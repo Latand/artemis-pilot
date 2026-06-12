@@ -1,0 +1,93 @@
+import * as THREE from "three";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { K, STARS } from "./constants.js";
+import { BH } from "./state.js";
+import { eph } from "./ephemeris.js";
+
+// Gravitational lensing as a screen-space post pass, applied to the world
+// render before bloom (so the warped accretion light still glows). Each
+// hole is a thin point-mass lens with the source field at infinity:
+// Einstein angle θE = √(2·r_s/D), deflection β = θ − θE²/θ. Pixels inside
+// θE sample the far side of the hole — the background flips through the
+// Einstein ring, and the black mesh magnifies into the shadow. Up to four
+// strongest lenses per frame: every player hole plus the bh entries in
+// STARS (SGR A*). Desktop composer only — the VR path renders without
+// post-processing.
+
+const MAXL = 4;
+
+export const lensingPass = new ShaderPass(new THREE.ShaderMaterial({
+    uniforms: {
+        tDiffuse: { value: null },
+        uN: { value: 0 },
+        uC: { value: Array.from({ length: MAXL }, () => new THREE.Vector2()) },
+        uT2: { value: new Float32Array(MAXL) },
+        uAspect: { value: 1 },
+    },
+    vertexShader: /* glsl */`
+        varying vec2 vUv;
+        void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: /* glsl */`
+        uniform sampler2D tDiffuse;
+        uniform int uN;
+        uniform vec2 uC[${MAXL}];
+        uniform float uT2[${MAXL}];
+        uniform float uAspect;
+        varying vec2 vUv;
+        void main(){
+            // tangent-plane coordinates: NDC with x stretched by aspect, so
+            // angles are isotropic and θE is one number per lens
+            vec2 p = vUv * 2.0 - 1.0;
+            p.x *= uAspect;
+            vec2 q = p;
+            for (int i = 0; i < ${MAXL}; i++) {
+                if (i >= uN) break;
+                vec2 d = p - uC[i];
+                float r2 = max(dot(d, d), 1e-9);
+                q -= d * (uT2[i] / r2);
+            }
+            q.x /= uAspect;
+            gl_FragColor = texture2D(tDiffuse, clamp(q * 0.5 + 0.5, 0.0, 1.0));
+        }`,
+}));
+lensingPass.enabled = false;
+
+const _v = new THREE.Vector3();
+const _cand = [];
+function consider(cands, wx, wy, wz, rsU, camera, f) {
+    _v.set(wx, wy, wz).applyMatrix4(camera.matrixWorldInverse);
+    if (_v.z > -1e-9) return;                  // behind the eye
+    const d = _v.length();
+    if (d < rsU * 1.5) return;                 // at/inside the horizon: the mesh owns the view
+    // cap the ring at ~half the frame height: past that the whole view sits
+    // inside the Einstein radius and reads as smeared mush, not lensing
+    const t = Math.min(f * Math.tan(Math.min(Math.sqrt(2 * rsU / d), .6)), .55);
+    if (t < .004) return;                      // sub-pixel ring
+    const cx = f * (_v.x / -_v.z), cy = f * (_v.y / -_v.z);
+    if (Math.hypot(cx, cy) > 4) return;        // far off-screen
+    cands.push({ cx, cy, t2: t * t });
+}
+
+// call once per frame with the final world camera; enables/disables the
+// pass and loads the strongest lenses into the shader
+export function updateLensing(camera, aspect) {
+    _cand.length = 0;
+    const f = 1 / Math.tan(camera.fov * Math.PI / 360);
+    for (let i = 0; i < BH.n; i++) {
+        consider(_cand, (eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera, f);
+    }
+    for (const s of STARS) {
+        if (s.bh) consider(_cand, s.x * K, 0, -s.y * K, s.rs * K, camera, f);
+    }
+    _cand.sort((a, b) => b.t2 - a.t2);
+    const n = Math.min(MAXL, _cand.length);
+    lensingPass.enabled = n > 0;
+    if (!n) return;
+    const u = lensingPass.uniforms;
+    u.uN.value = n;
+    u.uAspect.value = aspect;
+    for (let i = 0; i < n; i++) {
+        u.uC.value[i].set(_cand[i].cx, _cand[i].cy);
+        u.uT2.value[i] = _cand[i].t2;
+    }
+}

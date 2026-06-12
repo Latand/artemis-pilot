@@ -31,6 +31,7 @@ import {
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river } from "./river.js";
 import { initCosmicLayer, updateCosmicLayer } from "./cosmic.js";
+import { updateLensing } from "./lensing.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
@@ -559,6 +560,10 @@ function frame() {
         }
     }
     // ---- physics ----
+    // holes disable the deep-time Kepler jump (their field breaks the
+    // two-body decomposition), so uncapped warp would force giant RK4 steps
+    // and blow the system up to NaN — cap while any hole exists
+    if (BH.n && G.warp > 2592000) { G.warp = 2592000; toast("Time warp capped at 30 d/s while black holes exist"); }
     let advanced = 0;
     if (!G.paused) {
         if (G.dead) {
@@ -694,6 +699,7 @@ function frame() {
     }
     if (sky) { sky.position.copy(camera.position); sky.visible = !cosmicView; }
     if (galaxyBackdrop) { galaxyBackdrop.position.copy(camera.position); galaxyBackdrop.visible = !cosmicView; }
+    updateLensing(camera, camera.aspect);
     updateCosmicLayer();
     updateBodyShaders(camera, G.t);
     updateStars(camera, dtR);

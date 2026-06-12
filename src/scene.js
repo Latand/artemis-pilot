@@ -6,6 +6,7 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { G } from "./state.js";
 import { CAM_DIST_MAX } from "./constants.js";
 import { look, LOOK_YAW_MAX, LOOK_PITCH_MIN, LOOK_PITCH_MAX } from "./cockpit.js";
+import { lensingPass } from "./lensing.js";
 
 export const cvHost = document.getElementById("gl");
 export const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -23,6 +24,7 @@ export const camera = new THREE.PerspectiveCamera(48, 1, .02, CAM_DIST_MAX * 1.3
 // ---- post-processing: bloom ----
 export const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
+composer.addPass(lensingPass); // bend the world before bloom: warped disk light still glows
 export const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), .62, .55, .78);
 if (location.search.includes("bloom=0")) bloomPass.enabled = false;
 composer.addPass(bloomPass);

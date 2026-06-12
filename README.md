@@ -11,6 +11,8 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 - **Autopilot you can interrupt** (⇧T travel to focus, ⇧C circularize, ⇧X off): climbs out of the local gravity well, flies a flip-and-burn intercept, brakes, captures, and circularizes — any manual input returns control instantly.
 - **Travel simulations** (⇧S): curated pre-flight states with physics explainer cards — Hohmann to Mars, lunar free-return figure-8, Jupiter slingshot, photon-sphere dive, dark-energy escape, the voyage to Proxima, and the dive to SGR A*.
 - **Accurate ephemerides**: full n-body RK4 world seeded from real J2000 eccentric orbital elements for all planets, Earth, and the Moon (27.32-day month), with J2 oblateness, Sun 1PN precession, atmospheres, and light-speed gravity fronts.
+- **One clock at every scale**: past the integrator budget the system rides exact osculating Kepler orbits (barycenter coasting), so planets stay on their tracks and T+ runs at the commanded warp from real time to Myr/s — the MET reads years/kyr/Myr/Gyr at deep time.
+- **Visible gravitational lensing**: a screen-space point-mass lens around every black hole and SGR A* — Einstein ring, flipped background, magnified shadow — applied before bloom so the warped disk light glows.
 - **Stellar destinations with physics**: eight named stars plus SGR A* (4.15M solar masses, accretion disk, polar jets) as real positions with live gravity and contact surfaces — fly there and die in a photosphere or photon sphere of your choosing.
 - **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, black holes, and boosted dark-energy expansion.
 - **Dynamic black holes** with configurable Schwarzschild radius, Paczynski-Wiita capture behavior, mergers, Hawking readouts, accretion visuals, and dark event-horizon cores.
@@ -137,6 +139,7 @@ src/
   physics.js      ship dynamics, landing, loss conditions
   river.js        GPU particle river field
   scenarios.js    travel simulations menu and title overlay
+  lensing.js      screen-space Einstein-ring lensing pass for holes and SGR A*
   stars.js        named-star meshes and the SGR A* accretion system
   trails.js       ship and body prediction traces
   vr.js           WebXR rigs, PSVR2 controller bindings, god-mode grab/zoom
