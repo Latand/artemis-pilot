@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import {
-    R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M,
+    R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S,
 } from "./constants.js";
-import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed } from "./state.js";
+import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
 import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
 import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
 import { fmtMET, fmtKm, clamp01, smooth01, speedColor } from "./format.js";
@@ -24,7 +24,7 @@ import {
     arrPos, arrAttr, arrow, flArrPos, flArrAttr, flowArrow, tipV, tipF,
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
-import { initRiver, updateRiver, updateShells } from "./river.js";
+import { initRiver, updateRiver, updateShells, river } from "./river.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
@@ -32,7 +32,7 @@ import {
     showBanner, hideBanner, updateHUD, updateEscapeTracker, hideHelp,
     fFlow, lblE, lblM, lblO, lblS,
 } from "./hud.js";
-import { initInput, setFocus } from "./input.js";
+import { initInput, setFocus, blackHoleFocusIndex } from "./input.js";
 
 // ============================ WIRING ============================
 function die(reason, swallowed) {
@@ -52,6 +52,7 @@ function die(reason, swallowed) {
 function restart() {
     resetEphem();
     resetShip();
+    rebaseBHEvents(); // clock rewound to 0: surviving holes count as long-established
     clearTrail();
     hideBanner();
     explosion.visible = false; xpFlash.visible = false; xp.t = -1;
@@ -62,20 +63,22 @@ initPhysicsHooks({ die, award, banner: showBanner, hideBanner });
 initBHHooks({
     toast, predict: computePrediction,
     cataclysm(target, rs, mode, bi = -1) {
-        const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs));
+        const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), true, false);
         award("bh");
         if (bi >= 0) focusBlackHole(bi);
         if (name) toast(name + " absorbed by black hole · r_s now " + fmtKm(rs));
     },
+    // blackholes.js carries the mass through phantom → hole event → ghost,
+    // so the BH paths skip the generic destruction ghost
     disrupt(target, rs, mode, bi = -1) {
-        const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), false) || bodyName(target);
+        const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), false, false) || bodyName(target);
         award("bh");
         if (bi >= 0) focusBlackHole(bi);
         if (name) toast(name + " is being tidally shredded");
         return name;
     },
     absorbed(target, rs, bi = -1) {
-        const name = markBodyDestroyed(target, "mass absorbed by r_s " + fmtKm(rs), false) || bodyName(target);
+        const name = markBodyDestroyed(target, "mass absorbed by r_s " + fmtKm(rs), false, false) || bodyName(target);
         if (bi >= 0) focusBlackHole(bi);
         toast((name || "Body") + " mass absorbed · r_s now " + fmtKm(rs));
     },
@@ -127,10 +130,22 @@ function unlockBodyPrediction() {
     lockedBodyTarget = BODY_NONE;
     clearBodyPrediction();
 }
-function markBodyDestroyed(target, reason, refocus = true) {
+function bodyPhys(target) {
+    const key = bodyKey(target);
+    if (key === "earth") return { x: 0, y: 0, vx: 0, vy: 0, mu: MU_E, R: R_EARTH };
+    if (key === "moon") return { x: eph.moonX, y: eph.moonY, vx: eph.moonVx, vy: eph.moonVy, mu: MU_M, R: R_MOON };
+    if (key === "sun") return { x: eph.sunX, y: eph.sunY, vx: eph.sunVx, vy: eph.sunVy, mu: MU_S, R: R_SUN };
+    if (typeof key === "number") return { x: eph.plX[key], y: eph.plY[key], vx: eph.plVx[key], vy: eph.plVy[key], mu: PL[key].mu, R: PL[key].R };
+    return null;
+}
+function markBodyDestroyed(target, reason, refocus = true, ghost = true) {
     const key = bodyKey(target);
     if (isBodyDestroyed(key)) return "";
+    // the news that the mass is gone expands outward at c; far regions keep
+    // feeling the old field until the front reaches them
+    const phys = ghost ? bodyPhys(target) : null;
     destroyBody(key);
+    if (phys) addGhost(phys.x, phys.y, phys.vx, phys.vy, phys.mu, phys.R, G.t);
     const name = bodyName(target);
     if (lockedBodyTarget !== BODY_NONE && bodyKey(lockedBodyTarget) === key) unlockBodyPrediction();
     if (G.landed && ((key === "earth" && G.landed.body === "earth") ||
@@ -146,6 +161,13 @@ function markBodyDestroyed(target, reason, refocus = true) {
     return name;
 }
 const _focusOrigin = new THREE.Vector3(), _focusPos = new THREE.Vector3();
+const _bhFocusPos = new THREE.Vector3(), _bhLabelPos = new THREE.Vector3();
+const bhFocusValue = i => "bh:" + i;
+function bhScenePos(i, out = _bhFocusPos) {
+    return out.set((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K);
+}
+function isBHTarget(target) { return blackHoleFocusIndex(target) >= 0; }
+function targetBHIndex(target) { return blackHoleFocusIndex(target); }
 function addFocusCandidate(list, target, focus, pos, minDist) {
     if (!isTargetDestroyed(target)) list.push({ name: bodyName(target), target, focus, pos: pos.clone(), minDist });
 }
@@ -158,8 +180,8 @@ function focusNearestSurvivor() {
     addFocusCandidate(cands, BODY_SUN, "sun", sunCore.position, SUN_RADIUS * 4);
     for (let i = 0; i < PL.length; i++) addFocusCandidate(cands, i, i, plGroups[i].position, PL[i].R * K * 18);
     for (let i = 0; i < BH.n; i++) {
-        _focusPos.set((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K);
-        cands.push({ name: "Black hole", target: BODY_NONE, focus: "free", pos: _focusPos.clone(), minDist: Math.max(80, BH.rs[i] * K * 16) });
+        bhScenePos(i, _focusPos);
+        cands.push({ name: "Black hole", target: bhFocusValue(i), focus: bhFocusValue(i), pos: _focusPos.clone(), minDist: Math.max(80, BH.rs[i] * K * 16) });
     }
     let best = null, bestD = Infinity;
     for (const c of cands) {
@@ -167,19 +189,18 @@ function focusNearestSurvivor() {
         if (d < bestD) { bestD = d; best = c; }
     }
     if (!best) return null;
-    if (best.focus === "free") {
-        unlockBodyPrediction();
-        G.focus = "free";
-        cam.tgt.copy(best.pos);
-        cam.dist = Math.max(cam.dist, best.minDist);
-    } else focusAndLockBody(best.target, best.focus);
+    if (isBHTarget(best.focus)) focusBlackHole(targetBHIndex(best.focus));
+    else focusAndLockBody(best.target, best.focus);
     return best.name;
 }
 function focusBlackHole(i) {
     if (i < 0 || i >= BH.n) return;
-    G.focus = "free";
-    cam.tgt.set((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K);
-    cam.dist = Math.max(Math.min(cam.dist, Math.max(900, BH.rs[i] * K * 22)), Math.max(80, BH.rs[i] * K * 12));
+    G.focus = bhFocusValue(i);
+    cam.tgt.copy(bhScenePos(i));
+    // keep the player's zoom level; only push out far enough to stay outside
+    // the hole (clamping the distance down reset the view scale on every
+    // absorption/disruption event)
+    cam.dist = Math.max(cam.dist, Math.max(80, BH.rs[i] * K * 12));
     unlockBodyPrediction();
 }
 function enterObserverMode() {
@@ -202,6 +223,15 @@ bindBodyLabel(lblM, BODY_MOON, () => focusAndLockBody(BODY_MOON, "moon"));
 bindBodyLabel(lblS, BODY_SUN, () => focusAndLockBody(BODY_SUN, "sun"));
 lblO.onclick = () => { setFocus("ship"); unlockBodyPrediction(); };
 plLabels.forEach((sp, i) => { bindBodyLabel(sp, i, () => focusAndLockBody(i, i)); });
+const bhLabels = Array.from({ length: BH_MAX }, (_, i) => {
+    const el = document.createElement("span");
+    el.className = "lbl bhLbl";
+    el.style.color = "#c9b6ff";
+    el.textContent = "BH " + (i + 1);
+    document.getElementById("root").appendChild(el);
+    bindBodyLabel(el, bhFocusValue(i), () => focusBlackHole(i));
+    return el;
+});
 
 function bodyContactList() {
     const list = [];
@@ -304,15 +334,16 @@ function hoverVelocity(idx, out) {
 function updateHover(w, h) {
     let best = BODY_NONE, bestD = 18, bestPos = null;
     const ptr = labelPtr || lastPtr;
-    if (labelHoverTarget !== BODY_NONE && !isTargetDestroyed(labelHoverTarget)) {
+    if (labelHoverTarget !== BODY_NONE && (isBHTarget(labelHoverTarget) ? targetBHIndex(labelHoverTarget) < BH.n : !isTargetDestroyed(labelHoverTarget))) {
         best = labelHoverTarget;
-        bestPos = bodyScenePos(best);
+        bestPos = isBHTarget(best) ? bhScenePos(targetBHIndex(best), _bhFocusPos) : bodyScenePos(best);
     } else if (lastPtr) {
         const cands = [];
         if (!WORLD.earthDestroyed) cands.push([BODY_EARTH, earthG.position]);
         if (!WORLD.sunDestroyed) cands.push([BODY_SUN, sunCore.position]);
         if (!WORLD.moonDestroyed) cands.push([BODY_MOON, moon.position]);
         for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) cands.push([i, plGroups[i].position]);
+        for (let i = 0; i < BH.n; i++) cands.push([bhFocusValue(i), bhScenePos(i, _bhLabelPos).clone()]);
         for (const [idx, pos] of cands) {
             const pr = project(pos, w, h);
             if (!pr) continue;
@@ -327,12 +358,19 @@ function updateHover(w, h) {
         return;
     }
     hoverBodyTarget = best;
-    hoverVelocity(best, _hv);
+    if (isBHTarget(best)) {
+        const bi = targetBHIndex(best);
+        _hv.vx = eph.earthVx + BH.vx[bi];
+        _hv.vy = eph.earthVy + BH.vy[bi];
+    } else hoverVelocity(best, _hv);
     const v = Math.hypot(_hv.vx, _hv.vy);
-    const name = best === BODY_EARTH ? "EARTH" : best === BODY_SUN ? "SUN" : best === BODY_MOON ? "MOON" : PL[best].name;
+    const name = isBHTarget(best) ? "BH " + (targetBHIndex(best) + 1) :
+        best === BODY_EARTH ? "EARTH" : best === BODY_SUN ? "SUN" : best === BODY_MOON ? "MOON" : PL[best].name;
     let txt = name + " — " + v.toFixed(2) + " km/s";
     if (best >= 0) txt += " · helio " + Math.hypot(_hv.vx - (eph.earthVx + eph.sunVx), _hv.vy - (eph.earthVy + eph.sunVy)).toFixed(2) + " km/s";
+    if (isBHTarget(best)) txt += " · r_s " + fmtKm(BH.rs[targetBHIndex(best)]);
     if (lockedBodyTarget === best) txt += " · LOCKED";
+    if (G.focus === best) txt += " · FOCUS";
     hoverTipEl.textContent = txt;
     hoverTipEl.style.display = "block";
     hoverTipEl.style.left = (ptr[0] + 16) + "px";
@@ -353,6 +391,8 @@ function updateHover(w, h) {
 // ============================ MAIN LOOP ============================
 const clock = new THREE.Clock();
 const earthV = new THREE.Vector3(), moonV = new THREE.Vector3(), velV = new THREE.Vector3(), upV = new THREE.Vector3(0, 1, 0), dirV = new THREE.Vector3();
+const camPrevTgt = new THREE.Vector3(), camDelta = new THREE.Vector3();
+let camPrevFocus = null;
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 const arrC = [0, 0, 0];
 const fv = [0, 0, 0];
@@ -459,16 +499,28 @@ function frame() {
         plGlows[i].scale.setScalar(Math.max(PL[i].R * K * 3, dCamP * .011));
     }
     updateBHVisuals(dtR, earthX, earthZ);
+    const focusBH = blackHoleFocusIndex(G.focus);
+    if (focusBH >= BH.n) setFocus("ship");
     const oriX = (eph.earthX + G.x) * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, 0, oriZ);
     shipG.visible = !G.dead;
     clouds.rotation.y += dtR * .01;
     // ---- camera ----
     // "free" focus: the target stays wherever panning put it
-    const tgt = G.focus === "free" ? cam.tgt : typeof G.focus === "number" ? plGroups[G.focus].position :
+    const activeBHFocus = focusBH >= 0 && focusBH < BH.n;
+    const tgt = activeBHFocus ? bhScenePos(focusBH) : G.focus === "free" ? cam.tgt : typeof G.focus === "number" ? plGroups[G.focus].position :
         G.focus === "moon" ? moon.position : G.focus === "earth" ? earthG.position : G.focus === "sun" ? sunCore.position : shipG.position;
-    if (G.focus !== "free") cam.tgt.lerp(tgt, placed ? Math.min(1, dtR * 6) : 1);
-    const minD = G.focus === "free" ? .03 : typeof G.focus === "number" ? PL[G.focus].R * K * 1.3 :
+    if (G.focus !== "free") {
+        // rigid-follow the focus body's frame-to-frame motion so fast targets
+        // stay centered at any warp; the lerp only glides out the residual
+        // offset left by focus transitions and pans
+        if (placed && camPrevFocus === G.focus) cam.tgt.add(camDelta.copy(tgt).sub(camPrevTgt));
+        cam.tgt.lerp(tgt, placed ? Math.min(1, dtR * 6) : 1);
+        camPrevTgt.copy(tgt);
+        camPrevFocus = G.focus;
+    } else camPrevFocus = null;
+    const minD = activeBHFocus ? Math.max(.05, BH.rs[focusBH] * K * 1.3) :
+        G.focus === "free" ? .03 : typeof G.focus === "number" ? PL[G.focus].R * K * 1.3 :
         G.focus === "earth" ? R_EARTH * K * 1.3 : G.focus === "moon" ? R_MOON * K * 1.3 : G.focus === "sun" ? SUN_RADIUS * 1.25 : .05;
     cam.dist = Math.max(minD, cam.dist);
     applyCamera();
@@ -567,8 +619,8 @@ function frame() {
     grB += (grT - grB) * Math.min(1, dtR * 3.4);
     if (Math.abs(grT - grB) < .004) grB = grT;
     const fB = grB;
-    updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr);
-    updateShells(advanced, fB, sunPos);
+    updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR);
+    updateShells(river.dtVis ?? advanced, fB, sunPos);
     if (fB > .01) fFlow.textContent = (flowVel(oriX, 0, oriZ, moonV.x, moonV.y, moonV.z, fv) * 1000).toFixed(2) + " km/s";
     moonSoiRing.visible = fB > .01 && !WORLD.moonDestroyed;
     moonSoiRing.material.opacity = fB * (.14 + .1 * Math.sin(performance.now() * .002));
@@ -636,6 +688,17 @@ function frame() {
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) plLabels[i].style.opacity = "0";
         else put(plLabels[i], plGroups[i].position, -8, w, h);
+    }
+    for (let i = 0; i < BH_MAX; i++) {
+        if (i >= BH.n) {
+            bhLabels[i].style.display = "none";
+            bhLabels[i].style.opacity = "0";
+        }
+        else {
+            bhLabels[i].style.display = "block";
+            bhLabels[i].textContent = "BH " + (i + 1);
+            put(bhLabels[i], bhScenePos(i, _bhLabelPos), -10, w, h);
+        }
     }
     if (G.dead) lblO.style.opacity = "0";
     else put(lblO, shipG.position, -22, w, h);

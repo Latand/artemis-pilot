@@ -1,8 +1,8 @@
 import {
     AU_KM, SUN_TH0, OM_YEAR, PL, A_MOON, OMEGA, MOON_ANG0,
-    MU_E, MU_M, MU_S,
+    MU_E, MU_M, MU_S, C_LIGHT,
 } from "./constants.js";
-import { BH, WORLD } from "./state.js";
+import { BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -53,6 +53,7 @@ function syncFromState(st = null) {
 }
 
 export function resetEphem() {
+    EPHT.t = 0;
     const ma = MOON_ANG0;
     bodyX[IDX_MOON] = A_MOON * Math.cos(ma);
     bodyY[IDX_MOON] = A_MOON * Math.sin(ma);
@@ -124,9 +125,13 @@ export function bodyStateForTarget(target, out, st = null) {
 // Indirect (frame) acceleration: every body and hole pulls the Earth-centered
 // origin. Identical for all field points, so callers evaluating many points
 // against one state compute it once and pass it as `ind`.
+const _gp = [0, 0];
 export function indirectAccel(st, out, tau = 0) {
+    // with Earth gone the origin coasts inertially: no frame correction at all
+    if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; return out; }
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
     const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
+    const tEval = (st && st.t !== undefined ? st.t : EPHT.t) + tau;
     let ax = 0, ay = 0;
     for (let i = 0; i < NB; i++) {
         const mu = activeBodyMu(i);
@@ -140,14 +145,21 @@ export function indirectAccel(st, out, tau = 0) {
         }
     }
     for (let i = 0; i < BH.n; i++) {
+        const mu0 = bhMuAt(i, 0, 0, tEval);
+        if (mu0 <= 0) continue;
         const bx = BH.x[i] + BH.vx[i] * tau, by = BH.y[i] + BH.vy[i] * tau;
         const r0 = Math.sqrt(bx * bx + by * by);
         if (r0 > 1e-9) {
             const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
-            const am0 = BH.mu[i] / (eff0 * eff0) / r0;
+            const am0 = mu0 / (eff0 * eff0) / r0;
             ax -= bx * am0;
             ay -= by * am0;
         }
+    }
+    if (GS.length) {
+        _gp[0] = 0; _gp[1] = 0;
+        gsPull(0, 0, tEval, _gp);
+        ax -= _gp[0]; ay -= _gp[1];
     }
     out[0] = ax; out[1] = ay;
     return out;
@@ -159,6 +171,9 @@ export function indirectAccel(st, out, tau = 0) {
 export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind = null) {
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
     const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
+    const tEval = (st && st.t !== undefined ? st.t : EPHT.t) + tau;
+    // inline indirect terms only while Earth anchors an accelerating frame
+    const indir = ind === null && !WORLD.earthDestroyed;
     let ax = 0, ay = 0;
     const muE = activeEarthMu();
     if (muE > 0) {
@@ -182,7 +197,7 @@ export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind =
                 ay -= w * dy;
             }
         }
-        if (ind === null) {
+        if (indir) {
             const r02 = bx * bx + by * by;
             if (r02 > 1e-18) {
                 const w0 = mu / (r02 * Math.sqrt(r02));
@@ -196,19 +211,36 @@ export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind =
         const dx = x - bx, dy = y - by;
         const r = Math.sqrt(dx * dx + dy * dy);
         if (r > 1e-9) {
-            const eff = Math.max(r - BH.rs[i], BH.rs[i] * .02);
-            const am = BH.mu[i] / (eff * eff) / r;
-            ax -= dx * am;
-            ay -= dy * am;
-        }
-        if (ind === null) {
-            const r0 = Math.sqrt(bx * bx + by * by);
-            if (r0 > 1e-9) {
-                const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
-                const am0 = BH.mu[i] / (eff0 * eff0) / r0;
-                ax -= bx * am0;
-                ay -= by * am0;
+            // only the mass whose light front has reached this point pulls
+            const mu = bhMuAt(i, x, y, tEval);
+            if (mu > 0) {
+                const eff = Math.max(r - BH.rs[i], BH.rs[i] * .02);
+                const am = mu / (eff * eff) / r;
+                ax -= dx * am;
+                ay -= dy * am;
             }
+        }
+        if (indir) {
+            const mu0 = bhMuAt(i, 0, 0, tEval);
+            if (mu0 > 0) {
+                const r0 = Math.sqrt(bx * bx + by * by);
+                if (r0 > 1e-9) {
+                    const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
+                    const am0 = mu0 / (eff0 * eff0) / r0;
+                    ax -= bx * am0;
+                    ay -= by * am0;
+                }
+            }
+        }
+    }
+    if (GS.length) {
+        _gp[0] = 0; _gp[1] = 0;
+        gsPull(x, y, tEval, _gp);
+        ax += _gp[0]; ay += _gp[1];
+        if (indir) {
+            _gp[0] = 0; _gp[1] = 0;
+            gsPull(0, 0, tEval, _gp);
+            ax -= _gp[0]; ay -= _gp[1];
         }
     }
     if (ind !== null) { ax += ind[0]; ay += ind[1]; }
@@ -232,11 +264,13 @@ function makeState() {
         earthY,
         earthVx,
         earthVy,
+        t: EPHT.t,
     };
 }
 function copyStateToLive(st) {
     bodyX.set(st.x); bodyY.set(st.y); bodyVx.set(st.vx); bodyVy.set(st.vy);
     earthX = st.earthX; earthY = st.earthY; earthVx = st.earthVx; earthVy = st.earthVy;
+    if (typeof st.t === "number") EPHT.t = st.t;
     syncFromState();
 }
 const _ind = [0, 0];
@@ -272,6 +306,7 @@ function rk4Bodies(st, dt) {
             earthY: st.earthY + f * dt * _k[prev].earthY,
             earthVx: st.earthVx + f * dt * _k[prev].earthVx,
             earthVy: st.earthVy + f * dt * _k[prev].earthVy,
+            t: st.t + f * dt,
         }, _k[cur]);
     }
     for (let i = 0; i < NB; i++) {
@@ -302,18 +337,33 @@ function bodyStepSize(st, rem, maxStep = 3600) {
         }
         for (let b = 0; b < BH.n; b++) {
             const dx = st.x[i] - BH.x[b], dy = st.y[i] - BH.y[b];
-            const d2 = dx * dx + dy * dy;
-            if (d2 > BH.rs[b] * BH.rs[b]) dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (mui + BH.mu[b])) / 45);
+            const d = Math.sqrt(dx * dx + dy * dy);
+            // free-fall timescale against the PW-softened pull; the floor keeps
+            // it finite even with the body's center inside the horizon
+            const eff = Math.max(d - BH.rs[b], BH.rs[b] * .02);
+            dt = Math.min(dt, Math.sqrt(eff * eff * Math.max(d, BH.rs[b] * .02) / (mui + BH.mu[b])) / 45);
         }
     }
     return Math.max(1e-3, dt);
 }
-function advanceState(st, dtTotal, maxStep = 3600) {
+// live-path guard wired by blackholes.js: a body can free-fall into a hole
+// well inside one flush interval, so disruption boundaries must be checked
+// per substep — never from predictions, which must not mutate the world
+let liveGuard = null;
+export function setLiveGuard(fn) { liveGuard = fn; }
+function advanceState(st, dtTotal, maxStep = 3600, live = false) {
     let rem = dtTotal, guard = 0;
     while (rem > 1e-9 && guard++ < 2000) {
-        const dt = Math.min(rem, bodyStepSize(st, rem, maxStep));
+        // if the step collapses near a deep well, spend the remaining budget
+        // anyway: bounded local error beats bodies silently losing time
+        const dt = Math.min(rem, Math.max(bodyStepSize(st, rem, maxStep), rem / (2001 - guard)));
         rk4Bodies(st, dt);
+        st.t += dt;
         rem -= dt;
+        if (live && liveGuard && BH.n) {
+            syncFromState(st); // the guard reads current body positions via eph
+            liveGuard();
+        }
     }
 }
 const _adv = makeState(); // persistent scratch: advanceEphem runs every flush, allocation-free
@@ -321,8 +371,12 @@ export function advanceEphem(dtTotal) {
     if (dtTotal <= 0) return;
     _adv.x.set(bodyX); _adv.y.set(bodyY); _adv.vx.set(bodyVx); _adv.vy.set(bodyVy);
     _adv.earthX = earthX; _adv.earthY = earthY; _adv.earthVx = earthVx; _adv.earthVy = earthVy;
-    advanceState(_adv, dtTotal);
+    _adv.t = EPHT.t;
+    advanceState(_adv, dtTotal, 3600, true);
     copyStateToLive(_adv);
+    // a ghost whose front has swept past Neptune influences nothing anymore
+    for (let k = GS.length - 1; k >= 0; k--)
+        if ((EPHT.t - GS[k].t) * C_LIGHT > 1e10) GS.splice(k, 1);
 }
 export function snapshotEphem() { return makeState(); }
 export function applyEphemSnapshot(st) { syncFromState(st); }
@@ -333,3 +387,4 @@ export function advanceEphemSnapshot(st, dtTotal, maxStep = 3600) {
 }
 
 resetEphem();
+window.__eph = eph; // debug/testing handle

@@ -5,6 +5,11 @@ import { fmtKm, fmtDist, fmtMET, escapeKmS, accelMs2, fmtAccel } from "./format.
 import { bhHawkingLabel, bhMassLabel } from "./blackholes.js";
 
 const $ = id => document.getElementById(id);
+const bhFocusIndex = f => {
+    if (typeof f !== "string") return -1;
+    const m = f.match(/^bh:(\d+)$/);
+    return m ? Number(m[1]) : -1;
+};
 export const metEl = $("met"), warpEl = $("warpLine"), engineEl = $("engineLine"), throttleEl = $("throttleLine");
 export const fuelTxtEl = $("fuelTxt"), fuelFillEl = $("fuelFill");
 export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVel = $("cVel"), cApPe = $("cApPe"), cMoon = $("cMoon"), cSun = $("cSun"), cDv = $("cDv"), cGrav = $("cGrav");
@@ -94,12 +99,21 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     const gTot = aShE + aShM + aShS + aShB + aShP;
     const shares = [["E", aShE], ["M", aShM], ["S", aShS], ["⚫", aShB], [oi.pNear >= 0 ? PL[oi.pNear].tag : "P", aShP]].sort((p, q) => q[1] - p[1]);
     cGrav.textContent = gTot > 0 ? shares[0][0] + " " + Math.round(shares[0][1] / gTot * 100) + "% · " + shares[1][0] + " " + Math.round(shares[1][1] / gTot * 100) + "%" : "—";
+    const focusBH = bhFocusIndex(G.focus);
     let bhReadoutRs = BH_SIZES[BH.sizeIdx], bhNearestD = Infinity;
     for (let bi = 0; bi < BH.n; bi++) {
         const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi]);
         if (dB < bhNearestD) { bhNearestD = dB; bhReadoutRs = BH.rs[bi]; }
     }
-    document.getElementById("bhLine").textContent = "⚫ r_s " + fmtKm(bhReadoutRs) + " · " + bhMassLabel(bhReadoutRs) + " · " + bhHawkingLabel(bhReadoutRs) + " · B PLACE · [ ] SIZE" + (BH.n ? " · ACTIVE " + BH.n + "/6" : "");
+    if (focusBH >= 0 && focusBH < BH.n) {
+        const dShip = Math.hypot(G.x - BH.x[focusBH], G.y - BH.y[focusBH]);
+        const vFrame = Math.hypot(BH.vx[focusBH], BH.vy[focusBH]);
+        const vSun = Math.hypot(BH.vx[focusBH] + eph.earthVx, BH.vy[focusBH] + eph.earthVy);
+        const eff = Math.max(dShip - BH.rs[focusBH], BH.rs[focusBH] * .02);
+        document.getElementById("bhLine").textContent = "⚫ BH " + (focusBH + 1) + "/" + BH.n +
+            " · v " + vFrame.toFixed(2) + " km/s · helio " + vSun.toFixed(2) + " km/s · ship " + fmtDist(dShip) +
+            " · g " + fmtAccel(accelMs2(BH.mu[focusBH], eff)) + " · r_s " + fmtKm(BH.rs[focusBH]);
+    } else document.getElementById("bhLine").textContent = "⚫ r_s " + fmtKm(bhReadoutRs) + " · " + bhMassLabel(bhReadoutRs) + " · " + bhHawkingLabel(bhReadoutRs) + " · B PLACE · N FOCUS · [ ] SIZE" + (BH.n ? " · ACTIVE " + BH.n + "/6" : "");
     if (fB > .25) {
         fShip.textContent = kVLoc.toFixed(2) + " km/s";
         fEsc.textContent = escapeKmS(MU_E, Math.max(R_EARTH, oi.rE)).toFixed(2) + " km/s";

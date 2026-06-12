@@ -30,6 +30,47 @@ export function resetWorld() {
     WORLD.moonDestroyed = false;
     WORLD.sunDestroyed = false;
     WORLD.plDestroyed.fill(0);
+    GS.length = 0;
+}
+
+// ---- simulation clock for gravity-front bookkeeping ----
+// ephemeris.js advances it on every flush; prediction snapshots carry their
+// own copy so traces see the fronts where they will be, not where they are.
+export const EPHT = { t: 0 };
+
+// ---- phantom & ghost gravity sources ----
+// Changes to the field propagate at c. A phantom (t = Infinity) is the frozen
+// debris of a body under tidal disruption: it keeps the body's mass pulling
+// from where the shredding started, coasting at the body's last velocity,
+// Plummer-softened by the body radius so a hole can pass through it without
+// singular kicks. When the mass is finally absorbed the phantom becomes a
+// ghost (t = absorption time): the old field keeps pulling only OUTSIDE the
+// light front c·(tEval − t) — the news of the absorption expands at c.
+export const GS = [];
+window.__GS = GS;
+export function addPhantom(x, y, vx, vy, mu, R) {
+    const s = { x, y, vx, vy, mu, R, t0: EPHT.t, t: Infinity };
+    GS.push(s);
+    return s;
+}
+export function addGhost(x, y, vx, vy, mu, R, t) {
+    GS.push({ x, y, vx, vy, mu, R, t0: t, t });
+}
+// accumulate the pull of every phantom/ghost at (x, y) into out[0..1]
+export function gsPull(x, y, tEval, out) {
+    for (let k = 0; k < GS.length; k++) {
+        const s = GS[k];
+        const ft = (tEval - s.t) * C_LIGHT;
+        if (ft > 0) {
+            const fx = x - s.x, fy = y - s.y; // front expands from the event point
+            if (fx * fx + fy * fy <= ft * ft) continue; // news arrived: source gone
+        }
+        const age = tEval - s.t0;
+        const dx = x - (s.x + s.vx * age), dy = y - (s.y + s.vy * age);
+        const s2 = dx * dx + dy * dy + s.R * s.R;
+        const w = s.mu / (s2 * Math.sqrt(s2));
+        out[0] -= w * dx; out[1] -= w * dy;
+    }
 }
 
 export function isBodyDestroyed(target) {
@@ -73,9 +114,12 @@ export const BH = {
     sx: new Float64Array(BH_MAX), sz: new Float64Array(BH_MAX),
     c: new Float64Array(BH_MAX), sinkS: new Float64Array(BH_MAX),
     obsT: new Float64Array(BH_MAX),
+    // per-hole mass-gain events {x, y, t, dmu}: birth, absorptions, and
+    // merger inheritance — each delta's influence expands at c from (x, y)
+    ev: new Array(BH_MAX).fill(null),
 };
 window.__BH = BH;
-export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0) {
+export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0, events = null) {
     BH.x[i] = xKm; BH.y[i] = yKm; BH.rs[i] = rsKm;
     BH.vx[i] = vx0; BH.vy[i] = vy0;
     BH.mu[i] = rsKm * C_LIGHT * C_LIGHT / 2;
@@ -83,4 +127,28 @@ export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0) {
     BH.c[i] = .001 * Math.sqrt(2 * BH.mu[i] / 1000);
     BH.sinkS[i] = rsKm * K;
     BH.obsT[i] = 1;
+    BH.ev[i] = events && events.length ? events.map(e => ({ ...e }))
+        : [{ x: xKm, y: yKm, t: EPHT.t, dmu: BH.mu[i] }];
 }
+// hole i's gravitational parameter as felt at (x, y): only the mass deltas
+// whose light fronts have reached the point contribute
+export function bhMuAt(i, x, y, tEval) {
+    const ev = BH.ev[i];
+    if (!ev) return BH.mu[i];
+    let mu = 0;
+    for (let k = 0; k < ev.length; k++) {
+        const e = ev[k];
+        const ft = (tEval - e.t) * C_LIGHT;
+        if (ft <= 0) continue;
+        const dx = x - e.x, dy = y - e.y;
+        if (dx * dx + dy * dy <= ft * ft) mu += e.dmu;
+    }
+    return mu;
+}
+// restart rewinds the clock to 0: treat surviving holes as long-established
+export function rebaseBHEvents() {
+    for (let i = 0; i < BH.n; i++)
+        BH.ev[i] = [{ x: BH.x[i], y: BH.y[i], t: -1e18, dmu: BH.mu[i] }];
+}
+window.__bhMuAt = bhMuAt; // debug/testing handle
+window.__EPHT = EPHT;

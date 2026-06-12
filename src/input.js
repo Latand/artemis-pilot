@@ -5,12 +5,27 @@ import { initAudio, thrustGain } from "./audio.js";
 import { toast } from "./achievements.js";
 import { placeBHAtCursor, removeLastBH } from "./blackholes.js";
 import { computePrediction } from "./trails.js";
+import { saveState, loadState } from "./saves.js";
 import { help, hideHelp, toggleHelp } from "./hud.js";
 
 export function setFocus(f) {
     G.focus = f;
-    cam.dist = typeof f === "number" ? Math.max(PL[f].R * K * 7, 2) :
+    const bi = blackHoleFocusIndex(f);
+    cam.dist = bi >= 0 && bi < BH.n ? Math.max(80, BH.rs[bi] * K * 12) :
+        typeof f === "number" ? Math.max(PL[f].R * K * 7, 2) :
         f === "earth" ? 34 : f === "moon" ? 10 : f === "sun" ? 2600 : 2.6;
+}
+export function blackHoleFocusIndex(f) {
+    if (typeof f !== "string") return -1;
+    const m = f.match(/^bh:(\d+)$/);
+    return m ? Number(m[1]) : -1;
+}
+function focusNextBlackHole() {
+    if (!BH.n) { toast("No black holes placed"); return; }
+    const cur = blackHoleFocusIndex(G.focus);
+    const next = (cur + 1) % BH.n;
+    setFocus("bh:" + next);
+    toast("Black-hole focus " + (next + 1) + "/" + BH.n);
 }
 
 let H = { restart: () => { } };
@@ -48,6 +63,9 @@ function onKeyDown(e) {
         case "KeyI": G.infinite = !G.infinite; toast(G.infinite ? "Infinite propellant ON" : "Infinite propellant OFF"); break;
         case "KeyM": G.muted = !G.muted; if (thrustGain) thrustGain.gain.value = 0; break;
         case "KeyR": H.restart(); break;
+        case "KeyK": saveState(); break;
+        case "KeyL": loadState(); break;
+        case "KeyN": focusNextBlackHole(); break;
         case "KeyB": placeBHAtCursor(); break;
         case "KeyV": removeLastBH(); break;
         case "BracketLeft": BH.sizeIdx = Math.max(0, BH.sizeIdx - 1); break;

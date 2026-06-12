@@ -26,6 +26,7 @@ body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; co
 .cell { flex: 1; padding: 7px 9px; min-width: 0; overflow: hidden; }
 #fuelBar { width: 190px; height: 7px; border-radius: 4px; background: rgba(255,255,255,.07); border: 1px solid #232e3c; overflow: hidden; margin-top: 4px; }
 #fuelFill { height: 100%; width: 100%; background: linear-gradient(90deg, #2e7d4f, #58c87f); }
+#bhLine { width: min(360px, calc(100vw - 28px)); line-height: 1.45; }
 #banner { position: absolute; left: 50%; top: 38%; transform: translate(-50%,-50%); text-align: center;
   background: rgba(8,11,16,.9); border: 1px solid #2a3442; border-radius: 12px; padding: 18px 26px; backdrop-filter: blur(8px); display: none; z-index: 8; }
 #help { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); width: 420px; max-width: calc(100% - 40px);

@@ -218,7 +218,8 @@ export function initRiver() {
 
 let lastR = 0, lastCx = 0, lastCz = 0;
 // bodies: 0 earth, 1 moon, 2 sun, 3..9 planets, 10+ black holes
-export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos) {
+export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0) {
+    river.dtVis = dtSim;
     if (!river.enabled) return;
     lines.visible = fB > .01;
     uniformsShared.uOpacity.value = .52 * fB;
@@ -237,7 +238,6 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos) {
     uniformsShared.uRadius.value = R;
     uniformsShared.uCam.value.copy(camera.position);
     uniformsShared.uForce.value = force;
-    uniformsShared.uDtSim.value = dtSim;
     uniformsShared.uTick.value = (uniformsShared.uTick.value + .618) % 64;
 
     bodyVals[0].set(earthV.x, earthV.y, earthV.z, WORLD.earthDestroyed ? 0 : FLOW.CE);
@@ -268,8 +268,17 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos) {
         if (typ > bestS) { bestS = typ; best = i; bestTyp = far ? typ * 4 : bodyVals[i].w / Math.sqrt(sinkVals[i]); }
     }
     uniformsShared.uVRef.value = Math.max(.01, bestTyp);
+    // visualization floor: zoomed in at low warp the physical inflow moves
+    // subpixel per frame — advect at least fast enough that the dominant flow
+    // crosses ~8 % of the volume per real second, so the river drag reads at
+    // any zoom. True sim time takes over as soon as warp makes it faster.
+    const dtVis = dtSim > 0
+        ? Math.max(dtSim, dtReal * R * .08 / Math.max(uniformsShared.uVRef.value, 1e-9))
+        : 0;
+    river.dtVis = dtVis;
+    uniformsShared.uDtSim.value = dtVis;
 
-    if (dtSim > 0 || force) {
+    if (dtVis > 0 || force) {
         const prevRT = renderer.getRenderTarget();
         renderer.setRenderTarget(rtB);
         renderer.render(computeScene, computeCam);
