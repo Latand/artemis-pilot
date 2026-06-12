@@ -252,7 +252,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos) {
     }
     let nb = 3 + PL.length;
     for (let i = 0; i < BH.n && nb < MAXB; i++, nb++) {
-        bodyVals[nb].set(earthV.x + BH.sx[i], earthV.y, earthV.z + BH.sz[i], BH.c[i]);
+        bodyVals[nb].set(earthV.x + BH.sx[i], earthV.y, earthV.z + BH.sz[i], BH.c[i] * Math.max(.08, BH.obsT[i] || 1));
         sinkVals[nb] = BH.sinkS[i];
     }
     uniformsShared.uNB.value = nb;

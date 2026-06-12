@@ -8,8 +8,11 @@ import { scene, camera, cvHost, lastPtr } from "./scene.js";
 
 export const BH_META = []; // visual groups, parallel to the data arrays
 
-let H = { toast: () => { }, predict: () => { }, cataclysm: () => { } };
-export function initBHHooks(hooks) { H = hooks; }
+let H = {
+    toast: () => { }, predict: () => { }, cataclysm: () => { },
+    disrupt: () => "", absorbed: () => { },
+};
+export function initBHHooks(hooks) { H = { ...H, ...hooks }; }
 
 export function bhMassLabel(rs) {
     const msun = rs * C_LIGHT * C_LIGHT / 2 / MU_S;
@@ -61,6 +64,33 @@ function makeHawkingPoints(seed) {
     pts.renderOrder = 5;
     return pts;
 }
+function makeSpaghettificationStream(seed) {
+    const N = 320, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+    const rnd = mulberry32(seed);
+    for (let i = 0; i < N; i++) {
+        pos[i * 3] = 0; pos[i * 3 + 1] = 0; pos[i * 3 + 2] = 0;
+        const hot = Math.pow(i / Math.max(1, N - 1), .45);
+        col[i * 3] = .65 + hot * .35;
+        col[i * 3 + 1] = .26 + hot * .58;
+        col[i * 3 + 2] = .12 + hot * .88;
+        // keep the PRNG stream deterministic for later geometry refreshes
+        rnd();
+    }
+    const g = new THREE.BufferGeometry();
+    const attr = new THREE.BufferAttribute(pos, 3);
+    attr.setUsage(THREE.DynamicDrawUsage);
+    g.setAttribute("position", attr);
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.PointsMaterial({
+        size: .035, vertexColors: true, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+        map: dotTexture("rgba(255,245,218,1)", "rgba(255,110,30,0.0)"),
+    });
+    const pts = new THREE.Points(g, mat);
+    pts.frustumCulled = false;
+    pts.renderOrder = 7;
+    return { pts, pos, attr, mat, seed };
+}
 function blackCoreTexture() {
     const cv = document.createElement("canvas");
     cv.width = cv.height = 96;
@@ -87,6 +117,7 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0) {
     const coreMask = new THREE.Sprite(new THREE.SpriteMaterial({ map: blackCoreTexture(), transparent: true, depthWrite: false, depthTest: false, opacity: 1 }));
     coreMask.renderOrder = 20;
     const hawk = makeHawkingPoints(8800 + i * 97);
+    const spag = makeSpaghettificationStream(17000 + i * 173);
     const cv = document.createElement("canvas");
     cv.width = cv.height = 256;
     const ctx = cv.getContext("2d");
@@ -112,14 +143,18 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0) {
     diskTex.center.set(.5, .5);
     const disk = new THREE.Mesh(new THREE.PlaneGeometry(rsKm * K * 13, rsKm * K * 13), new THREE.MeshBasicMaterial({ map: diskTex, transparent: true, opacity: .82, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
     disk.rotation.x = -Math.PI / 2;
-    g.add(disk, horizon, photon, glow, hawkGlow, hawk, coreMask);
+    g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.pts, coreMask);
     scene.add(g);
-    BH_META.push({ g, disk, horizon, photon, glow, hawkGlow, hawk, coreMask, tex: diskTex, rs: rsKm, flare: 0 });
+    BH_META.push({ g, disk, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0 });
     BH.n++;
     H.toast("⚫ Black hole: r_s " + fmtKm(rsKm) + " · " + bhMassLabel(rsKm) + " · " + bhHawkingLabel(rsKm));
     H.predict();
 }
 function removeBHIndex(i) {
+    for (let k = DISRUPT.length - 1; k >= 0; k--) {
+        if (DISRUPT[k].bh === i) DISRUPT.splice(k, 1);
+        else if (DISRUPT[k].bh > i) DISRUPT[k].bh--;
+    }
     const m = BH_META.splice(i, 1)[0];
     scene.remove(m.g);
     m.g.traverse(o => {
@@ -132,6 +167,7 @@ function removeBHIndex(i) {
         BH.mu[k] = BH.mu[k + 1]; BH.rs[k] = BH.rs[k + 1];
         BH.sx[k] = BH.sx[k + 1]; BH.sz[k] = BH.sz[k + 1];
         BH.c[k] = BH.c[k + 1]; BH.sinkS[k] = BH.sinkS[k + 1];
+        BH.obsT[k] = BH.obsT[k + 1];
     }
     BH.n--;
 }
@@ -256,27 +292,100 @@ function absorbBody(i, target, x, y, vx, vy, muBody) {
     BH.sz[i] = -BH.y[i] * K;
     refreshBHSize(i, BH.rs[i]);
     if (BH_META[i]) BH_META[i].flare = 1;
-    H.cataclysm(target, BH.rs[i], "absorbed by black hole", i);
+    H.absorbed(target, BH.rs[i], i);
 }
 function bhBodyLimit(rs, radius, muBody, muBH) {
-    const tidal = radius * Math.cbrt(muBH / Math.max(1e-9, muBody)) * .25;
-    return Math.max(radius + rs * 1.5, Math.min(radius * 40, tidal));
+    const roche = radius * Math.cbrt(muBH / Math.max(1e-9, muBody));
+    const tidal = Math.min(radius * 18, roche * .55);
+    return Math.max(radius + rs * 2.2, tidal);
+}
+const DISRUPT = [];
+window.__BH_DISRUPT = DISRUPT;
+function targetLabel(target) {
+    return target === "earth" ? "Earth" :
+        target === "moon" ? "Moon" :
+            target === "sun" ? "Sun" :
+                typeof target === "number" && PL[target] ? PL[target].name : "Body";
+}
+function sameTarget(a, b) { return a === b; }
+function isDisrupting(target) {
+    return DISRUPT.some(d => sameTarget(d.target, target));
+}
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function disruptionDuration(radius, dist, muBH, muBody, rel) {
+    const r = Math.max(1, dist);
+    const tidalAcc = 2 * muBH * radius / (r * r * r);
+    const selfAcc = muBody / Math.max(1, radius * radius);
+    const stress = Math.max(.02, tidalAcc / Math.max(1e-12, selfAcc));
+    const dyn = Math.sqrt(radius / Math.max(1e-9, tidalAcc));
+    const crossing = radius / Math.max(.05, rel);
+    return clamp(Math.max(21600, dyn * 6, crossing * 10) / Math.sqrt(Math.min(60, stress)), 21600, 86400 * 90);
+}
+function disruptionBodyState(d) {
+    if (d.target === "earth") {
+        d.x = 0; d.y = 0; d.vx = 0; d.vy = 0;
+    } else if (d.target === "moon") {
+        d.x = eph.moonX; d.y = eph.moonY; d.vx = eph.moonVx; d.vy = eph.moonVy;
+    } else if (d.target === "sun") {
+        d.x = eph.sunX; d.y = eph.sunY; d.vx = eph.sunVx; d.vy = eph.sunVy;
+    } else if (typeof d.target === "number" && d.target >= 0 && d.target < PL.length) {
+        d.x = eph.plX[d.target]; d.y = eph.plY[d.target];
+        d.vx = eph.plVx[d.target]; d.vy = eph.plVy[d.target];
+    }
+    return d;
+}
+function beginDisruption(i, target, x, y, vx, vy, radius, muBody, dist, limit) {
+    if (isDisrupting(target) || i < 0 || i >= BH.n) return;
+    const rel = Math.hypot(vx - BH.vx[i], vy - BH.vy[i]);
+    const duration = disruptionDuration(radius, Math.max(dist, BH.rs[i] * 1.2), BH.mu[i], muBody, rel);
+    const name = H.disrupt(target, BH.rs[i], "tidal disruption", i) || targetLabel(target);
+    DISRUPT.push({
+        bh: i, target, name, x, y, vx, vy, radius, muBody,
+        age: 0, visual: 0, duration,
+        limit: Math.max(limit, radius), bornRt: performance.now(),
+    });
+    const m = BH_META[i];
+    if (m) m.flare = Math.max(m.flare, .55);
+    H.toast(name + " spaghettifying · mass transfer forming");
+}
+function advanceDisruptions(dt) {
+    for (let k = DISRUPT.length - 1; k >= 0; k--) {
+        const d = DISRUPT[k];
+        if (d.bh < 0 || d.bh >= BH.n) { DISRUPT.splice(k, 1); continue; }
+        disruptionBodyState(d);
+        d.age += dt;
+        const simDone = d.age >= d.duration;
+        const visibleDone = d.visual >= .96 && performance.now() - d.bornRt > 5000;
+        if (simDone && visibleDone) {
+            const dx = d.x - BH.x[d.bh], dy = d.y - BH.y[d.bh];
+            const r = Math.max(1e-9, Math.hypot(dx, dy));
+            const horizon = Math.max(BH.rs[d.bh] * 1.08, 1e-6);
+            const x = BH.x[d.bh] + dx / r * horizon;
+            const y = BH.y[d.bh] + dy / r * horizon;
+            absorbBody(d.bh, d.target, x, y, d.vx, d.vy, d.muBody);
+            DISRUPT.splice(k, 1);
+        }
+    }
 }
 function checkBHBodyBoundaries() {
     for (let i = 0; i < BH.n; i++) {
         const rs = BH.rs[i], mu = BH.mu[i];
-        if (!WORLD.earthDestroyed && Math.hypot(BH.x[i], BH.y[i]) < bhBodyLimit(rs, R_EARTH, MU_E, mu)) {
-            absorbBody(i, "earth", 0, 0, 0, 0, MU_E);
+        let d = Math.hypot(BH.x[i], BH.y[i]), lim = bhBodyLimit(rs, R_EARTH, MU_E, mu);
+        if (!WORLD.earthDestroyed && d < lim) {
+            beginDisruption(i, "earth", 0, 0, 0, 0, R_EARTH, MU_E, d, lim);
         }
-        if (!WORLD.moonDestroyed && Math.hypot(BH.x[i] - eph.moonX, BH.y[i] - eph.moonY) < bhBodyLimit(rs, R_MOON, MU_M, mu)) {
-            absorbBody(i, "moon", eph.moonX, eph.moonY, eph.moonVx, eph.moonVy, MU_M);
+        d = Math.hypot(BH.x[i] - eph.moonX, BH.y[i] - eph.moonY); lim = bhBodyLimit(rs, R_MOON, MU_M, mu);
+        if (!WORLD.moonDestroyed && d < lim) {
+            beginDisruption(i, "moon", eph.moonX, eph.moonY, eph.moonVx, eph.moonVy, R_MOON, MU_M, d, lim);
         }
-        if (!WORLD.sunDestroyed && Math.hypot(BH.x[i] - eph.sunX, BH.y[i] - eph.sunY) < bhBodyLimit(rs, R_SUN, MU_S, mu)) {
-            absorbBody(i, "sun", eph.sunX, eph.sunY, eph.sunVx, eph.sunVy, MU_S);
+        d = Math.hypot(BH.x[i] - eph.sunX, BH.y[i] - eph.sunY); lim = bhBodyLimit(rs, R_SUN, MU_S, mu);
+        if (!WORLD.sunDestroyed && d < lim) {
+            beginDisruption(i, "sun", eph.sunX, eph.sunY, eph.sunVx, eph.sunVy, R_SUN, MU_S, d, lim);
         }
         for (let p = 0; p < PL.length; p++) {
-            if (!WORLD.plDestroyed[p] && Math.hypot(BH.x[i] - eph.plX[p], BH.y[i] - eph.plY[p]) < bhBodyLimit(rs, PL[p].R, PL[p].mu, mu)) {
-                absorbBody(i, p, eph.plX[p], eph.plY[p], eph.plVx[p], eph.plVy[p], PL[p].mu);
+            d = Math.hypot(BH.x[i] - eph.plX[p], BH.y[i] - eph.plY[p]); lim = bhBodyLimit(rs, PL[p].R, PL[p].mu, mu);
+            if (!WORLD.plDestroyed[p] && d < lim) {
+                beginDisruption(i, p, eph.plX[p], eph.plY[p], eph.plVx[p], eph.plVy[p], PL[p].R, PL[p].mu, d, lim);
             }
         }
     }
@@ -301,6 +410,7 @@ export function bhAdvance(dtTotal, tStart) {
         dt = Math.min(dt, rem);
         bhRk4(t, dt);
         t += dt; rem -= dt;
+        advanceDisruptions(dt);
         tryMerge();
         checkBHBodyBoundaries();
     }
@@ -320,12 +430,62 @@ export function placeBHAtCursor() {
 }
 window.__addBH = addBlackHole; // debug/testing handle
 
+function lapseAt(rKm, rsKm) {
+    const r = Math.max(rsKm * 1.002, rKm);
+    return Math.sqrt(Math.max(.012, 1 - rsKm / r));
+}
+export function observerTimeScaleForBH(bi, scenePos = null) {
+    if (bi < 0 || bi >= BH.n) return 1;
+    const p = scenePos || BH_META[bi]?.g.position;
+    if (!p) return 1;
+    const obsR = Math.max(BH.rs[bi] * 1.002, camera.position.distanceTo(p) / K);
+    const eventR = Math.max(BH.rs[bi] * 1.08, BH.rs[bi] + 1e-6);
+    return clamp(lapseAt(eventR, BH.rs[bi]) / lapseAt(obsR, BH.rs[bi]), .08, 2.4);
+}
+function updateSpagVisual(d, m, dtLocal, dBH, obsRate) {
+    if (!m?.spag) return;
+    const visualWindow = Math.max(4, Math.min(16, d.duration / 14400));
+    const realAge = (performance.now() - d.bornRt) * .001;
+    d.visual = Math.max(d.visual, clamp(realAge * obsRate / visualWindow, 0, 1));
+    d.visual = clamp(d.visual + dtLocal / visualWindow, 0, 1);
+    const pos = m.spag.pos;
+    const rnd = mulberry32(m.spag.seed + Math.floor(d.visual * 1000));
+    disruptionBodyState(d);
+    const debrisX = (d.x - BH.x[d.bh]) * K;
+    const debrisZ = -(d.y - BH.y[d.bh]) * K;
+    const len0 = Math.max(Math.hypot(debrisX, debrisZ), d.radius * K * .5, m.rs * K * 4);
+    const cap = Math.max(d.radius * K * 10, m.rs * K * 60, dBH * .12);
+    const len = Math.min(len0, cap);
+    const ux = len0 > 1e-9 ? debrisX / len0 : 1, uz = len0 > 1e-9 ? debrisZ / len0 : 0;
+    const px = -uz, pz = ux;
+    const inner = Math.max(m.rs * K * 1.18, dBH * .002);
+    const tail = Math.max(inner * 1.4, len * (1 + d.visual * 1.5));
+    const N = pos.length / 3;
+    for (let n = 0; n < N; n++) {
+        const q = n / Math.max(1, N - 1);
+        const phase = q * 36 + d.visual * 19;
+        const along = inner + (1 - q) * tail;
+        const pinch = Math.pow(q, .55);
+        const spread = (1 - pinch) * Math.max(d.radius * K * .18, dBH * .0015);
+        const swirl = Math.sin(phase) * spread * (0.35 + rnd() * .65);
+        const lift = Math.cos(phase * .73) * spread * .22;
+        pos[n * 3] = ux * along + px * swirl;
+        pos[n * 3 + 1] = lift;
+        pos[n * 3 + 2] = uz * along + pz * swirl;
+    }
+    m.spag.attr.needsUpdate = true;
+    m.spag.mat.size = Math.max(.018, dBH * .0009);
+    m.spag.mat.opacity = .78 * Math.sin(Math.PI * d.visual) + .18 * (1 - d.visual);
+}
 export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
     for (let bi = 0; bi < BH_META.length; bi++) {
         const m = BH_META[bi];
-        m.flare = Math.max(0, m.flare - dtR * .55);
         m.g.position.set(earthScX + BH.sx[bi], 0, earthScZ + BH.sz[bi]);
         const dBH = camera.position.distanceTo(m.g.position);
+        const obsRate = observerTimeScaleForBH(bi, m.g.position);
+        BH.obsT[bi] = obsRate;
+        const dtLocal = dtR * obsRate;
+        m.flare = Math.max(0, m.flare - dtLocal * .55);
         m.photon.scale.setScalar(Math.max(m.rs * K * 4.2, dBH * .006));
         m.glow.scale.setScalar(Math.max(m.rs * K * 8, dBH * .012));
         const hot = Math.min(1, Math.max(.14, Math.pow(1000 / Math.max(1, m.rs), .34)));
@@ -333,8 +493,8 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         m.glow.material.opacity = .12 + hot * .14 + flare * .34;
         const hVis = Math.max(m.rs * K * 5.5, dBH * .0065);
         m.hawk.scale.setScalar(hVis);
-        m.hawk.rotation.y += dtR * (1.4 + hot * 4.8);
-        m.hawk.rotation.z -= dtR * (.35 + hot * 1.2);
+        m.hawk.rotation.y += dtLocal * (1.4 + hot * 4.8);
+        m.hawk.rotation.z -= dtLocal * (.35 + hot * 1.2);
         m.hawk.material.opacity = .06 + hot * .22;
         m.hawk.material.size = Math.max(.006, dBH * .00075) * (.55 + hot * .7);
         m.hawkGlow.scale.setScalar(Math.max(m.rs * K * (4.6 + flare * 5), dBH * (.0055 + flare * .009)));
@@ -344,6 +504,11 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
             m.coreMask.material.opacity = 1;
             m.coreMask.quaternion.copy(camera.quaternion);
         }
-        m.tex.rotation -= dtR * (.25 + 9 / Math.sqrt(m.rs));
+        const d = DISRUPT.find(x => x.bh === bi);
+        if (d) updateSpagVisual(d, m, dtLocal, dBH, obsRate);
+        else if (m.spag) {
+            m.spag.mat.opacity = Math.max(0, m.spag.mat.opacity - dtR * .85);
+        }
+        m.tex.rotation -= dtLocal * (.25 + 9 / Math.sqrt(m.rs));
     }
 }

@@ -72,7 +72,9 @@ export const BH = {
     mu: new Float64Array(BH_MAX), rs: new Float64Array(BH_MAX),
     sx: new Float64Array(BH_MAX), sz: new Float64Array(BH_MAX),
     c: new Float64Array(BH_MAX), sinkS: new Float64Array(BH_MAX),
+    obsT: new Float64Array(BH_MAX),
 };
+window.__BH = BH;
 export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0) {
     BH.x[i] = xKm; BH.y[i] = yKm; BH.rs[i] = rsKm;
     BH.vx[i] = vx0; BH.vy[i] = vy0;
@@ -80,4 +82,5 @@ export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0) {
     BH.sx[i] = xKm * K; BH.sz[i] = -yKm * K;
     BH.c[i] = .001 * Math.sqrt(2 * BH.mu[i] / 1000);
     BH.sinkS[i] = rsKm * K;
+    BH.obsT[i] = 1;
 }

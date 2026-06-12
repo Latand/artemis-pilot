@@ -42,7 +42,7 @@ export function flowVel(x, y, z, mx, my, mz, out) {
         // black-hole river: v = √(2μ/r) — exactly c at the horizon
         const bdx = x - (flowCtx.earthScX + BH.sx[i]), bdz = z - (flowCtx.earthScZ + BH.sz[i]);
         const br = Math.max(BH.sinkS[i] * .5, Math.hypot(bdx, y, bdz));
-        const bs = BH.c[i] / Math.sqrt(br) / br;
+        const bs = BH.c[i] * Math.max(.08, BH.obsT[i] || 1) / Math.sqrt(br) / br;
         exVX -= bdx * bs; exVY -= y * bs; exVZ -= bdz * bs;
     }
     const vx = -edx * sE * earthW - dx * sM + exVX;

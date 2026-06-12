@@ -67,6 +67,18 @@ initBHHooks({
         if (bi >= 0) focusBlackHole(bi);
         if (name) toast(name + " absorbed by black hole · r_s now " + fmtKm(rs));
     },
+    disrupt(target, rs, mode, bi = -1) {
+        const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), false) || bodyName(target);
+        award("bh");
+        if (bi >= 0) focusBlackHole(bi);
+        if (name) toast(name + " is being tidally shredded");
+        return name;
+    },
+    absorbed(target, rs, bi = -1) {
+        const name = markBodyDestroyed(target, "mass absorbed by r_s " + fmtKm(rs), false) || bodyName(target);
+        if (bi >= 0) focusBlackHole(bi);
+        toast((name || "Body") + " mass absorbed · r_s now " + fmtKm(rs));
+    },
 });
 initInput({ restart });
 
@@ -115,7 +127,7 @@ function unlockBodyPrediction() {
     lockedBodyTarget = BODY_NONE;
     clearBodyPrediction();
 }
-function markBodyDestroyed(target, reason) {
+function markBodyDestroyed(target, reason, refocus = true) {
     const key = bodyKey(target);
     if (isBodyDestroyed(key)) return "";
     destroyBody(key);
@@ -127,8 +139,8 @@ function markBodyDestroyed(target, reason) {
         G.landed = null;
         die("Surface body destroyed: " + name + " · " + reason, true);
     }
-    if ((G.focus === "earth" && key === "earth") || (G.focus === "moon" && key === "moon") ||
-        (G.focus === "sun" && key === "sun") || (typeof G.focus === "number" && G.focus === key)) {
+    if (refocus && ((G.focus === "earth" && key === "earth") || (G.focus === "moon" && key === "moon") ||
+        (G.focus === "sun" && key === "sun") || (typeof G.focus === "number" && G.focus === key))) {
         setTimeout(() => focusNearestSurvivor(), 0);
     }
     return name;
