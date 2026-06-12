@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Artemis Pilot — Earth–Moon Gravity Sandbox</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="root">
+    <div id="gl"></div>
+    <span class="lbl" id="lblE">EARTH</span>
+    <span class="lbl" id="lblM">MOON</span>
+    <span class="lbl" id="lblO" style="color:#ffd9d1">SHIP</span>
+    <span class="lbl" id="lblS" style="color:#ffe3a8">SUN</span>
+
+    <div id="hudTL">
+      <div style="display:flex;align-items:center;gap:8px">
+        <svg width="30" height="20" viewBox="0 0 30 20" aria-hidden="true">
+          <circle cx="22.5" cy="10" r="3.1" fill="#8b95a3"></circle>
+          <path d="M2 17 C 10 17, 26 14, 27.5 7" stroke="#ff4226" stroke-width="2.1" fill="none" stroke-linecap="round"></path>
+        </svg>
+        <div style="font-size:15px;letter-spacing:.3em;color:#f2f5f9;font-weight:700">ARTEMIS PILOT</div>
+      </div>
+      <div style="font-size:9px;letter-spacing:.12em;color:#6d7a8a;margin-top:3px">EARTH–MOON GRAVITY SANDBOX · LIVE PHYSICS</div>
+      <div id="met" style="font-size:24px;color:#fff;margin-top:8px;text-shadow:0 0 14px rgba(255,66,38,.25)">T+ 00:00:00:00</div>
+      <div style="font-size:9px;letter-spacing:.14em;color:#6d7a8a">MET&nbsp;&nbsp;DD:HH:MM:SS</div>
+      <div id="warpLine">⏩ —</div>
+      <div id="engineLine">ENGINE OFF</div>
+      <div style="font-size:9px;letter-spacing:.14em;color:#6d7a8a;margin-top:8px">PROPELLANT <span id="fuelTxt" style="color:#cfe8d8"></span></div>
+      <div id="fuelBar"><div id="fuelFill"></div></div>
+      <div id="throttleLine" style="font-size:10px;color:#9fb0c2;margin-top:5px">THROTTLE 100%</div>
+      <div id="bhLine" style="font-size:10px;color:#b9a8ff;margin-top:6px">⚫ —</div>
+      <div id="vTrack">
+        <div style="font-size:9px;letter-spacing:.2em;color:#7cc4f2;margin-bottom:4px">ESCAPE TRACKER</div>
+        <div id="vRows"></div>
+      </div>
+    </div>
+    <div id="hoverTip"></div>
+
+    <div id="hudTR">
+      <div class="panel" style="padding:9px 12px">
+        <div style="font-size:9px;letter-spacing:.2em;color:#ff8a73">FLIGHT OBJECTIVES</div>
+        <ul id="objList"></ul>
+      </div>
+      <div id="toasts"></div>
+    </div>
+
+    <div id="flowPanel">
+      <div style="font-size:9px;letter-spacing:.22em;color:#7cc4f2">SPACETIME FLOW — RIVER MODEL</div>
+      <div style="font-size:10px;color:#7cc4f2;margin-top:5px;letter-spacing:.08em">
+        LOCAL INFALL&nbsp;<span id="fFlow" style="color:#e8f4ff">—</span>&nbsp;·&nbsp;<span style="color:#ff8a73">SHIP</span>&nbsp;<span id="fShip" style="color:#ffe2da">—</span>
+      </div>
+      <div style="font-size:9px;color:#8fb6c9;margin-top:4px;line-height:1.55">
+        Earth v<sub>esc</sub> <span id="fEsc" style="color:#e8f4ff">—</span> · Moon v<sub>esc</sub> <span id="fEscM" style="color:#e8f4ff">—</span> · net g <span id="fAcc" style="color:#e8f4ff">—</span>
+      </div>
+      <div style="font-size:9px;color:#6d7a8a;margin-top:4px;line-height:1.5">
+        <span style="color:#ff7a5e">red</span> = ship velocity · <span style="color:#8fd8ff">cyan</span> = space infall, same scale ·
+        <span style="color:#ffd34d">yellow</span> = the nose. When cyan rivals red, the river wins — that's the turn.
+      </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <div id="help">
+      <div style="font-size:12px;letter-spacing:.24em;color:#fff">CONTROLS</div>
+      <table style="margin-top:10px">
+        <tr><td>W / ↑</td><td>main engine — thrust along the nose</td></tr>
+        <tr><td>S / ↓</td><td>reverse thrust</td></tr>
+        <tr><td>A / D, ← / →</td><td>rotate ship</td></tr>
+        <tr><td>Q / E</td><td>RCS lateral translation</td></tr>
+        <tr><td>SHIFT</td><td>×4 boost (needed to lift off Earth)</td></tr>
+        <tr><td>Z / X</td><td>throttle ÷ / × — no upper limit</td></tr>
+        <tr><td>T / Y</td><td>hold prograde / retrograde</td></tr>
+        <tr><td>1 – 8</td><td>time warp presets: real time … 30 d/s</td></tr>
+        <tr><td>, / .</td><td>warp ÷2 / ×2 — hold to sweep</td></tr>
+        <tr><td>SPACE</td><td>pause</td></tr>
+        <tr><td>F</td><td>camera focus: ship → moon → earth → sun</td></tr>
+        <tr><td>SHIFT+F</td><td>cycle the planets (Mercury … Neptune)</td></tr>
+        <tr><td>0 / click label</td><td>focus ship / focus body and lock its trajectory</td></tr>
+        <tr><td>RMB drag</td><td>pan — free camera, detached from any body</td></tr>
+        <tr><td>P</td><td>trajectory prediction on/off</td></tr>
+        <tr><td>G</td><td>spacetime river view on/off</td></tr>
+        <tr><td>B</td><td>place black hole at cursor (on the plane)</td></tr>
+        <tr><td>[ / ]</td><td>black-hole size: r_s 1 m … 5,000,000 km</td></tr>
+        <tr><td>V</td><td>remove last black hole</td></tr>
+        <tr><td>I</td><td>toggle limited-fuel challenge mode</td></tr>
+        <tr><td>M</td><td>mute sound</td></tr>
+        <tr><td>R</td><td>restart in low Earth orbit</td></tr>
+        <tr><td>H</td><td>this help</td></tr>
+      </table>
+      <div style="font-size:10px;color:#6d7a8a;margin-top:10px;line-height:1.6">
+        Physics runs live: RK4 world motion for Earth, Sun, Moon, planets, and
+        black holes, with Earth-local high-precision ship dynamics for launch,
+        landing, and atmosphere. All seven planets are in, true radii and μ,
+        each with its own SOI; you can land on the rocky ones.
+        Exponential Earth atmosphere below 160 km.
+        Black holes are real point masses (μ = r_s·c²/2) with the Paczyński–Wiita
+        potential — correct ISCO and capture; the river hits light speed at the
+        horizon. Holes and planets move through the live n-body field.
+        Drag to orbit the camera, scroll to zoom.
+        Aim for the Moon, capture orbit, land, come home — or dive into something dark.
+      </div>
+      <div style="font-size:10px;color:#ff8a73;margin-top:10px;letter-spacing:.12em">PRESS H OR START FLYING</div>
+    </div>
+
+    <div id="hint">H HELP · P PREDICT · G RIVER · F FOCUS</div>
+
+    <div id="hudBot">
+      <div id="cells">
+        <div class="cell panel"><div class="cellL" id="cAltL">ALT · EARTH</div><div class="cellV" id="cAlt">—</div></div>
+        <div class="cell panel"><div class="cellL">VELOCITY</div><div class="cellV" id="cVel">—</div></div>
+        <div class="cell panel"><div class="cellL" id="cApPeL">APO / PERI</div><div class="cellV" id="cApPe">—</div></div>
+        <div class="cell panel"><div class="cellL">MOON DIST</div><div class="cellV" id="cMoon">—</div></div>
+        <div class="cell panel"><div class="cellL">SUN DIST</div><div class="cellV" id="cSun">—</div></div>
+        <div class="cell panel"><div class="cellL">Δv USED</div><div class="cellV" id="cDv">0 m/s</div></div>
+        <div class="cell panel"><div class="cellL">GRAVITY PULL</div><div class="cellV" id="cGrav">—</div></div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

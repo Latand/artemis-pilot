@@ -1,0 +1,17 @@
+{
+  "name": "artemis-pilot",
+  "version": "1.0.0",
+  "description": "Real-time Earth-Moon and Solar System gravity sandbox in Three.js.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "0.164.1"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

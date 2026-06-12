@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.vite/
+
+*.log
+*.local
+.DS_Store
+Thumbs.db
+
+artemis-*.png
+playwright-report/
+test-results/
