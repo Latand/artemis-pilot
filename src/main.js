@@ -739,8 +739,13 @@ function frame() {
             shake = I;
         } else plasma.visible = false;
     } else plasma.visible = false;
+    let cabinShake = 0;
     if (shake > .03 || (G.boost && aMag > 0)) {
-        const s = Math.max(shake, .12) * cam.dist * .006;
+        // in the cabin the camera sits at cockpit scale: a fixed micro-jitter
+        // reads as engine rumble, while cam.dist-scaled shake (external zoom)
+        // would hurl the world around the window
+        const s = cabinActive ? Math.max(shake, .12) * .004 : Math.max(shake, .12) * cam.dist * .006;
+        cabinShake = cabinActive ? Math.max(shake, .12) : 0;
         camera.position.x += (Math.random() - .5) * s;
         camera.position.y += (Math.random() - .5) * s;
         camera.position.z += (Math.random() - .5) * s;
@@ -838,7 +843,7 @@ function frame() {
         const fuelWarn = !G.infinite && G.fuel < FUEL_DV0 * .15;
         const altWarn = !G.landed && oi.r - oi.R < 25;
         updateCockpit(dtR, sunDirW, G.heading, aMag, G.boost,
-            { AP: AP.mode !== "off", ALT: altWarn, FUEL: fuelWarn, WARP: G.warp > 600 });
+            { AP: AP.mode !== "off", ALT: altWarn, FUEL: fuelWarn, WARP: G.warp > 600 }, cabinShake);
         updateInstruments(oi, eph);
         setLeverThrottle(G.throttle);
         if (cockpitCam.aspect !== camera.aspect) setCockpitAspect(camera.aspect);

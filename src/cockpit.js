@@ -181,7 +181,7 @@ const _sunLocal = new THREE.Vector3();
 // sunDirWorld: world-space Earth-frame sun direction; heading: ship heading.
 // The interior light direction = sun direction expressed in cockpit axes
 // (cockpit -Z = ship nose), so sunlight sweeps the cabin as the ship rotates.
-export function updateCockpit(dtR, sunDirWorld, heading, aMag, boost, warn) {
+export function updateCockpit(dtR, sunDirWorld, heading, aMag, boost, warn, shake = 0) {
     const c = Math.cos(heading), s = Math.sin(heading);
     _sunLocal.set(sunDirWorld.x * s + sunDirWorld.z * c, .35, -(sunDirWorld.x * c - sunDirWorld.z * s));
     if (_sunLocal.lengthSq() < 1e-9) _sunLocal.set(0, 1, 0);
@@ -192,10 +192,12 @@ export function updateCockpit(dtR, sunDirWorld, heading, aMag, boost, warn) {
         const m = warnLights[key].material;
         m.opacity += ((on ? 1 : .12) - m.opacity) * Math.min(1, dtR * 10);
     }
-    // head orientation: cockpit fixed, head rotates
+    // head orientation: cockpit fixed, head rotates; thrust/aero rumble is a
+    // millimetre-scale head jitter, matched to the world camera's micro-shake
     cockpitCam.rotation.order = "YXZ";
     cockpitCam.rotation.set(look.pitch, -look.yaw, 0);
-    cockpitCam.position.set(0, 0, 0);
+    const j = shake * .006;
+    cockpitCam.position.set((Math.random() - .5) * j, (Math.random() - .5) * j, (Math.random() - .5) * j);
 }
 
 export function setCockpitAspect(aspect) {
