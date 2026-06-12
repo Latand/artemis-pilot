@@ -29,9 +29,9 @@ function header(ctx, label) {
     ctx.lineWidth = 2;
     ctx.strokeRect(3, 3, W - 6, H - 6);
     ctx.fillStyle = DIM;
-    ctx.font = "600 17px ui-monospace, monospace";
+    ctx.font = "600 20px ui-monospace, monospace";
     ctx.textAlign = "left";
-    ctx.fillText(label, 16, 28);
+    ctx.fillText(label, 16, 30);
 }
 const norm = a => ((a % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
 
@@ -44,7 +44,7 @@ function drawAttitude(ctx, oi) {
     ctx.beginPath();
     ctx.rect(16, 60, W - 32, 110);
     ctx.clip();
-    ctx.font = "15px ui-monospace, monospace";
+    ctx.font = "17px ui-monospace, monospace";
     ctx.textAlign = "center";
     const pxPerDeg = 3.4;
     for (let d = -80; d <= 80; d += 5) {
@@ -86,17 +86,17 @@ function drawAttitude(ctx, oi) {
     ctx.font = "700 30px ui-monospace, monospace";
     ctx.textAlign = "center";
     ctx.fillText(String(Math.round(hdg)).padStart(3, "0") + "°", W / 2, 222);
-    ctx.font = "16px ui-monospace, monospace";
+    ctx.font = "18px ui-monospace, monospace";
     ctx.fillStyle = G.hold ? OK : DIM;
     ctx.fillText(G.hold === "pro" ? "HOLD PROGRADE" : G.hold === "retro" ? "HOLD RETROGRADE" : "MANUAL", W / 2, 252);
     // bottom: speed/alt
     ctx.textAlign = "left";
     ctx.fillStyle = DIM;
-    ctx.font = "15px ui-monospace, monospace";
+    ctx.font = "17px ui-monospace, monospace";
     ctx.fillText("VEL", 26, 305);
     ctx.fillText("ALT " + oi.body, 26, 345);
     ctx.fillStyle = TXT;
-    ctx.font = "700 21px ui-monospace, monospace";
+    ctx.font = "700 24px ui-monospace, monospace";
     ctx.fillText(Math.hypot(G.vx, G.vy).toFixed(3) + " km/s", 110, 305);
     ctx.fillText(fmtDist(Math.max(0, oi.r - oi.R)), 110, 345);
 }
@@ -104,16 +104,38 @@ function drawAttitude(ctx, oi) {
 // ---- MFD 1: nav orbit map ----
 function drawNav(ctx, oi) {
     header(ctx, "NAV · " + oi.body);
-    const cx = W / 2, cy = H / 2 + 14;
+    // readouts live at the TOP: the screen tilts away, the bottom forshortens
+    ctx.font = "17px ui-monospace, monospace";
+    ctx.fillStyle = DIM;
+    ctx.fillText("APO", 16, 62);
+    ctx.fillText("PERI", 16, 86);
+    ctx.fillStyle = TXT;
+    ctx.fillText(oi.ra === Infinity ? "ESCAPE" : fmtDist(Math.max(0, oi.ra - oi.R)), 76, 62);
+    ctx.fillText(fmtDist(Math.max(0, oi.rp - oi.R)), 76, 86);
+    ctx.textAlign = "right";
+    ctx.fillStyle = DIM;
+    ctx.fillText("e " + oi.e.toFixed(3), W - 16, 62);
+    ctx.fillText(oi.E < 0 ? "BOUND" : "HYPERBOLIC", W - 16, 86);
+    ctx.textAlign = "left";
+    const cx = W / 2, cy = H / 2 + 44;
     // scale: fit the larger of current radius and apoapsis
     const fit = Math.max(oi.r * 1.15, oi.ra !== Infinity ? oi.ra * 1.08 : oi.r * 2.2, oi.R * 2.5);
-    const s = 150 / fit;
-    // dominant body
-    ctx.fillStyle = "#27405a";
-    ctx.beginPath();
-    ctx.arc(cx, cy, Math.max(3, oi.R * s), 0, 7);
-    ctx.fill();
+    const s = 132 / fit;
+    // range rings every half-fit for instant scale reading
     ctx.strokeStyle = GRID;
+    ctx.setLineDash([3, 5]);
+    for (const f of [.5, 1]) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, 132 * f, 0, 7);
+        ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    // dominant body
+    ctx.fillStyle = "#3a587a";
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(5, oi.R * s), 0, 7);
+    ctx.fill();
+    ctx.strokeStyle = "#5f87ad";
     ctx.stroke();
     // osculating ellipse from the eccentricity vector (2D, exact)
     const { rx, ry, rvx, rvy, mu, e, E } = oi;
@@ -123,9 +145,8 @@ function drawNav(ctx, oi) {
         const ey = ((v2 - mu / r) * ry - (rx * rvx + ry * rvy) * rvy) / mu;
         const a = -mu / (2 * E);
         const peri = Math.atan2(ey, ex);
-        const b = a * Math.sqrt(Math.max(0, 1 - e * e));
-        ctx.strokeStyle = ACC;
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = "#9fd8ff";
+        ctx.lineWidth = 2;
         ctx.beginPath();
         for (let i = 0; i <= 96; i++) {
             const th = i / 96 * Math.PI * 2;
@@ -152,28 +173,19 @@ function drawNav(ctx, oi) {
     const sx = cx + rx * s, sy = cy - ry * s;
     ctx.fillStyle = "#ff7a5e";
     ctx.beginPath();
-    ctx.arc(sx, sy, 5, 0, 7);
+    ctx.arc(sx, sy, 7, 0, 7);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(sx, sy, 2.6, 0, 7);
     ctx.fill();
     const vm = Math.hypot(rvx, rvy) || 1;
     ctx.strokeStyle = "#ff7a5e";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.moveTo(sx, sy);
-    ctx.lineTo(sx + rvx / vm * 26, sy - rvy / vm * 26);
+    ctx.lineTo(sx + rvx / vm * 30, sy - rvy / vm * 30);
     ctx.stroke();
-    // readouts
-    ctx.font = "15px ui-monospace, monospace";
-    ctx.textAlign = "left";
-    ctx.fillStyle = DIM;
-    ctx.fillText("APO", 22, H - 44);
-    ctx.fillText("PERI", 22, H - 20);
-    ctx.fillStyle = TXT;
-    ctx.fillText(oi.ra === Infinity ? "ESCAPE" : fmtDist(Math.max(0, oi.ra - oi.R)), 75, H - 44);
-    ctx.fillText(fmtDist(Math.max(0, oi.rp - oi.R)), 75, H - 20);
-    ctx.fillStyle = DIM;
-    ctx.textAlign = "right";
-    ctx.fillText("e " + oi.e.toFixed(3), W - 22, H - 44);
-    ctx.fillText(oi.E < 0 ? "BOUND" : "HYPERBOLIC", W - 22, H - 20);
 }
 
 // ---- MFD 2: systems / drive / target ----
@@ -198,7 +210,7 @@ function targetInfo() {
 }
 function drawSys(ctx, oi, eph) {
     header(ctx, "SYS · DRIVE");
-    ctx.font = "15px ui-monospace, monospace";
+    ctx.font = "17px ui-monospace, monospace";
     ctx.textAlign = "left";
     const rows = [
         ["THROTTLE", Math.round(G.throttle * 100) + "%", Math.min(1, G.throttle), ACC],
@@ -227,9 +239,9 @@ function drawSys(ctx, oi, eph) {
     ctx.strokeStyle = GRID;
     ctx.strokeRect(16, y - 26, W - 32, 88);
     ctx.fillStyle = AP.mode !== "off" ? OK : DIM;
-    ctx.font = "600 16px ui-monospace, monospace";
+    ctx.font = "600 18px ui-monospace, monospace";
     ctx.fillText("AUTOPILOT · " + AP.mode.toUpperCase() + (AP.phase ? " · " + AP.phase.toUpperCase() : ""), 26, y);
-    ctx.font = "15px ui-monospace, monospace";
+    ctx.font = "17px ui-monospace, monospace";
     ctx.fillStyle = TXT;
     const t = targetInfo();
     ctx.fillText(AP.mode !== "off" ? (AP.msg || "") : t ? "FOCUS " + t.name + " · ⇧T TRAVEL · ⇧C CIRCULARIZE" : "SET FOCUS, THEN ⇧T", 26, y + 26);

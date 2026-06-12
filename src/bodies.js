@@ -225,8 +225,10 @@ export function buildBodies(maps) {
                     vec3 h = normalize(sunDir + v);
                     float spec = pow(max(dot(n, h), 0.0), 80.0) * ocean;
                     vec3 lit = day * (0.05 + 1.1 * max(sd, 0.0)) + vec3(1.0, .92, .75) * spec * .6 * dayF;
+                    // gain kept below the bloom threshold: at close range the
+                    // texels are huge and anything brighter blooms into blobs
                     vec3 night = uHasNight > .5
-                        ? texture2D(nightMap, vUv).rgb * vec3(1.18, .96, .66) * 1.5
+                        ? min(texture2D(nightMap, vUv).rgb * vec3(1.12, .92, .62), vec3(.72))
                         : vec3(0.0);
                     // terminator band warms slightly (sunset ring)
                     float band = smoothstep(0.0, .14, sd) * (1.0 - smoothstep(.14, .42, sd));

@@ -26,46 +26,78 @@ function box(w, h, d, mat, x, y, z, rx = 0, ry = 0, rz = 0) {
     return m;
 }
 
-// ---- shell: REAR hull arc only — the forward 210° stays open glass ----
+// faint glass pane: barely-there tint + specular sheen from interior lights
+const mGlass = new THREE.MeshPhongMaterial({
+    color: 0x9fc8ff, transparent: true, opacity: .045, shininess: 180,
+    specular: 0xdef0ff, side: THREE.DoubleSide, depthWrite: false,
+});
+function pane(w, h, x, y, z, rx = 0, ry = 0) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mGlass);
+    m.position.set(x, y, z);
+    m.rotation.set(rx, ry, 0);
+    m.renderOrder = 2;
+    cockpitScene.add(m);
+    return m;
+}
+
+// ---- shell: REAR hull arc only — everything forward and above is glass ----
 // (cylinder theta 0 faces +Z = behind the pilot; camera looks down -Z)
 {
     const hull = new THREE.Mesh(
-        new THREE.CylinderGeometry(1.45, 1.45, 2.3, 24, 1, true, -1.3, 2.6),
+        new THREE.CylinderGeometry(1.55, 1.55, 2.1, 24, 1, true, -1.05, 2.1),
         new THREE.MeshPhongMaterial({ color: 0x171d25, shininess: 6, side: THREE.BackSide }));
-    hull.position.set(0, .35, .35);
+    hull.position.set(0, .35, .45);
     cockpitScene.add(hull);
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(1.45, 24),
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(1.55, 24),
         new THREE.MeshPhongMaterial({ color: 0x10151b, shininess: 4 }));
     floor.rotation.x = -Math.PI / 2;
-    floor.position.set(0, -.78, .35);
+    floor.position.set(0, -.78, .45);
     cockpitScene.add(floor);
     // rear bulkhead with hatch outline
-    box(1.2, 1.5, .06, mPanel, 0, .3, 1.5);
-    box(.62, .98, .02, mDark, 0, .25, 1.46);
+    box(1.2, 1.5, .06, mPanel, 0, .3, 1.55);
+    box(.62, .98, .02, mDark, 0, .25, 1.51);
 }
 
-// ---- canopy frame ----
+// ---- panoramic canopy: 3 front panes, big side windows, overhead skylight ----
 {
-    box(2.0, .1, .16, mSill, 0, -.34, -.95);                      // sill under the window
-    box(1.7, .09, .3, mFrame, 0, .78, -.62, .5);                  // header bar, slanted back
-    box(.09, 1.3, .12, mFrame, -.96, .2, -.78, 0, 0, .2);         // A-pillar L
-    box(.09, 1.3, .12, mFrame, .96, .2, -.78, 0, 0, -.2);         // A-pillar R
-    box(.07, 1.16, .1, mFrame, -.34, .26, -.92, 0, 0, .06);       // center mullions
-    box(.07, 1.16, .1, mFrame, .34, .26, -.92, 0, 0, -.06);
-    // side window frames
-    box(.1, .9, 1.3, mFrame, -1.18, .25, -.1, 0, 0, 0);
-    box(.1, .9, 1.3, mFrame, 1.18, .25, -.1, 0, 0, 0);
-    box(.1, .12, 1.5, mSill, -1.16, -.3, -.1);
-    box(.1, .12, 1.5, mSill, 1.16, -.3, -.1);
+    box(2.7, .08, .14, mSill, 0, -.3, -.98);                       // slim sill under the windshield
+    // slim A-pillars far out + two thin mullions → three wide front panes
+    box(.06, 1.5, .1, mFrame, -1.34, .3, -.86, 0, 0, .26);
+    box(.06, 1.5, .1, mFrame, 1.34, .3, -.86, 0, 0, -.26);
+    box(.04, 1.42, .08, mFrame, -.45, .34, -.96, 0, 0, .08);
+    box(.04, 1.42, .08, mFrame, .45, .34, -.96, 0, 0, -.08);
+    pane(.86, 1.4, -.9, .32, -.93, -.1, .12);
+    pane(.88, 1.42, 0, .34, -.97, -.1, 0);
+    pane(.86, 1.4, .9, .32, -.93, -.1, -.12);
+    // overhead: two slim transverse ribs frame a skylight band — look up, see stars
+    box(2.5, .06, .12, mFrame, 0, 1.0, -.52, .35);
+    box(2.6, .06, .12, mFrame, 0, 1.18, .18, 0);
+    pane(2.4, .72, 0, 1.12, -.18, 1.25, 0);
+    // side windows: long glass with one slim B-pillar per side
+    box(.08, .08, 1.9, mSill, -1.42, -.28, -.15);                  // side sills
+    box(.08, .08, 1.9, mSill, 1.42, -.28, -.15);
+    box(.08, 1.2, .07, mFrame, -1.43, .3, -.12, 0, 0, .04);        // B-pillars
+    box(.08, 1.2, .07, mFrame, 1.43, .3, -.12, 0, 0, -.04);
+    box(.08, .07, 1.9, mFrame, -1.4, .92, -.15, 0, 0, .06);        // side top rails
+    box(.08, .07, 1.9, mFrame, 1.4, .92, -.15, 0, 0, -.06);
+    pane(.85, 1.1, -1.41, .3, -.6, 0, Math.PI / 2);
+    pane(.85, 1.1, -1.43, .3, .35, 0, Math.PI / 2);
+    pane(.85, 1.1, 1.41, .3, -.6, 0, -Math.PI / 2);
+    pane(.85, 1.1, 1.43, .3, .35, 0, -Math.PI / 2);
 }
 
 // ---- dashboard ----
 export const mfdScreens = [];
 let throttleLever = null;
 {
-    box(2.0, .3, .5, mPanel, 0, -.44, -.82, .28);                 // main console slab
-    box(2.0, .1, .4, mSill, 0, -.3, -.72, .55);                   // brow / glareshield
+    box(2.6, .3, .5, mPanel, 0, -.46, -.8, .28);                  // main console slab
+    box(2.6, .07, .34, mSill, 0, -.31, -.72, .58);                // slim brow / glareshield
     box(.5, .26, .42, mPanel, 0, -.56, -.46, .5);                 // center pedestal
+    // angled side consoles give the bay depth
+    box(.5, .2, 1.0, mPanel, -1.08, -.52, -.15, 0, .14, .3);
+    box(.5, .2, 1.0, mPanel, 1.08, -.52, -.15, 0, -.14, -.3);
+    box(.4, .015, .26, new THREE.MeshBasicMaterial({ color: 0x14333f }), -1.06, -.41, -.3, -.3, .14);
+    box(.4, .015, .26, new THREE.MeshBasicMaterial({ color: 0x3f2914 }), 1.06, -.41, -.3, -.3, -.14);
     // throttle lever on the pedestal
     const lever = new THREE.Group();
     const stalk = new THREE.Mesh(new THREE.CylinderGeometry(.012, .012, .14, 8), mFrame);
@@ -77,28 +109,27 @@ let throttleLever = null;
     cockpitScene.add(lever);
     throttleLever = lever;
     // three MFD screens angled toward the pilot's eye
-    for (const [x, tilt] of [[-.52, .14], [0, 0], [.52, -.14]]) {
+    for (const [x, tilt] of [[-.56, .16], [0, 0], [.56, -.16]]) {
         const scr = new THREE.Mesh(
-            new THREE.PlaneGeometry(.42, .315),
+            new THREE.PlaneGeometry(.46, .345),
             new THREE.MeshBasicMaterial({ color: 0xffffff })); // map assigned by instruments.js
-        scr.position.set(x, -.315, -.66);
-        scr.rotation.set(-.46, tilt, 0, "YXZ");
+        scr.position.set(x, -.305, -.64);
+        scr.rotation.set(-.56, tilt, 0, "YXZ");
         cockpitScene.add(scr);
-        const bezel = box(.48, .375, .025, mDark, x, -.317, -.675, -.46, tilt);
+        const bezel = box(.52, .405, .025, mDark, x, -.307, -.655, -.56, tilt);
         bezel.rotation.order = "YXZ";
         mfdScreens.push(scr);
     }
 }
 
-// ---- overhead annunciator strip ----
+// ---- annunciators ride the forward skylight rib ----
 const warnLights = {};
 {
-    box(.9, .07, .26, mPanel, 0, .69, -.5, .9);
     const defs = [["AP", 0x39d98a, -.3], ["ALT", 0xff5040, -.1], ["FUEL", 0xffb13d, .1], ["WARP", 0x6fa8ff, .3]];
     for (const [key, color, x] of defs) {
-        const l = new THREE.Mesh(new THREE.SphereGeometry(.022, 10, 8),
+        const l = new THREE.Mesh(new THREE.SphereGeometry(.02, 10, 8),
             new THREE.MeshBasicMaterial({ color }));
-        l.position.set(x, .665, -.41);
+        l.position.set(x, .965, -.49);
         l.material.transparent = true;
         l.material.opacity = .12;
         cockpitScene.add(l);
