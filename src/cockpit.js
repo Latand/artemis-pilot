@@ -5,6 +5,11 @@ import * as THREE from "three";
 // of the bloom pass, immune to world-scale z-precision, and fixed to the
 // ship: the world camera rotates to match head direction, the cockpit only
 // rotates with the head's look offsets.
+//
+// v3 layout: the pilot sits inside a continuous glass bubble (one BackSide
+// sphere — no seams or gaps at any look angle), with an opaque rear shell,
+// a full floor, and a curved wraparound console. Frame ribs are torus arcs
+// lying ON the dome, so structure and glass can never separate.
 export const cockpitScene = new THREE.Scene();
 export const cockpitCam = new THREE.PerspectiveCamera(56, 1, .01, 12);
 cockpitScene.add(cockpitCam);
@@ -13,123 +18,145 @@ cockpitScene.add(cockpitCam);
 export const look = { yaw: 0, pitch: 0 };
 export const LOOK_YAW_MAX = 2.7, LOOK_PITCH_MIN = -.75, LOOK_PITCH_MAX = .95;
 
-const mPanel = new THREE.MeshPhongMaterial({ color: 0x222b36, shininess: 18, specular: 0x33404e });
+const DOME_R = 1.6, DOME_CY = -.1;      // glass bubble: radius, center height
+const FLOOR_Y = -.74;
+
+const mPanel = new THREE.MeshPhongMaterial({ color: 0x222b36, shininess: 18, specular: 0x33404e, side: THREE.DoubleSide, emissive: 0x0a0f15 });
 const mFrame = new THREE.MeshPhongMaterial({ color: 0x39434f, shininess: 55, specular: 0x6b7886 });
 const mDark = new THREE.MeshPhongMaterial({ color: 0x12161c, shininess: 8 });
-const mSill = new THREE.MeshPhongMaterial({ color: 0x1a2129, shininess: 12 });
-
-function box(w, h, d, mat, x, y, z, rx = 0, ry = 0, rz = 0) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    m.position.set(x, y, z);
-    m.rotation.set(rx, ry, rz);
-    cockpitScene.add(m);
-    return m;
-}
-
-// faint glass pane: barely-there tint + specular sheen from interior lights
 const mGlass = new THREE.MeshPhongMaterial({
-    color: 0x9fc8ff, transparent: true, opacity: .045, shininess: 180,
-    specular: 0xdef0ff, side: THREE.DoubleSide, depthWrite: false,
+    color: 0x9fc8ff, transparent: true, opacity: .05, shininess: 180,
+    specular: 0xdef0ff, side: THREE.BackSide, depthWrite: false,
 });
-function pane(w, h, x, y, z, rx = 0, ry = 0) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mGlass);
-    m.position.set(x, y, z);
-    m.rotation.set(rx, ry, 0);
-    m.renderOrder = 2;
-    cockpitScene.add(m);
-    return m;
-}
 
-// ---- shell: REAR hull arc only — everything forward and above is glass ----
-// (cylinder theta 0 faces +Z = behind the pilot; camera looks down -Z)
+// dome-circle radius at a given height (ribs must hug the glass)
+const domeR = y => Math.sqrt(Math.max(.01, DOME_R * DOME_R - (y - DOME_CY) * (y - DOME_CY)));
+
+// ---- enclosure ----
 {
-    const hull = new THREE.Mesh(
-        new THREE.CylinderGeometry(1.55, 1.55, 2.1, 24, 1, true, -1.05, 2.1),
-        new THREE.MeshPhongMaterial({ color: 0x171d25, shininess: 6, side: THREE.BackSide }));
-    hull.position.set(0, .35, .45);
-    cockpitScene.add(hull);
-    const floor = new THREE.Mesh(new THREE.CircleGeometry(1.55, 24),
+    // the canopy: one closed glass sphere around the pilot
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(DOME_R, 48, 32), mGlass);
+    dome.position.y = DOME_CY;
+    dome.renderOrder = 1;
+    cockpitScene.add(dome);
+    // opaque rear shell: cylinder arc hugging the dome behind the pilot
+    // (cylinder theta 0 faces +Z = backwards; camera looks down -Z)
+    const shell = new THREE.Mesh(
+        new THREE.CylinderGeometry(DOME_R * .985, DOME_R * .985, 2.1, 32, 1, true, -1.25, 2.5),
+        new THREE.MeshPhongMaterial({ color: 0x232c38, shininess: 10, side: THREE.BackSide }));
+    shell.position.y = DOME_CY + .25;
+    cockpitScene.add(shell);
+    // rear shell cap above head height: sphere sector matching the dome
+    const cap = new THREE.Mesh(
+        new THREE.SphereGeometry(DOME_R * .98, 32, 12, Math.PI / 2 - 1.25, 2.5, 0, 1.05),
+        new THREE.MeshPhongMaterial({ color: 0x141a21, shininess: 6, side: THREE.BackSide }));
+    cap.position.y = DOME_CY;
+    cockpitScene.add(cap);
+    // full floor disc seals the bottom
+    const floor = new THREE.Mesh(new THREE.CircleGeometry(domeR(FLOOR_Y) * 1.01, 40),
         new THREE.MeshPhongMaterial({ color: 0x10151b, shininess: 4 }));
     floor.rotation.x = -Math.PI / 2;
-    floor.position.set(0, -.78, .45);
+    floor.position.y = FLOOR_Y;
     cockpitScene.add(floor);
-    // rear bulkhead with hatch outline
-    box(1.2, 1.5, .06, mPanel, 0, .3, 1.55);
-    box(.62, .98, .02, mDark, 0, .25, 1.51);
+    // rear bulkhead detail: hatch outline on the shell
+    const hatch = new THREE.Mesh(new THREE.PlaneGeometry(.6, .95), mDark);
+    hatch.position.set(0, .12, DOME_R * .96);
+    hatch.rotation.y = Math.PI;
+    cockpitScene.add(hatch);
 }
 
-// ---- panoramic canopy: 3 front panes, big side windows, overhead skylight ----
+// ---- frame ribs: torus arcs lying on the glass ----
 {
-    box(2.7, .08, .14, mSill, 0, -.3, -.98);                       // slim sill under the windshield
-    // slim A-pillars far out + two thin mullions → three wide front panes
-    box(.06, 1.5, .1, mFrame, -1.34, .3, -.86, 0, 0, .26);
-    box(.06, 1.5, .1, mFrame, 1.34, .3, -.86, 0, 0, -.26);
-    box(.04, 1.42, .08, mFrame, -.45, .34, -.96, 0, 0, .08);
-    box(.04, 1.42, .08, mFrame, .45, .34, -.96, 0, 0, -.08);
-    pane(.86, 1.4, -.9, .32, -.93, -.1, .12);
-    pane(.88, 1.42, 0, .34, -.97, -.1, 0);
-    pane(.86, 1.4, .9, .32, -.93, -.1, -.12);
-    // overhead: two slim transverse ribs frame a skylight band — look up, see stars
-    box(2.5, .06, .12, mFrame, 0, 1.0, -.52, .35);
-    box(2.6, .06, .12, mFrame, 0, 1.18, .18, 0);
-    pane(2.4, .72, 0, 1.12, -.18, 1.25, 0);
-    // side windows: long glass with one slim B-pillar per side
-    box(.08, .08, 1.9, mSill, -1.42, -.28, -.15);                  // side sills
-    box(.08, .08, 1.9, mSill, 1.42, -.28, -.15);
-    box(.08, 1.2, .07, mFrame, -1.43, .3, -.12, 0, 0, .04);        // B-pillars
-    box(.08, 1.2, .07, mFrame, 1.43, .3, -.12, 0, 0, -.04);
-    box(.08, .07, 1.9, mFrame, -1.4, .92, -.15, 0, 0, .06);        // side top rails
-    box(.08, .07, 1.9, mFrame, 1.4, .92, -.15, 0, 0, -.06);
-    pane(.85, 1.1, -1.41, .3, -.6, 0, Math.PI / 2);
-    pane(.85, 1.1, -1.43, .3, .35, 0, Math.PI / 2);
-    pane(.85, 1.1, 1.41, .3, -.6, 0, -Math.PI / 2);
-    pane(.85, 1.1, 1.43, .3, .35, 0, -Math.PI / 2);
-}
-
-// ---- dashboard ----
-export const mfdScreens = [];
-let throttleLever = null;
-{
-    box(2.6, .3, .5, mPanel, 0, -.46, -.8, .28);                  // main console slab
-    box(2.6, .07, .34, mSill, 0, -.31, -.72, .58);                // slim brow / glareshield
-    box(.5, .26, .42, mPanel, 0, -.56, -.46, .5);                 // center pedestal
-    // angled side consoles give the bay depth
-    box(.5, .2, 1.0, mPanel, -1.08, -.52, -.15, 0, .14, .3);
-    box(.5, .2, 1.0, mPanel, 1.08, -.52, -.15, 0, -.14, -.3);
-    box(.4, .015, .26, new THREE.MeshBasicMaterial({ color: 0x14333f }), -1.06, -.41, -.3, -.3, .14);
-    box(.4, .015, .26, new THREE.MeshBasicMaterial({ color: 0x3f2914 }), 1.06, -.41, -.3, -.3, -.14);
-    // throttle lever on the pedestal
-    const lever = new THREE.Group();
-    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(.012, .012, .14, 8), mFrame);
-    stalk.position.y = .07;
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(.028, 12, 8), new THREE.MeshPhongMaterial({ color: 0xb33c24, shininess: 40 }));
-    knob.position.y = .15;
-    lever.add(stalk, knob);
-    lever.position.set(.14, -.52, -.48);
-    cockpitScene.add(lever);
-    throttleLever = lever;
-    // three MFD screens angled toward the pilot's eye
-    for (const [x, tilt] of [[-.56, .16], [0, 0], [.56, -.16]]) {
-        const scr = new THREE.Mesh(
-            new THREE.PlaneGeometry(.46, .345),
-            new THREE.MeshBasicMaterial({ color: 0xffffff })); // map assigned by instruments.js
-        scr.position.set(x, -.305, -.64);
-        scr.rotation.set(-.56, tilt, 0, "YXZ");
-        cockpitScene.add(scr);
-        const bezel = box(.52, .405, .025, mDark, x, -.307, -.655, -.56, tilt);
-        bezel.rotation.order = "YXZ";
-        mfdScreens.push(scr);
+    const rib = (tube, arcRadius, y, arc, rotY, vertical = false) => {
+        const t = new THREE.Mesh(new THREE.TorusGeometry(arcRadius, tube, 8, 40, arc), mFrame);
+        if (vertical) {
+            // circle in a vertical plane through the center, azimuth rotY
+            t.rotation.y = rotY;
+            t.position.y = DOME_CY;
+        } else {
+            t.rotation.x = Math.PI / 2;
+            t.rotation.z = rotY;
+            t.position.y = y;
+        }
+        cockpitScene.add(t);
+        return t;
+    };
+    // horizontal rails: sill ring (full), brow ring (front sector)
+    rib(.028, domeR(-.18), -.18, Math.PI * 2, 0);
+    rib(.024, domeR(.92), .92, 2.4, Math.PI / 2 - 1.2);
+    // vertical ribs every ~50° around the front and sides; arc spans
+    // from below the sill up over the crown — structure reads at any angle
+    for (const az of [-2.0, -1.2, -.45, .45, 1.2, 2.0]) {
+        const t = new THREE.Mesh(new THREE.TorusGeometry(DOME_R * .995, .022, 8, 32, 2.1), mFrame);
+        t.rotation.y = Math.PI / 2 - az;      // torus arc starts at +X: place it at azimuth az (0 = dead ahead)
+        t.rotation.z = -.35;                   // start the arc below the horizon
+        t.position.y = DOME_CY;
+        cockpitScene.add(t);
     }
 }
 
-// ---- annunciators ride the forward skylight rib ----
+// ---- wraparound console: one curved band + top deck, sealed to the floor ----
+export const mfdScreens = [];
+let throttleLever = null;
+{
+    // console face: tapered cylinder sector facing the pilot
+    const band = new THREE.Mesh(
+        new THREE.CylinderGeometry(.8, 1.05, FLOOR_Y * -1 - .22, 40, 1, true, Math.PI - 1.35, 2.7),
+        mPanel);
+    band.position.y = (FLOOR_Y - .22) / 2;
+    cockpitScene.add(band);
+    // top deck: flat ring sector capping the console
+    const deckGeom = new THREE.RingGeometry(.52, .82, 40, 1, Math.PI / 2 - 1.35, 2.7);
+    const deck = new THREE.Mesh(deckGeom, mPanel);
+    deck.rotation.x = -Math.PI / 2;
+    deck.position.y = -.22;
+    cockpitScene.add(deck);
+    // inner kick wall under the deck so glancing down never shows a gap
+    const kick = new THREE.Mesh(
+        new THREE.CylinderGeometry(.52, .52, -.22 - FLOOR_Y, 32, 1, true, Math.PI - 1.35, 2.7),
+        mPanel);
+    kick.position.y = (FLOOR_Y - .22) / 2;
+    cockpitScene.add(kick);
+    // three MFDs standing on the deck, each facing the pilot's head
+    for (const az of [-.62, 0, .62]) {
+        const sx = Math.sin(az), cz = Math.cos(az);
+        const bezel = new THREE.Mesh(new THREE.BoxGeometry(.5, .39, .035), mDark);
+        bezel.position.set(sx * .68, -.275, -cz * .68);
+        bezel.rotation.set(-.58, -az, 0, "YXZ");
+        cockpitScene.add(bezel);
+        const scr = new THREE.Mesh(
+            new THREE.PlaneGeometry(.45, .34),
+            new THREE.MeshBasicMaterial({ color: 0xffffff })); // map assigned by instruments.js
+        scr.position.set(sx * .664, -.266, -cz * .664);
+        scr.rotation.set(-.58, -az, 0, "YXZ");
+        cockpitScene.add(scr);
+        mfdScreens.push(scr);
+    }
+    // throttle: base block + lever on the deck, starboard of center
+    const base = new THREE.Mesh(new THREE.BoxGeometry(.14, .06, .18), mDark);
+    base.position.set(.34, -.2, -.6);
+    base.rotation.y = -.45;
+    cockpitScene.add(base);
+    const lever = new THREE.Group();
+    const stalk = new THREE.Mesh(new THREE.CylinderGeometry(.01, .01, .09, 8), mFrame);
+    stalk.position.y = .045;
+    const knob = new THREE.Mesh(new THREE.SphereGeometry(.022, 12, 8), new THREE.MeshPhongMaterial({ color: 0xb33c24, shininess: 40 }));
+    knob.position.y = .095;
+    lever.add(stalk, knob);
+    lever.position.set(.34, -.18, -.6);
+    cockpitScene.add(lever);
+    throttleLever = lever;
+}
+
+// ---- annunciators ride the brow rib ----
 const warnLights = {};
 {
-    const defs = [["AP", 0x39d98a, -.3], ["ALT", 0xff5040, -.1], ["FUEL", 0xffb13d, .1], ["WARP", 0x6fa8ff, .3]];
-    for (const [key, color, x] of defs) {
-        const l = new THREE.Mesh(new THREE.SphereGeometry(.02, 10, 8),
+    const r = domeR(.92) - .04;
+    const defs = [["AP", 0x39d98a, -.27], ["ALT", 0xff5040, -.09], ["FUEL", 0xffb13d, .09], ["WARP", 0x6fa8ff, .27]];
+    for (const [key, color, az] of defs) {
+        const l = new THREE.Mesh(new THREE.SphereGeometry(.022, 10, 8),
             new THREE.MeshBasicMaterial({ color }));
-        l.position.set(x, .965, -.49);
+        l.position.set(Math.sin(az) * r, .9, -Math.cos(az) * r);
         l.material.transparent = true;
         l.material.opacity = .12;
         cockpitScene.add(l);
@@ -137,14 +164,18 @@ const warnLights = {};
     }
 }
 
-// ---- interior lighting ----
-const ambient = new THREE.AmbientLight(0x4c5c74, .9);
-const sunInterior = new THREE.DirectionalLight(0xfff2dc, 1.1);
-const panelGlow = new THREE.PointLight(0x6fd8e8, .55, 1.9);
-panelGlow.position.set(0, -.25, -.55);
+// ---- interior lighting: even ambient, sun direction, tucked accents ----
+const ambient = new THREE.AmbientLight(0x4c5c74, .95);
+const sunInterior = new THREE.DirectionalLight(0xfff2dc, 1.05);
+// console accent: small, tucked under the deck lip — a glow line, not a blob
+const panelGlow = new THREE.PointLight(0x6fd8e8, .28, .9);
+panelGlow.position.set(0, -.2, -.62);
 const thrustLight = new THREE.PointLight(0xff8a4a, 0, 4);
 thrustLight.position.set(0, -.2, 1.4);
-cockpitScene.add(ambient, sunInterior, panelGlow, thrustLight);
+// dim warm dome light so the rear cabin reads instead of vanishing
+const domeLight = new THREE.PointLight(0xffd9b0, .4, 3.4);
+domeLight.position.set(0, .75, .7);
+cockpitScene.add(ambient, sunInterior, panelGlow, thrustLight, domeLight);
 
 const _sunLocal = new THREE.Vector3();
 // sunDirWorld: world-space Earth-frame sun direction; heading: ship heading.
@@ -152,9 +183,7 @@ const _sunLocal = new THREE.Vector3();
 // (cockpit -Z = ship nose), so sunlight sweeps the cabin as the ship rotates.
 export function updateCockpit(dtR, sunDirWorld, heading, aMag, boost, warn) {
     const c = Math.cos(heading), s = Math.sin(heading);
-    // world (x, z) → cockpit frame: nose dir (c, -s) maps to -Z
-    _sunLocal.set(sunDirWorld.x * -s * -1 - sunDirWorld.z * c * -1, .35, -(sunDirWorld.x * c - sunDirWorld.z * s));
-    // guard degenerate vector
+    _sunLocal.set(sunDirWorld.x * s + sunDirWorld.z * c, .35, -(sunDirWorld.x * c - sunDirWorld.z * s));
     if (_sunLocal.lengthSq() < 1e-9) _sunLocal.set(0, 1, 0);
     sunInterior.position.copy(_sunLocal.normalize().multiplyScalar(5));
     thrustLight.intensity = aMag > 0 ? (boost ? 1.6 : .8) * (0.85 + .3 * Math.sin(performance.now() * .04)) : 0;

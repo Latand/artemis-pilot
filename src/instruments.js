@@ -221,8 +221,8 @@ function drawSys(ctx, oi, eph) {
         ctx.fillStyle = DIM;
         ctx.fillText(lab, 26, y);
         ctx.fillStyle = TXT;
-        ctx.fillText(val, 150, y);
-        bar(ctx, 280, y - 12, 200, frac, col);
+        ctx.fillText(val, 170, y);
+        bar(ctx, 310, y - 12, 172, frac, col);
         y += 38;
     }
     ctx.fillStyle = DIM;
