@@ -177,14 +177,17 @@ export function buildBodies(maps) {
             vertexColors: true,
             size: 1.25,
             sizeAttenuation: false,
-            transparent: true,
+            // opaque-pass backdrop: transparent:true would defer it to the
+            // transparent pass, after the planets, and its depthTest:false
+            // dots would paint over them (stars "through" the night side)
+            transparent: false,
             opacity: .34,
             depthWrite: false,
             depthTest: false,
             blending: THREE.AdditiveBlending,
         }));
         galaxyBackdrop.rotation.set(.42, -.28, .18);
-        galaxyBackdrop.renderOrder = -3;
+        galaxyBackdrop.renderOrder = -1; // after the sky dome (-2), before the planets (0)
         galaxyBackdrop.frustumCulled = false;
         scene.add(galaxyBackdrop);
     }

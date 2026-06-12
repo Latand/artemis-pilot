@@ -657,6 +657,21 @@ function frame() {
         camera.lookAt(cabinLook);
     } else applyCamera();
     placed = true;
+    // near plane tracks clearance to the nearest surface: the fixed 20 km
+    // near (kept for depth precision in space) clipped the entire ground
+    // when landed, so stars and the river shone through the planet
+    let clearU = Infinity;
+    if (!WORLD.earthDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(earthG.position) - R_EARTH * K);
+    if (!WORLD.moonDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(moon.position) - R_MOON * K);
+    if (!WORLD.sunDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(sunCore.position) - SUN_RADIUS);
+    for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) clearU = Math.min(clearU, camera.position.distanceTo(plGroups[i].position) - PL[i].R * K);
+    for (let i = 0; i < STARS.length; i++) clearU = Math.min(clearU, camera.position.distanceTo(starScenePos(i)) - (STARS[i].bh ? STARS[i].rs : STARS[i].R) * K);
+    for (let i = 0; i < BH.n; i++) clearU = Math.min(clearU, camera.position.distanceTo(bhScenePos(i)) - BH.rs[i] * K);
+    const nearWant = Math.min(.02, Math.max(2e-6, clearU * .5));
+    if (Math.abs(nearWant - camera.near) > camera.near * .1) {
+        camera.near = nearWant;
+        camera.updateProjectionMatrix();
+    }
     if (sky) { sky.position.copy(camera.position); sky.visible = !cosmicView; }
     if (galaxyBackdrop) { galaxyBackdrop.position.copy(camera.position); galaxyBackdrop.visible = !cosmicView; }
     updateCosmicLayer();

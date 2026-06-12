@@ -10,3 +10,5 @@ Thumbs.db
 artemis-*.png
 playwright-report/
 test-results/
+generated/
+.playwright-mcp/
