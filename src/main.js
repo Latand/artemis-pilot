@@ -41,6 +41,7 @@ import {
 import { initInput, setFocus, blackHoleFocusIndex, starFocusIndex } from "./input.js";
 import { initScenarios } from "./scenarios.js";
 import { initHints, hintTick } from "./hints.js";
+import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
 
 // ============================ WIRING ============================
 function die(reason, swallowed) {
@@ -94,6 +95,7 @@ initBHHooks({
 initInput({ restart });
 initScenarios({ restart });
 initHints();
+initVR({ restart });
 
 // ============================ INIT ============================
 const maps = await loadAllMaps();
@@ -501,21 +503,36 @@ function updateCabinHUD(cosmicView, oi) {
     return cabinActive;
 }
 
+function renderFrame(showCockpit) {
+    if (VR.active) { renderVRFrame(showCockpit && VR.mode === "ship"); return; }
+    composer.render();
+    if (showCockpit) {
+        // interior composited over the world: depth cleared, color kept, no bloom
+        renderer.autoClear = false;
+        renderer.clearDepth();
+        renderer.render(cockpitScene, cockpitCam);
+        renderer.autoClear = true;
+    }
+}
+
 function frame() {
-    requestAnimationFrame(frame);
     const dtR = Math.min(.06, clock.getDelta());
     frameNo++;
     if (G.dead && !G.observerMode && performance.now() - G.deathRt >= 2000) enterObserverMode();
-    // ---- input → attitude & thrust ----
-    const rotIn = ((keys.has("KeyA") || keys.has("ArrowLeft")) ? 1 : 0) - ((keys.has("KeyD") || keys.has("ArrowRight")) ? 1 : 0);
+    // ---- input → attitude & thrust (keyboard merged with VR controllers) ----
+    const vrIn = vrPoll(dtR);
+    let rotIn = ((keys.has("KeyA") || keys.has("ArrowLeft")) ? 1 : 0) - ((keys.has("KeyD") || keys.has("ArrowRight")) ? 1 : 0);
+    if (!rotIn) rotIn = vrIn.rot;
     if (rotIn) { G.hold = null; G.heading += rotIn * ROT_RATE * dtR; }
     if (!G.landed) {
         if (G.hold === "pro") G.heading = Math.atan2(G.vy, G.vx);
         else if (G.hold === "retro") G.heading = Math.atan2(-G.vy, -G.vx);
     }
     let mainIn = (keys.has("KeyW") || keys.has("ArrowUp")) ? 1 : ((keys.has("KeyS") || keys.has("ArrowDown")) ? -1 : 0);
-    const latIn = (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0);
-    G.boost = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    if (!mainIn) mainIn = vrIn.main;
+    let latIn = (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0);
+    if (!latIn) latIn = vrIn.lat;
+    G.boost = keys.has("ShiftLeft") || keys.has("ShiftRight") || vrIn.boost;
     // the pilot always outranks the flight computer
     if ((rotIn || mainIn || latIn) && AP.mode !== "off") apOff("pilot override", toast);
     let atx = 0, aty = 0, aMag = 0;
@@ -647,7 +664,11 @@ function frame() {
         G.focus === "earth" ? R_EARTH * K * 1.3 : G.focus === "moon" ? R_MOON * K * 1.3 : G.focus === "sun" ? SUN_RADIUS * 1.25 : .05;
     cam.dist = Math.max(minD, cam.dist);
     const cabinActive = updateCabinHUD(cosmicView, oi);
-    if (cabinActive) {
+    if (VR.active) {
+        // rigs follow the ship (or the god transform); the desktop camera is
+        // re-pointed at the VR eye so camera-dependent systems keep working
+        vrUpdateRigs(oriX, oriZ, dtR);
+    } else if (cabinActive) {
         // head direction = ship heading + look offsets (drag to look around)
         const a = G.heading - look.yaw;
         const cp = Math.cos(look.pitch);
@@ -755,16 +776,18 @@ function frame() {
         } else plasma.visible = false;
     } else plasma.visible = false;
     let cabinShake = 0;
-    if (shake > .03 || (G.boost && aMag > 0)) {
+    if ((shake > .03 || (G.boost && aMag > 0)) && !VR.active) {
         // in the cabin the camera sits at cockpit scale: a fixed micro-jitter
         // reads as engine rumble, while cam.dist-scaled shake (external zoom)
-        // would hurl the world around the window
+        // would hurl the world around the window. In VR the same events go
+        // to the controllers as haptic rumble — visual shake is nauseating.
         const s = cabinActive ? Math.max(shake, .12) * .004 : Math.max(shake, .12) * cam.dist * .006;
         cabinShake = cabinActive ? Math.max(shake, .12) : 0;
         camera.position.x += (Math.random() - .5) * s;
         camera.position.y += (Math.random() - .5) * s;
         camera.position.z += (Math.random() - .5) * s;
     }
+    vrHaptics(aMag, shake);
     // ---- trails & prediction ----
     if (!G.paused && !G.dead && advanced > 0) { pushTrail(false); pushJourney(); }
     setJourneyOpacity(.85 * smooth01(40, 320, cd));
@@ -870,7 +893,7 @@ function frame() {
         if (showStarLabels) put(starLabels[i], starScenePos(i, _starLabelPos), -8, w, h);
         else starLabels[i].style.opacity = "0";
     }
-    if (cosmicView || cabinActive) {
+    if (cosmicView || cabinActive || VR.active) {
         hoverTipEl.style.display = "none";
         hovLine.visible = false; hovCone.visible = false;
     } else updateHover(w, h);
@@ -884,7 +907,7 @@ function frame() {
         for (let i = 0; i < PL.length; i++) plLabels[i].style.opacity = "0";
         for (let i = 0; i < BH_MAX; i++) { bhLabels[i].style.display = "none"; bhLabels[i].style.opacity = "0"; }
         clearBodyPrediction();
-        composer.render();
+        renderFrame(false);
         return;
     }
     if (WORLD.earthDestroyed) lblE.style.opacity = "0"; else put(lblE, earthG.position, -8, w, h);
@@ -907,13 +930,8 @@ function frame() {
     }
     if (G.dead) lblO.style.opacity = "0";
     else put(lblO, shipG.position, -22, w, h);
-    composer.render();
-    if (cabinActive) {
-        // interior composited over the world: depth cleared, color kept, no bloom
-        renderer.autoClear = false;
-        renderer.clearDepth();
-        renderer.render(cockpitScene, cockpitCam);
-        renderer.autoClear = true;
-    }
+    renderFrame(cabinActive);
 }
-frame();
+// setAnimationLoop instead of requestAnimationFrame: WebXR sessions drive
+// the loop through the session's frame callback when presenting
+renderer.setAnimationLoop(frame);

@@ -118,3 +118,7 @@ body.mode-cabin #simsBtn { display: none !important; }
   .strutL { left: 12vw; }
   .strutR { right: 12vw; }
 }
+/* ---- WebXR entry (only appended when a headset runtime is available) ---- */
+#vrBtn { position: absolute; right: 14px; bottom: 36px; z-index: 9; pointer-events: auto;
+  border-color: #3a6a8e; color: #9fe8ff; letter-spacing: .22em; }
+#vrBtn:hover { background: rgba(26,40,56,.92); color: #ffffff; }

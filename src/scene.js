@@ -104,6 +104,7 @@ window.addEventListener("pointercancel", onUp);
 el.addEventListener("wheel", onWheel, { passive: false });
 
 function resize() {
+    if (renderer.xr.isPresenting) return; // XR owns the framebuffer size
     const w = cvHost.clientWidth || 1, h = cvHost.clientHeight || 1;
     renderer.setSize(w, h);
     composer.setSize(w, h);

@@ -7,6 +7,7 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 ## Highlights
 
 - **First-person 3D cockpit** (J): real interior geometry composited over the world render, three live canvas MFDs (attitude tape with prograde/retrograde, osculating-orbit nav map with apo/peri, drive/systems panel), head-look on drag, sun-tracking interior light, thrust flicker, and warning annunciators.
+- **WebXR / PSVR2 support**: sit inside the cockpit with full head tracking and fly on the Sense sticks, or switch to god mode and grab the solar system with your hands — one grip drags space, both grips zoom and twist it from tabletop Earth–Moon scale out to the Local Group. Controller haptics carry engine rumble and aero buffeting.
 - **Autopilot you can interrupt** (⇧T travel to focus, ⇧C circularize, ⇧X off): climbs out of the local gravity well, flies a flip-and-burn intercept, brakes, captures, and circularizes — any manual input returns control instantly.
 - **Travel simulations** (⇧S): curated pre-flight states with physics explainer cards — Hohmann to Mars, lunar free-return figure-8, Jupiter slingshot, photon-sphere dive, dark-energy escape, the voyage to Proxima, and the dive to SGR A*.
 - **Accurate ephemerides**: full n-body RK4 world seeded from real J2000 eccentric orbital elements for all planets, Earth, and the Moon (27.32-day month), with J2 oblateness, Sun 1PN precession, atmospheres, and light-speed gravity fronts.
@@ -91,6 +92,37 @@ The static build is written to `dist/`.
 | `R` | Restart |
 | `H` | Help |
 
+## VR (PSVR2 / any WebXR headset)
+
+An **ENTER VR** button appears bottom-right when a WebXR runtime is available (the page must be a secure context: `localhost` counts; over the LAN use HTTPS or a browser origin exception). Two modes, toggled with the **left stick click**:
+
+**In-ship** — seated in the cockpit, world locked to the hull (the cockpit is the rest frame):
+
+| Control | Action |
+| --- | --- |
+| Right stick ↕ / ↔ | Main/reverse thrust · lateral RCS |
+| Left stick ↔ / ↕ | Yaw ship · throttle trim |
+| Right trigger | Boost (analog) |
+| Left trigger | Autopilot: travel to focus / cancel |
+| Right / left grip (hold) | Hold prograde / retrograde |
+| A / B | Time warp up / down |
+| X / Y | Toggle river · cycle focus |
+| Right stick click | Recenter view (hold 1 s when lost: rebuild ship) |
+
+**God mode** — a free observer over a grabbable model of the world:
+
+| Control | Action |
+| --- | --- |
+| One grip (hold) | Grab and drag space |
+| Both grips | Zoom and twist space between your hands |
+| Right stick | Fly (head-relative) · right trigger = speed |
+| Left stick ↕ / ↔ flick | Rise & descend · 30° snap turn |
+| Left trigger | Aim ray → place a black hole on the ecliptic |
+| Y | Tour: ship → planets → stars → SGR A* |
+| A / B · X | Time warp · river toggle |
+
+A wrist panel on the left controller shows MET, warp, velocity, focus, and the current scale (1 m = …). Losing the ship in VR drops you into god-mode observer automatically.
+
 ## Project Structure
 
 ```text
@@ -107,6 +139,7 @@ src/
   scenarios.js    travel simulations menu and title overlay
   stars.js        named-star meshes and the SGR A* accretion system
   trails.js       ship and body prediction traces
+  vr.js           WebXR rigs, PSVR2 controller bindings, god-mode grab/zoom
 public/textures/  planet, Moon, Sun, ring, Earth night, and Milky Way maps
 ```
 
