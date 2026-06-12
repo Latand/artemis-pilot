@@ -34,6 +34,7 @@ export function award(id) {
     renderObjectives();
 }
 export function toast(msg) {
+    while (toastsEl.children.length >= 3) toastsEl.firstChild.remove(); // cap the stack
     const d = document.createElement("div");
     d.className = "toast";
     d.textContent = msg;

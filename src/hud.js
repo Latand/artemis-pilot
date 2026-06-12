@@ -39,9 +39,24 @@ export function toggleHelp() {
 try { if (localStorage.getItem("ap_helpSeen")) { helpEl.style.display = "none"; help.shown = false; } } catch (e) { }
 
 // ---- escape tracker: speed milestones vs Earth / Sun / nearest black hole ----
+// collapsed behind a small toggle header; the open state survives a refresh
 const vRowsEl = document.getElementById("vRows");
+const escToggleEl = document.getElementById("escToggle");
+let escOpen = false;
+try { escOpen = localStorage.getItem("ap_escOpen") === "1"; } catch (e) { }
+function applyEscOpen() {
+    vRowsEl.style.display = escOpen ? "block" : "none";
+    escToggleEl.textContent = escOpen ? "ESC ▾ ESCAPE TRACKER" : "ESC ▸";
+}
+escToggleEl.onclick = () => {
+    escOpen = !escOpen;
+    try { localStorage.setItem("ap_escOpen", escOpen ? "1" : "0"); } catch (e) { }
+    applyEscOpen();
+};
+applyEscOpen();
 const fmtV = v => v >= 1000 ? Math.round(v).toLocaleString("en-US") : v >= 100 ? v.toFixed(1) : v.toFixed(2);
 export function updateEscapeTracker(oi) {
+    if (!escOpen) return;
     const v = Math.hypot(G.vx, G.vy);
     // heliocentric speed in the current n-body state
     const vH = Math.hypot(G.vx - eph.sunVx, G.vy - eph.sunVy);

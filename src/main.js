@@ -39,6 +39,8 @@ import {
     fFlow, fDark, lblE, lblM, lblO, lblS,
 } from "./hud.js";
 import { initInput, setFocus, blackHoleFocusIndex, starFocusIndex } from "./input.js";
+import { initScenarios } from "./scenarios.js";
+import { initHints, hintTick } from "./hints.js";
 
 // ============================ WIRING ============================
 function die(reason, swallowed) {
@@ -90,6 +92,8 @@ initBHHooks({
     },
 });
 initInput({ restart });
+initScenarios({ restart });
+initHints();
 
 // ============================ INIT ============================
 const maps = await loadAllMaps();
@@ -314,11 +318,12 @@ function checkBodyContacts() {
             cam.yaw = saved.yaw ?? cam.yaw;
             cam.pitch = saved.pitch ?? cam.pitch;
             if (saved.focus !== undefined && saved.focus !== "free") G.focus = saved.focus;
+            if (isFinite(saved.warp) && saved.warp >= 1) G.warp = saved.warp;
         }
     } catch (e) { }
     const saveCam = () => {
         try {
-            localStorage.setItem("ap_cam", JSON.stringify({ dist: cam.dist, yaw: cam.yaw, pitch: cam.pitch, focus: G.focus }));
+            localStorage.setItem("ap_cam", JSON.stringify({ dist: cam.dist, yaw: cam.yaw, pitch: cam.pitch, focus: G.focus, warp: G.warp }));
         } catch (e) { }
     };
     setInterval(saveCam, 2500);
@@ -817,6 +822,7 @@ function frame() {
     }
     // ---- HUD & labels ----
     updateHUD(oi, aMag, mainIn, sp, kVLoc, fB);
+    hintTick(oi);
     if (cabinActive) {
         const fuelWarn = !G.infinite && G.fuel < FUEL_DV0 * .15;
         const altWarn = !G.landed && oi.r - oi.R < 25;

@@ -10,6 +10,7 @@ import { help, hideHelp, toggleHelp } from "./hud.js";
 import { cycleCosmicScale } from "./cosmic.js";
 import { look } from "./cockpit.js";
 import { apTravelToFocus, apCircularize, apOff } from "./autopilot.js";
+import { toggleScenarioMenu } from "./scenarios.js";
 
 export function setFocus(f) {
     G.focus = f;
@@ -69,6 +70,9 @@ function onKeyDown(e) {
             else G.hold = G.hold === "pro" ? null : "pro";
             break;
         case "KeyY": G.hold = G.hold === "retro" ? null : "retro"; break;
+        case "KeyS":
+            if (e.shiftKey) { keys.delete("KeyS"); toggleScenarioMenu(); } // plain S stays reverse thrust
+            break;
         case "KeyF":
             if (e.shiftKey) { // cycle the planets
                 const cur = typeof G.focus === "number" ? G.focus : -1;

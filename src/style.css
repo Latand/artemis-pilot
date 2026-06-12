@@ -56,6 +56,57 @@ body.mode-cabin #flowPanel, body.mode-cabin #hint, body.mode-cabin .lbl { displa
 #objList li.done::before { content: "✓ "; }
 #objList li::before { content: "○ "; }
 #engineLine { font-size: 10px; color: #9fb0c2; margin-top: 6px; }
+/* ---- HUD hierarchy ---- */
+.cell-dim { opacity: .75; }
+.cell-dim .cellV { font-size: 10px; }
+#escToggle { font-size: 9px; letter-spacing: .2em; color: #7cc4f2; cursor: pointer; pointer-events: auto; }
+#escToggle:hover { color: #cfeaff; }
+#vRows { margin-top: 4px; }
+/* ---- shared UI buttons ---- */
+.uiBtn { font-family: inherit; font-size: 11px; letter-spacing: .14em; color: #cfe8f8; cursor: pointer;
+  background: rgba(13,18,26,.85); border: 1px solid #2a4a5e; border-radius: 8px; padding: 8px 16px; }
+.uiBtn:hover { border-color: #7cc4f2; color: #fff; }
+.uiBtnHot { background: rgba(18,40,58,.92); border-color: #7cc4f2; color: #eaf6ff; }
+/* ---- title / first-run overlay ---- */
+#intro { position: absolute; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+  background: rgba(4,6,10,.55); backdrop-filter: blur(7px); }
+#introCard { text-align: center; max-width: 520px; margin: 0 18px; padding: 30px 36px 26px;
+  background: rgba(8,11,16,.92); border: 1px solid #2a3442; border-radius: 14px; }
+#introTitle { font-size: 26px; letter-spacing: .34em; color: #f2f5f9; font-weight: 700; margin-top: 8px; text-indent: .34em; }
+#introSub { font-size: 9px; letter-spacing: .22em; color: #6d7a8a; margin-top: 6px; }
+#introLore { font-size: 11px; color: #9fb0c2; line-height: 1.8; margin-top: 16px; text-align: left; }
+#introBtns { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
+/* ---- travel simulations menu ---- */
+#simsBtn { position: absolute; left: 14px; bottom: 60px; z-index: 6; }
+body.mode-cabin #simsBtn { display: none !important; }
+#simsMenu { position: absolute; inset: 0; z-index: 28; display: none; align-items: center; justify-content: center;
+  background: rgba(4,6,10,.5); backdrop-filter: blur(6px); }
+#simsCard { width: min(720px, calc(100vw - 36px)); max-height: calc(100vh - 60px); overflow-y: auto;
+  background: rgba(8,11,16,.93); border: 1px solid #2a3442; border-radius: 12px; padding: 16px 20px 20px; }
+#simsHead { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; letter-spacing: .24em; color: #fff; }
+#simsClose { font-size: 10px; letter-spacing: .14em; color: #ff8a73; cursor: pointer; }
+#simsClose:hover { color: #fff; }
+#simsSub { font-size: 9px; letter-spacing: .1em; color: #6d7a8a; margin-top: 5px; }
+#simsGrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }
+@media (max-width: 560px) { #simsGrid { grid-template-columns: 1fr; } }
+.simCard { background: rgba(13,18,26,.82); border: 1px solid #1d2733; border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+.simCard:hover { border-color: #7cc4f2; background: rgba(18,30,42,.88); }
+.scName { font-size: 11px; letter-spacing: .16em; color: #7cc4f2; }
+.scBlurb { font-size: 10px; color: #8fa0b2; line-height: 1.55; margin-top: 4px; }
+/* ---- post-load physics card ---- */
+#physCard { position: absolute; left: 50%; top: 110px; transform: translateX(-50%); display: none; z-index: 8;
+  width: min(460px, calc(100vw - 28px)); cursor: pointer; pointer-events: auto;
+  background: rgba(8,11,16,.92); border: 1px solid #2a4a5e; border-radius: 10px; padding: 12px 16px; backdrop-filter: blur(8px); }
+.pcTitle { font-size: 11px; letter-spacing: .22em; color: #7cc4f2; }
+.pcList { margin: 8px 0 0; padding-left: 16px; }
+.pcList li { font-size: 10px; color: #cfd8e3; line-height: 1.65; margin-top: 3px; }
+.pcHint { font-size: 9px; letter-spacing: .14em; color: #6d7a8a; margin-top: 9px; }
+/* ---- contextual hints ---- */
+#hintCard { position: absolute; left: 50%; top: 118px; transform: translateX(-50%); z-index: 6; pointer-events: none;
+  font-size: 10px; letter-spacing: .12em; color: #cfeaff; white-space: nowrap;
+  background: rgba(8,12,18,.88); border: 1px solid #2a4a5e; border-radius: 8px; padding: 7px 13px;
+  opacity: 0; transition: opacity .45s; }
+#hintCard.on { opacity: 1; }
 #warpLine { font-size: 11px; color: #ffd9d1; margin-top: 6px; letter-spacing: .08em; }
 .warn { color: #ff8a73 !important; animation: pulse 1s infinite; }
 @media (max-width: 760px) {

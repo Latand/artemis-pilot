@@ -45,7 +45,7 @@
       <div id="throttleLine" style="font-size:10px;color:#9fb0c2;margin-top:5px">THROTTLE 100%</div>
       <div id="bhLine" style="font-size:10px;color:#b9a8ff;margin-top:6px">⚫ —</div>
       <div id="vTrack">
-        <div style="font-size:9px;letter-spacing:.2em;color:#7cc4f2;margin-bottom:4px">ESCAPE TRACKER</div>
+        <div id="escToggle">ESC ▸</div>
         <div id="vRows"></div>
       </div>
     </div>
@@ -111,6 +111,7 @@
         <tr><td>M</td><td>mute sound</td></tr>
         <tr><td>R</td><td>restart in low Earth orbit</td></tr>
         <tr><td>K / L</td><td>quicksave / quickload (browser storage)</td></tr>
+        <tr><td>SHIFT+S</td><td>travel simulations menu</td></tr>
         <tr><td>H</td><td>this help</td></tr>
       </table>
       <div style="font-size:10px;color:#6d7a8a;margin-top:10px;line-height:1.6">
@@ -140,13 +141,49 @@
       <div id="cells">
         <div class="cell panel"><div class="cellL" id="cAltL">ALT · EARTH</div><div class="cellV" id="cAlt">—</div></div>
         <div class="cell panel"><div class="cellL">VELOCITY</div><div class="cellV" id="cVel">—</div></div>
-        <div class="cell panel"><div class="cellL" id="cApPeL">APO / PERI</div><div class="cellV" id="cApPe">—</div></div>
-        <div class="cell panel"><div class="cellL">MOON DIST</div><div class="cellV" id="cMoon">—</div></div>
-        <div class="cell panel"><div class="cellL">SUN DIST</div><div class="cellV" id="cSun">—</div></div>
-        <div class="cell panel"><div class="cellL">Δv USED</div><div class="cellV" id="cDv">0 m/s</div></div>
-        <div class="cell panel"><div class="cellL">GRAVITY PULL</div><div class="cellV" id="cGrav">—</div></div>
+        <div class="cell panel cell-dim"><div class="cellL" id="cApPeL">APO / PERI</div><div class="cellV" id="cApPe">—</div></div>
+        <div class="cell panel cell-dim"><div class="cellL">MOON DIST</div><div class="cellV" id="cMoon">—</div></div>
+        <div class="cell panel cell-dim"><div class="cellL">SUN DIST</div><div class="cellV" id="cSun">—</div></div>
+        <div class="cell panel cell-dim"><div class="cellL">Δv USED</div><div class="cellV" id="cDv">0 m/s</div></div>
+        <div class="cell panel cell-dim"><div class="cellL">GRAVITY PULL</div><div class="cellV" id="cGrav">—</div></div>
       </div>
     </div>
+
+    <button id="simsBtn" class="uiBtn">▦ SIMS</button>
+
+    <div id="physCard"></div>
+
+    <div id="simsMenu">
+      <div id="simsCard">
+        <div id="simsHead"><span>TRAVEL SIMULATIONS</span><span id="simsClose">✕ CLOSE</span></div>
+        <div id="simsSub">Pre-flight states for the long crossing · physics is always live · ⇧S toggles this menu</div>
+        <div id="simsGrid"></div>
+      </div>
+    </div>
+
+    <div id="intro">
+      <div id="introCard">
+        <div id="introLogo">
+          <svg width="44" height="30" viewBox="0 0 30 20" aria-hidden="true">
+            <circle cx="22.5" cy="10" r="3.1" fill="#8b95a3"></circle>
+            <path d="M2 17 C 10 17, 26 14, 27.5 7" stroke="#ff4226" stroke-width="2.1" fill="none" stroke-linecap="round"></path>
+          </svg>
+        </div>
+        <div id="introTitle">ARTEMIS PILOT</div>
+        <div id="introSub">VR TRAVEL SIMULATOR · LIVE PHYSICS</div>
+        <div id="introLore">
+          The crossing takes centuries. Your body will be regrown at the far end;
+          your mind rides the ship. While the hull coasts between stars you live here,
+          inside a physics-true simulation of the gravity outside the wall.
+          Fly it, warp it, break it — the autopilot hands you the stick and takes it back whenever you ask.
+        </div>
+        <div id="introBtns">
+          <button id="introEnter" class="uiBtn uiBtnHot">ENTER SIMULATION</button>
+          <button id="introSims" class="uiBtn">TRAVEL SIMULATIONS</button>
+        </div>
+      </div>
+    </div>
+    <script>try { if (localStorage.getItem("ap_introSeen")) document.getElementById("intro").style.display = "none"; } catch (e) { }</script>
   </div>
   <script type="module" src="/src/main.js"></script>
 </body>

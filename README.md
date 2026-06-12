@@ -1,18 +1,20 @@
 # Artemis Pilot
 
-An interactive Three.js gravity sandbox where you pilot a spacecraft from low Earth orbit into a live Solar System model. Fly, warp time, inspect predicted paths, place black holes, and watch the spacetime river field respond around planets and singularities.
+A physics-true VR travel simulator in Three.js. The framing: far-future AI-human hybrids cross between stars for centuries, living inside a simulation of the gravity outside the hull — this is that simulation. Fly from low Earth orbit to the Moon, Mars, Proxima Centauri, or the supermassive black hole at the galactic center; warp time up to a billion years per second; hand the stick to the autopilot and take it back at any keystroke; and watch the spacetime river field respond around planets and singularities.
 
 ![Artemis Pilot: Earth orbit with spacetime river flow](docs/screenshots/01-earth-orbit-river.png)
 
 ## Highlights
 
-- **Live orbital flight** with thrust, RCS, throttle control, prograde/retrograde hold, time warp, atmospheric drag, landing, and mission objectives.
-- **Solar System scale with a galactic backdrop** with Earth, Moon, Sun, all seven other planets, true radii, gravitational parameters, orbit rings, textures, Milky Way dust, and focus controls.
-- **Cosmic scale jump** for generated world-space Milky Way and Local Group bodies when you need galaxy or intergalactic framing.
-- **Trajectory tools** for ship prediction, full-journey traces, hover velocity readouts, body trajectory prediction, and locked body tracking.
+- **First-person 3D cockpit** (J): real interior geometry composited over the world render, three live canvas MFDs (attitude tape with prograde/retrograde, osculating-orbit nav map with apo/peri, drive/systems panel), head-look on drag, sun-tracking interior light, thrust flicker, and warning annunciators.
+- **Autopilot you can interrupt** (⇧T travel to focus, ⇧C circularize, ⇧X off): climbs out of the local gravity well, flies a flip-and-burn intercept, brakes, captures, and circularizes — any manual input returns control instantly.
+- **Travel simulations** (⇧S): curated pre-flight states with physics explainer cards — Hohmann to Mars, lunar free-return figure-8, Jupiter slingshot, photon-sphere dive, dark-energy escape, the voyage to Proxima, and the dive to SGR A*.
+- **Accurate ephemerides**: full n-body RK4 world seeded from real J2000 eccentric orbital elements for all planets, Earth, and the Moon (27.32-day month), with J2 oblateness, Sun 1PN precession, atmospheres, and light-speed gravity fronts.
+- **Stellar destinations with physics**: eight named stars plus SGR A* (4.15M solar masses, accretion disk, polar jets) as real positions with live gravity and contact surfaces — fly there and die in a photosphere or photon sphere of your choosing.
 - **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, black holes, and boosted dark-energy expansion.
 - **Dynamic black holes** with configurable Schwarzschild radius, Paczynski-Wiita capture behavior, mergers, Hawking readouts, accretion visuals, and dark event-horizon cores.
-- **Readable cockpit HUD** with escape-speed tracking, propellant, apoapsis/periapsis, Moon/Sun distance, gravity pull, and mission status.
+- **Earth that looks alive**: day/night terminator with real city-lights map, ocean sun glint, camera-aware atmosphere; limb-darkened granulated Sun with an animated corona; magnitude/color-varied starfield; ACES filmic tone mapping.
+- **Contextual onboarding**: a one-time title overlay with the voyage lore, milestone hint cards instead of a wall of hotkeys, and persistence of camera, focus, warp, and UI state across refreshes.
 
 ## Screenshots
 
@@ -66,6 +68,10 @@ The static build is written to `dist/`.
 | `Shift` | Boost |
 | `Z` / `X` | Throttle down/up |
 | `T` / `Y` | Hold prograde/retrograde |
+| `Shift+T` | Autopilot: travel to the focused body or star |
+| `Shift+C` | Autopilot: circularize the current orbit |
+| `Shift+X` | Autopilot off (any manual input also takes over) |
+| `Shift+S` | Travel simulations menu |
 | `1`-`9` | Time warp presets through 1 year/s |
 | `,` / `.` | Warp down/up through 1 billion years/s |
 | `F` | Cycle ship, Moon, Earth, and Sun focus |
@@ -89,13 +95,19 @@ The static build is written to `dist/`.
 
 ```text
 src/
+  autopilot.js    flight computer: climb, intercept, brake, circularize
   blackholes.js   black-hole physics hooks and visuals
-  bodies.js       Sun, planets, Moon, rings, labels, lights
-  ephemeris.js    Solar System state propagation
+  bodies.js       Sun, planets, Moon, rings, labels, lights, shaders
+  cockpit.js      first-person 3D cockpit scene and interior lighting
+  ephemeris.js    n-body propagation seeded from J2000 orbital elements
+  hints.js        milestone-triggered onboarding hint cards
+  instruments.js  live canvas MFD rendering for the cockpit
   physics.js      ship dynamics, landing, loss conditions
   river.js        GPU particle river field
+  scenarios.js    travel simulations menu and title overlay
+  stars.js        named-star meshes and the SGR A* accretion system
   trails.js       ship and body prediction traces
-public/textures/  planet, Moon, Sun, ring, and Milky Way maps
+public/textures/  planet, Moon, Sun, ring, Earth night, and Milky Way maps
 ```
 
 ## Assets And License

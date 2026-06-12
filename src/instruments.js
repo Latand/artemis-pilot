@@ -118,7 +118,6 @@ function drawNav(ctx, oi) {
     // osculating ellipse from the eccentricity vector (2D, exact)
     const { rx, ry, rvx, rvy, mu, e, E } = oi;
     if (E < 0 && e < .999 && mu > 1) {
-        const h = rx * rvy - ry * rvx;
         const v2 = rvx * rvx + rvy * rvy, r = Math.hypot(rx, ry);
         const ex = ((v2 - mu / r) * rx - (rx * rvx + ry * rvy) * rvx) / mu;
         const ey = ((v2 - mu / r) * ry - (rx * rvx + ry * rvy) * rvy) / mu;
@@ -133,7 +132,7 @@ function drawNav(ctx, oi) {
             // ellipse around focus: r(ν) = p/(1+e cos ν), rotated by peri
             const rr = a * (1 - e * e) / (1 + e * Math.cos(th));
             const px = cx + rr * Math.cos(th + peri) * s;
-            const py = cy - rr * Math.sin(th + peri) * s * (h >= 0 ? 1 : 1);
+            const py = cy - rr * Math.sin(th + peri) * s;
             i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
         }
         ctx.stroke();

@@ -148,10 +148,12 @@ void main() {
     float sunPart = uBody[2].w * inversesqrt(max(uSink[2] * 0.5, distance(p, uBody[2].xyz)));
     float gold = smoothstep(0.5, 0.95, clamp(sunPart / spd, 0.0, 1.0));
     float expPart = length((p - uOrigin) * uDE);
-    float violet = smoothstep(0.18, 0.72, clamp(expPart / spd, 0.0, 1.0));
+    // only tint where expansion truly dominates the local flow — with the
+    // Earth-centered origin a loose threshold painted the whole 1 AU shell
+    float violet = smoothstep(0.62, 0.97, clamp(expPart / spd, 0.0, 1.0));
     vec3 cBlue = vec3(0.16 + 0.5 * t, 0.4 + 0.45 * t, 0.6 + 0.4 * t);
     vec3 cGold = vec3(0.6 + 0.4 * t, 0.34 + 0.42 * t, 0.12 + 0.26 * t);
-    vec3 cViolet = vec3(0.55 + 0.34 * t, 0.20 + 0.28 * t, 0.92 + 0.08 * t);
+    vec3 cViolet = vec3(0.38 + 0.3 * t, 0.22 + 0.26 * t, 0.85 + 0.15 * t);
     vColor = mix(mix(cBlue, cGold, gold), cViolet, violet) * fade * mix(0.9, 0.12, aEnd) * uOpacity;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
