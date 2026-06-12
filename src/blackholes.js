@@ -114,7 +114,7 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0) {
     disk.rotation.x = -Math.PI / 2;
     g.add(disk, horizon, photon, glow, hawkGlow, hawk, coreMask);
     scene.add(g);
-    BH_META.push({ g, disk, photon, glow, hawkGlow, hawk, coreMask, tex: diskTex, rs: rsKm });
+    BH_META.push({ g, disk, horizon, photon, glow, hawkGlow, hawk, coreMask, tex: diskTex, rs: rsKm, flare: 0 });
     BH.n++;
     H.toast("⚫ Black hole: r_s " + fmtKm(rsKm) + " · " + bhMassLabel(rsKm) + " · " + bhHawkingLabel(rsKm));
     H.predict();
@@ -232,6 +232,32 @@ function tryMerge() {
         }
     return false;
 }
+function refreshBHSize(i, rs) {
+    const m = BH_META[i];
+    if (!m) return;
+    const oldRs = Math.max(1e-9, m.rs);
+    const ratio = rs / oldRs;
+    m.rs = rs;
+    if (m.horizon) m.horizon.scale.multiplyScalar(ratio);
+    if (m.disk) m.disk.scale.multiplyScalar(ratio);
+}
+function absorbBody(i, target, x, y, vx, vy, muBody) {
+    const mu0 = BH.mu[i], mu = mu0 + muBody;
+    if (mu <= mu0) return;
+    BH.x[i] = (BH.x[i] * mu0 + x * muBody) / mu;
+    BH.y[i] = (BH.y[i] * mu0 + y * muBody) / mu;
+    BH.vx[i] = (BH.vx[i] * mu0 + vx * muBody) / mu;
+    BH.vy[i] = (BH.vy[i] * mu0 + vy * muBody) / mu;
+    BH.mu[i] = mu;
+    BH.rs[i] = 2 * mu / (C_LIGHT * C_LIGHT);
+    BH.c[i] = .001 * Math.sqrt(2 * BH.mu[i] / 1000);
+    BH.sinkS[i] = BH.rs[i] * K;
+    BH.sx[i] = BH.x[i] * K;
+    BH.sz[i] = -BH.y[i] * K;
+    refreshBHSize(i, BH.rs[i]);
+    if (BH_META[i]) BH_META[i].flare = 1;
+    H.cataclysm(target, BH.rs[i], "absorbed by black hole", i);
+}
 function bhBodyLimit(rs, radius, muBody, muBH) {
     const tidal = radius * Math.cbrt(muBH / Math.max(1e-9, muBody)) * .25;
     return Math.max(radius + rs * 1.5, Math.min(radius * 40, tidal));
@@ -240,17 +266,17 @@ function checkBHBodyBoundaries() {
     for (let i = 0; i < BH.n; i++) {
         const rs = BH.rs[i], mu = BH.mu[i];
         if (!WORLD.earthDestroyed && Math.hypot(BH.x[i], BH.y[i]) < bhBodyLimit(rs, R_EARTH, MU_E, mu)) {
-            H.cataclysm("earth", rs, "black-hole tidal disruption");
+            absorbBody(i, "earth", 0, 0, 0, 0, MU_E);
         }
         if (!WORLD.moonDestroyed && Math.hypot(BH.x[i] - eph.moonX, BH.y[i] - eph.moonY) < bhBodyLimit(rs, R_MOON, MU_M, mu)) {
-            H.cataclysm("moon", rs, "black-hole tidal disruption");
+            absorbBody(i, "moon", eph.moonX, eph.moonY, eph.moonVx, eph.moonVy, MU_M);
         }
         if (!WORLD.sunDestroyed && Math.hypot(BH.x[i] - eph.sunX, BH.y[i] - eph.sunY) < bhBodyLimit(rs, R_SUN, MU_S, mu)) {
-            H.cataclysm("sun", rs, "black-hole photosphere breach");
+            absorbBody(i, "sun", eph.sunX, eph.sunY, eph.sunVx, eph.sunVy, MU_S);
         }
         for (let p = 0; p < PL.length; p++) {
             if (!WORLD.plDestroyed[p] && Math.hypot(BH.x[i] - eph.plX[p], BH.y[i] - eph.plY[p]) < bhBodyLimit(rs, PL[p].R, PL[p].mu, mu)) {
-                H.cataclysm(p, rs, "black-hole tidal disruption");
+                absorbBody(i, p, eph.plX[p], eph.plY[p], eph.plVx[p], eph.plVy[p], PL[p].mu);
             }
         }
     }
@@ -297,20 +323,22 @@ window.__addBH = addBlackHole; // debug/testing handle
 export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
     for (let bi = 0; bi < BH_META.length; bi++) {
         const m = BH_META[bi];
+        m.flare = Math.max(0, m.flare - dtR * .55);
         m.g.position.set(earthScX + BH.sx[bi], 0, earthScZ + BH.sz[bi]);
         const dBH = camera.position.distanceTo(m.g.position);
         m.photon.scale.setScalar(Math.max(m.rs * K * 4.2, dBH * .006));
         m.glow.scale.setScalar(Math.max(m.rs * K * 8, dBH * .012));
         const hot = Math.min(1, Math.max(.14, Math.pow(1000 / Math.max(1, m.rs), .34)));
-        m.glow.material.opacity = .12 + hot * .14;
+        const flare = m.flare * m.flare;
+        m.glow.material.opacity = .12 + hot * .14 + flare * .34;
         const hVis = Math.max(m.rs * K * 5.5, dBH * .0065);
         m.hawk.scale.setScalar(hVis);
         m.hawk.rotation.y += dtR * (1.4 + hot * 4.8);
         m.hawk.rotation.z -= dtR * (.35 + hot * 1.2);
         m.hawk.material.opacity = .06 + hot * .22;
         m.hawk.material.size = Math.max(.006, dBH * .00075) * (.55 + hot * .7);
-        m.hawkGlow.scale.setScalar(Math.max(m.rs * K * 4.6, dBH * .0055));
-        m.hawkGlow.material.opacity = .035 + hot * .11 * (0.65 + 0.35 * Math.sin(performance.now() * .004 + bi));
+        m.hawkGlow.scale.setScalar(Math.max(m.rs * K * (4.6 + flare * 5), dBH * (.0055 + flare * .009)));
+        m.hawkGlow.material.opacity = .035 + hot * .11 * (0.65 + 0.35 * Math.sin(performance.now() * .004 + bi)) + flare * .38;
         if (m.coreMask) {
             m.coreMask.scale.setScalar(Math.max(m.rs * K * 3, dBH * .009));
             m.coreMask.material.opacity = 1;

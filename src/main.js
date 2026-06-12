@@ -61,10 +61,11 @@ function restart() {
 initPhysicsHooks({ die, award, banner: showBanner, hideBanner });
 initBHHooks({
     toast, predict: computePrediction,
-    cataclysm(target, rs, mode) {
+    cataclysm(target, rs, mode, bi = -1) {
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs));
         award("bh");
-        if (name) toast(name + " destroyed by black hole · r_s " + fmtKm(rs));
+        if (bi >= 0) focusBlackHole(bi);
+        if (name) toast(name + " absorbed by black hole · r_s now " + fmtKm(rs));
     },
 });
 initInput({ restart });
@@ -161,6 +162,13 @@ function focusNearestSurvivor() {
         cam.dist = Math.max(cam.dist, best.minDist);
     } else focusAndLockBody(best.target, best.focus);
     return best.name;
+}
+function focusBlackHole(i) {
+    if (i < 0 || i >= BH.n) return;
+    G.focus = "free";
+    cam.tgt.set((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K);
+    cam.dist = Math.max(Math.min(cam.dist, Math.max(900, BH.rs[i] * K * 22)), Math.max(80, BH.rs[i] * K * 12));
+    unlockBodyPrediction();
 }
 function enterObserverMode() {
     if (!G.dead || G.observerMode) return;
