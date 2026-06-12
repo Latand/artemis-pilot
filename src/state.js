@@ -2,7 +2,7 @@ import { R_EARTH, MU_E, FUEL_DV0, BH_MAX, C_LIGHT, K, PL } from "./constants.js"
 
 // ---- game state ----
 export const G = {
-    t: 0, x: 0, y: 0, vx: 0, vy: 0,
+    t: 0, cosmicT: 0, x: 0, y: 0, vx: 0, vy: 0,
     heading: 0, throttle: 1,
     warp: 60, paused: false,
     fuel: FUEL_DV0, infinite: true, dvUsed: 0,
@@ -11,7 +11,8 @@ export const G = {
     dead: false, deadReason: "",
     deathT: 0, deathRt: 0, observerMode: false,
     leftHome: false, maxRE: 0,
-    gr: true, predict: true, muted: false,
+    gr: true, predict: true, darkEnergy: true, muted: false,
+    cabin: false,
     focus: "ship",
     thrustMain: 0, thrustLat: 0, boost: false,
 };
@@ -95,13 +96,15 @@ export function resetShip() {
     const r0 = R_EARTH + 300, th0 = -0.6;
     const v0 = Math.sqrt(MU_E / r0);
     G.t = 0;
+    G.cosmicT = 0;
     G.x = r0 * Math.cos(th0); G.y = r0 * Math.sin(th0);
     G.vx = -v0 * Math.sin(th0); G.vy = v0 * Math.cos(th0);
     G.heading = Math.atan2(G.vy, G.vx);
     G.fuel = FUEL_DV0; G.dvUsed = 0;
     G.landed = null; G.dead = false; G.deadReason = ""; G.deathT = 0; G.deathRt = 0; G.observerMode = false;
     G.leftHome = false; G.maxRE = r0;
-    G.hold = null; G.warp = 60; G.paused = false; G.throttle = 1;
+    G.hold = null; G.warp = 60; G.paused = false; G.throttle = 1; G.darkEnergy = true;
+    G.cabin = false;
 }
 
 // ---- black holes (data; visuals live in blackholes.js) ----

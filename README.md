@@ -7,9 +7,10 @@ An interactive Three.js gravity sandbox where you pilot a spacecraft from low Ea
 ## Highlights
 
 - **Live orbital flight** with thrust, RCS, throttle control, prograde/retrograde hold, time warp, atmospheric drag, landing, and mission objectives.
-- **Solar System scale** with Earth, Moon, Sun, all seven other planets, true radii, gravitational parameters, orbit rings, textures, and focus controls.
+- **Solar System scale with a galactic backdrop** with Earth, Moon, Sun, all seven other planets, true radii, gravitational parameters, orbit rings, textures, Milky Way dust, and focus controls.
+- **Cosmic scale jump** for generated world-space Milky Way and Local Group bodies when you need galaxy or intergalactic framing.
 - **Trajectory tools** for ship prediction, full-journey traces, hover velocity readouts, body trajectory prediction, and locked body tracking.
-- **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, and black holes.
+- **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, black holes, and boosted dark-energy expansion.
 - **Dynamic black holes** with configurable Schwarzschild radius, Paczynski-Wiita capture behavior, mergers, Hawking readouts, accretion visuals, and dark event-horizon cores.
 - **Readable cockpit HUD** with escape-speed tracking, propellant, apoapsis/periapsis, Moon/Sun distance, gravity pull, and mission status.
 
@@ -65,13 +66,17 @@ The static build is written to `dist/`.
 | `Shift` | Boost |
 | `Z` / `X` | Throttle down/up |
 | `T` / `Y` | Hold prograde/retrograde |
-| `1`-`8` | Time warp presets |
-| `,` / `.` | Warp down/up |
+| `1`-`9` | Time warp presets through 1 year/s |
+| `,` / `.` | Warp down/up through 1 billion years/s |
 | `F` | Cycle ship, Moon, Earth, and Sun focus |
 | `Shift+F` | Cycle planets |
+| `C` | Cycle Solar System, Milky Way, and Local Group scale |
+| `U` | Cycle nearby physical stellar destinations |
+| `J` | Toggle in-ship cabin view |
 | `0` or body label click | Focus a body and lock its trajectory prediction |
 | `P` | Toggle trajectory prediction |
 | `G` | Toggle spacetime river visualization |
+| `O` | Toggle dark-energy expansion |
 | `B` | Place a black hole on the cursor plane |
 | `[` / `]` | Change black-hole Schwarzschild radius |
 | `V` | Remove last black hole |

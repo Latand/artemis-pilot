@@ -4,6 +4,7 @@ import {
     eph, moonState,
     snapshotEphem, loadEphemSnapshot, advanceEphemSnapshot,
     bodyStateForTarget,
+    beginPredictionBH, endPredictionBH, predBHX, predBHY,
 } from "./ephemeris.js";
 import { G, BH } from "./state.js";
 import { speedColor } from "./format.js";
@@ -173,6 +174,7 @@ export function computePrediction() {
     const t0 = performance.now();
     try {
         loadEphemSnapshot(predEphem);
+        beginPredictionBH(); // holes coast linearly from their snapshot state
         const far = Math.hypot(G.x, G.y) > 2e6;
         const tMax = G.t + 86400 * (far ? 160 : 8);
         let pmx = 0, pmy = 0, pex = 0, pey = 0, hasPrev = false, plNear = false;
@@ -205,7 +207,7 @@ export function computePrediction() {
                 if (d2 < PL[pi].soi * PL[pi].soi * .25) plNear = true;
             }
             for (let bi = 0; bi < BH.n; bi++) {
-                const dx = _ps[0] - BH.x[bi], dy = _ps[1] - BH.y[bi];
+                const dx = _ps[0] - predBHX(bi, pt), dy = _ps[1] - predBHY(bi, pt);
                 const lim = BH.rs[bi] * 1.5;
                 if (dx * dx + dy * dy <= lim * lim) { impact = 4; break; }
             }
@@ -220,6 +222,7 @@ export function computePrediction() {
             pt += dt;
         }
     } finally {
+        endPredictionBH();
         loadEphemSnapshot(liveEphem);
     }
     prPosAttr.needsUpdate = true;
@@ -273,6 +276,7 @@ export function computeBodyPrediction(target, locked = false) {
     let n = 0;
     try {
         loadEphemSnapshot(predEphem);
+        beginPredictionBH(); // holes coast linearly from their snapshot state
         while (n < nMax) {
             bodyStateForTarget(target, _bs, predEphem);
             bpPos[n * 3] = _bs.x * K;
@@ -282,6 +286,7 @@ export function computeBodyPrediction(target, locked = false) {
             advanceEphemSnapshot(predEphem, step, step);
         }
     } finally {
+        endPredictionBH();
         loadEphemSnapshot(liveEphem);
     }
     const col = locked ? 0xff4fc3 : target === -2 ? 0xb7d8ff : target === -1 ? 0xffdc8a : 0xf1d36b;
@@ -310,7 +315,15 @@ flArrG.setAttribute("position", flArrAttr);
 export const flowArrow = new THREE.Line(flArrG, new THREE.LineBasicMaterial({ color: 0x8fd8ff, transparent: true, opacity: 0 }));
 flowArrow.renderOrder = 4; flowArrow.frustumCulled = false;
 scene.add(flowArrow);
+export const deArrPos = new Float32Array(6);
+const deArrG = new THREE.BufferGeometry();
+export const deArrAttr = new THREE.BufferAttribute(deArrPos, 3); deArrAttr.setUsage(THREE.DynamicDrawUsage);
+deArrG.setAttribute("position", deArrAttr);
+export const darkEnergyArrow = new THREE.Line(deArrG, new THREE.LineBasicMaterial({ color: 0xbd72ff, transparent: true, opacity: 0 }));
+darkEnergyArrow.renderOrder = 4; darkEnergyArrow.frustumCulled = false;
+scene.add(darkEnergyArrow);
 export const tipV = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,120,80,1)", "rgba(255,80,40,0.4)"), transparent: true, depthWrite: false }));
 export const tipF = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(160,225,255,1)", "rgba(120,200,255,0.4)"), transparent: true, depthWrite: false }));
-tipV.renderOrder = 5; tipF.renderOrder = 5;
-scene.add(tipV, tipF);
+export const tipDE = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(215,150,255,1)", "rgba(165,90,255,0.4)"), transparent: true, depthWrite: false }));
+tipV.renderOrder = 5; tipF.renderOrder = 5; tipDE.renderOrder = 5;
+scene.add(tipV, tipF, tipDE);

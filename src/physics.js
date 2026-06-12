@@ -1,6 +1,6 @@
 import {
-    MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, C_LIGHT, J2_E,
-    PL, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME, EPH_CHUNK,
+    MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, C_LIGHT, J2_E, OMEGA_EARTH,
+    PL, STARS, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME, EPH_CHUNK,
 } from "./constants.js";
 import { eph, updEphem, moonState, planetVel, relGravityAt, advanceEphem } from "./ephemeris.js";
 import { G, BH, WORLD } from "./state.js";
@@ -35,9 +35,11 @@ export function deriv(x, y, vx, vy, tau, atx, aty, out) {
         const h = rE - R_EARTH;
         if (h < ATM_TOP) {
             const rho = Math.exp(-Math.max(0, h) / DRAG_H);
-            const v = Math.sqrt(vx * vx + vy * vy);
+            const avx = -OMEGA_EARTH * y, avy = OMEGA_EARTH * x;
+            const rvx = vx - avx, rvy = vy - avy;
+            const v = Math.sqrt(rvx * rvx + rvy * rvy);
             const f = -DRAG_CD * rho * v;
-            ax += f * vx; ay += f * vy;
+            ax += f * rvx; ay += f * rvy;
         }
     }
     if (!WORLD.sunDestroyed) {
@@ -119,6 +121,18 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, vx = 0, vy = 0) {
             }
         }
     }
+    for (const star of STARS) {
+        const sx = star.x - eph.earthX, sy = star.y - eph.earthY;
+        const dx = x - sx, dy = y - sy;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < star.R * star.R * 400) {
+            const d = Math.sqrt(d2);
+            const tStar = Math.sqrt(d * d2 / star.mu) / 90;
+            if (tStar < dt) dt = tStar;
+            const gap = d - star.R;
+            if (gap < star.R * 20) dt = Math.min(dt, Math.max(.5, .2 * Math.max(200, gap) / Math.max(.01, vTot)));
+        }
+    }
     let floor = 0.02;
     for (let i = 0; i < BH.n; i++) {
         const dx = x - BH.x[i], dy = y - BH.y[i];
@@ -163,7 +177,7 @@ export function orbitInfo() {
         mu = p.mu; rx = G.x - eph.plX[pNear]; ry = G.y - eph.plY[pNear];
         rvx = G.vx - _pv.vx; rvy = G.vy - _pv.vy; R = p.R; body = p.name;
     }
-    else if (domSun) { mu = MU_S; rx = sdx; ry = sdy; rvx = G.vx; rvy = G.vy; R = R_SUN; body = "SUN"; }
+    else if (domSun) { mu = MU_S; rx = sdx; ry = sdy; rvx = G.vx - eph.sunVx; rvy = G.vy - eph.sunVy; R = R_SUN; body = "SUN"; }
     else if (!WORLD.earthDestroyed) { mu = MU_E; rx = G.x; ry = G.y; rvx = G.vx; rvy = G.vy; R = R_EARTH; body = "EARTH"; }
     else { mu = 1; rx = G.x; ry = G.y; rvx = G.vx; rvy = G.vy; R = 0; body = "DRIFT"; }
     const r = Math.hypot(rx, ry), v2 = rvx * rvx + rvy * rvy;
@@ -174,17 +188,18 @@ export function orbitInfo() {
     let rp, ra;
     if (E < 0) { rp = a * (1 - e); ra = a * (1 + e); }
     else { rp = Math.abs(a) * (e - 1); ra = Infinity; }
-    return { domMoon, domSun, domPl, pNear, pNearD, body, mu, r, rp, ra, e, E, R, rE, rM, rS, relV: Math.sqrt(v2) };
+    return { domMoon, domSun, domPl, pNear, pNearD, body, mu, r, rp, ra, e, E, R, rE, rM, rS, relV: Math.sqrt(v2), rx, ry, rvx, rvy };
 }
 
 // ============================ CONTACT / LANDING ============================
 function handleEarthContact(s) {
     const r = Math.hypot(s[0], s[1]), f = (R_EARTH + 0.005) / r;
     s[0] *= f; s[1] *= f;
-    const spd = Math.hypot(s[2], s[3]);
+    const surfVx = -OMEGA_EARTH * s[1], surfVy = OMEGA_EARTH * s[0];
+    const spd = Math.hypot(s[2] - surfVx, s[3] - surfVy);
     if (spd < 0.35) {
-        s[2] = 0; s[3] = 0;
-        G.landed = { body: "earth", ang: Math.atan2(s[1], s[0]) };
+        s[2] = surfVx; s[3] = surfVy;
+        G.landed = { body: "earth", ang: Math.atan2(s[1], s[0]), t0: G.t };
         G.heading = G.landed.ang;
         if (G.leftHome) {
             H.award("home");
@@ -233,8 +248,9 @@ export function snapLanded() {
     if (!G.landed) return;
     if (G.landed.body === "earth") {
         const r = R_EARTH + 0.005;
-        G.x = r * Math.cos(G.landed.ang); G.y = r * Math.sin(G.landed.ang);
-        G.vx = 0; G.vy = 0;
+        const th = G.landed.ang + OMEGA_EARTH * (G.t - (G.landed.t0 ?? G.t));
+        G.x = r * Math.cos(th); G.y = r * Math.sin(th);
+        G.vx = -OMEGA_EARTH * G.y; G.vy = OMEGA_EARTH * G.x;
     } else if (G.landed.body === "planet") {
         const i = G.landed.i, r = PL[i].R + 0.01;
         updEphem(G.t);
@@ -275,6 +291,13 @@ function bodiesNeedFlush(x, y, lag) {
         const lim = Math.max(BH.rs[i] * 150, 5000);
         if (dx * dx + dy * dy < lim * lim) return true;
     }
+    for (const star of STARS) {
+        const sx = star.x - (eph.earthX + eph.earthVx * lag);
+        const sy = star.y - (eph.earthY + eph.earthVy * lag);
+        const dx = x - sx, dy = y - sy;
+        const lim = star.R * 25;
+        if (dx * dx + dy * dy < lim * lim) return true;
+    }
     return false;
 }
 export function advance(simAdv, atx, aty, aMag) {
@@ -307,6 +330,19 @@ export function advance(simAdv, atx, aty, aMag) {
         }
         // Earth sits at the frame origin: its contact check is always exact
         if (!WORLD.earthDestroyed && Math.sqrt(s[0] * s[0] + s[1] * s[1]) <= R_EARTH) { handleEarthContact(s); break; }
+        let hitStar = -1;
+        for (let i = 0; i < STARS.length; i++) {
+            const sx = STARS[i].x - (eph.earthX + eph.earthVx * lag);
+            const sy = STARS[i].y - (eph.earthY + eph.earthVy * lag);
+            if (Math.hypot(s[0] - sx, s[1] - sy) <= STARS[i].R) { hitStar = i; break; }
+        }
+        if (hitStar >= 0) {
+            G.x = s[0]; G.y = s[1]; G.vx = s[2]; G.vy = s[3];
+            H.die(STARS[hitStar].bh
+                ? "Crossed " + STARS[hitStar].name + "'s photon sphere; captured into the boundary flow"
+                : "Entered " + STARS[hitStar].name + "'s photosphere", STARS[hitStar].bh);
+            break;
+        }
         // every other surface lies deep inside a flush zone, so these checks
         // only need to run when the ephemeris is fresh
         if (lag > 0) continue;
@@ -355,7 +391,12 @@ export function sampleAero() {
     let best = 0;
     if (!WORLD.earthDestroyed) {
         const rE = Math.sqrt(G.x * G.x + G.y * G.y), h = rE - R_EARTH;
-        if (h < ATM_TOP) best = DRAG_CD * Math.exp(-Math.max(0, h) / DRAG_H) * (G.vx * G.vx + G.vy * G.vy);
+        if (h < ATM_TOP) {
+            const avx = -OMEGA_EARTH * G.y, avy = OMEGA_EARTH * G.x;
+            const rvx = G.vx - avx, rvy = G.vy - avy;
+            best = DRAG_CD * Math.exp(-Math.max(0, h) / DRAG_H) * (rvx * rvx + rvy * rvy);
+            AERO.vx = rvx; AERO.vy = rvy;
+        }
     }
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];

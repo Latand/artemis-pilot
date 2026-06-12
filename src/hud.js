@@ -1,4 +1,4 @@
-import { PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, warpLabel } from "./constants.js";
+import { DARK_ENERGY, PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, SEC_YEAR, warpLabel } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { fmtKm, fmtDist, fmtMET, escapeKmS, accelMs2, fmtAccel } from "./format.js";
@@ -13,7 +13,7 @@ const bhFocusIndex = f => {
 export const metEl = $("met"), warpEl = $("warpLine"), engineEl = $("engineLine"), throttleEl = $("throttleLine");
 export const fuelTxtEl = $("fuelTxt"), fuelFillEl = $("fuelFill");
 export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVel = $("cVel"), cApPe = $("cApPe"), cMoon = $("cMoon"), cSun = $("cSun"), cDv = $("cDv"), cGrav = $("cGrav");
-export const fFlow = $("fFlow"), fShip = $("fShip"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
+export const fFlow = $("fFlow"), fDark = $("fDark"), fShip = $("fShip"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
 export const flowPanelEl = $("flowPanel"), bannerEl = $("banner"), helpEl = $("help");
 export const lblE = $("lblE"), lblM = $("lblM"), lblO = $("lblO"), lblS = $("lblS");
 
@@ -25,12 +25,18 @@ export function showBanner(title, sub, hint) {
 }
 export function hideBanner() { bannerEl.style.display = "none"; }
 
+// help shows on the very first visit only; any dismissal is remembered
 export const help = { shown: true };
-export function hideHelp() { helpEl.style.display = "none"; help.shown = false; }
+export function hideHelp() {
+    helpEl.style.display = "none";
+    help.shown = false;
+    try { localStorage.setItem("ap_helpSeen", "1"); } catch (e) { }
+}
 export function toggleHelp() {
     if (help.shown) hideHelp();
     else { helpEl.style.display = "block"; help.shown = true; }
 }
+try { if (localStorage.getItem("ap_helpSeen")) { helpEl.style.display = "none"; help.shown = false; } } catch (e) { }
 
 // ---- escape tracker: speed milestones vs Earth / Sun / nearest black hole ----
 const vRowsEl = document.getElementById("vRows");
@@ -66,6 +72,7 @@ export function updateEscapeTracker(oi) {
 export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     metEl.textContent = "T+ " + fmtMET(G.t);
     warpEl.textContent = "⏩ " + warpLabel(G.warp) +
+        (G.warp > 30 * SEC_YEAR ? " · DEEP VIEW CLOCK" : "") +
         (aMag > 0 && G.warp > 600 ? " · ⚠ THRUST AT HIGH WARP" : "") + (G.paused ? " · ❚❚ PAUSED" : "");
     warpEl.className = G.paused ? "warn" : "";
     if (G.dead) engineEl.textContent = "VEHICLE LOST — " + G.deadReason;
@@ -96,8 +103,9 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
         aShB += BH.mu[bi] / (effB * effB);
     }
     const aShP = oi.pNear >= 0 && !WORLD.plDestroyed[oi.pNear] ? PL[oi.pNear].mu / Math.pow(Math.max(PL[oi.pNear].R, oi.pNearD), 2) : 0;
-    const gTot = aShE + aShM + aShS + aShB + aShP;
-    const shares = [["E", aShE], ["M", aShM], ["S", aShS], ["⚫", aShB], [oi.pNear >= 0 ? PL[oi.pNear].tag : "P", aShP]].sort((p, q) => q[1] - p[1]);
+    const aDE = G.darkEnergy ? DARK_ENERGY.H2_SIM * Math.hypot(G.x, G.y) : 0;
+    const gTot = aShE + aShM + aShS + aShB + aShP + aDE;
+    const shares = [["E", aShE], ["M", aShM], ["S", aShS], ["⚫", aShB], [oi.pNear >= 0 ? PL[oi.pNear].tag : "P", aShP], ["DE", aDE]].sort((p, q) => q[1] - p[1]);
     cGrav.textContent = gTot > 0 ? shares[0][0] + " " + Math.round(shares[0][1] / gTot * 100) + "% · " + shares[1][0] + " " + Math.round(shares[1][1] / gTot * 100) + "%" : "—";
     const focusBH = bhFocusIndex(G.focus);
     let bhReadoutRs = BH_SIZES[BH.sizeIdx], bhNearestD = Infinity;
@@ -118,7 +126,7 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
         fShip.textContent = kVLoc.toFixed(2) + " km/s";
         fEsc.textContent = escapeKmS(MU_E, Math.max(R_EARTH, oi.rE)).toFixed(2) + " km/s";
         fEscM.textContent = escapeKmS(MU_M, Math.max(R_MOON, oi.rM)).toFixed(2) + " km/s";
-        fAcc.textContent = fmtAccel(accelMs2(MU_E, Math.max(R_EARTH, oi.rE)) + accelMs2(MU_M, Math.max(R_MOON, oi.rM)) + accelMs2(MU_S, Math.max(R_SUN, oi.rS)) + (aShB + aShP) * 1000);
+        fAcc.textContent = fmtAccel(accelMs2(MU_E, Math.max(R_EARTH, oi.rE)) + accelMs2(MU_M, Math.max(R_MOON, oi.rM)) + accelMs2(MU_S, Math.max(R_SUN, oi.rS)) + (aShB + aShP + aDE) * 1000);
     }
     flowPanelEl.style.display = fB > .25 ? "block" : "none";
 }

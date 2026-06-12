@@ -11,9 +11,10 @@ import { toast } from "./achievements.js";
 
 const SLOT = "artemis.quicksave.v1";
 const G_FIELDS = [
-    "t", "x", "y", "vx", "vy", "heading", "throttle", "warp", "paused",
+    "t", "cosmicT", "x", "y", "vx", "vy", "heading", "throttle", "warp", "paused",
     "fuel", "infinite", "dvUsed", "hold", "landed", "dead", "deadReason",
-    "deathT", "leftHome", "maxRE", "gr", "predict", "muted", "focus",
+    "deathT", "leftHome", "maxRE", "gr", "predict", "darkEnergy", "muted", "focus",
+    "cabin",
 ];
 
 export function saveState() {
@@ -53,6 +54,9 @@ export function loadState() {
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
     if (!data || (data.v !== 1 && data.v !== 2)) { toast("No saved state · K to save one"); return false; }
     Object.assign(G, data.g);
+    if (typeof G.darkEnergy !== "boolean") G.darkEnergy = true;
+    if (typeof G.cabin !== "boolean") G.cabin = false;
+    if (typeof G.cosmicT !== "number") G.cosmicT = G.t;
     G.observerMode = false;
     G.deathRt = G.dead ? performance.now() : 0;
     G.boost = false;

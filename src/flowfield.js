@@ -1,5 +1,5 @@
-import { FLOW, PL, K } from "./constants.js";
-import { BH, WORLD } from "./state.js";
+import { DARK_ENERGY, FLOW, PL, K } from "./constants.js";
+import { G, BH, WORLD } from "./state.js";
 
 // Scene-unit river field: the medium falls at v = √(2μ/r) toward every body.
 // Earth, Sun, planets, and holes are sampled in world-space. The far-field
@@ -44,6 +44,11 @@ export function flowVel(x, y, z, mx, my, mz, out) {
         const br = Math.max(BH.sinkS[i] * .5, Math.hypot(bdx, y, bdz));
         const bs = BH.c[i] * Math.max(.08, BH.obsT[i] || 1) / Math.sqrt(br) / br;
         exVX -= bdx * bs; exVY -= y * bs; exVZ -= bdz * bs;
+    }
+    if (G.darkEnergy) {
+        exVX += edx * DARK_ENERGY.H_SIM;
+        exVY += y * DARK_ENERGY.H_SIM;
+        exVZ += edz * DARK_ENERGY.H_SIM;
     }
     const vx = -edx * sE * earthW - dx * sM + exVX;
     const vy = -y * sE * earthW - dy * sM + exVY;

@@ -47,7 +47,7 @@ plasma.visible = false;
 shipG.add(plasma);
 scene.add(shipG);
 
-// ---- heading (nose) indicator: yellow shaft + cone, visible at any zoom ----
+// ---- heading (nose) indicator: yellow shaft + cone for flight-scale views ----
 export const headArrow = new THREE.Group();
 const headLineGeom = new THREE.BufferGeometry();
 const headLinePos = new Float32Array(6);

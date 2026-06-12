@@ -164,6 +164,7 @@ function tryLoad(file, srgb = true) {
 export async function loadAllMaps() {
     const names = {
         earth: tryLoad("2k_earth_daymap.jpg"),
+        earthNight: tryLoad("2k_earth_nightmap.jpg"),
         clouds: tryLoad("2k_earth_clouds.jpg", false),
         moon: tryLoad("2k_moon.jpg"),
         sun: tryLoad("2k_sun.jpg"),

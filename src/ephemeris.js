@@ -1,8 +1,8 @@
 import {
-    AU_KM, SUN_TH0, OM_YEAR, PL, A_MOON, OMEGA, MOON_ANG0,
-    MU_E, MU_M, MU_S, C_LIGHT,
+    AU_KM, SUN_TH0, E_EARTH, VARPI_EARTH, PL, STARS, A_MOON, E_MOON, OMEGA, MOON_ANG0,
+    MU_E, MU_M, MU_S, C_LIGHT, BH_MAX, darkEnergyAccel,
 } from "./constants.js";
-import { BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
+import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -35,6 +35,7 @@ export const eph = {
     plX: new Float64Array(PL.length), plY: new Float64Array(PL.length),
     plVx: new Float64Array(PL.length), plVy: new Float64Array(PL.length),
 };
+window.__eph = eph;
 
 function syncFromState(st = null) {
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
@@ -52,33 +53,62 @@ function syncFromState(st = null) {
     }
 }
 
+// Two-body elements → planar state (km, km/s). Solves Kepler's equation
+// M = E − e·sinE by Newton, then converts: r = a(1 − e·cosE), true anomaly ν
+// from E, heliocentric angle θ = varpi + ν, and radial/tangential speeds
+// vr = √(μ/p)·e·sinν, vt = √(μ/p)·(1 + e·cosν) with p = a(1 − e²). Used only
+// to set initial conditions — everything then evolves under full n-body RK4.
+export function keplerInit(a, e, varpi, M0, mu, out) {
+    let E = M0;
+    for (let i = 0; i < 8; i++)
+        E -= (E - e * Math.sin(E) - M0) / (1 - e * Math.cos(E));
+    const nu = 2 * Math.atan2(Math.sqrt(1 + e) * Math.sin(E / 2), Math.sqrt(1 - e) * Math.cos(E / 2));
+    const r = a * (1 - e * Math.cos(E));
+    const c = Math.sqrt(mu / (a * (1 - e * e)));
+    const vr = c * e * Math.sin(nu), vt = c * (1 + e * Math.cos(nu));
+    const th = varpi + nu, ct = Math.cos(th), st = Math.sin(th);
+    out.x = r * ct; out.y = r * st;
+    out.vx = vr * ct - vt * st;
+    out.vy = vr * st + vt * ct;
+    return out;
+}
+
+const _kp = { x: 0, y: 0, vx: 0, vy: 0 };
 export function resetEphem() {
     EPHT.t = 0;
-    const ma = MOON_ANG0;
-    bodyX[IDX_MOON] = A_MOON * Math.cos(ma);
-    bodyY[IDX_MOON] = A_MOON * Math.sin(ma);
-    bodyVx[IDX_MOON] = -A_MOON * OMEGA * Math.sin(ma);
-    bodyVy[IDX_MOON] = A_MOON * OMEGA * Math.cos(ma);
+    // Moon from elements; MOON_ANG0 is its initial mean anomaly, varpi = 0
+    keplerInit(A_MOON, E_MOON, 0, MOON_ANG0, MU_E + MU_M, _kp);
+    bodyX[IDX_MOON] = _kp.x;
+    bodyY[IDX_MOON] = _kp.y;
+    bodyVx[IDX_MOON] = _kp.vx;
+    bodyVy[IDX_MOON] = _kp.vy;
 
-    const sa = SUN_TH0;
-    const svx = -AU_KM * OM_YEAR * Math.sin(sa);
-    const svy = AU_KM * OM_YEAR * Math.cos(sa);
-    bodyX[IDX_SUN] = AU_KM * Math.cos(sa);
-    bodyY[IDX_SUN] = AU_KM * Math.sin(sa);
-    bodyVx[IDX_SUN] = svx;
-    bodyVy[IDX_SUN] = svy;
-    earthX = -bodyX[IDX_SUN];
-    earthY = -bodyY[IDX_SUN];
-    earthVx = -bodyVx[IDX_SUN];
-    earthVy = -bodyVy[IDX_SUN];
+    // Earth's heliocentric state from elements, with the initial true anomaly
+    // chosen so the Earth→Sun direction stays exactly at SUN_TH0; the Sun's
+    // Earth-relative state is its negative (Earth world-state matches it).
+    const nu0 = SUN_TH0 + Math.PI - VARPI_EARTH;
+    const E0 = 2 * Math.atan2(Math.sqrt(1 - E_EARTH) * Math.sin(nu0 / 2), Math.sqrt(1 + E_EARTH) * Math.cos(nu0 / 2));
+    keplerInit(AU_KM, E_EARTH, VARPI_EARTH, E0 - E_EARTH * Math.sin(E0), MU_S + MU_E, _kp);
+    earthX = _kp.x;
+    earthY = _kp.y;
+    earthVx = _kp.vx;
+    earthVy = _kp.vy;
+    bodyX[IDX_SUN] = -_kp.x;
+    bodyY[IDX_SUN] = -_kp.y;
+    bodyVx[IDX_SUN] = -_kp.vx;
+    bodyVy[IDX_SUN] = -_kp.vy;
+    const svx = bodyVx[IDX_SUN], svy = bodyVy[IDX_SUN];
 
+    // planets stored Earth-relative: Sun's Earth-relative state + heliocentric
+    // state from J2000 elements (p.phase is the initial mean anomaly)
     for (let i = 0; i < PL.length; i++) {
-        const p = PL[i], pa = p.phase;
+        const p = PL[i];
         const k = IDX_PLANETS + i;
-        bodyX[k] = bodyX[IDX_SUN] + p.a * Math.cos(pa);
-        bodyY[k] = bodyY[IDX_SUN] + p.a * Math.sin(pa);
-        bodyVx[k] = svx - p.a * p.n * Math.sin(pa);
-        bodyVy[k] = svy + p.a * p.n * Math.cos(pa);
+        keplerInit(p.a, p.e, p.varpi, p.phase, MU_S, _kp);
+        bodyX[k] = bodyX[IDX_SUN] + _kp.x;
+        bodyY[k] = bodyY[IDX_SUN] + _kp.y;
+        bodyVx[k] = svx + _kp.vx;
+        bodyVy[k] = svy + _kp.vy;
     }
     syncFromState();
 }
@@ -122,10 +152,37 @@ export function bodyStateForTarget(target, out, st = null) {
     return out;
 }
 
+// Prediction-time black-hole extrapolation: predicted arcs span up to 160
+// days, but BH.x/BH.y only hold the holes' live positions. While a prediction
+// is active, gravity places hole i at snapX + snapVx·(tEval − t0) — a linear
+// coast from a snapshot taken at prediction start. Covers both the snapshot
+// path (advanceEphemSnapshot → derivAll) and the ship path (rk4Step calls
+// relGravityAt with st = null while the live arrays hold the prediction
+// state). Live integration never sets the flag, so that path is untouched.
+const PRED_BH = {
+    active: false, t0: 0,
+    x: new Float64Array(BH_MAX), y: new Float64Array(BH_MAX),
+    vx: new Float64Array(BH_MAX), vy: new Float64Array(BH_MAX),
+};
+export function beginPredictionBH() {
+    PRED_BH.t0 = EPHT.t;
+    for (let i = 0; i < BH.n; i++) {
+        PRED_BH.x[i] = BH.x[i]; PRED_BH.y[i] = BH.y[i];
+        PRED_BH.vx[i] = BH.vx[i]; PRED_BH.vy[i] = BH.vy[i];
+    }
+    PRED_BH.active = true;
+}
+export function endPredictionBH() { PRED_BH.active = false; }
+// extrapolated hole position at absolute sim time t (for prediction-loop
+// impact checks); falls back to the live state outside predictions
+export function predBHX(i, t) { return PRED_BH.active ? PRED_BH.x[i] + PRED_BH.vx[i] * (t - PRED_BH.t0) : BH.x[i]; }
+export function predBHY(i, t) { return PRED_BH.active ? PRED_BH.y[i] + PRED_BH.vy[i] * (t - PRED_BH.t0) : BH.y[i]; }
+
 // Indirect (frame) acceleration: every body and hole pulls the Earth-centered
 // origin. Identical for all field points, so callers evaluating many points
 // against one state compute it once and pass it as `ind`.
 const _gp = [0, 0];
+const _de = [0, 0];
 export function indirectAccel(st, out, tau = 0) {
     // with Earth gone the origin coasts inertially: no frame correction at all
     if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; return out; }
@@ -144,16 +201,27 @@ export function indirectAccel(st, out, tau = 0) {
             ay -= w * by;
         }
     }
+    const bhDt = PRED_BH.active ? tEval - PRED_BH.t0 : tau;
     for (let i = 0; i < BH.n; i++) {
         const mu0 = bhMuAt(i, 0, 0, tEval);
         if (mu0 <= 0) continue;
-        const bx = BH.x[i] + BH.vx[i] * tau, by = BH.y[i] + BH.vy[i] * tau;
+        const bx = PRED_BH.active ? PRED_BH.x[i] + PRED_BH.vx[i] * bhDt : BH.x[i] + BH.vx[i] * bhDt;
+        const by = PRED_BH.active ? PRED_BH.y[i] + PRED_BH.vy[i] * bhDt : BH.y[i] + BH.vy[i] * bhDt;
         const r0 = Math.sqrt(bx * bx + by * by);
         if (r0 > 1e-9) {
             const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
             const am0 = mu0 / (eff0 * eff0) / r0;
             ax -= bx * am0;
             ay -= by * am0;
+        }
+    }
+    for (const star of STARS) {
+        const bx = star.x - (st ? st.earthX : earthX), by = star.y - (st ? st.earthY : earthY);
+        const r0 = Math.sqrt(bx * bx + by * by);
+        if (r0 > 1e-9) {
+            const w0 = star.mu / (r0 * r0 * r0);
+            ax -= w0 * bx;
+            ay -= w0 * by;
         }
     }
     if (GS.length) {
@@ -206,8 +274,10 @@ export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind =
             }
         }
     }
+    const bhDt = PRED_BH.active ? tEval - PRED_BH.t0 : tau;
     for (let i = 0; i < BH.n; i++) {
-        const bx = BH.x[i] + BH.vx[i] * tau, by = BH.y[i] + BH.vy[i] * tau;
+        const bx = PRED_BH.active ? PRED_BH.x[i] + PRED_BH.vx[i] * bhDt : BH.x[i] + BH.vx[i] * bhDt;
+        const by = PRED_BH.active ? PRED_BH.y[i] + PRED_BH.vy[i] * bhDt : BH.y[i] + BH.vy[i] * bhDt;
         const dx = x - bx, dy = y - by;
         const r = Math.sqrt(dx * dx + dy * dy);
         if (r > 1e-9) {
@@ -233,6 +303,25 @@ export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind =
             }
         }
     }
+    for (const star of STARS) {
+        const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
+        const bx = star.x - ex, by = star.y - ey;
+        const dx = x - bx, dy = y - by;
+        const r2 = dx * dx + dy * dy;
+        if (r2 > 1e-18) {
+            const w = star.mu / (r2 * Math.sqrt(r2));
+            ax -= w * dx;
+            ay -= w * dy;
+        }
+        if (indir) {
+            const r02 = bx * bx + by * by;
+            if (r02 > 1e-18) {
+                const w0 = star.mu / (r02 * Math.sqrt(r02));
+                ax -= w0 * bx;
+                ay -= w0 * by;
+            }
+        }
+    }
     if (GS.length) {
         _gp[0] = 0; _gp[1] = 0;
         gsPull(x, y, tEval, _gp);
@@ -242,6 +331,10 @@ export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind =
             gsPull(0, 0, tEval, _gp);
             ax -= _gp[0]; ay -= _gp[1];
         }
+    }
+    if (G.darkEnergy) {
+        darkEnergyAccel(x, y, _de);
+        ax += _de[0]; ay += _de[1];
     }
     if (ind !== null) { ax += ind[0]; ay += ind[1]; }
     out[0] = ax; out[1] = ay;

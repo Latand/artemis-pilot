@@ -4,17 +4,21 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { G } from "./state.js";
+import { CAM_DIST_MAX } from "./constants.js";
+import { look, LOOK_YAW_MAX, LOOK_PITCH_MIN, LOOK_PITCH_MAX } from "./cockpit.js";
 
 export const cvHost = document.getElementById("gl");
 export const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
 renderer.setClearColor(0x04060a, 1);
 renderer.domElement.style.display = "block";
 renderer.domElement.style.touchAction = "none";
 cvHost.appendChild(renderer.domElement);
 
 export const scene = new THREE.Scene();
-export const camera = new THREE.PerspectiveCamera(48, 1, .02, 7500000);
+export const camera = new THREE.PerspectiveCamera(48, 1, .02, CAM_DIST_MAX * 1.35);
 
 // ---- post-processing: bloom ----
 export const composer = new EffectComposer(renderer);
@@ -68,7 +72,11 @@ function onMove(e) {
     ptrs.set(e.pointerId, cur);
     const dx = cur.x - prev.x, dy = cur.y - prev.y;
     if (ptrs.size === 1) {
-        if (prev.btn === 1 || prev.btn === 2) panBy(dx, dy);
+        if (G.cabin) {
+            // head-look inside the cockpit; the world camera follows in main.js
+            look.yaw = Math.min(LOOK_YAW_MAX, Math.max(-LOOK_YAW_MAX, look.yaw + dx * .0042));
+            look.pitch = Math.min(LOOK_PITCH_MAX, Math.max(LOOK_PITCH_MIN, look.pitch - dy * .0042));
+        } else if (prev.btn === 1 || prev.btn === 2) panBy(dx, dy);
         else {
             cam.yaw += dx * .0052;
             cam.pitch = Math.min(1.45, Math.max(-1.45, cam.pitch + dy * .0052));
@@ -76,13 +84,17 @@ function onMove(e) {
     } else if (ptrs.size === 2) {
         const a = [...ptrs.values()];
         const d = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
-        if (pinchD > 0) cam.dist = Math.min(5600000, Math.max(.03, cam.dist * pinchD / d));
+        if (pinchD > 0) cam.dist = Math.min(CAM_DIST_MAX, Math.max(.03, cam.dist * pinchD / d));
         pinchD = d;
         panBy(dx * .5, dy * .5); // two-finger drag pans too
     }
 }
 function onUp(e) { ptrs.delete(e.pointerId); pinchD = 0; }
-function onWheel(e) { e.preventDefault(); cam.dist = Math.min(5600000, Math.max(.03, cam.dist * Math.exp(e.deltaY * .0011))); }
+function onWheel(e) {
+    e.preventDefault();
+    if (G.cabin) return; // zoom is meaningless inside the cabin and would silently trip cosmic scale
+    cam.dist = Math.min(CAM_DIST_MAX, Math.max(.03, cam.dist * Math.exp(e.deltaY * .0011)));
+}
 el.addEventListener("pointermove", e => { lastPtr = [e.clientX, e.clientY]; });
 el.addEventListener("pointerdown", onDown);
 el.addEventListener("contextmenu", e => e.preventDefault());

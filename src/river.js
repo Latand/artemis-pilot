@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { FLOW, PL, K, R_EARTH, R_MOON, SUN_RADIUS } from "./constants.js";
-import { BH, WORLD } from "./state.js";
+import { DARK_ENERGY, FLOW, PL, K, R_EARTH, R_MOON, SUN_RADIUS } from "./constants.js";
+import { G, BH, WORLD } from "./state.js";
 import { mulberry32 } from "./format.js";
 import { dotTexture } from "./textures.js";
 import { scene, renderer, camera, cam } from "./scene.js";
@@ -27,6 +27,7 @@ const uniformsShared = {
     uPos: { value: null },
     uDtSim: { value: 0 },
     uCenter: { value: new THREE.Vector3() },
+    uOrigin: { value: new THREE.Vector3() },
     uRadius: { value: 22 },
     uCam: { value: new THREE.Vector3() },
     uTick: { value: 0 },
@@ -36,6 +37,7 @@ const uniformsShared = {
     uSink: { value: sinkVals },
     uVRef: { value: .01 },
     uOpacity: { value: 0 },
+    uDE: { value: 0 },
 };
 
 const FLOW_GLSL = /* glsl */`
@@ -44,6 +46,8 @@ uniform vec4 uBody[${MAXB}];
 uniform float uSink[${MAXB}];
 uniform float uRadius;
 uniform vec3 uCenter;
+uniform vec3 uOrigin;
+uniform float uDE;
 // Relative river: bodies far outside the viewed volume contribute their tidal
 // residual by subtracting bulk flow at the volume center. This keeps local
 // structure readable when a distant massive body dominates the raw vector.
@@ -65,6 +69,7 @@ vec3 flowField(vec3 p) {
         float w = smoothstep(uRadius * 0.9, uRadius * 1.8, length(dC));
         v += -d * s + w * dC * sC;
     }
+    v += (p - uOrigin) * uDE;
     return v;
 }
 float hash13(vec3 p3) {
@@ -132,19 +137,22 @@ void main() {
     vec3 pos = mix(p, tail, aEnd);
     // fades: volume edge, camera proximity, sink proximity
     float fade = clamp(1.0 - (distance(p, uCenter) - uRadius * 0.8) / (uRadius * 0.2), 0.0, 1.0);
-    fade *= clamp((distance(p, uCam) - uRadius * 0.05) / (uRadius * 0.3), 0.0, 1.0);
+    fade *= clamp((distance(p, uCam) - uRadius * 0.1) / (uRadius * 0.45), 0.0, 1.0);
     fade *= 0.55 + 0.45 * hash13(vec3(ref * 53.7, 7.77)); // per-streak variety
     for (int i = 0; i < ${MAXB}; i++) {
         if (i >= uNB) break;
         float dB = distance(p, uBody[i].xyz);
         fade *= clamp((dB - uSink[i]) / (uSink[i] * 1.5 + uRadius * 0.02), 0.0, 1.0);
     }
-    // golden when the Sun's river dominates locally, cyan-blue otherwise
+    // golden when the Sun's river dominates locally, violet when expansion wins
     float sunPart = uBody[2].w * inversesqrt(max(uSink[2] * 0.5, distance(p, uBody[2].xyz)));
     float gold = smoothstep(0.5, 0.95, clamp(sunPart / spd, 0.0, 1.0));
+    float expPart = length((p - uOrigin) * uDE);
+    float violet = smoothstep(0.18, 0.72, clamp(expPart / spd, 0.0, 1.0));
     vec3 cBlue = vec3(0.16 + 0.5 * t, 0.4 + 0.45 * t, 0.6 + 0.4 * t);
     vec3 cGold = vec3(0.6 + 0.4 * t, 0.34 + 0.42 * t, 0.12 + 0.26 * t);
-    vColor = mix(cBlue, cGold, gold) * fade * mix(0.9, 0.12, aEnd) * uOpacity;
+    vec3 cViolet = vec3(0.55 + 0.34 * t, 0.20 + 0.28 * t, 0.92 + 0.08 * t);
+    vColor = mix(mix(cBlue, cGold, gold), cViolet, violet) * fade * mix(0.9, 0.12, aEnd) * uOpacity;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
 
@@ -222,11 +230,11 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     river.dtVis = dtSim;
     if (!river.enabled) return;
     lines.visible = fB > .01;
-    uniformsShared.uOpacity.value = .52 * fB;
+    uniformsShared.uOpacity.value = .26 * fB;
     if (!lines.visible) return;
 
     const cd = camera.position.distanceTo(cam.tgt);
-    const R = Math.min(2.4e6, Math.max(16, cd * 2.8));
+    const R = Math.min(1.2e8, Math.max(16, cd * 2.8));
     river.radius = R;
     const c = cam.tgt;
     let force = 0;
@@ -235,9 +243,11 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         force = 1; lastR = R; lastCx = c.x; lastCz = c.z;
     }
     uniformsShared.uCenter.value.set(c.x, c.y, c.z);
+    uniformsShared.uOrigin.value.copy(earthV);
     uniformsShared.uRadius.value = R;
     uniformsShared.uCam.value.copy(camera.position);
     uniformsShared.uForce.value = force;
+    uniformsShared.uDE.value = G.darkEnergy ? DARK_ENERGY.H_SIM : 0;
     uniformsShared.uTick.value = (uniformsShared.uTick.value + .618) % 64;
 
     bodyVals[0].set(earthV.x, earthV.y, earthV.z, WORLD.earthDestroyed ? 0 : FLOW.CE);

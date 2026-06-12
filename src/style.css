@@ -14,12 +14,14 @@ body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; co
 .vFill.ok { background: linear-gradient(90deg, #2e7d4f, #58c87f); }
 #hoverTip { position: absolute; display: none; pointer-events: none; z-index: 7; font-size: 10px; letter-spacing: .08em;
   background: rgba(8,12,18,.92); border: 1px solid #2a4a5e; border-radius: 6px; padding: 5px 8px; color: #cfe8f8; white-space: nowrap; }
+#cosmicScale { position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); z-index: 5; pointer-events: none; opacity: 0;
+  font-size: 10px; letter-spacing: .18em; color: #d6c8ff; text-shadow: 0 0 12px rgba(150,110,255,.55); transition: opacity .2s; }
 .panel { background: rgba(13,18,26,.82); border: 1px solid #1d2733; border-radius: 8px; backdrop-filter: blur(6px); }
 .cellL { font-size: 9px; letter-spacing: .14em; color: #6d7a8a; }
 .cellV { font-size: 12px; color: #e8edf4; margin-top: 2px; white-space: nowrap; }
 #hudTL { position: absolute; top: 12px; left: 14px; pointer-events: none; z-index: 5; }
 #hudTR { position: absolute; top: 12px; right: 14px; width: 240px; pointer-events: none; z-index: 5; }
-#flowPanel { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: 430px; text-align: center; pointer-events: none; z-index: 4;
+#flowPanel { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); width: min(560px, calc(100vw - 28px)); text-align: center; pointer-events: none; z-index: 4;
   background: rgba(8,12,18,.76); border: 1px solid #21384a; border-radius: 10px; padding: 8px 12px; backdrop-filter: blur(6px); }
 #hudBot { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 10px 10px; display: flex; justify-content: center; pointer-events: none; z-index: 5; }
 #cells { width: 100%; max-width: 860px; display: flex; gap: 6px; }
@@ -35,6 +37,14 @@ body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; co
 #help td { font-size: 11px; padding: 3px 4px; color: #cfd8e3; }
 #help td:first-child { color: #ff8a73; white-space: nowrap; width: 110px; }
 #hint { position: absolute; right: 14px; bottom: 12px; font-size: 9px; letter-spacing: .14em; color: #5a6878; pointer-events: none; z-index: 5; }
+/* cabin mode: the cockpit is real 3D geometry now — the DOM only contributes
+   a small mode hint; every external panel gets out of the way entirely */
+#cabinHud { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); display: none; pointer-events: none; z-index: 6;
+  font-size: 10px; letter-spacing: .22em; color: #7c95a8; text-shadow: 0 1px 3px #000; }
+body.mode-cabin #cabinHud { display: block; }
+body.mode-cabin #hudTL, body.mode-cabin #hudTR, body.mode-cabin #hudBot,
+body.mode-cabin #flowPanel, body.mode-cabin #hint, body.mode-cabin .lbl { display: none !important; }
+.starLbl { font-size: 10px; text-shadow: 0 0 12px rgba(255,220,160,.55), 0 1px 3px #000; }
 #toasts { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .toast { background: rgba(20,30,22,.92); border: 1px solid #2e5a3a; color: #9fe8b8; border-radius: 8px; padding: 7px 11px;
   font-size: 11px; letter-spacing: .06em; animation: tIn .3s ease-out; }
@@ -48,3 +58,9 @@ body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; co
 #engineLine { font-size: 10px; color: #9fb0c2; margin-top: 6px; }
 #warpLine { font-size: 11px; color: #ffd9d1; margin-top: 6px; letter-spacing: .08em; }
 .warn { color: #ff8a73 !important; animation: pulse 1s infinite; }
+@media (max-width: 760px) {
+  .dash { left: 0; right: 0; grid-template-columns: 1fr; height: 32vh; overflow: hidden; }
+  .mfd { padding: 7px 9px; }
+  .strutL { left: 12vw; }
+  .strutR { right: 12vw; }
+}
