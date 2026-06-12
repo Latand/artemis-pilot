@@ -47,7 +47,7 @@ function die(reason, swallowed) {
         triggerExplosion(G.x * K, 0, -G.y * K, cs);
         boom();
     }
-    showBanner("VEHICLE LOST", reason + " · MET " + fmtMET(G.t) + " · max Earth distance " + fmtKm(G.maxRE) + " · Δv used " + Math.round(G.dvUsed) + " m/s", "OBSERVER MODE IN 2 SECONDS · R TO REBUILD SHIP");
+    showBanner("VEHICLE LOST", reason + " · MET " + fmtMET(G.t) + " · max Earth distance " + fmtKm(G.maxRE) + " · Δv used " + Math.round(G.dvUsed) + " m/s", "R TO REBUILD SHIP");
 }
 function restart() {
     resetEphem();
