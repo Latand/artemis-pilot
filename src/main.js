@@ -2,12 +2,12 @@ import * as THREE from "three";
 import {
     R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_ENERGY, LY_SCENE, STARS,
-    OMEGA_EARTH, FUEL_DV0,
+    OMEGA_EARTH, FUEL_DV0, warpLabel,
 } from "./constants.js";
 import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
 import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
 import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
-import { fmtMET, fmtKm, clamp01, smooth01, speedColor } from "./format.js";
+import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.js";
 import { loadAllMaps } from "./textures.js";
 import { scene, camera, composer, renderer, cam, applyCamera, cvHost, put, project, lastPtr } from "./scene.js";
 import {
@@ -483,10 +483,21 @@ function nearestStarInfo() {
     }
     return { i: best, d: bestD };
 }
-function updateCabinHUD(cosmicView) {
+function updateCabinHUD(cosmicView, oi) {
     const cabinActive = G.cabin && !G.dead && !cosmicView;
     document.body.classList.toggle("mode-cabin", cabinActive);
     if (cabinHudEl) cabinHudEl.setAttribute("aria-hidden", cabinActive ? "false" : "true");
+    // glass HUD: the always-readable line the 3D panels can't show at a glance
+    if (cabinActive && frameNo % 5 === 0) {
+        const apOn = AP.mode !== "off";
+        cabinHudEl.innerHTML =
+            '<span class="chMain">T+ ' + fmtMET(G.t) +
+            ' · ⏩ ' + warpLabel(G.warp) + (G.paused ? " ❚❚" : "") +
+            ' · VEL ' + Math.hypot(G.vx, G.vy).toFixed(2) + " km/s" +
+            ' · ALT ' + fmtDist(Math.max(0, oi.r - oi.R)) + " · " + oi.body +
+            (apOn ? ' · <span class="chAp">AP ' + AP.mode.toUpperCase() + "</span>" : "") +
+            "</span><br><span class=\"chHint\">DRAG TO LOOK · J EXTERNAL VIEW</span>";
+    }
     return cabinActive;
 }
 
@@ -635,7 +646,7 @@ function frame() {
         G.focus === "free" ? .03 : typeof G.focus === "number" ? PL[G.focus].R * K * 1.3 :
         G.focus === "earth" ? R_EARTH * K * 1.3 : G.focus === "moon" ? R_MOON * K * 1.3 : G.focus === "sun" ? SUN_RADIUS * 1.25 : .05;
     cam.dist = Math.max(minD, cam.dist);
-    const cabinActive = updateCabinHUD(cosmicView);
+    const cabinActive = updateCabinHUD(cosmicView, oi);
     if (cabinActive) {
         // head direction = ship heading + look offsets (drag to look around)
         const a = G.heading - look.yaw;

@@ -121,21 +121,21 @@ let throttleLever = null;
     for (const az of [-.62, 0, .62]) {
         const sx = Math.sin(az), cz = Math.cos(az);
         const bezel = new THREE.Mesh(new THREE.BoxGeometry(.5, .39, .035), mDark);
-        bezel.position.set(sx * .68, -.275, -cz * .68);
-        bezel.rotation.set(-.58, -az, 0, "YXZ");
+        bezel.position.set(sx * .68, -.215, -cz * .68);
+        bezel.rotation.set(-.48, -az, 0, "YXZ");
         cockpitScene.add(bezel);
         const scr = new THREE.Mesh(
             new THREE.PlaneGeometry(.45, .34),
             new THREE.MeshBasicMaterial({ color: 0xffffff })); // map assigned by instruments.js
-        scr.position.set(sx * .664, -.266, -cz * .664);
-        scr.rotation.set(-.58, -az, 0, "YXZ");
+        scr.position.set(sx * .664, -.206, -cz * .664);
+        scr.rotation.set(-.48, -az, 0, "YXZ");
         cockpitScene.add(scr);
         mfdScreens.push(scr);
     }
-    // throttle: base block + lever on the deck, starboard of center
+    // throttle: base block + lever on the deck, outboard of the SYS screen
     const base = new THREE.Mesh(new THREE.BoxGeometry(.14, .06, .18), mDark);
-    base.position.set(.34, -.2, -.6);
-    base.rotation.y = -.45;
+    base.position.set(Math.sin(1.08) * .7, -.2, -Math.cos(1.08) * .7);
+    base.rotation.y = -1.08;
     cockpitScene.add(base);
     const lever = new THREE.Group();
     const stalk = new THREE.Mesh(new THREE.CylinderGeometry(.01, .01, .09, 8), mFrame);
@@ -143,7 +143,7 @@ let throttleLever = null;
     const knob = new THREE.Mesh(new THREE.SphereGeometry(.022, 12, 8), new THREE.MeshPhongMaterial({ color: 0xb33c24, shininess: 40 }));
     knob.position.y = .095;
     lever.add(stalk, knob);
-    lever.position.set(.34, -.18, -.6);
+    lever.position.set(Math.sin(1.08) * .7, -.18, -Math.cos(1.08) * .7);
     cockpitScene.add(lever);
     throttleLever = lever;
 }

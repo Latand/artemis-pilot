@@ -39,8 +39,11 @@ body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; co
 #hint { position: absolute; right: 14px; bottom: 12px; font-size: 9px; letter-spacing: .14em; color: #5a6878; pointer-events: none; z-index: 5; }
 /* cabin mode: the cockpit is real 3D geometry now — the DOM only contributes
    a small mode hint; every external panel gets out of the way entirely */
-#cabinHud { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); display: none; pointer-events: none; z-index: 6;
-  font-size: 10px; letter-spacing: .22em; color: #7c95a8; text-shadow: 0 1px 3px #000; }
+#cabinHud { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); display: none; pointer-events: none; z-index: 6;
+  text-align: center; padding: 6px 14px; border-radius: 8px; background: rgba(6,10,15,.55); border: 1px solid rgba(42,74,94,.5); }
+.chMain { font-size: 12px; letter-spacing: .1em; color: #cfe8f8; text-shadow: 0 1px 3px #000; }
+.chAp { color: #58c87f; }
+.chHint { font-size: 9px; letter-spacing: .2em; color: #5d7587; }
 body.mode-cabin #cabinHud { display: block; }
 body.mode-cabin #hudTL, body.mode-cabin #hudTR, body.mode-cabin #hudBot,
 body.mode-cabin #flowPanel, body.mode-cabin #hint, body.mode-cabin .lbl { display: none !important; }

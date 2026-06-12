@@ -38,6 +38,13 @@ const norm = a => ((a % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
 // ---- MFD 0: attitude / heading tape ----
 function drawAttitude(ctx, oi) {
     header(ctx, "ATTITUDE");
+    // vel/alt share the top row — the screen bottom can sit behind the deck
+    ctx.font = "17px ui-monospace, monospace";
+    ctx.textAlign = "right";
+    ctx.fillStyle = TXT;
+    ctx.fillText(Math.hypot(G.vx, G.vy).toFixed(3) + " km/s", W - 16, 30);
+    ctx.fillStyle = DIM;
+    ctx.fillText("ALT " + fmtDist(Math.max(0, oi.r - oi.R)), W - 16, 56);
     const hdg = (-G.heading * 180 / Math.PI % 360 + 360) % 360; // compass-style
     const cy = 120;
     ctx.save();
@@ -89,16 +96,6 @@ function drawAttitude(ctx, oi) {
     ctx.font = "18px ui-monospace, monospace";
     ctx.fillStyle = G.hold ? OK : DIM;
     ctx.fillText(G.hold === "pro" ? "HOLD PROGRADE" : G.hold === "retro" ? "HOLD RETROGRADE" : "MANUAL", W / 2, 252);
-    // bottom: speed/alt
-    ctx.textAlign = "left";
-    ctx.fillStyle = DIM;
-    ctx.font = "17px ui-monospace, monospace";
-    ctx.fillText("VEL", 26, 305);
-    ctx.fillText("ALT " + oi.body, 26, 345);
-    ctx.fillStyle = TXT;
-    ctx.font = "700 24px ui-monospace, monospace";
-    ctx.fillText(Math.hypot(G.vx, G.vy).toFixed(3) + " km/s", 110, 305);
-    ctx.fillText(fmtDist(Math.max(0, oi.r - oi.R)), 110, 345);
 }
 
 // ---- MFD 1: nav orbit map ----
@@ -212,41 +209,39 @@ function drawSys(ctx, oi, eph) {
     header(ctx, "SYS · DRIVE");
     ctx.font = "17px ui-monospace, monospace";
     ctx.textAlign = "left";
-    const rows = [
-        ["THROTTLE", Math.round(G.throttle * 100) + "%", Math.min(1, G.throttle), ACC],
-        ["FUEL Δv", G.infinite ? "∞" : Math.round(G.fuel) + " m/s", G.infinite ? 1 : G.fuel / FUEL_DV0, G.infinite || G.fuel / FUEL_DV0 > .15 ? OK : WARN],
-    ];
-    let y = 64;
-    for (const [lab, val, frac, col] of rows) {
-        ctx.fillStyle = DIM;
-        ctx.fillText(lab, 26, y);
-        ctx.fillStyle = TXT;
-        ctx.fillText(val, 170, y);
-        bar(ctx, 310, y - 12, 172, frac, col);
-        y += 38;
-    }
+    // two-column top layout: everything important above the deck line
     ctx.fillStyle = DIM;
-    ctx.fillText("WARP", 26, y);
-    ctx.fillStyle = G.warp > 30 * SEC_YEAR ? GOLD : TXT;
-    ctx.fillText(warpLabel(G.warp) + (G.paused ? " · PAUSED" : ""), 150, y);
-    y += 38;
-    ctx.fillStyle = DIM;
-    ctx.fillText("Δv USED", 26, y);
+    ctx.fillText("THR", 16, 60);
     ctx.fillStyle = TXT;
-    ctx.fillText(Math.round(G.dvUsed) + " m/s", 150, y);
-    y += 50;
-    // autopilot block
-    ctx.strokeStyle = GRID;
-    ctx.strokeRect(16, y - 26, W - 32, 88);
-    ctx.fillStyle = AP.mode !== "off" ? OK : DIM;
+    ctx.fillText(Math.round(G.throttle * 100) + "%", 64, 60);
+    bar(ctx, 140, 48, 96, Math.min(1, G.throttle), ACC);
+    ctx.fillStyle = DIM;
+    ctx.fillText("FUEL", 16, 86);
+    ctx.fillStyle = G.infinite || G.fuel / FUEL_DV0 > .15 ? TXT : WARN;
+    ctx.fillText(G.infinite ? "∞" : Math.round(G.fuel) + " m/s", 64, 86);
+    if (!G.infinite) bar(ctx, 140, 74, 96, G.fuel / FUEL_DV0, G.fuel / FUEL_DV0 > .15 ? OK : WARN);
+    ctx.fillStyle = DIM;
+    ctx.fillText("WARP", 256, 60);
+    ctx.fillStyle = G.warp > 30 * SEC_YEAR ? GOLD : TXT;
+    ctx.fillText(warpLabel(G.warp) + (G.paused ? " ❚❚" : ""), 318, 60);
+    ctx.fillStyle = DIM;
+    ctx.fillText("Δv", 256, 86);
+    ctx.fillStyle = TXT;
+    ctx.fillText(Math.round(G.dvUsed).toLocaleString("en-US") + " m/s", 318, 86);
+    // autopilot strip directly below — still in the visible band
+    const apOn = AP.mode !== "off";
+    ctx.fillStyle = apOn ? OK : DIM;
     ctx.font = "600 18px ui-monospace, monospace";
-    ctx.fillText("AUTOPILOT · " + AP.mode.toUpperCase() + (AP.phase ? " · " + AP.phase.toUpperCase() : ""), 26, y);
+    ctx.fillText("AP · " + (apOn ? AP.mode.toUpperCase() + (AP.phase ? " · " + AP.phase.toUpperCase() : "") : "OFF"), 16, 122);
     ctx.font = "17px ui-monospace, monospace";
     ctx.fillStyle = TXT;
     const t = targetInfo();
-    ctx.fillText(AP.mode !== "off" ? (AP.msg || "") : t ? "FOCUS " + t.name + " · ⇧T TRAVEL · ⇧C CIRCULARIZE" : "SET FOCUS, THEN ⇧T", 26, y + 26);
+    ctx.fillText(apOn ? (AP.msg || "") : t ? "FOCUS " + t.name + " · ⇧T GO · ⇧C CIRC" : "SET FOCUS, THEN ⇧T", 16, 150);
     ctx.fillStyle = DIM;
-    ctx.fillText(AP.mode !== "off" ? "ANY MANUAL INPUT TAKES OVER · ⇧X CANCEL" : "⇧X CANCEL", 26, y + 50);
+    ctx.fillText(apOn ? "MANUAL INPUT TAKES OVER · ⇧X OFF" : "⇧C CIRCULARIZE HERE", 16, 176);
+    // engine state
+    ctx.fillStyle = G.boost ? GOLD : DIM;
+    ctx.fillText(G.boost ? "BOOST ×4" : "", 16, 206);
 }
 
 let tick = 0;
