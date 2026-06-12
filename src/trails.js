@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, R_SUN, PL, K } from "./constants.js";
+import { R_EARTH, R_MOON, R_SUN, PL, K, SOI_M } from "./constants.js";
 import {
-    eph, updEphem, moonState,
+    eph, moonState,
     snapshotEphem, loadEphemSnapshot, advanceEphemSnapshot,
     bodyStateForTarget,
 } from "./ephemeris.js";
@@ -150,36 +150,72 @@ const caDot = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(
 caDot.visible = false;
 scene.add(caDot);
 const _ps = [0, 0, 0, 0];
+// per-call time cap so long predictions never hitch a frame — but only after a
+// guaranteed minimum of steps, so near-field impact warnings are never starved
+// (a cold, un-JITed first call can be slow enough to truncate otherwise)
+const PRED_BUDGET_MS = 10, PRED_MIN_STEPS = 600;
+// did the segment (x0,y0)→(x1,y1), in body-relative coordinates, pass within R
+// of the body center?
+function segHit(x0, y0, x1, y1, R) {
+    const dx = x1 - x0, dy = y1 - y0;
+    const L2 = dx * dx + dy * dy;
+    let t = L2 > 1e-12 ? -(x0 * dx + y0 * dy) / L2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const qx = x0 + dx * t, qy = y0 + dy * t;
+    return qx * qx + qy * qy < R * R;
+}
 export function computePrediction() {
     if (!G.predict || G.dead || G.landed) { prGeom.setDrawRange(0, 0); impactSpr.visible = false; ghostMoon.visible = false; caDot.visible = false; return; }
     const liveEphem = snapshotEphem();
     const predEphem = snapshotEphem();
     _ps[0] = G.x; _ps[1] = G.y; _ps[2] = G.vx; _ps[3] = G.vy;
     let pt = G.t, n = 0, minRM = Infinity, caT = 0, caX = 0, caY = 0, caMX = 0, caMY = 0, caEX = 0, caEY = 0, impact = 0;
+    const t0 = performance.now();
     try {
         loadEphemSnapshot(predEphem);
         const far = Math.hypot(G.x, G.y) > 2e6;
         const tMax = G.t + 86400 * (far ? 160 : 8);
+        let pmx = 0, pmy = 0, pex = 0, pey = 0, hasPrev = false, plNear = false;
         while (n < PRN && pt < tMax) {
             prPos[n * 3] = (predEphem.earthX + _ps[0]) * K; prPos[n * 3 + 1] = 0; prPos[n * 3 + 2] = -(predEphem.earthY + _ps[1]) * K;
             n++;
-            updEphem(pt);
-            const rE = Math.hypot(_ps[0], _ps[1]);
+            if (n > PRED_MIN_STEPS && (n & 31) === 0 && performance.now() - t0 > PRED_BUDGET_MS) break;
+            const rE = Math.sqrt(_ps[0] * _ps[0] + _ps[1] * _ps[1]);
             moonState(pt, _m);
-            const rM = Math.hypot(_ps[0] - _m.mx, _ps[1] - _m.my);
+            const dmx = _ps[0] - _m.mx, dmy = _ps[1] - _m.my;
+            const rM = Math.sqrt(dmx * dmx + dmy * dmy);
             if (rM < minRM) { minRM = rM; caT = pt; caX = _ps[0]; caY = _ps[1]; caMX = _m.mx; caMY = _m.my; caEX = predEphem.earthX; caEY = predEphem.earthY; }
-            const rSp = Math.hypot(_ps[0] - eph.sunX, _ps[1] - eph.sunY);
+            const dsx = _ps[0] - eph.sunX, dsy = _ps[1] - eph.sunY;
+            const rSp = Math.sqrt(dsx * dsx + dsy * dsy);
             if (rE < R_EARTH) { impact = 1; break; }
             if (rM < R_MOON) { impact = 2; break; }
+            // grazing chords: a step can jump across a body between samples, so
+            // near Earth/Moon also test the closest approach along the segment
+            if (hasPrev) {
+                if (rM < SOI_M && segHit(pmx, pmy, dmx, dmy, R_MOON)) { impact = 2; break; }
+                if (rE < 60000 && segHit(pex, pey, _ps[0], _ps[1], R_EARTH)) { impact = 1; break; }
+            }
+            pmx = dmx; pmy = dmy; pex = _ps[0]; pey = _ps[1]; hasPrev = true;
             if (rSp < R_SUN) { impact = 3; break; }
-            for (let pi = 0; pi < PL.length; pi++)
-                if (Math.hypot(_ps[0] - eph.plX[pi], _ps[1] - eph.plY[pi]) <= PL[pi].R) { impact = 5; break; }
-            for (let bi = 0; bi < BH.n; bi++)
-                if (Math.hypot(_ps[0] - BH.x[bi], _ps[1] - BH.y[bi]) <= BH.rs[bi] * 1.5) { impact = 4; break; }
+            plNear = false;
+            for (let pi = 0; pi < PL.length; pi++) {
+                const dx = _ps[0] - eph.plX[pi], dy = _ps[1] - eph.plY[pi];
+                const d2 = dx * dx + dy * dy;
+                if (d2 <= PL[pi].R * PL[pi].R) { impact = 5; break; }
+                if (d2 < PL[pi].soi * PL[pi].soi * .25) plNear = true;
+            }
+            for (let bi = 0; bi < BH.n; bi++) {
+                const dx = _ps[0] - BH.x[bi], dy = _ps[1] - BH.y[bi];
+                const lim = BH.rs[bi] * 1.5;
+                if (dx * dx + dy * dy <= lim * lim) { impact = 4; break; }
+            }
             if (impact) break;
-            let dt = stepSize(rE, rM, rSp, rE - R_EARTH, Math.hypot(_ps[2], _ps[3]), _ps[0], _ps[1]) * (far ? 14 : 3);
+            // full fidelity through flybys: the post-encounter path is too
+            // sensitive for coarsened steps near the Moon or a planet
+            const mult = (rM < SOI_M * 1.5 || plNear) ? 1 : far ? 14 : 3;
+            let dt = stepSize(rE, rM, rSp, rE - R_EARTH, Math.hypot(_ps[2], _ps[3]), _ps[0], _ps[1], _ps[2], _ps[3]) * mult;
             dt = Math.max(.5, Math.min(far ? 3200 : 600, dt));
-            rk4Step(_ps, pt, dt, 0, 0);
+            rk4Step(_ps, 0, dt, 0, 0);
             advanceEphemSnapshot(predEphem, dt);
             pt += dt;
         }

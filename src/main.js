@@ -1,11 +1,11 @@
 import * as THREE from "three";
 import {
-    R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, ATM_TOP, DRAG_CD, DRAG_H,
+    R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M,
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S,
 } from "./constants.js";
 import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed } from "./state.js";
 import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
-import { initPhysicsHooks, advance, snapLanded, orbitInfo } from "./physics.js";
+import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
 import { fmtMET, fmtKm, clamp01, smooth01, speedColor } from "./format.js";
 import { loadAllMaps } from "./textures.js";
 import { scene, camera, composer, cam, applyCamera, cvHost, put, project, lastPtr } from "./scene.js";
@@ -538,17 +538,14 @@ function frame() {
         xpFlash.material.opacity = Math.max(0, 1 - xp.t / .7);
         if (xp.t > 3) { explosion.visible = false; xpFlash.visible = false; xp.t = -1; }
     }
-    // ---- plasma / aero shake ----
+    // ---- plasma / aero shake (any atmosphere: Earth, Venus, Mars, giants) ----
     let shake = 0;
-    const hAtm = oi.rE - R_EARTH;
-    if (hAtm < ATM_TOP && !G.landed && !G.dead) {
-        const rho = Math.exp(-Math.max(0, hAtm) / DRAG_H);
-        const v = Math.hypot(G.vx, G.vy);
-        const aD = DRAG_CD * rho * v * v * 1000;
-        const I = clamp01(aD / 35);
+    const aero = sampleAero();
+    if (aero.aD > 0 && !G.landed && !G.dead) {
+        const I = clamp01(aero.aD / 35);
         if (I > .02) {
             plasma.visible = true;
-            velV.set(G.vx, 0, -G.vy).normalize();
+            velV.set(aero.vx, 0, -aero.vy).normalize();
             plasma.position.copy(velV).multiplyScalar(cs * .9);
             plasma.scale.setScalar(cs * (1.6 + 3.4 * I) * (1 + .15 * Math.sin(performance.now() * .05)));
             plasma.material.opacity = Math.min(1, .25 + I);

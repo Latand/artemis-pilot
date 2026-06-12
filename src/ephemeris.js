@@ -121,51 +121,97 @@ export function bodyStateForTarget(target, out, st = null) {
     return out;
 }
 
-export function relGravityAt(x, y, out, skipBody = -1, st = null) {
+// Indirect (frame) acceleration: every body and hole pulls the Earth-centered
+// origin. Identical for all field points, so callers evaluating many points
+// against one state compute it once and pass it as `ind`.
+export function indirectAccel(st, out, tau = 0) {
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
+    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
     let ax = 0, ay = 0;
-    const rE = Math.hypot(x, y);
-    const muE = activeEarthMu();
-    if (muE > 0 && rE > 1e-9) {
-        const rE3 = rE * rE * rE;
-        ax -= muE * x / rE3;
-        ay -= muE * y / rE3;
-    }
     for (let i = 0; i < NB; i++) {
         const mu = activeBodyMu(i);
-        if (mu > 0 && i !== skipBody) {
-            const dx = x - X[i], dy = y - Y[i];
-            const r = Math.hypot(dx, dy);
-            if (r > 1e-9) {
-                const r3 = r * r * r;
-                ax -= mu * dx / r3;
-                ay -= mu * dy / r3;
-            }
-        }
-        const r0 = Math.hypot(X[i], Y[i]);
-        if (mu > 0 && r0 > 1e-9) {
-            const r03 = r0 * r0 * r0;
-            ax -= mu * X[i] / r03;
-            ay -= mu * Y[i] / r03;
+        if (mu <= 0) continue;
+        const bx = X[i] + VX[i] * tau, by = Y[i] + VY[i] * tau;
+        const r02 = bx * bx + by * by;
+        if (r02 > 1e-18) {
+            const w = mu / (r02 * Math.sqrt(r02));
+            ax -= w * bx;
+            ay -= w * by;
         }
     }
     for (let i = 0; i < BH.n; i++) {
-        const dx = x - BH.x[i], dy = y - BH.y[i];
-        const r = Math.hypot(dx, dy);
+        const bx = BH.x[i] + BH.vx[i] * tau, by = BH.y[i] + BH.vy[i] * tau;
+        const r0 = Math.sqrt(bx * bx + by * by);
+        if (r0 > 1e-9) {
+            const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
+            const am0 = BH.mu[i] / (eff0 * eff0) / r0;
+            ax -= bx * am0;
+            ay -= by * am0;
+        }
+    }
+    out[0] = ax; out[1] = ay;
+    return out;
+}
+
+// `tau` linearly extrapolates body/hole positions, so an RK4 stage at t+τ
+// samples the field where the bodies actually are instead of where they were
+// at the start of the step (and between ephemeris flushes).
+export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind = null) {
+    const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
+    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
+    let ax = 0, ay = 0;
+    const muE = activeEarthMu();
+    if (muE > 0) {
+        const r2 = x * x + y * y;
+        if (r2 > 1e-18) {
+            const w = muE / (r2 * Math.sqrt(r2));
+            ax -= w * x;
+            ay -= w * y;
+        }
+    }
+    for (let i = 0; i < NB; i++) {
+        const mu = activeBodyMu(i);
+        if (mu <= 0) continue;
+        const bx = X[i] + VX[i] * tau, by = Y[i] + VY[i] * tau;
+        if (i !== skipBody) {
+            const dx = x - bx, dy = y - by;
+            const r2 = dx * dx + dy * dy;
+            if (r2 > 1e-18) {
+                const w = mu / (r2 * Math.sqrt(r2));
+                ax -= w * dx;
+                ay -= w * dy;
+            }
+        }
+        if (ind === null) {
+            const r02 = bx * bx + by * by;
+            if (r02 > 1e-18) {
+                const w0 = mu / (r02 * Math.sqrt(r02));
+                ax -= w0 * bx;
+                ay -= w0 * by;
+            }
+        }
+    }
+    for (let i = 0; i < BH.n; i++) {
+        const bx = BH.x[i] + BH.vx[i] * tau, by = BH.y[i] + BH.vy[i] * tau;
+        const dx = x - bx, dy = y - by;
+        const r = Math.sqrt(dx * dx + dy * dy);
         if (r > 1e-9) {
             const eff = Math.max(r - BH.rs[i], BH.rs[i] * .02);
             const am = BH.mu[i] / (eff * eff) / r;
             ax -= dx * am;
             ay -= dy * am;
         }
-        const r0 = Math.hypot(BH.x[i], BH.y[i]);
-        if (r0 > 1e-9) {
-            const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
-            const am0 = BH.mu[i] / (eff0 * eff0) / r0;
-            ax -= BH.x[i] * am0;
-            ay -= BH.y[i] * am0;
+        if (ind === null) {
+            const r0 = Math.sqrt(bx * bx + by * by);
+            if (r0 > 1e-9) {
+                const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
+                const am0 = BH.mu[i] / (eff0 * eff0) / r0;
+                ax -= bx * am0;
+                ay -= by * am0;
+            }
         }
     }
+    if (ind !== null) { ax += ind[0]; ay += ind[1]; }
     out[0] = ax; out[1] = ay;
     return out;
 }
@@ -193,42 +239,23 @@ function copyStateToLive(st) {
     earthX = st.earthX; earthY = st.earthY; earthVx = st.earthVx; earthVy = st.earthVy;
     syncFromState();
 }
-function earthAccel(st, out) {
-    let ax = 0, ay = 0;
-    if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; return; }
-    for (let i = 0; i < NB; i++) {
-        const mu = activeBodyMu(i);
-        const r = Math.hypot(st.x[i], st.y[i]);
-        if (mu > 0 && r > 1e-9) {
-            const r3 = r * r * r;
-            ax += mu * st.x[i] / r3;
-            ay += mu * st.y[i] / r3;
-        }
-    }
-    for (let i = 0; i < BH.n; i++) {
-        const r = Math.hypot(BH.x[i], BH.y[i]);
-        if (r > 1e-9) {
-            const eff = Math.max(r - BH.rs[i], BH.rs[i] * .02);
-            const am = BH.mu[i] / (eff * eff) / r;
-            ax += BH.x[i] * am;
-            ay += BH.y[i] * am;
-        }
-    }
-    out[0] = ax; out[1] = ay;
-}
+const _ind = [0, 0];
 function derivAll(st, K_) {
+    // the indirect frame term is identical for every body: compute it once
+    // (Earth's inertial acceleration is exactly its negative)
+    indirectAccel(st, _ind);
     for (let i = 0; i < NB; i++) {
         if (!isBodyActive(i)) {
             K_.x[i] = 0; K_.y[i] = 0; K_.vx[i] = 0; K_.vy[i] = 0;
             continue;
         }
-        relGravityAt(st.x[i], st.y[i], _a, i, st);
+        relGravityAt(st.x[i], st.y[i], _a, i, st, 0, _ind);
         K_.x[i] = st.vx[i]; K_.y[i] = st.vy[i];
         K_.vx[i] = _a[0]; K_.vy[i] = _a[1];
     }
-    earthAccel(st, _a);
     K_.earthX = st.earthVx; K_.earthY = st.earthVy;
-    K_.earthVx = _a[0]; K_.earthVy = _a[1];
+    if (WORLD.earthDestroyed) { K_.earthVx = 0; K_.earthVy = 0; }
+    else { K_.earthVx = -_ind[0]; K_.earthVy = -_ind[1]; }
 }
 function rk4Bodies(st, dt) {
     derivAll(st, _k[0]);
@@ -260,21 +287,23 @@ function rk4Bodies(st, dt) {
 }
 function bodyStepSize(st, rem, maxStep = 3600) {
     let dt = Math.min(rem, maxStep);
+    const muE = activeEarthMu();
     for (let i = 0; i < NB; i++) {
         const mui = activeBodyMu(i);
         if (mui <= 0) continue;
-        const rE = Math.hypot(st.x[i], st.y[i]);
-        const muE = activeEarthMu();
-        if (muE > 0 && rE > 1) dt = Math.min(dt, Math.sqrt(rE * rE * rE / (muE + mui)) / 55);
+        const rE2 = st.x[i] * st.x[i] + st.y[i] * st.y[i];
+        if (muE > 0 && rE2 > 1) dt = Math.min(dt, Math.sqrt(rE2 * Math.sqrt(rE2) / (muE + mui)) / 55);
         for (let j = i + 1; j < NB; j++) {
             const muj = activeBodyMu(j);
             if (muj <= 0) continue;
-            const d = Math.hypot(st.x[i] - st.x[j], st.y[i] - st.y[j]);
-            if (d > 1) dt = Math.min(dt, Math.sqrt(d * d * d / (mui + muj)) / 55);
+            const dx = st.x[i] - st.x[j], dy = st.y[i] - st.y[j];
+            const d2 = dx * dx + dy * dy;
+            if (d2 > 1) dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (mui + muj)) / 55);
         }
         for (let b = 0; b < BH.n; b++) {
-            const d = Math.hypot(st.x[i] - BH.x[b], st.y[i] - BH.y[b]);
-            if (d > BH.rs[b]) dt = Math.min(dt, Math.sqrt(d * d * d / (mui + BH.mu[b])) / 45);
+            const dx = st.x[i] - BH.x[b], dy = st.y[i] - BH.y[b];
+            const d2 = dx * dx + dy * dy;
+            if (d2 > BH.rs[b] * BH.rs[b]) dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (mui + BH.mu[b])) / 45);
         }
     }
     return Math.max(1e-3, dt);
@@ -287,11 +316,13 @@ function advanceState(st, dtTotal, maxStep = 3600) {
         rem -= dt;
     }
 }
+const _adv = makeState(); // persistent scratch: advanceEphem runs every flush, allocation-free
 export function advanceEphem(dtTotal) {
     if (dtTotal <= 0) return;
-    const st = makeState();
-    advanceState(st, dtTotal);
-    copyStateToLive(st);
+    _adv.x.set(bodyX); _adv.y.set(bodyY); _adv.vx.set(bodyVx); _adv.vy.set(bodyVy);
+    _adv.earthX = earthX; _adv.earthY = earthY; _adv.earthVx = earthVx; _adv.earthVy = earthVy;
+    advanceState(_adv, dtTotal);
+    copyStateToLive(_adv);
 }
 export function snapshotEphem() { return makeState(); }
 export function applyEphemSnapshot(st) { syncFromState(st); }

@@ -1,6 +1,6 @@
 import {
-    MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN,
-    PL, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME,
+    MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, C_LIGHT, J2_E,
+    PL, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME, EPH_CHUNK,
 } from "./constants.js";
 import { eph, updEphem, moonState, planetVel, relGravityAt, advanceEphem } from "./ephemeris.js";
 import { G, BH, WORLD } from "./state.js";
@@ -15,59 +15,116 @@ const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 const _pv = { vx: 0, vy: 0 };
 
 // derivative of [x,y,vx,vy] incl. the live n-body field in the Earth-relative
-// frame, PW black holes, atmosphere drag, thrust
-export function deriv(x, y, vx, vy, t, atx, aty, out) {
-    relGravityAt(x, y, _ga);
+// frame, PW black holes, Earth J2, Sun 1PN, atmosphere drag, thrust.
+// `tau` is the offset from the last ephemeris flush: body and hole positions
+// are linearly extrapolated so RK4 stages sample the field where the bodies
+// actually are mid-step.
+const J2_R2_MAX = 4e9;        // J2 negligible beyond ~10 Earth radii
+const PN_R2_MAX = 7.5e7 * 7.5e7; // Sun 1PN active inside ~0.5 AU
+export function deriv(x, y, vx, vy, tau, atx, aty, out) {
+    relGravityAt(x, y, _ga, -1, null, tau);
     let ax = _ga[0], ay = _ga[1];
-    const rE = Math.hypot(x, y);
-    const h = rE - R_EARTH;
-    if (h < ATM_TOP) {
-        const rho = Math.exp(-Math.max(0, h) / DRAG_H);
-        const v = Math.hypot(vx, vy);
-        const f = -DRAG_CD * rho * v;
-        ax += f * vx; ay += f * vy;
+    if (!WORLD.earthDestroyed) {
+        const rE2 = x * x + y * y;
+        const rE = Math.sqrt(rE2);
+        if (rE2 < J2_R2_MAX && rE > 1e-9) {
+            // oblateness: equatorial-plane radial correction → apsidal precession
+            const w = 1.5 * J2_E * MU_E * R_EARTH * R_EARTH / (rE2 * rE2 * rE);
+            ax -= w * x; ay -= w * y;
+        }
+        const h = rE - R_EARTH;
+        if (h < ATM_TOP) {
+            const rho = Math.exp(-Math.max(0, h) / DRAG_H);
+            const v = Math.sqrt(vx * vx + vy * vy);
+            const f = -DRAG_CD * rho * v;
+            ax += f * vx; ay += f * vy;
+        }
+    }
+    if (!WORLD.sunDestroyed) {
+        const sx = eph.sunX + eph.sunVx * tau, sy = eph.sunY + eph.sunVy * tau;
+        const dx = x - sx, dy = y - sy;
+        const r2 = dx * dx + dy * dy;
+        if (r2 < PN_R2_MAX && r2 > 1e-12) {
+            // first post-Newtonian Sun term: Mercury-style perihelion precession
+            const r = Math.sqrt(r2);
+            const rvx = vx - eph.sunVx, rvy = vy - eph.sunVy;
+            const v2 = rvx * rvx + rvy * rvy;
+            const rv = dx * rvx + dy * rvy;
+            const k = MU_S / (C_LIGHT * C_LIGHT * r2 * r);
+            ax += k * ((4 * MU_S / r - v2) * dx + 4 * rv * rvx);
+            ay += k * ((4 * MU_S / r - v2) * dy + 4 * rv * rvy);
+        }
+    }
+    for (let i = 0; i < PL.length; i++) {
+        const p = PL[i];
+        if (!p.atmH || WORLD.plDestroyed[i]) continue;
+        const px = eph.plX[i] + eph.plVx[i] * tau, py = eph.plY[i] + eph.plVy[i] * tau;
+        const dx = x - px, dy = y - py;
+        const lim = p.R + p.atmTop;
+        if (dx > lim || dx < -lim || dy > lim || dy < -lim) continue;
+        const h = Math.sqrt(dx * dx + dy * dy) - p.R;
+        if (h >= p.atmTop) continue;
+        // drag opposes the planet-relative velocity → aerobraking works
+        const rho = p.atmD0 * Math.exp(-Math.max(0, h) / p.atmH);
+        const rvx = vx - eph.plVx[i], rvy = vy - eph.plVy[i];
+        const f = -DRAG_CD * rho * Math.sqrt(rvx * rvx + rvy * rvy);
+        ax += f * rvx; ay += f * rvy;
     }
     out[0] = vx; out[1] = vy; out[2] = ax + atx; out[3] = ay + aty;
 }
 
 const _ga = [0, 0];
 const _k1 = [0, 0, 0, 0], _k2 = [0, 0, 0, 0], _k3 = [0, 0, 0, 0], _k4 = [0, 0, 0, 0], _st = [0, 0, 0, 0];
-export function rk4Step(s, t, dt, atx, aty) {
-    deriv(s[0], s[1], s[2], s[3], t, atx, aty, _k1);
+// tau0: ephemeris lag at the start of this step (0 when bodies are fresh)
+export function rk4Step(s, tau0, dt, atx, aty) {
+    deriv(s[0], s[1], s[2], s[3], tau0, atx, aty, _k1);
     for (let i = 0; i < 4; i++) _st[i] = s[i] + .5 * dt * _k1[i];
-    deriv(_st[0], _st[1], _st[2], _st[3], t + .5 * dt, atx, aty, _k2);
+    deriv(_st[0], _st[1], _st[2], _st[3], tau0 + .5 * dt, atx, aty, _k2);
     for (let i = 0; i < 4; i++) _st[i] = s[i] + .5 * dt * _k2[i];
-    deriv(_st[0], _st[1], _st[2], _st[3], t + .5 * dt, atx, aty, _k3);
+    deriv(_st[0], _st[1], _st[2], _st[3], tau0 + .5 * dt, atx, aty, _k3);
     for (let i = 0; i < 4; i++) _st[i] = s[i] + dt * _k3[i];
-    deriv(_st[0], _st[1], _st[2], _st[3], t + dt, atx, aty, _k4);
+    deriv(_st[0], _st[1], _st[2], _st[3], tau0 + dt, atx, aty, _k4);
     for (let i = 0; i < 4; i++) s[i] += dt / 6 * (_k1[i] + 2 * _k2[i] + 2 * _k3[i] + _k4[i]);
 }
 
-export function stepSize(rE, rM, rS, h, vTot, x, y) {
+export function stepSize(rE, rM, rS, h, vTot, x, y, vx = 0, vy = 0) {
     const tE = Math.sqrt(rE * rE * rE / MU_E), tM = Math.sqrt(rM * rM * rM / MU_M);
     const tS = Math.sqrt(rS * rS * rS / MU_S);
     let dt = Math.min(tE, tM, tS) / 90;
-    // approaching the atmosphere fast: never let one step jump across the shell
-    if (h < 1200) dt = Math.min(dt, Math.max(.4, .22 * Math.max(40, h - 90) / Math.max(.01, vTot)));
-    if (h < ATM_TOP + 60) {
-        dt = Math.min(dt, .9);
-        // bound drag Δv to ~5 % of speed per step or RK4 blows up on the exp profile
-        const aD = DRAG_CD * Math.exp(-Math.max(0, h) / DRAG_H) * vTot;
-        if (aD > 1e-6) dt = Math.min(dt, .05 / aD);
+    if (!WORLD.earthDestroyed) {
+        // approaching the atmosphere fast: never let one step jump across the shell
+        if (h < 1200) dt = Math.min(dt, Math.max(.4, .22 * Math.max(40, h - 90) / Math.max(.01, vTot)));
+        if (h < ATM_TOP + 60) {
+            dt = Math.min(dt, .9);
+            // bound drag Δv to ~5 % of speed per step or RK4 blows up on the exp profile
+            const aD = DRAG_CD * Math.exp(-Math.max(0, h) / DRAG_H) * vTot;
+            if (aD > 1e-6) dt = Math.min(dt, .05 / aD);
+        }
     }
     for (let i = 0; i < PL.length; i++) {
-        const d = Math.hypot(x - eph.plX[i], y - eph.plY[i]);
-        if (d < PL[i].soi * 3) {
-            const tP = Math.sqrt(d * d * d / PL[i].mu) / 90;
+        const p = PL[i];
+        const dx = x - eph.plX[i], dy = y - eph.plY[i];
+        const d2 = dx * dx + dy * dy;
+        if (d2 < p.soi * p.soi * 9) {
+            const d = Math.sqrt(d2);
+            const tP = Math.sqrt(d * d2 / p.mu) / 90;
             if (tP < dt) dt = tP;
-            const gap = d - PL[i].R;
+            const gap = d - p.R;
             if (gap < 60000) dt = Math.min(dt, Math.max(.5, .2 * Math.max(200, gap) / Math.max(.01, vTot)));
+            if (p.atmH && !WORLD.plDestroyed[i] && gap < p.atmTop + 60) {
+                dt = Math.min(dt, .9);
+                const rvx = vx - eph.plVx[i], rvy = vy - eph.plVy[i];
+                const aD = DRAG_CD * p.atmD0 * Math.exp(-Math.max(0, gap) / p.atmH) * Math.sqrt(rvx * rvx + rvy * rvy);
+                if (aD > 1e-6) dt = Math.min(dt, .05 / aD);
+            }
         }
     }
     let floor = 0.02;
     for (let i = 0; i < BH.n; i++) {
-        const d = Math.hypot(x - BH.x[i], y - BH.y[i]);
-        const tB = Math.sqrt(d * d * d / BH.mu[i]) / 60;
+        const dx = x - BH.x[i], dy = y - BH.y[i];
+        const d2 = dx * dx + dy * dy;
+        const d = Math.sqrt(d2);
+        const tB = Math.sqrt(d * d2 / BH.mu[i]) / 60;
         if (tB < dt) dt = tB;
         const gap = d - BH.rs[i];
         if (gap < BH.rs[i] * 80) {
@@ -196,21 +253,45 @@ export function snapLanded() {
 
 // ============================ INTEGRATION ============================
 const _gs = [0, 0, 0, 0];
+// Inside any of these zones the ephemeris must be exact (contact checks, SOI
+// dynamics, bullet time); outside, the ship integrates on extrapolated body
+// positions and the n-body system advances in EPH_CHUNK batches.
+function bodiesNeedFlush(x, y, lag) {
+    if (!WORLD.moonDestroyed) {
+        const dx = x - (eph.moonX + eph.moonVx * lag), dy = y - (eph.moonY + eph.moonVy * lag);
+        if (dx * dx + dy * dy < SOI_M * SOI_M) return true;
+    }
+    if (!WORLD.sunDestroyed) {
+        const dx = x - (eph.sunX + eph.sunVx * lag), dy = y - (eph.sunY + eph.sunVy * lag);
+        if (dx * dx + dy * dy < 9 * R_SUN * R_SUN) return true;
+    }
+    for (let i = 0; i < PL.length; i++) {
+        if (WORLD.plDestroyed[i]) continue;
+        const dx = x - (eph.plX[i] + eph.plVx[i] * lag), dy = y - (eph.plY[i] + eph.plVy[i] * lag);
+        if (dx * dx + dy * dy < PL[i].soi * PL[i].soi) return true;
+    }
+    for (let i = 0; i < BH.n; i++) {
+        const dx = x - (BH.x[i] + BH.vx[i] * lag), dy = y - (BH.y[i] + BH.vy[i] * lag);
+        const lim = Math.max(BH.rs[i] * 150, 5000);
+        if (dx * dx + dy * dy < lim * lim) return true;
+    }
+    return false;
+}
 export function advance(simAdv, atx, aty, aMag) {
-    let adv = simAdv, steps = 0;
+    let adv = simAdv, steps = 0, lag = 0;
     const s = _gs;
     s[0] = G.x; s[1] = G.y; s[2] = G.vx; s[3] = G.vy;
+    updEphem(G.t);
     while (adv > 1e-9 && steps < MAX_STEPS_FRAME && !G.dead && !G.landed) {
-        updEphem(G.t);
-        const rE = Math.hypot(s[0], s[1]);
-        moonState(G.t, _m);
-        const rM = Math.hypot(s[0] - _m.mx, s[1] - _m.my);
-        const rS = Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY);
-        const dt = Math.min(stepSize(rE, rM, rS, rE - R_EARTH, Math.hypot(s[2], s[3]), s[0], s[1]), adv);
-        rk4Step(s, G.t, dt, atx, aty);
-        advanceEphem(dt);
-        bhAdvance(dt, G.t); // holes free-fall in sync with the ship
-        G.t += dt; adv -= dt; steps++;
+        const rE = Math.sqrt(s[0] * s[0] + s[1] * s[1]);
+        const dmx = s[0] - (eph.moonX + eph.moonVx * lag), dmy = s[1] - (eph.moonY + eph.moonVy * lag);
+        const rM = Math.sqrt(dmx * dmx + dmy * dmy);
+        const dsx = s[0] - (eph.sunX + eph.sunVx * lag), dsy = s[1] - (eph.sunY + eph.sunVy * lag);
+        const rS = Math.sqrt(dsx * dsx + dsy * dsy);
+        const vTot = Math.sqrt(s[2] * s[2] + s[3] * s[3]);
+        const dt = Math.min(stepSize(rE, rM, rS, rE - R_EARTH, vTot, s[0], s[1], s[2], s[3]), adv);
+        rk4Step(s, lag, dt, atx, aty);
+        G.t += dt; adv -= dt; lag += dt; steps++;
         if (aMag > 0) {
             const dv = aMag * dt * 1000;
             G.dvUsed += dv;
@@ -219,19 +300,25 @@ export function advance(simAdv, atx, aty, aMag) {
                 if (G.fuel <= 0) { G.fuel = 0; atx = 0; aty = 0; aMag = 0; }
             }
         }
-        updEphem(G.t);
-        const rE2 = Math.hypot(s[0], s[1]);
-        if (rE2 <= R_EARTH) { handleEarthContact(s); break; }
-        moonState(G.t, _m);
-        if (Math.hypot(s[0] - _m.mx, s[1] - _m.my) <= R_MOON) { handleMoonContact(s); break; }
-        if (Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY) <= R_SUN) {
+        if (lag >= EPH_CHUNK || adv <= 1e-9 || steps >= MAX_STEPS_FRAME || bodiesNeedFlush(s[0], s[1], lag)) {
+            advanceEphem(lag);
+            bhAdvance(lag, G.t); // holes free-fall in sync with the ship
+            lag = 0;
+        }
+        // Earth sits at the frame origin: its contact check is always exact
+        if (!WORLD.earthDestroyed && Math.sqrt(s[0] * s[0] + s[1] * s[1]) <= R_EARTH) { handleEarthContact(s); break; }
+        // every other surface lies deep inside a flush zone, so these checks
+        // only need to run when the ephemeris is fresh
+        if (lag > 0) continue;
+        if (!WORLD.moonDestroyed && Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY) <= R_MOON) { handleMoonContact(s); break; }
+        if (!WORLD.sunDestroyed && Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY) <= R_SUN) {
             G.x = s[0]; G.y = s[1]; G.vx = s[2]; G.vy = s[3];
             H.die("Vaporized in the solar photosphere");
             break;
         }
         let hitP = -1;
         for (let i = 0; i < PL.length; i++)
-            if (Math.hypot(s[0] - eph.plX[i], s[1] - eph.plY[i]) <= PL[i].R) { hitP = i; break; }
+            if (!WORLD.plDestroyed[i] && Math.hypot(s[0] - eph.plX[i], s[1] - eph.plY[i]) <= PL[i].R) { hitP = i; break; }
         if (hitP >= 0) { handlePlanetContact(s, hitP); break; }
         for (let i = 0; i < BH.n; i++) {
             const dBH = Math.hypot(s[0] - BH.x[i], s[1] - BH.y[i]);
@@ -250,9 +337,38 @@ export function advance(simAdv, atx, aty, aMag) {
         }
         if (G.dead) break;
     }
+    if (lag > 0) { advanceEphem(lag); bhAdvance(lag, G.t); }
     G.x = s[0]; G.y = s[1]; G.vx = s[2]; G.vy = s[3];
-    const rE = Math.hypot(G.x, G.y);
+    const rE = Math.sqrt(G.x * G.x + G.y * G.y);
     G.maxRE = Math.max(G.maxRE, rE);
     if (rE > 100000) G.leftHome = true;
     return simAdv - adv;
+}
+
+// ============================ AERO READOUT ============================
+// strongest atmospheric interaction this instant (Earth or any planet with an
+// atmosphere); drives the plasma sheath, camera shake, and HUD
+export const AERO = { aD: 0, vx: 0, vy: 0 };
+export function sampleAero() {
+    AERO.aD = 0; AERO.vx = G.vx; AERO.vy = G.vy;
+    if (G.dead) return AERO;
+    let best = 0;
+    if (!WORLD.earthDestroyed) {
+        const rE = Math.sqrt(G.x * G.x + G.y * G.y), h = rE - R_EARTH;
+        if (h < ATM_TOP) best = DRAG_CD * Math.exp(-Math.max(0, h) / DRAG_H) * (G.vx * G.vx + G.vy * G.vy);
+    }
+    for (let i = 0; i < PL.length; i++) {
+        const p = PL[i];
+        if (!p.atmH || WORLD.plDestroyed[i]) continue;
+        const dx = G.x - eph.plX[i], dy = G.y - eph.plY[i];
+        const lim = p.R + p.atmTop;
+        if (dx > lim || dx < -lim || dy > lim || dy < -lim) continue;
+        const h = Math.sqrt(dx * dx + dy * dy) - p.R;
+        if (h >= p.atmTop) continue;
+        const rvx = G.vx - eph.plVx[i], rvy = G.vy - eph.plVy[i];
+        const aD = DRAG_CD * p.atmD0 * Math.exp(-Math.max(0, h) / p.atmH) * (rvx * rvx + rvy * rvy);
+        if (aD > best) { best = aD; AERO.vx = rvx; AERO.vy = rvy; }
+    }
+    AERO.aD = best * 1000; // m/s²
+    return AERO;
 }

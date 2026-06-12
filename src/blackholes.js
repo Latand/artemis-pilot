@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, K } from "./constants.js";
 import { BH, WORLD, bhRegister } from "./state.js";
-import { eph, updEphem } from "./ephemeris.js";
+import { eph } from "./ephemeris.js";
 import { fmtKm, mulberry32 } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
 import { scene, camera, cvHost, lastPtr } from "./scene.js";
@@ -182,35 +182,41 @@ export function removeLastBH() {
 // Holes free-fall in the same Earth-relative n-body frame as the ship and
 // planets, then attract each other via the Paczyński-Wiita acceleration.
 // Close pairs merge, conserving momentum.
-function bhAccel(i, X, Y, out) {
+let _bax = 0, _bay = 0;
+function bodyPull(x, y, bx, by, mu) {
+    const dx = x - bx, dy = y - by;
+    const r2 = Math.max(1e-18, dx * dx + dy * dy);
+    const w = mu / (r2 * Math.sqrt(r2));
+    const r02 = Math.max(1e-18, bx * bx + by * by);
+    const w0 = mu / (r02 * Math.sqrt(r02)); // indirect: pull on the frame origin
+    _bax -= w * dx + w0 * bx;
+    _bay -= w * dy + w0 * by;
+}
+// `tau` offsets body positions from the live ephemeris (holes integrate over
+// the interval just *behind* the freshly advanced bodies, so tau ≤ 0).
+function bhAccel(i, X, Y, tau, out) {
     const x = X[i], y = Y[i];
-    let ax = 0, ay = 0;
+    _bax = 0; _bay = 0;
     if (!WORLD.earthDestroyed) {
-        const rE = Math.max(1e-9, Math.hypot(x, y)), rE3 = rE * rE * rE;
-        ax -= MU_E * x / rE3;
-        ay -= MU_E * y / rE3;
+        const r2 = Math.max(1e-18, x * x + y * y);
+        const w = MU_E / (r2 * Math.sqrt(r2));
+        _bax -= w * x; _bay -= w * y;
     }
-    const bodies = [];
-    if (!WORLD.moonDestroyed) bodies.push([eph.moonX, eph.moonY, MU_M]);
-    if (!WORLD.sunDestroyed) bodies.push([eph.sunX, eph.sunY, MU_S]);
-    for (let p = 0; p < PL.length; p++) if (!WORLD.plDestroyed[p]) bodies.push([eph.plX[p], eph.plY[p], PL[p].mu]);
-    for (const [bx, by, mu] of bodies) {
-        const dx = x - bx, dy = y - by;
-        const r = Math.max(1e-9, Math.hypot(dx, dy)), r3 = r * r * r;
-        const r0 = Math.max(1e-9, Math.hypot(bx, by)), r03 = r0 * r0 * r0;
-        ax -= mu * (dx / r3 + bx / r03);
-        ay -= mu * (dy / r3 + by / r03);
-    }
+    if (!WORLD.moonDestroyed) bodyPull(x, y, eph.moonX + eph.moonVx * tau, eph.moonY + eph.moonVy * tau, MU_M);
+    if (!WORLD.sunDestroyed) bodyPull(x, y, eph.sunX + eph.sunVx * tau, eph.sunY + eph.sunVy * tau, MU_S);
+    for (let p = 0; p < PL.length; p++)
+        if (!WORLD.plDestroyed[p]) bodyPull(x, y, eph.plX[p] + eph.plVx[p] * tau, eph.plY[p] + eph.plVy[p] * tau, PL[p].mu);
+    let ax = _bax, ay = _bay;
     for (let j = 0; j < BH.n; j++) {
         if (j !== i) {
             const dx = x - X[j], dy = y - Y[j];
-            const d = Math.hypot(dx, dy);
+            const d = Math.sqrt(dx * dx + dy * dy);
             const eff = Math.max(d - BH.rs[j], BH.rs[j] * .02);
             const am = BH.mu[j] / (eff * eff) / Math.max(1e-9, d);
             ax -= dx * am; ay -= dy * am;
         }
         // indirect: every hole accelerates the Earth-centered frame origin
-        const r0 = Math.hypot(X[j], Y[j]);
+        const r0 = Math.sqrt(X[j] * X[j] + Y[j] * Y[j]);
         const eff0 = Math.max(r0 - BH.rs[j], BH.rs[j] * .02);
         const am0 = BH.mu[j] / (eff0 * eff0) / Math.max(1e-9, r0);
         ax -= X[j] * am0; ay -= Y[j] * am0;
@@ -218,21 +224,19 @@ function bhAccel(i, X, Y, out) {
     out[0] = ax; out[1] = ay;
 }
 const _ba = [0, 0];
-const _bx = new Float64Array(BH_MAX), _by = new Float64Array(BH_MAX);
 const _k = [];
 for (let s = 0; s < 4; s++) _k.push({ x: new Float64Array(BH_MAX), y: new Float64Array(BH_MAX), vx: new Float64Array(BH_MAX), vy: new Float64Array(BH_MAX) });
-function bhDerivAll(t, X, Y, VX, VY, K_) {
-    updEphem(t);
+function bhDerivAll(tau, X, Y, VX, VY, K_) {
     for (let i = 0; i < BH.n; i++) {
-        bhAccel(i, X, Y, _ba);
+        bhAccel(i, X, Y, tau, _ba);
         K_.x[i] = VX[i]; K_.y[i] = VY[i];
         K_.vx[i] = _ba[0]; K_.vy[i] = _ba[1];
     }
 }
 const _sx = new Float64Array(BH_MAX), _sy = new Float64Array(BH_MAX), _svx = new Float64Array(BH_MAX), _svy = new Float64Array(BH_MAX);
-function bhRk4(t, dt) {
+function bhRk4(tau0, dt) {
     const N = BH.n;
-    bhDerivAll(t, BH.x, BH.y, BH.vx, BH.vy, _k[0]);
+    bhDerivAll(tau0, BH.x, BH.y, BH.vx, BH.vy, _k[0]);
     for (const [f, kPrev, kCur] of [[.5, 0, 1], [.5, 1, 2], [1, 2, 3]]) {
         for (let i = 0; i < N; i++) {
             _sx[i] = BH.x[i] + f * dt * _k[kPrev].x[i];
@@ -240,7 +244,7 @@ function bhRk4(t, dt) {
             _svx[i] = BH.vx[i] + f * dt * _k[kPrev].vx[i];
             _svy[i] = BH.vy[i] + f * dt * _k[kPrev].vy[i];
         }
-        bhDerivAll(t + f * dt, _sx, _sy, _svx, _svy, _k[kCur]);
+        bhDerivAll(tau0 + f * dt, _sx, _sy, _svx, _svy, _k[kCur]);
     }
     for (let i = 0; i < N; i++) {
         BH.x[i] += dt / 6 * (_k[0].x[i] + 2 * _k[1].x[i] + 2 * _k[2].x[i] + _k[3].x[i]);
@@ -252,7 +256,8 @@ function bhRk4(t, dt) {
 function tryMerge() {
     for (let i = 0; i < BH.n; i++)
         for (let j = i + 1; j < BH.n; j++) {
-            const d = Math.hypot(BH.x[i] - BH.x[j], BH.y[i] - BH.y[j]);
+            const dx = BH.x[i] - BH.x[j], dy = BH.y[i] - BH.y[j];
+            const d = Math.sqrt(dx * dx + dy * dy);
             if (d < (BH.rs[i] + BH.rs[j]) * 1.2) {
                 const mu = BH.mu[i] + BH.mu[j];
                 const x = (BH.x[i] * BH.mu[i] + BH.x[j] * BH.mu[j]) / mu;
@@ -298,6 +303,23 @@ function bhBodyLimit(rs, radius, muBody, muBH) {
     const roche = radius * Math.cbrt(muBH / Math.max(1e-9, muBody));
     const tidal = Math.min(radius * 18, roche * .55);
     return Math.max(radius + rs * 2.2, tidal);
+}
+// disruption limits depend only on the hole's μ (and body constants), so they
+// are cached and recomputed only after a merge or absorption changes the mass.
+// Keyed on μ, the cache stays valid even when removeBHIndex shifts the arrays.
+const _limCache = [];
+function bhLimits(i) {
+    let c = _limCache[i];
+    if (!c) { c = { mu: -1, pl: new Float64Array(PL.length) }; _limCache[i] = c; }
+    if (c.mu !== BH.mu[i]) {
+        const mu = BH.mu[i], rs = BH.rs[i];
+        c.mu = mu;
+        c.earth = bhBodyLimit(rs, R_EARTH, MU_E, mu);
+        c.moon = bhBodyLimit(rs, R_MOON, MU_M, mu);
+        c.sun = bhBodyLimit(rs, R_SUN, MU_S, mu);
+        for (let p = 0; p < PL.length; p++) c.pl[p] = bhBodyLimit(rs, PL[p].R, PL[p].mu, mu);
+    }
+    return c;
 }
 const DISRUPT = [];
 window.__BH_DISRUPT = DISRUPT;
@@ -369,47 +391,61 @@ function advanceDisruptions(dt) {
 }
 function checkBHBodyBoundaries() {
     for (let i = 0; i < BH.n; i++) {
-        const rs = BH.rs[i], mu = BH.mu[i];
-        let d = Math.hypot(BH.x[i], BH.y[i]), lim = bhBodyLimit(rs, R_EARTH, MU_E, mu);
-        if (!WORLD.earthDestroyed && d < lim) {
-            beginDisruption(i, "earth", 0, 0, 0, 0, R_EARTH, MU_E, d, lim);
+        const L = bhLimits(i);
+        const x = BH.x[i], y = BH.y[i];
+        if (!WORLD.earthDestroyed) {
+            const d2 = x * x + y * y;
+            if (d2 < L.earth * L.earth) beginDisruption(i, "earth", 0, 0, 0, 0, R_EARTH, MU_E, Math.sqrt(d2), L.earth);
         }
-        d = Math.hypot(BH.x[i] - eph.moonX, BH.y[i] - eph.moonY); lim = bhBodyLimit(rs, R_MOON, MU_M, mu);
-        if (!WORLD.moonDestroyed && d < lim) {
-            beginDisruption(i, "moon", eph.moonX, eph.moonY, eph.moonVx, eph.moonVy, R_MOON, MU_M, d, lim);
+        if (!WORLD.moonDestroyed) {
+            const dx = x - eph.moonX, dy = y - eph.moonY, d2 = dx * dx + dy * dy;
+            if (d2 < L.moon * L.moon) beginDisruption(i, "moon", eph.moonX, eph.moonY, eph.moonVx, eph.moonVy, R_MOON, MU_M, Math.sqrt(d2), L.moon);
         }
-        d = Math.hypot(BH.x[i] - eph.sunX, BH.y[i] - eph.sunY); lim = bhBodyLimit(rs, R_SUN, MU_S, mu);
-        if (!WORLD.sunDestroyed && d < lim) {
-            beginDisruption(i, "sun", eph.sunX, eph.sunY, eph.sunVx, eph.sunVy, R_SUN, MU_S, d, lim);
+        if (!WORLD.sunDestroyed) {
+            const dx = x - eph.sunX, dy = y - eph.sunY, d2 = dx * dx + dy * dy;
+            if (d2 < L.sun * L.sun) beginDisruption(i, "sun", eph.sunX, eph.sunY, eph.sunVx, eph.sunVy, R_SUN, MU_S, Math.sqrt(d2), L.sun);
         }
         for (let p = 0; p < PL.length; p++) {
-            d = Math.hypot(BH.x[i] - eph.plX[p], BH.y[i] - eph.plY[p]); lim = bhBodyLimit(rs, PL[p].R, PL[p].mu, mu);
-            if (!WORLD.plDestroyed[p] && d < lim) {
-                beginDisruption(i, p, eph.plX[p], eph.plY[p], eph.plVx[p], eph.plVy[p], PL[p].R, PL[p].mu, d, lim);
-            }
+            if (WORLD.plDestroyed[p]) continue;
+            const dx = x - eph.plX[p], dy = y - eph.plY[p], d2 = dx * dx + dy * dy;
+            if (d2 < L.pl[p] * L.pl[p]) beginDisruption(i, p, eph.plX[p], eph.plY[p], eph.plVx[p], eph.plVy[p], PL[p].R, PL[p].mu, Math.sqrt(d2), L.pl[p]);
         }
     }
 }
-export function bhAdvance(dtTotal, tStart) {
+export function bhAdvance(dtTotal, _tEnd) {
     if (!BH.n) return;
-    let rem = dtTotal, t = tStart, guard = 0;
+    let rem = dtTotal, guard = 0;
     while (rem > 1e-9 && guard++ < 200 && BH.n) {
         // step: a fraction of the tightest orbital timescale in play
         let dt = Math.min(rem, 21600);
         for (let i = 0; i < BH.n; i++) {
-            const rS = Math.hypot(BH.x[i] - eph.sunX, BH.y[i] - eph.sunY);
-            dt = Math.min(dt, Math.sqrt(rS * rS * rS / MU_S) / 40);
-            const r0 = Math.hypot(BH.x[i], BH.y[i]);
-            dt = Math.min(dt, Math.sqrt(r0 * r0 * r0 / BH.mu[i]) / 40); // infall toward Earth
+            const mu = BH.mu[i];
+            if (!WORLD.sunDestroyed) {
+                const dx = BH.x[i] - eph.sunX, dy = BH.y[i] - eph.sunY, d2 = dx * dx + dy * dy;
+                dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (MU_S + mu)) / 40);
+            }
+            const r2 = BH.x[i] * BH.x[i] + BH.y[i] * BH.y[i];
+            dt = Math.min(dt, Math.sqrt(r2 * Math.sqrt(r2) / (MU_E + mu)) / 40); // infall toward Earth
+            if (!WORLD.moonDestroyed) {
+                const dx = BH.x[i] - eph.moonX, dy = BH.y[i] - eph.moonY, d2 = dx * dx + dy * dy;
+                dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (MU_M + mu)) / 40);
+            }
+            for (let p = 0; p < PL.length; p++) {
+                if (WORLD.plDestroyed[p]) continue;
+                const dx = BH.x[i] - eph.plX[p], dy = BH.y[i] - eph.plY[p], d2 = dx * dx + dy * dy;
+                dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (PL[p].mu + mu)) / 40);
+            }
             for (let j = i + 1; j < BH.n; j++) {
-                const d = Math.hypot(BH.x[i] - BH.x[j], BH.y[i] - BH.y[j]);
-                dt = Math.min(dt, Math.sqrt(d * d * d / (BH.mu[i] + BH.mu[j])) / 40);
+                const dx = BH.x[i] - BH.x[j], dy = BH.y[i] - BH.y[j], d2 = dx * dx + dy * dy;
+                dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (mu + BH.mu[j])) / 40);
             }
         }
         dt = Math.max(dt, rem / (200 - guard + 1), 1e-3);
         dt = Math.min(dt, rem);
-        bhRk4(t, dt);
-        t += dt; rem -= dt;
+        // the ephemeris is already at the end of the interval: holes catch up
+        // through it, sampling bodies interpolated backward from now
+        bhRk4(-rem, dt);
+        rem -= dt;
         advanceDisruptions(dt);
         tryMerge();
         checkBHBodyBoundaries();

@@ -15,14 +15,16 @@ export const SUN_D3 = AU_KM * AU_KM * AU_KM;
 export const SUN_TH0 = Math.atan2(-.08, -1);
 export const OM_YEAR = Math.sqrt((MU_S + MU_E) / SUN_D3); // ~365.25 d period
 // planets: true radii, true μ, circular coplanar heliocentric orbits
+// atmH/atmD0: exponential atmosphere scale height (km) and surface density
+// relative to Earth sea level; atmTop is where drag becomes negligible.
 export const PL = [
     { name: "MERCURY", tag: "ME", a: 57.909e6, R: 2439.7, mu: 22031.9, color: 0x9c8e7e, phase: 4.2, gas: false, tex: "2k_mercury.jpg" },
-    { name: "VENUS", tag: "VE", a: 108.21e6, R: 6051.8, mu: 324858.6, color: 0xe6c98e, phase: 1.1, gas: false, tex: "2k_venus_atmosphere.jpg" },
-    { name: "MARS", tag: "MA", a: 227.956e6, R: 3389.5, mu: 42828.4, color: 0xc96b4a, phase: 5.4, gas: false, tex: "2k_mars.jpg" },
-    { name: "JUPITER", tag: "JU", a: 778.479e6, R: 69911, mu: 126686531, color: 0xc9a47a, phase: 2.6, gas: true, tex: "2k_jupiter.jpg" },
-    { name: "SATURN", tag: "SA", a: 1432.041e6, R: 58232, mu: 37931206, color: 0xe0d0a4, phase: 0.4, gas: true, ring: [74500, 140200], tex: "2k_saturn.jpg" },
-    { name: "URANUS", tag: "UR", a: 2867.043e6, R: 25362, mu: 5793951, color: 0x9fd6dd, phase: 3.5, gas: true, tex: "2k_uranus.jpg" },
-    { name: "NEPTUNE", tag: "NE", a: 4514.953e6, R: 24622, mu: 6835100, color: 0x5d7fe8, phase: 5.9, gas: true, tex: "2k_neptune.jpg" },
+    { name: "VENUS", tag: "VE", a: 108.21e6, R: 6051.8, mu: 324858.6, color: 0xe6c98e, phase: 1.1, gas: false, tex: "2k_venus_atmosphere.jpg", atmH: 15.9, atmTop: 380, atmD0: 53 },
+    { name: "MARS", tag: "MA", a: 227.956e6, R: 3389.5, mu: 42828.4, color: 0xc96b4a, phase: 5.4, gas: false, tex: "2k_mars.jpg", atmH: 11.1, atmTop: 200, atmD0: 0.016 },
+    { name: "JUPITER", tag: "JU", a: 778.479e6, R: 69911, mu: 126686531, color: 0xc9a47a, phase: 2.6, gas: true, tex: "2k_jupiter.jpg", atmH: 27, atmTop: 520, atmD0: 0.13 },
+    { name: "SATURN", tag: "SA", a: 1432.041e6, R: 58232, mu: 37931206, color: 0xe0d0a4, phase: 0.4, gas: true, ring: [74500, 140200], tex: "2k_saturn.jpg", atmH: 59.5, atmTop: 1100, atmD0: 0.155 },
+    { name: "URANUS", tag: "UR", a: 2867.043e6, R: 25362, mu: 5793951, color: 0x9fd6dd, phase: 3.5, gas: true, tex: "2k_uranus.jpg", atmH: 27.7, atmTop: 540, atmD0: 0.34 },
+    { name: "NEPTUNE", tag: "NE", a: 4514.953e6, R: 24622, mu: 6835100, color: 0x5d7fe8, phase: 5.9, gas: true, tex: "2k_neptune.jpg", atmH: 19.7, atmTop: 390, atmD0: 0.37 },
 ];
 for (const p of PL) {
     p.n = Math.sqrt(MU_S / (p.a * p.a * p.a));
@@ -31,7 +33,11 @@ for (const p of PL) {
 export const SOI_M = 66100;          // lunar dominance radius, km
 export const SOI_E = 924000;         // Earth's heliocentric SOI, km
 export const C_LIGHT = 299792.458;   // km/s
+export const J2_E = 1.08262668e-3;   // Earth oblateness (equatorial-plane radial term)
 export const DRAG_CD = 0.55, DRAG_H = 8.5, ATM_TOP = 160;
+// the ephemeris advances in chunks of at most this many seconds while the
+// ship integrates between flushes on linearly extrapolated body positions
+export const EPH_CHUNK = 120;
 export const MAIN_A = 0.006;         // km/s² at 100 % throttle
 export const RCS_A = 0.0018;
 export const BOOST = 4;
