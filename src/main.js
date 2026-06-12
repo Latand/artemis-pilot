@@ -561,7 +561,6 @@ function frame() {
     // ---- physics ----
     let advanced = 0;
     if (!G.paused) {
-        G.cosmicT = Math.max(G.cosmicT ?? G.t, G.t) + dtR * G.warp;
         if (G.dead) {
             advanced = dtR * G.warp;
             advanceEphem(advanced);

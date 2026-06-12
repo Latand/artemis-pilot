@@ -1,4 +1,4 @@
-import { DARK_ENERGY, PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, SEC_YEAR, warpLabel } from "./constants.js";
+import { DARK_ENERGY, PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, warpLabel } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { fmtKm, fmtDist, fmtMET, escapeKmS, accelMs2, fmtAccel } from "./format.js";
@@ -87,7 +87,6 @@ export function updateEscapeTracker(oi) {
 export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     metEl.textContent = "T+ " + fmtMET(G.t);
     warpEl.textContent = "⏩ " + warpLabel(G.warp) +
-        (G.warp > 30 * SEC_YEAR ? " · DEEP VIEW CLOCK" : "") +
         (aMag > 0 && G.warp > 600 ? " · ⚠ THRUST AT HIGH WARP" : "") + (G.paused ? " · ❚❚ PAUSED" : "");
     warpEl.className = G.paused ? "warn" : "";
     if (G.dead) engineEl.textContent = "VEHICLE LOST — " + G.deadReason;

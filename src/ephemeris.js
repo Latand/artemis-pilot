@@ -439,12 +439,158 @@ function bodyStepSize(st, rem, maxStep = 3600) {
     }
     return Math.max(1e-3, dt);
 }
+// ---- deep-time propagation ----
+// Exact planar two-body propagation over any dt: osculating elements from
+// the state vector, Kepler's equation (elliptic or hyperbolic) by damped
+// Newton, state back out. Retrograde orbits are mirrored prograde and
+// flipped back. Sets out.ok=false (and coasts linearly) on the degenerate
+// cases: parabolic slivers, radial plunges, non-finite results.
+export function keplerAdvance(x, y, vx, vy, mu, dt, out) {
+    out.x = x + vx * dt; out.y = y + vy * dt; out.vx = vx; out.vy = vy;
+    out.ok = false;
+    const r0 = Math.hypot(x, y);
+    if (!(mu > 0) || !(r0 > 1e-9)) return out;
+    const mir = (x * vy - y * vx) >= 0 ? 1 : -1;
+    y *= mir; vy *= mir;
+    const v2 = vx * vx + vy * vy;
+    const En = v2 / 2 - mu / r0;
+    const rv = x * vx + y * vy;
+    const evx = ((v2 - mu / r0) * x - rv * vx) / mu;
+    const evy = ((v2 - mu / r0) * y - rv * vy) / mu;
+    const e = Math.hypot(evx, evy);
+    if (Math.abs(e - 1) < 1e-6 || Math.abs(En) < 1e-14) return out;
+    const vp = Math.atan2(evy, evx);
+    const nu0 = Math.atan2(y, x) - vp;
+    let nu1, r1, p;
+    if (En < 0) {
+        const a = -mu / (2 * En);
+        p = a * (1 - e * e);
+        const n = Math.sqrt(mu / (a * a * a));
+        const E0 = Math.atan2(Math.sqrt(1 - e * e) * Math.sin(nu0), e + Math.cos(nu0));
+        let M = (E0 - e * Math.sin(E0) + n * dt) % (2 * Math.PI);
+        let E1 = e < .8 ? M : Math.PI * (M < 0 ? -1 : 1);
+        for (let i = 0; i < 40; i++) {
+            const f = E1 - e * Math.sin(E1) - M;
+            E1 -= Math.max(-1, Math.min(1, f / (1 - e * Math.cos(E1))));
+            if (Math.abs(f) < 1e-12) break;
+        }
+        nu1 = 2 * Math.atan2(Math.sqrt(1 + e) * Math.sin(E1 / 2), Math.sqrt(1 - e) * Math.cos(E1 / 2));
+        r1 = a * (1 - e * Math.cos(E1));
+    } else {
+        const a = -mu / (2 * En); // < 0
+        p = a * (1 - e * e);      // > 0
+        const n = Math.sqrt(mu / (-a * -a * -a));
+        const tn = Math.tan(nu0 / 2) * Math.sqrt((e - 1) / (e + 1));
+        if (Math.abs(tn) >= 1) return out; // rounding pushed ν outside the asymptotes
+        const H0 = 2 * Math.atanh(tn);
+        const M = e * Math.sinh(H0) - H0 + n * dt;
+        let H1 = Math.asinh(M / e);
+        for (let i = 0; i < 50; i++) {
+            const f = e * Math.sinh(H1) - H1 - M;
+            H1 -= f / (e * Math.cosh(H1) - 1);
+            if (Math.abs(f) < 1e-11 * Math.max(1, Math.abs(M))) break;
+        }
+        if (!isFinite(H1)) return out;
+        nu1 = 2 * Math.atan(Math.sqrt((e + 1) / (e - 1)) * Math.tanh(H1 / 2));
+        r1 = a * (1 - e * Math.cosh(H1));
+    }
+    const c = Math.sqrt(mu / p);
+    const vr = c * e * Math.sin(nu1), vt = c * (1 + e * Math.cos(nu1));
+    const th = vp + nu1, ct = Math.cos(th), sth = Math.sin(th);
+    const nx = r1 * ct, ny = r1 * sth;
+    const nvx = vr * ct - vt * sth, nvy = vr * sth + vt * ct;
+    if (!isFinite(nx + ny + nvx + nvy)) return out;
+    out.x = nx; out.y = ny * mir;
+    out.vx = nvx; out.vy = nvy * mir;
+    out.ok = true;
+    return out;
+}
+
+// RK4 cannot honestly integrate a megayear frame budget, and forcing giant
+// steps scrambles the orbits. Past the per-call step budget the system rides
+// osculating two-body orbits instead: Earth and planets heliocentric, the
+// Moon geocentric, with the system barycenter coasting uniformly. Mutual
+// perturbations pause for the jump; periods, shapes, and phases stay right
+// at any warp.
+const _kjE = { x: 0, y: 0, vx: 0, vy: 0, ok: false };
+const _kjM = { x: 0, y: 0, vx: 0, vy: 0, ok: false };
+const _kjP = { x: 0, y: 0, vx: 0, vy: 0, ok: false };
+const _jx = new Float64Array(NB), _jy = new Float64Array(NB);
+const _jvx = new Float64Array(NB), _jvy = new Float64Array(NB);
+function keplerJumpState(st, dt) {
+    const muS = bodyMu[IDX_SUN], muE = activeEarthMu(), muM = activeBodyMu(IDX_MOON);
+    const sk = IDX_SUN;
+    // heliocentric pieces (earth-relative differences cancel the frame)
+    const eHx = -st.x[sk], eHy = -st.y[sk], eHvx = -st.vx[sk], eHvy = -st.vy[sk];
+    const sWx = st.earthX + st.x[sk], sWy = st.earthY + st.y[sk];
+    const sWvx = st.earthVx + st.vx[sk], sWvy = st.earthVy + st.vy[sk];
+    // barycenter offset from the Sun, mass(∝μ)-weighted
+    let M = muS + muE + muM;
+    let ox = muE * eHx + muM * (eHx + st.x[IDX_MOON]), oy = muE * eHy + muM * (eHy + st.y[IDX_MOON]);
+    let ovx = muE * eHvx + muM * (eHvx + st.vx[IDX_MOON]), ovy = muE * eHvy + muM * (eHvy + st.vy[IDX_MOON]);
+    for (let i = 0; i < PL.length; i++) {
+        const k = IDX_PLANETS + i, mu = activeBodyMu(k);
+        if (mu <= 0) continue;
+        M += mu;
+        ox += mu * (st.x[k] - st.x[sk]); oy += mu * (st.y[k] - st.y[sk]);
+        ovx += mu * (st.vx[k] - st.vx[sk]); ovy += mu * (st.vy[k] - st.vy[sk]);
+    }
+    const rBx = sWx + ox / M, rBy = sWy + oy / M;
+    const vBx = sWvx + ovx / M, vBy = sWvy + ovy / M;
+    // advance every active piece on its own conic
+    keplerAdvance(eHx, eHy, eHvx, eHvy, muS + muE, dt, _kjE);
+    if (muM > 0) keplerAdvance(st.x[IDX_MOON], st.y[IDX_MOON], st.vx[IDX_MOON], st.vy[IDX_MOON], muE + bodyMu[IDX_MOON], dt, _kjM);
+    for (let i = 0; i < PL.length; i++) {
+        const k = IDX_PLANETS + i;
+        if (activeBodyMu(k) <= 0) continue;
+        keplerAdvance(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], muS + bodyMu[k], dt, _kjP);
+        _jx[k] = _kjP.x; _jy[k] = _kjP.y; _jvx[k] = _kjP.vx; _jvy[k] = _kjP.vy;
+    }
+    // recompose: the barycenter coasted, the Sun hangs off it
+    let nox = muE * _kjE.x, noy = muE * _kjE.y, novx = muE * _kjE.vx, novy = muE * _kjE.vy;
+    if (muM > 0) {
+        nox += muM * (_kjE.x + _kjM.x); noy += muM * (_kjE.y + _kjM.y);
+        novx += muM * (_kjE.vx + _kjM.vx); novy += muM * (_kjE.vy + _kjM.vy);
+    }
+    for (let i = 0; i < PL.length; i++) {
+        const k = IDX_PLANETS + i, mu = activeBodyMu(k);
+        if (mu <= 0) continue;
+        nox += mu * _jx[k]; noy += mu * _jy[k];
+        novx += mu * _jvx[k]; novy += mu * _jvy[k];
+    }
+    const sWx1 = rBx + vBx * dt - nox / M, sWy1 = rBy + vBy * dt - noy / M;
+    const sWvx1 = vBx - novx / M, sWvy1 = vBy - novy / M;
+    st.earthX = sWx1 + _kjE.x; st.earthY = sWy1 + _kjE.y;
+    st.earthVx = sWvx1 + _kjE.vx; st.earthVy = sWvy1 + _kjE.vy;
+    st.x[sk] = -_kjE.x; st.y[sk] = -_kjE.y;
+    st.vx[sk] = -_kjE.vx; st.vy[sk] = -_kjE.vy;
+    if (muM > 0) {
+        st.x[IDX_MOON] = _kjM.x; st.y[IDX_MOON] = _kjM.y;
+        st.vx[IDX_MOON] = _kjM.vx; st.vy[IDX_MOON] = _kjM.vy;
+    }
+    for (let i = 0; i < PL.length; i++) {
+        const k = IDX_PLANETS + i;
+        if (activeBodyMu(k) <= 0) continue;
+        st.x[k] = _jx[k] - _kjE.x; st.y[k] = _jy[k] - _kjE.y;
+        st.vx[k] = _jvx[k] - _kjE.vx; st.vy[k] = _jvy[k] - _kjE.vy;
+    }
+}
+
 // live-path guard wired by blackholes.js: a body can free-fall into a hole
 // well inside one flush interval, so disruption boundaries must be checked
 // per substep — never from predictions, which must not mutate the world
 let liveGuard = null;
 export function setLiveGuard(fn) { liveGuard = fn; }
 function advanceState(st, dtTotal, maxStep = 3600, live = false) {
+    // deep-time gate (live path only — predictions keep full RK4 fidelity):
+    // holes, gravity ghosts, and a destroyed Sun or Earth all break the
+    // two-body decomposition, so those fall through to the integrator
+    if (live && BH.n === 0 && GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed &&
+        dtTotal > bodyStepSize(st, dtTotal, maxStep) * 150) {
+        keplerJumpState(st, dtTotal);
+        st.t += dtTotal;
+        return;
+    }
     let rem = dtTotal, guard = 0;
     while (rem > 1e-9 && guard++ < 2000) {
         // if the step collapses near a deep well, spend the remaining budget

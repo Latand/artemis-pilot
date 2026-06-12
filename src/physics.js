@@ -2,8 +2,8 @@ import {
     MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, C_LIGHT, J2_E, OMEGA_EARTH,
     PL, STARS, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME, EPH_CHUNK,
 } from "./constants.js";
-import { eph, updEphem, moonState, planetVel, relGravityAt, advanceEphem } from "./ephemeris.js";
-import { G, BH, WORLD } from "./state.js";
+import { eph, updEphem, moonState, planetVel, relGravityAt, advanceEphem, keplerAdvance } from "./ephemeris.js";
+import { G, BH, WORLD, GS } from "./state.js";
 import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
 
@@ -305,6 +305,17 @@ export function advance(simAdv, atx, aty, aMag) {
     const s = _gs;
     s[0] = G.x; s[1] = G.y; s[2] = G.vx; s[3] = G.vy;
     updEphem(G.t);
+    // a frame budget far beyond the step cap: integrating the cap first is
+    // wasted work (the jump leaps it anyway), and at low fps it starves the
+    // clock — jump the whole frame in O(1) and keep 60 fps at any warp
+    if (!G.dead && !G.landed && aMag === 0 && BH.n === 0 && GS.length === 0 &&
+        !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
+        const rE0 = Math.hypot(s[0], s[1]);
+        const dm0 = Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY);
+        const ds0 = Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY);
+        const dt0 = stepSize(rE0, dm0, ds0, rE0 - R_EARTH, Math.hypot(s[2], s[3]), s[0], s[1], s[2], s[3]);
+        if (simAdv > MAX_STEPS_FRAME * dt0 && shipDeepJump(simAdv) > 0) return simAdv;
+    }
     while (adv > 1e-9 && steps < MAX_STEPS_FRAME && !G.dead && !G.landed) {
         const rE = Math.sqrt(s[0] * s[0] + s[1] * s[1]);
         const dmx = s[0] - (eph.moonX + eph.moonVx * lag), dmy = s[1] - (eph.moonY + eph.moonVy * lag);
@@ -375,10 +386,67 @@ export function advance(simAdv, atx, aty, aMag) {
     }
     if (lag > 0) { advanceEphem(lag); bhAdvance(lag, G.t); }
     G.x = s[0]; G.y = s[1]; G.vx = s[2]; G.vy = s[3];
+    // deep-time remainder: at warps the per-frame RK4 budget cannot cover,
+    // the ship rides its osculating two-body orbit while the ephemeris
+    // Kepler-jumps the same span — the clock keeps the commanded rate at
+    // every scale instead of silently crawling
+    if (adv > 1e-9 && !G.dead && !G.landed && aMag === 0 && BH.n === 0 &&
+        GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
+        adv -= shipDeepJump(adv);
+    }
     const rE = Math.sqrt(G.x * G.x + G.y * G.y);
     G.maxRE = Math.max(G.maxRE, rE);
     if (rE > 100000) G.leftHome = true;
     return simAdv - adv;
+}
+
+const _dj = { x: 0, y: 0, vx: 0, vy: 0, ok: false };
+// Jump the ship dt seconds along the conic around its strongest pull and
+// recompose against that body's post-jump state. Returns dt on success, 0
+// when honest integration must continue: thrustless coast only, clear of
+// atmospheres, periapsis above the surface, no contested three-body zone,
+// and never against a hole's Paczyński–Wiita field.
+function shipDeepJump(dt) {
+    const oi = orbitInfo();
+    const wx = eph.earthX + G.x, wy = eph.earthY + G.y;
+    let starI = -1, starAcc = 0;
+    for (let i = 0; i < STARS.length; i++) {
+        const dx = wx - STARS[i].x, dy = wy - STARS[i].y;
+        const a = STARS[i].mu / (dx * dx + dy * dy);
+        if (a > starAcc) { starAcc = a; starI = i; }
+    }
+    const domAcc = oi.mu / (oi.r * oi.r);
+    if (starAcc > domAcc) {
+        // a named star owns the well; they are static, so recomposition only
+        // has to undo the Earth-frame offset
+        const st = STARS[starI];
+        const d = Math.hypot(wx - st.x, wy - st.y);
+        if (st.bh && d < st.rs * 200) return 0;
+        if (d <= st.R * 1.1 || domAcc > starAcc * .02) return 0;
+        keplerAdvance(wx - st.x, wy - st.y, G.vx + eph.earthVx, G.vy + eph.earthVy, st.mu, dt, _dj);
+        if (!_dj.ok) return 0;
+        advanceEphem(dt);
+        G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY;
+        G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy;
+        G.t += dt;
+        return dt;
+    }
+    const atmTop = oi.body === "EARTH" ? ATM_TOP : oi.domPl ? (PL[oi.pNear].atmTop || 0) : 0;
+    if (oi.r - oi.R < atmTop) return 0;     // inside the drag shell: integrate it
+    if (oi.rp < oi.R + atmTop) return 0;    // orbit dips into it: let the decay/impact play out
+    if (Math.abs(oi.e - 1) < 1e-4) return 0;
+    if (starAcc > domAcc * .02) return 0;
+    keplerAdvance(oi.rx, oi.ry, oi.rvx, oi.rvy, oi.mu, dt, _dj);
+    if (!_dj.ok) return 0;
+    advanceEphem(dt);
+    let bx = 0, by = 0, bvx = 0, bvy = 0;
+    if (oi.domMoon) { bx = eph.moonX; by = eph.moonY; bvx = eph.moonVx; bvy = eph.moonVy; }
+    else if (oi.domPl) { bx = eph.plX[oi.pNear]; by = eph.plY[oi.pNear]; bvx = eph.plVx[oi.pNear]; bvy = eph.plVy[oi.pNear]; }
+    else if (oi.domSun) { bx = eph.sunX; by = eph.sunY; bvx = eph.sunVx; bvy = eph.sunVy; }
+    G.x = bx + _dj.x; G.y = by + _dj.y;
+    G.vx = bvx + _dj.vx; G.vy = bvy + _dj.vy;
+    G.t += dt;
+    return dt;
 }
 
 // ============================ AERO READOUT ============================

@@ -233,7 +233,7 @@ export function updateCosmicLayer() {
     const group = smooth01(LY_SCENE * 70000, LY_SCENE * 1200000, cam.dist);
     root.visible = true;
     diskRoot.visible = true;
-    galaxyRoot.rotation.y = (G.cosmicT ?? G.t) / (SEC_YEAR * 230000000) * Math.PI * 2;
+    galaxyRoot.rotation.y = G.t / (SEC_YEAR * 230000000) * Math.PI * 2;
     localRoot.visible = group > .01;
     for (const child of galaxyRoot.children) if (child.material) {
         child.visible = child.isPoints || gal > .01;

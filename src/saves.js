@@ -11,7 +11,7 @@ import { toast } from "./achievements.js";
 
 const SLOT = "artemis.quicksave.v1";
 const G_FIELDS = [
-    "t", "cosmicT", "x", "y", "vx", "vy", "heading", "throttle", "warp", "paused",
+    "t", "x", "y", "vx", "vy", "heading", "throttle", "warp", "paused",
     "fuel", "infinite", "dvUsed", "hold", "landed", "dead", "deadReason",
     "deathT", "leftHome", "maxRE", "gr", "predict", "darkEnergy", "muted", "focus",
     "cabin",
@@ -56,7 +56,6 @@ export function loadState() {
     Object.assign(G, data.g);
     if (typeof G.darkEnergy !== "boolean") G.darkEnergy = true;
     if (typeof G.cabin !== "boolean") G.cabin = false;
-    if (typeof G.cosmicT !== "number") G.cosmicT = G.t;
     G.observerMode = false;
     G.deathRt = G.dead ? performance.now() : 0;
     G.boost = false;

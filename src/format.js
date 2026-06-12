@@ -1,4 +1,4 @@
-import { AU_KM } from "./constants.js";
+import { AU_KM, SEC_YEAR } from "./constants.js";
 
 export function fmtKm(v) {
     const av = Math.abs(v);
@@ -8,7 +8,15 @@ export function fmtKm(v) {
 }
 export const fmtDist = v => v > 2e7 ? (v / AU_KM).toFixed(3) + " AU" : fmtKm(v);
 export function fmtMET(s) {
-    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), ss = Math.floor(s % 60);
+    const d = Math.floor(s / 86400);
+    if (d >= 10000) { // ~27 years: a raw day counter stops reading as time
+        const yr = s / SEC_YEAR;
+        if (yr >= 1e9) return (yr / 1e9).toFixed(2) + " Gyr";
+        if (yr >= 1e6) return (yr / 1e6).toFixed(2) + " Myr";
+        if (yr >= 1e4) return (yr / 1e3).toFixed(1) + " kyr";
+        return Math.floor(yr).toLocaleString("en-US") + " y " + String(Math.floor((s % SEC_YEAR) / 86400)).padStart(3, "0") + " d";
+    }
+    const h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), ss = Math.floor(s % 60);
     const p = n => String(n).padStart(2, "0");
     return p(d) + ":" + p(h) + ":" + p(m) + ":" + p(ss);
 }
