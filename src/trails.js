@@ -229,7 +229,7 @@ export function clearBodyPrediction() {
     bodyPredDots.visible = false;
 }
 export function computeBodyPrediction(target, locked = false) {
-    if (target < -3 || target >= PL.length || G.dead) { clearBodyPrediction(); return; }
+    if (target < -3 || target >= PL.length) { clearBodyPrediction(); return; }
     const liveEphem = snapshotEphem();
     const predEphem = snapshotEphem();
     const step = bodyPredStep(target);

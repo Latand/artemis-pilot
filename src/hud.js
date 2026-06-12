@@ -1,5 +1,5 @@
 import { PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, warpLabel } from "./constants.js";
-import { G, BH } from "./state.js";
+import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { fmtKm, fmtDist, fmtMET, escapeKmS, accelMs2, fmtAccel } from "./format.js";
 import { bhHawkingLabel, bhMassLabel } from "./blackholes.js";
@@ -35,8 +35,8 @@ export function updateEscapeTracker(oi) {
     // heliocentric speed in the current n-body state
     const vH = Math.hypot(G.vx - eph.sunVx, G.vy - eph.sunVy);
     const rows = [
-        { name: "EARTH ESC", v, need: Math.sqrt(2 * MU_E / Math.max(R_EARTH, oi.rE)) },
-        { name: "SUN ESC", v: vH, need: Math.sqrt(2 * MU_S / Math.max(R_SUN, oi.rS)) },
+        { name: "EARTH ESC", v, need: WORLD.earthDestroyed ? Infinity : Math.sqrt(2 * MU_E / Math.max(R_EARTH, oi.rE)) },
+        { name: "SUN ESC", v: vH, need: WORLD.sunDestroyed ? Infinity : Math.sqrt(2 * MU_S / Math.max(R_SUN, oi.rS)) },
     ];
     let bi = -1, bd = Infinity;
     for (let i = 0; i < BH.n; i++) {
@@ -81,17 +81,19 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     cMoon.textContent = fmtDist(oi.rM);
     cSun.textContent = fmtDist(oi.rS);
     cDv.textContent = Math.round(G.dvUsed) + " m/s";
-    const aShE = MU_E / Math.pow(Math.max(R_EARTH, oi.rE), 2), aShM = MU_M / Math.pow(Math.max(R_MOON, oi.rM), 2), aShS = MU_S / Math.pow(Math.max(R_SUN, oi.rS), 2);
+    const aShE = WORLD.earthDestroyed ? 0 : MU_E / Math.pow(Math.max(R_EARTH, oi.rE), 2);
+    const aShM = WORLD.moonDestroyed ? 0 : MU_M / Math.pow(Math.max(R_MOON, oi.rM), 2);
+    const aShS = WORLD.sunDestroyed ? 0 : MU_S / Math.pow(Math.max(R_SUN, oi.rS), 2);
     let aShB = 0;
     for (let bi = 0; bi < BH.n; bi++) {
         const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi]);
         const effB = Math.max(dB - BH.rs[bi], BH.rs[bi] * .02);
         aShB += BH.mu[bi] / (effB * effB);
     }
-    const aShP = oi.pNear >= 0 ? PL[oi.pNear].mu / Math.pow(Math.max(PL[oi.pNear].R, oi.pNearD), 2) : 0;
+    const aShP = oi.pNear >= 0 && !WORLD.plDestroyed[oi.pNear] ? PL[oi.pNear].mu / Math.pow(Math.max(PL[oi.pNear].R, oi.pNearD), 2) : 0;
     const gTot = aShE + aShM + aShS + aShB + aShP;
     const shares = [["E", aShE], ["M", aShM], ["S", aShS], ["⚫", aShB], [oi.pNear >= 0 ? PL[oi.pNear].tag : "P", aShP]].sort((p, q) => q[1] - p[1]);
-    cGrav.textContent = shares[0][0] + " " + Math.round(shares[0][1] / gTot * 100) + "% · " + shares[1][0] + " " + Math.round(shares[1][1] / gTot * 100) + "%";
+    cGrav.textContent = gTot > 0 ? shares[0][0] + " " + Math.round(shares[0][1] / gTot * 100) + "% · " + shares[1][0] + " " + Math.round(shares[1][1] / gTot * 100) + "%" : "—";
     let bhReadoutRs = BH_SIZES[BH.sizeIdx], bhNearestD = Infinity;
     for (let bi = 0; bi < BH.n; bi++) {
         const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi]);

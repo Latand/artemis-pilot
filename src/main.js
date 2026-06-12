@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import {
     R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, ATM_TOP, DRAG_CD, DRAG_H,
-    MAIN_A, RCS_A, BOOST, ROT_RATE,
+    MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S,
 } from "./constants.js";
-import { G, keys, BH, resetShip } from "./state.js";
+import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed } from "./state.js";
 import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
 import { initPhysicsHooks, advance, snapLanded, orbitInfo } from "./physics.js";
 import { fmtMET, fmtKm, clamp01, smooth01, speedColor } from "./format.js";
@@ -36,14 +36,18 @@ import { initInput, setFocus } from "./input.js";
 
 // ============================ WIRING ============================
 function die(reason, swallowed) {
+    if (G.dead) return;
     G.dead = true; G.deadReason = reason;
+    G.deathT = G.t;
+    G.deathRt = performance.now();
+    G.observerMode = false;
     if (!swallowed) { // black-hole loss suppresses the explosion effect
         const cd = camera.position.distanceTo(shipG.position);
         const cs = Math.min(2.4, Math.max(.012, cd * .02));
         triggerExplosion(G.x * K, 0, -G.y * K, cs);
         boom();
     }
-    showBanner("VEHICLE LOST", reason + " · MET " + fmtMET(G.t) + " · max Earth distance " + fmtKm(G.maxRE) + " · Δv used " + Math.round(G.dvUsed) + " m/s", "PRESS R TO RESTART");
+    showBanner("VEHICLE LOST", reason + " · MET " + fmtMET(G.t) + " · max Earth distance " + fmtKm(G.maxRE) + " · Δv used " + Math.round(G.dvUsed) + " m/s", "OBSERVER MODE IN 2 SECONDS · R TO REBUILD SHIP");
 }
 function restart() {
     resetEphem();
@@ -57,10 +61,10 @@ function restart() {
 initPhysicsHooks({ die, award, banner: showBanner, hideBanner });
 initBHHooks({
     toast, predict: computePrediction,
-    cataclysm(rs) {
-        if (G.dead) return;
+    cataclysm(target, rs, mode) {
+        const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs));
         award("bh");
-        die("Earth fell into a black hole (r_s " + Math.round(rs) + " km) — the planet, the frame and the mission are gone", true);
+        if (name) toast(name + " destroyed by black hole · r_s " + fmtKm(rs));
     },
 });
 initInput({ restart });
@@ -81,7 +85,20 @@ let hoverBodyTarget = BODY_NONE, lockedBodyTarget = BODY_NONE, labelHoverTarget 
 function bodyScenePos(target) {
     return target === BODY_EARTH ? earthG.position : target === BODY_MOON ? moon.position : target === BODY_SUN ? sunCore.position : target >= 0 ? plGroups[target].position : null;
 }
+function bodyName(target) {
+    return target === "earth" || target === BODY_EARTH ? "Earth" :
+        target === "moon" || target === BODY_MOON ? "Moon" :
+            target === "sun" || target === BODY_SUN ? "Sun" :
+                typeof target === "number" && target >= 0 ? PL[target].name : "";
+}
+function bodyKey(target) {
+    return target === BODY_EARTH ? "earth" :
+        target === BODY_MOON ? "moon" :
+            target === BODY_SUN ? "sun" : target;
+}
+function isTargetDestroyed(target) { return isBodyDestroyed(bodyKey(target)); }
 function lockBodyPrediction(target) {
+    if (isTargetDestroyed(target)) return;
     lockedBodyTarget = target;
     const minTrackDist = target === BODY_EARTH ? R_EARTH * K * 80 : target === BODY_MOON ? R_MOON * K * 80 : target === BODY_SUN ? SUN_RADIUS * 12 : PL[target].R * K * 65;
     cam.dist = Math.max(cam.dist, minTrackDist);
@@ -97,6 +114,61 @@ function unlockBodyPrediction() {
     lockedBodyTarget = BODY_NONE;
     clearBodyPrediction();
 }
+function markBodyDestroyed(target, reason) {
+    const key = bodyKey(target);
+    if (isBodyDestroyed(key)) return "";
+    destroyBody(key);
+    const name = bodyName(target);
+    if (lockedBodyTarget !== BODY_NONE && bodyKey(lockedBodyTarget) === key) unlockBodyPrediction();
+    if (G.landed && ((key === "earth" && G.landed.body === "earth") ||
+        (key === "moon" && G.landed.body === "moon") ||
+        (typeof key === "number" && G.landed.body === "planet" && G.landed.i === key))) {
+        G.landed = null;
+        die("Surface body destroyed: " + name + " · " + reason, true);
+    }
+    if ((G.focus === "earth" && key === "earth") || (G.focus === "moon" && key === "moon") ||
+        (G.focus === "sun" && key === "sun") || (typeof G.focus === "number" && G.focus === key)) {
+        setTimeout(() => focusNearestSurvivor(), 0);
+    }
+    return name;
+}
+const _focusOrigin = new THREE.Vector3(), _focusPos = new THREE.Vector3();
+function addFocusCandidate(list, target, focus, pos, minDist) {
+    if (!isTargetDestroyed(target)) list.push({ name: bodyName(target), target, focus, pos: pos.clone(), minDist });
+}
+function focusNearestSurvivor() {
+    const sx = (eph.earthX + G.x) * K, sz = -(eph.earthY + G.y) * K;
+    _focusOrigin.set(sx, 0, sz);
+    const cands = [];
+    addFocusCandidate(cands, BODY_EARTH, "earth", earthG.position, R_EARTH * K * 18);
+    addFocusCandidate(cands, BODY_MOON, "moon", moon.position, R_MOON * K * 32);
+    addFocusCandidate(cands, BODY_SUN, "sun", sunCore.position, SUN_RADIUS * 4);
+    for (let i = 0; i < PL.length; i++) addFocusCandidate(cands, i, i, plGroups[i].position, PL[i].R * K * 18);
+    for (let i = 0; i < BH.n; i++) {
+        _focusPos.set((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K);
+        cands.push({ name: "Black hole", target: BODY_NONE, focus: "free", pos: _focusPos.clone(), minDist: Math.max(80, BH.rs[i] * K * 16) });
+    }
+    let best = null, bestD = Infinity;
+    for (const c of cands) {
+        const d = c.pos.distanceTo(_focusOrigin);
+        if (d < bestD) { bestD = d; best = c; }
+    }
+    if (!best) return null;
+    if (best.focus === "free") {
+        unlockBodyPrediction();
+        G.focus = "free";
+        cam.tgt.copy(best.pos);
+        cam.dist = Math.max(cam.dist, best.minDist);
+    } else focusAndLockBody(best.target, best.focus);
+    return best.name;
+}
+function enterObserverMode() {
+    if (!G.dead || G.observerMode) return;
+    G.observerMode = true;
+    hideBanner();
+    const name = focusNearestSurvivor();
+    toast("Observer mode" + (name ? " · watching " + name : "") + " · R rebuilds the ship");
+}
 function bindBodyLabel(el, target, onClick) {
     el.onclick = onClick;
     el.addEventListener("pointerenter", e => { labelHoverTarget = target; labelPtr = [e.clientX, e.clientY]; });
@@ -110,6 +182,47 @@ bindBodyLabel(lblM, BODY_MOON, () => focusAndLockBody(BODY_MOON, "moon"));
 bindBodyLabel(lblS, BODY_SUN, () => focusAndLockBody(BODY_SUN, "sun"));
 lblO.onclick = () => { setFocus("ship"); unlockBodyPrediction(); };
 plLabels.forEach((sp, i) => { bindBodyLabel(sp, i, () => focusAndLockBody(i, i)); });
+
+function bodyContactList() {
+    const list = [];
+    if (!WORLD.earthDestroyed) list.push({ target: "earth", name: "Earth", x: 0, y: 0, vx: 0, vy: 0, R: R_EARTH, mu: MU_E });
+    if (!WORLD.moonDestroyed) list.push({ target: "moon", name: "Moon", x: eph.moonX, y: eph.moonY, vx: eph.moonVx, vy: eph.moonVy, R: R_MOON, mu: MU_M });
+    if (!WORLD.sunDestroyed) list.push({ target: "sun", name: "Sun", x: eph.sunX, y: eph.sunY, vx: eph.sunVx, vy: eph.sunVy, R: R_SUN, mu: MU_S });
+    for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) list.push({ target: i, name: PL[i].name, x: eph.plX[i], y: eph.plY[i], vx: eph.plVx[i], vy: eph.plVy[i], R: PL[i].R, mu: PL[i].mu });
+    return list;
+}
+function rocheLimit(big, small) {
+    const rhoRatio = (big.mu / Math.pow(big.R, 3)) / Math.max(1e-12, small.mu / Math.pow(small.R, 3));
+    return Math.min(big.R * 60, 2.44 * big.R * Math.cbrt(rhoRatio));
+}
+function checkBodyContacts() {
+    const bodies = bodyContactList();
+    for (let i = 0; i < bodies.length; i++) for (let j = i + 1; j < bodies.length; j++) {
+        const a = bodies[i], b = bodies[j];
+        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        const rel = Math.hypot(a.vx - b.vx, a.vy - b.vy);
+        const sumR = a.R + b.R;
+        const big = a.mu >= b.mu ? a : b;
+        const small = big === a ? b : a;
+        if (d <= sumR) {
+            const esc = Math.sqrt(2 * (a.mu + b.mu) / Math.max(1, sumR));
+            const ratio = small.mu / big.mu;
+            const smallName = markBodyDestroyed(small.target, "impact with " + big.name);
+            if (smallName) toast(smallName + " destroyed by impact with " + big.name + " · " + rel.toFixed(2) + " km/s");
+            if (ratio > .2 || rel > esc) {
+                const bigName = markBodyDestroyed(big.target, "high-energy impact with " + small.name);
+                if (bigName) toast(bigName + " destroyed by high-energy impact · " + rel.toFixed(2) + " km/s");
+            }
+            return;
+        }
+        const roche = rocheLimit(big, small);
+        if (d < roche) {
+            const smallName = markBodyDestroyed(small.target, "tidal disruption near " + big.name);
+            if (smallName) toast(smallName + " torn apart near " + big.name + " · Roche " + fmtKm(roche));
+            return;
+        }
+    }
+}
 
 // ---- URL test/share harness: ?dist=&yaw=&pitch=&warp=&vmul=&simt=&bh=&hidehelp=1 ----
 {
@@ -171,12 +284,15 @@ function hoverVelocity(idx, out) {
 function updateHover(w, h) {
     let best = BODY_NONE, bestD = 18, bestPos = null;
     const ptr = labelPtr || lastPtr;
-    if (labelHoverTarget !== BODY_NONE && !G.dead) {
+    if (labelHoverTarget !== BODY_NONE && !isTargetDestroyed(labelHoverTarget)) {
         best = labelHoverTarget;
         bestPos = bodyScenePos(best);
-    } else if (lastPtr && !G.dead) {
-        const cands = [[BODY_EARTH, earthG.position], [BODY_SUN, sunCore.position], [BODY_MOON, moon.position]];
-        for (let i = 0; i < PL.length; i++) cands.push([i, plGroups[i].position]);
+    } else if (lastPtr) {
+        const cands = [];
+        if (!WORLD.earthDestroyed) cands.push([BODY_EARTH, earthG.position]);
+        if (!WORLD.sunDestroyed) cands.push([BODY_SUN, sunCore.position]);
+        if (!WORLD.moonDestroyed) cands.push([BODY_MOON, moon.position]);
+        for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) cands.push([i, plGroups[i].position]);
         for (const [idx, pos] of cands) {
             const pr = project(pos, w, h);
             if (!pr) continue;
@@ -227,6 +343,7 @@ function frame() {
     requestAnimationFrame(frame);
     const dtR = Math.min(.06, clock.getDelta());
     frameNo++;
+    if (G.dead && !G.observerMode && performance.now() - G.deathRt >= 2000) enterObserverMode();
     // ---- input → attitude & thrust ----
     const rotIn = ((keys.has("KeyA") || keys.has("ArrowLeft")) ? 1 : 0) - ((keys.has("KeyD") || keys.has("ArrowRight")) ? 1 : 0);
     if (rotIn) { G.hold = null; G.heading += rotIn * ROT_RATE * dtR; }
@@ -258,17 +375,22 @@ function frame() {
     }
     // ---- physics ----
     let advanced = 0;
-    if (!G.paused && !G.dead) {
-        if (G.landed) {
+    if (!G.paused) {
+        if (G.dead) {
             advanced = dtR * G.warp;
             advanceEphem(advanced);
             bhAdvance(advanced, G.t);
             G.t += advanced;
-        }
-        else advanced = advance(dtR * G.warp, atx, aty, aMag);
+        } else if (G.landed) {
+            advanced = dtR * G.warp;
+            advanceEphem(advanced);
+            bhAdvance(advanced, G.t);
+            G.t += advanced;
+        } else advanced = advance(dtR * G.warp, atx, aty, aMag);
     }
     snapLanded();
     const oi = orbitInfo();
+    checkBodyContacts();
     // achievements
     if (!G.dead) {
         if (!oi.domMoon && oi.E < 0 && oi.ra > 100000 + R_EARTH) award("highE");
@@ -284,10 +406,14 @@ function frame() {
     const earthX = eph.earthX * K, earthZ = -eph.earthY * K;
     earthV.set(earthX, 0, earthZ);
     earthG.position.copy(earthV);
+    earthG.visible = !WORLD.earthDestroyed;
+    clouds.visible = !WORLD.earthDestroyed;
     moonOrbitRing.position.copy(earthV);
+    moonOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.moonDestroyed;
     moonState(G.t, _m);
     moonV.set((eph.earthX + _m.mx) * K, 0, -(eph.earthY + _m.my) * K);
     moon.position.copy(moonV);
+    moon.visible = !WORLD.moonDestroyed;
     moon.rotation.y = _m.ang + Math.PI * .5;
     moonSoiRing.position.copy(moonV);
     // sun & planets follow the live ephemeris (cache refreshed by orbitInfo above)
@@ -295,6 +421,9 @@ function frame() {
     sunCore.position.copy(sunPos);
     sunGlow.position.copy(sunPos);
     sunLight.position.copy(sunPos);
+    sunCore.visible = !WORLD.sunDestroyed;
+    sunGlow.visible = !WORLD.sunDestroyed;
+    sunLight.visible = !WORLD.sunDestroyed;
     flowCtx.earthScX = earthX; flowCtx.earthScZ = earthZ;
     flowCtx.sunScX = sunPos.x; flowCtx.sunScZ = sunPos.z;
     for (let i = 0; i < PL.length; i++) {
@@ -302,6 +431,9 @@ function frame() {
         plGroups[i].position.set(px, 0, pz);
         plGlows[i].position.set(px, 0, pz);
         plOrbitRings[i].position.copy(sunPos);
+        plGroups[i].visible = !WORLD.plDestroyed[i];
+        plGlows[i].visible = !WORLD.plDestroyed[i];
+        plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed;
         flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
         const dCamP = camera.position.distanceTo(plGroups[i].position);
         plGlows[i].scale.setScalar(Math.max(PL[i].R * K * 3, dCamP * .011));
@@ -421,7 +553,7 @@ function frame() {
     updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr);
     updateShells(advanced, fB, sunPos);
     if (fB > .01) fFlow.textContent = (flowVel(oriX, 0, oriZ, moonV.x, moonV.y, moonV.z, fv) * 1000).toFixed(2) + " km/s";
-    moonSoiRing.visible = fB > .01;
+    moonSoiRing.visible = fB > .01 && !WORLD.moonDestroyed;
     moonSoiRing.material.opacity = fB * (.14 + .1 * Math.sin(performance.now() * .002));
     // ---- velocity & flow vectors (one shared scale) ----
     velV.set(G.vx, 0, -G.vy);
@@ -477,14 +609,18 @@ function frame() {
     const w = cvHost.clientWidth, h = cvHost.clientHeight;
     updateHover(w, h);
     if (frameNo % 18 === 0) {
+        if (lockedBodyTarget !== BODY_NONE && isTargetDestroyed(lockedBodyTarget)) unlockBodyPrediction();
         if (lockedBodyTarget !== BODY_NONE) computeBodyPrediction(lockedBodyTarget, true);
-        else if (hoverBodyTarget !== BODY_NONE) computeBodyPrediction(hoverBodyTarget, false);
+        else if (hoverBodyTarget !== BODY_NONE && !isTargetDestroyed(hoverBodyTarget)) computeBodyPrediction(hoverBodyTarget, false);
         else clearBodyPrediction();
     }
-    put(lblE, earthG.position, -8, w, h);
-    put(lblM, moon.position, -8, w, h);
-    put(lblS, sunCore.position, -8, w, h);
-    for (let i = 0; i < PL.length; i++) put(plLabels[i], plGroups[i].position, -8, w, h);
+    if (WORLD.earthDestroyed) lblE.style.opacity = "0"; else put(lblE, earthG.position, -8, w, h);
+    if (WORLD.moonDestroyed) lblM.style.opacity = "0"; else put(lblM, moon.position, -8, w, h);
+    if (WORLD.sunDestroyed) lblS.style.opacity = "0"; else put(lblS, sunCore.position, -8, w, h);
+    for (let i = 0; i < PL.length; i++) {
+        if (WORLD.plDestroyed[i]) plLabels[i].style.opacity = "0";
+        else put(plLabels[i], plGroups[i].position, -8, w, h);
+    }
     if (G.dead) lblO.style.opacity = "0";
     else put(lblO, shipG.position, -22, w, h);
     composer.render();

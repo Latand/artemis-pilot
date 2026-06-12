@@ -1,5 +1,5 @@
 import { FLOW, PL, K } from "./constants.js";
-import { BH } from "./state.js";
+import { BH, WORLD } from "./state.js";
 
 // Scene-unit river field: the medium falls at v = √(2μ/r) toward every body.
 // Earth, Sun, planets, and holes are sampled in world-space. The far-field
@@ -14,20 +14,21 @@ export const flowCtx = {
 export function flowVel(x, y, z, mx, my, mz, out) {
     const edx = x - flowCtx.earthScX, edz = z - flowCtx.earthScZ;
     const rE = Math.max(0.6, Math.hypot(edx, y, edz));
-    const sE = FLOW.CE / Math.sqrt(rE) / rE;
+    const sE = WORLD.earthDestroyed ? 0 : FLOW.CE / Math.sqrt(rE) / rE;
     const dx = x - mx, dy = y - my, dz = z - mz;
     const rM = Math.max(0.4, Math.hypot(dx, dy, dz));
-    const sM = FLOW.CM / Math.sqrt(rM) / rM;
+    const sM = WORLD.moonDestroyed ? 0 : FLOW.CM / Math.sqrt(rM) / rM;
     const sdx = x - flowCtx.sunScX, sdy = y, sdz = z - flowCtx.sunScZ;
     const rS = Math.max(1, Math.hypot(sdx, sdy, sdz));
-    const sS = FLOW.CS / Math.sqrt(rS) / rS;
+    const sS = WORLD.sunDestroyed ? 0 : FLOW.CS / Math.sqrt(rS) / rS;
     const esx = flowCtx.earthScX - flowCtx.sunScX, esz = flowCtx.earthScZ - flowCtx.sunScZ;
     const rS0 = Math.max(1, Math.hypot(esx, esz));
-    const sS0 = FLOW.CS / Math.sqrt(rS0) / rS0;
+    const sS0 = WORLD.sunDestroyed ? 0 : FLOW.CS / Math.sqrt(rS0) / rS0;
     let exVX = -sdx * sS + esx * sS0;
     let exVY = -sdy * sS;
     let exVZ = -sdz * sS + esz * sS0;
     for (let i = 0; i < PL.length; i++) {
+        if (WORLD.plDestroyed[i]) continue;
         const pdx = x - flowCtx.plScX[i], pdz = z - flowCtx.plScZ[i];
         const rP = Math.max(flowCtx.plSink[i] * .9, Math.hypot(pdx, y, pdz));
         if (rP > PL[i].soi * K * 4) continue; // negligible beyond a few SOI

@@ -2,7 +2,7 @@ import {
     AU_KM, SUN_TH0, OM_YEAR, PL, A_MOON, OMEGA, MOON_ANG0,
     MU_E, MU_M, MU_S,
 } from "./constants.js";
-import { BH } from "./state.js";
+import { BH, WORLD } from "./state.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -13,6 +13,14 @@ const bodyMu = new Float64Array(NB);
 bodyMu[IDX_MOON] = MU_M;
 bodyMu[IDX_SUN] = MU_S;
 for (let i = 0; i < PL.length; i++) bodyMu[IDX_PLANETS + i] = PL[i].mu;
+
+function isBodyActive(i) {
+    return i === IDX_MOON ? !WORLD.moonDestroyed :
+        i === IDX_SUN ? !WORLD.sunDestroyed :
+            !WORLD.plDestroyed[i - IDX_PLANETS];
+}
+function activeBodyMu(i) { return isBodyActive(i) ? bodyMu[i] : 0; }
+function activeEarthMu() { return WORLD.earthDestroyed ? 0 : MU_E; }
 
 const bodyX = new Float64Array(NB), bodyY = new Float64Array(NB);
 const bodyVx = new Float64Array(NB), bodyVy = new Float64Array(NB);
@@ -117,26 +125,28 @@ export function relGravityAt(x, y, out, skipBody = -1, st = null) {
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
     let ax = 0, ay = 0;
     const rE = Math.hypot(x, y);
-    if (rE > 1e-9) {
+    const muE = activeEarthMu();
+    if (muE > 0 && rE > 1e-9) {
         const rE3 = rE * rE * rE;
-        ax -= MU_E * x / rE3;
-        ay -= MU_E * y / rE3;
+        ax -= muE * x / rE3;
+        ay -= muE * y / rE3;
     }
     for (let i = 0; i < NB; i++) {
-        if (i !== skipBody) {
+        const mu = activeBodyMu(i);
+        if (mu > 0 && i !== skipBody) {
             const dx = x - X[i], dy = y - Y[i];
             const r = Math.hypot(dx, dy);
             if (r > 1e-9) {
                 const r3 = r * r * r;
-                ax -= bodyMu[i] * dx / r3;
-                ay -= bodyMu[i] * dy / r3;
+                ax -= mu * dx / r3;
+                ay -= mu * dy / r3;
             }
         }
         const r0 = Math.hypot(X[i], Y[i]);
-        if (r0 > 1e-9) {
+        if (mu > 0 && r0 > 1e-9) {
             const r03 = r0 * r0 * r0;
-            ax -= bodyMu[i] * X[i] / r03;
-            ay -= bodyMu[i] * Y[i] / r03;
+            ax -= mu * X[i] / r03;
+            ay -= mu * Y[i] / r03;
         }
     }
     for (let i = 0; i < BH.n; i++) {
@@ -185,12 +195,14 @@ function copyStateToLive(st) {
 }
 function earthAccel(st, out) {
     let ax = 0, ay = 0;
+    if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; return; }
     for (let i = 0; i < NB; i++) {
+        const mu = activeBodyMu(i);
         const r = Math.hypot(st.x[i], st.y[i]);
-        if (r > 1e-9) {
+        if (mu > 0 && r > 1e-9) {
             const r3 = r * r * r;
-            ax += bodyMu[i] * st.x[i] / r3;
-            ay += bodyMu[i] * st.y[i] / r3;
+            ax += mu * st.x[i] / r3;
+            ay += mu * st.y[i] / r3;
         }
     }
     for (let i = 0; i < BH.n; i++) {
@@ -206,6 +218,10 @@ function earthAccel(st, out) {
 }
 function derivAll(st, K_) {
     for (let i = 0; i < NB; i++) {
+        if (!isBodyActive(i)) {
+            K_.x[i] = 0; K_.y[i] = 0; K_.vx[i] = 0; K_.vy[i] = 0;
+            continue;
+        }
         relGravityAt(st.x[i], st.y[i], _a, i, st);
         K_.x[i] = st.vx[i]; K_.y[i] = st.vy[i];
         K_.vx[i] = _a[0]; K_.vy[i] = _a[1];
@@ -245,15 +261,20 @@ function rk4Bodies(st, dt) {
 function bodyStepSize(st, rem, maxStep = 3600) {
     let dt = Math.min(rem, maxStep);
     for (let i = 0; i < NB; i++) {
+        const mui = activeBodyMu(i);
+        if (mui <= 0) continue;
         const rE = Math.hypot(st.x[i], st.y[i]);
-        if (rE > 1) dt = Math.min(dt, Math.sqrt(rE * rE * rE / (MU_E + bodyMu[i])) / 55);
+        const muE = activeEarthMu();
+        if (muE > 0 && rE > 1) dt = Math.min(dt, Math.sqrt(rE * rE * rE / (muE + mui)) / 55);
         for (let j = i + 1; j < NB; j++) {
+            const muj = activeBodyMu(j);
+            if (muj <= 0) continue;
             const d = Math.hypot(st.x[i] - st.x[j], st.y[i] - st.y[j]);
-            if (d > 1) dt = Math.min(dt, Math.sqrt(d * d * d / (bodyMu[i] + bodyMu[j])) / 55);
+            if (d > 1) dt = Math.min(dt, Math.sqrt(d * d * d / (mui + muj)) / 55);
         }
         for (let b = 0; b < BH.n; b++) {
             const d = Math.hypot(st.x[i] - BH.x[b], st.y[i] - BH.y[b]);
-            if (d > BH.rs[b]) dt = Math.min(dt, Math.sqrt(d * d * d / (bodyMu[i] + BH.mu[b])) / 45);
+            if (d > BH.rs[b]) dt = Math.min(dt, Math.sqrt(d * d * d / (mui + BH.mu[b])) / 45);
         }
     }
     return Math.max(1e-3, dt);

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { FLOW, PL, K, R_EARTH, R_MOON, SUN_RADIUS } from "./constants.js";
-import { BH } from "./state.js";
+import { BH, WORLD } from "./state.js";
 import { mulberry32 } from "./format.js";
 import { dotTexture } from "./textures.js";
 import { scene, renderer, camera, cam } from "./scene.js";
@@ -240,14 +240,14 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos) {
     uniformsShared.uDtSim.value = dtSim;
     uniformsShared.uTick.value = (uniformsShared.uTick.value + .618) % 64;
 
-    bodyVals[0].set(earthV.x, earthV.y, earthV.z, FLOW.CE);
+    bodyVals[0].set(earthV.x, earthV.y, earthV.z, WORLD.earthDestroyed ? 0 : FLOW.CE);
     sinkVals[0] = R_EARTH * K + .6;
-    bodyVals[1].set(moonV.x, moonV.y, moonV.z, FLOW.CM);
+    bodyVals[1].set(moonV.x, moonV.y, moonV.z, WORLD.moonDestroyed ? 0 : FLOW.CM);
     sinkVals[1] = R_MOON * K + .5;
-    bodyVals[2].set(sunPosV.x, sunPosV.y, sunPosV.z, FLOW.CS);
+    bodyVals[2].set(sunPosV.x, sunPosV.y, sunPosV.z, WORLD.sunDestroyed ? 0 : FLOW.CS);
     sinkVals[2] = SUN_RADIUS + 10;
     for (let i = 0; i < PL.length; i++) {
-        bodyVals[3 + i].set(plPos[i].x, plPos[i].y, plPos[i].z, .001 * Math.sqrt(2 * PL[i].mu / 1000));
+        bodyVals[3 + i].set(plPos[i].x, plPos[i].y, plPos[i].z, WORLD.plDestroyed[i] ? 0 : .001 * Math.sqrt(2 * PL[i].mu / 1000));
         sinkVals[3 + i] = PL[i].R * K;
     }
     let nb = 3 + PL.length;
@@ -267,7 +267,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos) {
         const typ = far ? vC * Math.min(1, R / (2 * dC)) : bodyVals[i].w / Math.sqrt(Math.max(sinkVals[i], Math.max(dC - R, sinkVals[i])));
         if (typ > bestS) { bestS = typ; best = i; bestTyp = far ? typ * 4 : bodyVals[i].w / Math.sqrt(sinkVals[i]); }
     }
-    uniformsShared.uVRef.value = bestTyp;
+    uniformsShared.uVRef.value = Math.max(.01, bestTyp);
 
     if (dtSim > 0 || force) {
         const prevRT = renderer.getRenderTarget();

@@ -3,7 +3,7 @@ import {
     PL, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME,
 } from "./constants.js";
 import { eph, updEphem, moonState, planetVel, relGravityAt, advanceEphem } from "./ephemeris.js";
-import { G, BH } from "./state.js";
+import { G, BH, WORLD } from "./state.js";
 import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
 
@@ -91,12 +91,13 @@ export function orbitInfo() {
     const rS = Math.hypot(sdx, sdy);
     let pNear = -1, pNearD = Infinity;
     for (let i = 0; i < PL.length; i++) {
+        if (WORLD.plDestroyed[i]) continue;
         const d = Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i]);
         if (d < pNearD) { pNearD = d; pNear = i; }
     }
-    const domMoon = rM < SOI_M;
+    const domMoon = !WORLD.moonDestroyed && rM < SOI_M;
     const domPl = !domMoon && pNear >= 0 && pNearD < PL[pNear].soi;
-    const domSun = !domMoon && !domPl && rE > SOI_E;
+    const domSun = !WORLD.sunDestroyed && !domMoon && !domPl && (WORLD.earthDestroyed || rE > SOI_E);
     let mu, rx, ry, rvx, rvy, R, body;
     if (domMoon) { mu = MU_M; rx = dxm; ry = dym; rvx = G.vx - _m.vmx; rvy = G.vy - _m.vmy; R = R_MOON; body = "MOON"; }
     else if (domPl) {
@@ -106,7 +107,8 @@ export function orbitInfo() {
         rvx = G.vx - _pv.vx; rvy = G.vy - _pv.vy; R = p.R; body = p.name;
     }
     else if (domSun) { mu = MU_S; rx = sdx; ry = sdy; rvx = G.vx; rvy = G.vy; R = R_SUN; body = "SUN"; }
-    else { mu = MU_E; rx = G.x; ry = G.y; rvx = G.vx; rvy = G.vy; R = R_EARTH; body = "EARTH"; }
+    else if (!WORLD.earthDestroyed) { mu = MU_E; rx = G.x; ry = G.y; rvx = G.vx; rvy = G.vy; R = R_EARTH; body = "EARTH"; }
+    else { mu = 1; rx = G.x; ry = G.y; rvx = G.vx; rvy = G.vy; R = 0; body = "DRIFT"; }
     const r = Math.hypot(rx, ry), v2 = rvx * rvx + rvy * rvy;
     const E = v2 / 2 - mu / r;
     const hh = rx * rvy - ry * rvx;
@@ -232,10 +234,17 @@ export function advance(simAdv, atx, aty, aMag) {
             if (Math.hypot(s[0] - eph.plX[i], s[1] - eph.plY[i]) <= PL[i].R) { hitP = i; break; }
         if (hitP >= 0) { handlePlanetContact(s, hitP); break; }
         for (let i = 0; i < BH.n; i++) {
-            if (Math.hypot(s[0] - BH.x[i], s[1] - BH.y[i]) <= BH.rs[i] * 1.5) {
+            const dBH = Math.hypot(s[0] - BH.x[i], s[1] - BH.y[i]);
+            if (dBH <= BH.rs[i]) {
                 G.x = s[0]; G.y = s[1]; G.vx = s[2]; G.vy = s[3];
                 H.award("bh");
-                H.die("Plunged inside the photon sphere — spaghettified past the event horizon", true);
+                H.die("Crossed the event horizon; no signal returns", true);
+                break;
+            }
+            if (dBH <= BH.rs[i] * 1.5) {
+                G.x = s[0]; G.y = s[1]; G.vx = s[2]; G.vy = s[3];
+                H.award("bh");
+                H.die("Crossed the photon sphere; captured into the black-hole boundary flow", true);
                 break;
             }
         }

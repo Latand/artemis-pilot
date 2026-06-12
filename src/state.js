@@ -1,4 +1,4 @@
-import { R_EARTH, MU_E, FUEL_DV0, BH_MAX, C_LIGHT, K } from "./constants.js";
+import { R_EARTH, MU_E, FUEL_DV0, BH_MAX, C_LIGHT, K, PL } from "./constants.js";
 
 // ---- game state ----
 export const G = {
@@ -9,6 +9,7 @@ export const G = {
     hold: null,                // 'pro' | 'retro' | null
     landed: null,              // null | {body:'earth'|'moon'|'planet', ang, i?}
     dead: false, deadReason: "",
+    deathT: 0, deathRt: 0, observerMode: false,
     leftHome: false, maxRE: 0,
     gr: true, predict: true, muted: false,
     focus: "ship",
@@ -16,10 +17,40 @@ export const G = {
 };
 window.__G = G; // debug/testing handle
 
+export const WORLD = {
+    earthDestroyed: false,
+    moonDestroyed: false,
+    sunDestroyed: false,
+    plDestroyed: new Uint8Array(PL.length),
+};
+window.__WORLD = WORLD;
+
+export function resetWorld() {
+    WORLD.earthDestroyed = false;
+    WORLD.moonDestroyed = false;
+    WORLD.sunDestroyed = false;
+    WORLD.plDestroyed.fill(0);
+}
+
+export function isBodyDestroyed(target) {
+    return target === "earth" ? WORLD.earthDestroyed :
+        target === "moon" ? WORLD.moonDestroyed :
+            target === "sun" ? WORLD.sunDestroyed :
+                typeof target === "number" ? WORLD.plDestroyed[target] === 1 : false;
+}
+
+export function destroyBody(target) {
+    if (target === "earth") WORLD.earthDestroyed = true;
+    else if (target === "moon") WORLD.moonDestroyed = true;
+    else if (target === "sun") WORLD.sunDestroyed = true;
+    else if (typeof target === "number" && target >= 0 && target < PL.length) WORLD.plDestroyed[target] = 1;
+}
+
 export const keys = new Set();
 window.__keys = keys; // debug/testing handle
 
 export function resetShip() {
+    resetWorld();
     const r0 = R_EARTH + 300, th0 = -0.6;
     const v0 = Math.sqrt(MU_E / r0);
     G.t = 0;
@@ -27,7 +58,7 @@ export function resetShip() {
     G.vx = -v0 * Math.sin(th0); G.vy = v0 * Math.cos(th0);
     G.heading = Math.atan2(G.vy, G.vx);
     G.fuel = FUEL_DV0; G.dvUsed = 0;
-    G.landed = null; G.dead = false; G.deadReason = "";
+    G.landed = null; G.dead = false; G.deadReason = ""; G.deathT = 0; G.deathRt = 0; G.observerMode = false;
     G.leftHome = false; G.maxRE = r0;
     G.hold = null; G.warp = 60; G.paused = false; G.throttle = 1;
 }

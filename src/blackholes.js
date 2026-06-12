@@ -1,6 +1,6 @@
 import * as THREE from "three";
-import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, PL, K } from "./constants.js";
-import { BH, bhRegister } from "./state.js";
+import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, K } from "./constants.js";
+import { BH, WORLD, bhRegister } from "./state.js";
 import { eph, updEphem } from "./ephemeris.js";
 import { fmtKm, mulberry32 } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
@@ -148,14 +148,16 @@ export function removeLastBH() {
 // Close pairs merge, conserving momentum.
 function bhAccel(i, X, Y, out) {
     const x = X[i], y = Y[i];
-    const rE = Math.max(1e-9, Math.hypot(x, y)), rE3 = rE * rE * rE;
-    let ax = -MU_E * x / rE3;
-    let ay = -MU_E * y / rE3;
-    const bodies = [
-        [eph.moonX, eph.moonY, MU_M],
-        [eph.sunX, eph.sunY, MU_S],
-    ];
-    for (let p = 0; p < PL.length; p++) bodies.push([eph.plX[p], eph.plY[p], PL[p].mu]);
+    let ax = 0, ay = 0;
+    if (!WORLD.earthDestroyed) {
+        const rE = Math.max(1e-9, Math.hypot(x, y)), rE3 = rE * rE * rE;
+        ax -= MU_E * x / rE3;
+        ay -= MU_E * y / rE3;
+    }
+    const bodies = [];
+    if (!WORLD.moonDestroyed) bodies.push([eph.moonX, eph.moonY, MU_M]);
+    if (!WORLD.sunDestroyed) bodies.push([eph.sunX, eph.sunY, MU_S]);
+    for (let p = 0; p < PL.length; p++) if (!WORLD.plDestroyed[p]) bodies.push([eph.plX[p], eph.plY[p], PL[p].mu]);
     for (const [bx, by, mu] of bodies) {
         const dx = x - bx, dy = y - by;
         const r = Math.max(1e-9, Math.hypot(dx, dy)), r3 = r * r * r;
@@ -230,6 +232,29 @@ function tryMerge() {
         }
     return false;
 }
+function bhBodyLimit(rs, radius, muBody, muBH) {
+    const tidal = radius * Math.cbrt(muBH / Math.max(1e-9, muBody)) * .25;
+    return Math.max(radius + rs * 1.5, Math.min(radius * 40, tidal));
+}
+function checkBHBodyBoundaries() {
+    for (let i = 0; i < BH.n; i++) {
+        const rs = BH.rs[i], mu = BH.mu[i];
+        if (!WORLD.earthDestroyed && Math.hypot(BH.x[i], BH.y[i]) < bhBodyLimit(rs, R_EARTH, MU_E, mu)) {
+            H.cataclysm("earth", rs, "black-hole tidal disruption");
+        }
+        if (!WORLD.moonDestroyed && Math.hypot(BH.x[i] - eph.moonX, BH.y[i] - eph.moonY) < bhBodyLimit(rs, R_MOON, MU_M, mu)) {
+            H.cataclysm("moon", rs, "black-hole tidal disruption");
+        }
+        if (!WORLD.sunDestroyed && Math.hypot(BH.x[i] - eph.sunX, BH.y[i] - eph.sunY) < bhBodyLimit(rs, R_SUN, MU_S, mu)) {
+            H.cataclysm("sun", rs, "black-hole photosphere breach");
+        }
+        for (let p = 0; p < PL.length; p++) {
+            if (!WORLD.plDestroyed[p] && Math.hypot(BH.x[i] - eph.plX[p], BH.y[i] - eph.plY[p]) < bhBodyLimit(rs, PL[p].R, PL[p].mu, mu)) {
+                H.cataclysm(p, rs, "black-hole tidal disruption");
+            }
+        }
+    }
+}
 export function bhAdvance(dtTotal, tStart) {
     if (!BH.n) return;
     let rem = dtTotal, t = tStart, guard = 0;
@@ -251,9 +276,7 @@ export function bhAdvance(dtTotal, tStart) {
         bhRk4(t, dt);
         t += dt; rem -= dt;
         tryMerge();
-        for (let i = 0; i < BH.n; i++) {
-            if (Math.hypot(BH.x[i], BH.y[i]) < 6371 + BH.rs[i] * 1.5) { H.cataclysm(BH.rs[i]); break; }
-        }
+        checkBHBodyBoundaries();
     }
     for (let i = 0; i < BH.n; i++) {
         BH.sx[i] = BH.x[i] * K; BH.sz[i] = -BH.y[i] * K;
