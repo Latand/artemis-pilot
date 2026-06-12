@@ -619,7 +619,6 @@ function frame() {
     if (frameNo % 18 === 0) {
         if (lockedBodyTarget !== BODY_NONE && isTargetDestroyed(lockedBodyTarget)) unlockBodyPrediction();
         if (lockedBodyTarget !== BODY_NONE) computeBodyPrediction(lockedBodyTarget, true);
-        else if (hoverBodyTarget !== BODY_NONE && !isTargetDestroyed(hoverBodyTarget)) computeBodyPrediction(hoverBodyTarget, false);
         else clearBodyPrediction();
     }
     if (WORLD.earthDestroyed) lblE.style.opacity = "0"; else put(lblE, earthG.position, -8, w, h);
