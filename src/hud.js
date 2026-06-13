@@ -3,6 +3,7 @@ import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { fmtKm, fmtDist, fmtMET, escapeKmS, accelMs2, fmtAccel } from "./format.js";
 import { bhHawkingLabel, bhMassLabel } from "./blackholes.js";
+import { clockRateAtShip, clockRateLabel } from "./relativity.js";
 
 const $ = id => document.getElementById(id);
 const bhFocusIndex = f => {
@@ -13,7 +14,7 @@ const bhFocusIndex = f => {
 export const metEl = $("met"), warpEl = $("warpLine"), engineEl = $("engineLine"), throttleEl = $("throttleLine");
 export const fuelTxtEl = $("fuelTxt"), fuelFillEl = $("fuelFill");
 export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVel = $("cVel"), cApPe = $("cApPe"), cMoon = $("cMoon"), cSun = $("cSun"), cDv = $("cDv"), cGrav = $("cGrav");
-export const fFlow = $("fFlow"), fDark = $("fDark"), fShip = $("fShip"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
+export const fFlow = $("fFlow"), fDark = $("fDark"), fShip = $("fShip"), fClock = $("fClock"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
 export const flowPanelEl = $("flowPanel"), bannerEl = $("banner"), helpEl = $("help");
 export const lblE = $("lblE"), lblM = $("lblM"), lblO = $("lblO"), lblS = $("lblS");
 
@@ -137,7 +138,9 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
             " · g " + fmtAccel(accelMs2(BH.mu[focusBH], eff)) + " · r_s " + fmtKm(BH.rs[focusBH]);
     } else document.getElementById("bhLine").textContent = "⚫ r_s " + fmtKm(bhReadoutRs) + " · " + bhMassLabel(bhReadoutRs) + " · " + bhHawkingLabel(bhReadoutRs) + " · B PLACE · N FOCUS · [ ] SIZE" + (BH.n ? " · ACTIVE " + BH.n + "/6" : "");
     if (fB > .25) {
+        const clock = clockRateAtShip();
         fShip.textContent = kVLoc.toFixed(2) + " km/s";
+        fClock.textContent = clockRateLabel(clock.rate);
         fEsc.textContent = escapeKmS(MU_E, Math.max(R_EARTH, oi.rE)).toFixed(2) + " km/s";
         fEscM.textContent = escapeKmS(MU_M, Math.max(R_MOON, oi.rM)).toFixed(2) + " km/s";
         fAcc.textContent = fmtAccel(accelMs2(MU_E, Math.max(R_EARTH, oi.rE)) + accelMs2(MU_M, Math.max(R_MOON, oi.rM)) + accelMs2(MU_S, Math.max(R_SUN, oi.rS)) + (aShB + aShP + aDE) * 1000);

@@ -25,7 +25,7 @@ export const camera = new THREE.PerspectiveCamera(48, 1, .02, CAM_DIST_MAX * 1.3
 export const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 composer.addPass(lensingPass); // bend the world before bloom: warped disk light still glows
-export const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), .62, .55, .78);
+export const bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), .38, .42, .9);
 if (location.search.includes("bloom=0")) bloomPass.enabled = false;
 composer.addPass(bloomPass);
 composer.addPass(new OutputPass());
@@ -110,6 +110,8 @@ function resize() {
     const w = cvHost.clientWidth || 1, h = cvHost.clientHeight || 1;
     renderer.setSize(w, h);
     composer.setSize(w, h);
+    const pr = renderer.getPixelRatio();
+    lensingPass.uniforms.uTexel.value.set(1 / Math.max(1, w * pr), 1 / Math.max(1, h * pr));
     camera.aspect = w / h;
     camera.updateProjectionMatrix();
 }

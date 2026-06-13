@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, A_MOON, SOI_M, SUN_RADIUS, PL, K } from "./constants.js";
+import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K } from "./constants.js";
 import { mulberry32 } from "./format.js";
 import {
     dotTexture, earthTextureProc, cloudTextureProc, moonColorProc, moonBumpProc,
@@ -8,9 +8,28 @@ import {
 import { scene } from "./scene.js";
 
 export const sunPos = new THREE.Vector3();
-export let sunLight, sunCore, sunGlow, sunCorona, sky, galaxyBackdrop;
+export let sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, galaxyBackdrop;
 export let earthG, earth, clouds, moon, moonOrbitRing, moonSoiRing;
-export const plGroups = [], plGlows = [], plOrbitRings = [], plLabels = [];
+export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], plLabels = [];
+
+function rgbaFromHex(hex, alpha) {
+    const c = new THREE.Color(hex);
+    return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255) + "," + alpha + ")";
+}
+function orbitEllipseGeometry(aKm, e, varpi = 0, segs = 720) {
+    const pos = new Float32Array(segs * 3);
+    const p = aKm * (1 - e * e);
+    for (let i = 0; i < segs; i++) {
+        const nu = i / segs * Math.PI * 2;
+        const r = p / Math.max(1e-9, 1 + e * Math.cos(nu));
+        const th = varpi + nu;
+        pos[i * 3] = r * K * Math.cos(th);
+        pos[i * 3 + 2] = -r * K * Math.sin(th);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    return g;
+}
 
 // shared shader uniforms updated once per frame from main.js
 export const sunDirW = new THREE.Vector3(1, 0, 0); // world-space Earth→Sun
@@ -36,7 +55,7 @@ export function buildBodies(maps) {
     // point light, no decay: every planet gets lit from the Sun's true
     // direction (a directional light aimed at Earth left the outer planets
     // showing their night side to the camera)
-    sunLight = new THREE.PointLight(0xfff3e0, 1.85, 0, 0);
+    sunLight = new THREE.PointLight(0xfff0d2, 1.65, 0, 0);
     scene.add(sunLight, new THREE.AmbientLight(0x32425c, .72));
     // limb-darkened photosphere with slow granulation shimmer
     const sunUniforms = {
@@ -59,23 +78,42 @@ export function buildBodies(maps) {
         fragmentShader: /* glsl */`
             uniform sampler2D map; uniform float uHasMap; uniform float uT;
             varying vec2 vUv; varying vec3 vNv; varying vec3 vPv;
-            float h2(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+            float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+            float noise(vec2 p){
+                vec2 i = floor(p), f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+                float a = hash(i), b = hash(i + vec2(1.0, 0.0));
+                float c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+            }
             void main(){
-                vec3 base = uHasMap > .5 ? texture2D(map, vUv).rgb : vec3(1.0, .76, .42);
-                // limb darkening: I(mu)/I(1) ≈ 1 - u(1 - mu), u ~ 0.6 (solar visible band)
+                vec3 tex = uHasMap > .5 ? texture2D(map, vUv).rgb : vec3(.95, .72, .42);
+                float texLum = dot(tex, vec3(.299, .587, .114));
                 float mu = clamp(dot(normalize(vNv), normalize(-vPv)), 0.0, 1.0);
-                float limb = 1.0 - 0.62 * (1.0 - mu);
-                float gr = .94 + .12 * h2(floor(vUv * 240.0) + floor(uT * 2.0));
-                vec3 col = base * vec3(1.08, 1.0, .88) * limb * gr;
+                float limb = 1.0 - 0.64 * (1.0 - mu);
+                float gran = noise(vUv * 28.0 + vec2(uT * .012, -uT * .009));
+                gran += .55 * noise(vUv * 74.0 + vec2(-uT * .018, uT * .014));
+                gran = gran / 1.55;
+                float cell = .82 + .18 * smoothstep(.16, .88, gran);
+                float plage = smoothstep(.72, 1.0, texLum) * .06;
+                float hot = clamp(cell + plage - .78, 0.0, 1.0);
+                vec3 core = mix(vec3(1.0, .36, .055), vec3(1.0, .68, .24), hot);
+                vec3 rim = vec3(.92, .22, .035);
+                vec3 col = mix(rim, core, smoothstep(.06, .94, mu)) * limb;
+                float texDetail = clamp((texLum - .45) * 1.75 + .78, .46, 1.18);
+                float activeBand = smoothstep(.18, .48, texLum) * (1.0 - smoothstep(.82, .98, texLum));
+                vec3 plasma = mix(vec3(.58, .12, .025), vec3(1.0, .62, .16), activeBand);
+                col = mix(col * texDetail, plasma * limb, .38);
+                col += vec3(1.0, .46, .10) * pow(mu, 3.1) * .025;
                 gl_FragColor = vec4(col, 1.0);
             }`,
     });
-    sunCore = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS, 64, 48), sunMat);
+    sunCore = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS, 96, 72), sunMat);
     scene.add(sunCore);
     // animated corona: fresnel rim shell with streamer noise
     const coronaUniforms = { uT: { value: 0 } };
     shaderTick.coronaUniforms = coronaUniforms;
-    sunCorona = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS * 1.6, 64, 48), new THREE.ShaderMaterial({
+    sunCorona = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS * 1.28, 96, 64), new THREE.ShaderMaterial({
         uniforms: coronaUniforms,
         transparent: true, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false,
         vertexShader: /* glsl */`
@@ -83,7 +121,7 @@ export function buildBodies(maps) {
             void main(){
                 vec3 n = normalize(normalMatrix * normal);
                 vec4 mv = modelViewMatrix * vec4(position, 1.0);
-                vF = pow(1.0 + dot(normalize(mv.xyz), n), 2.0);
+                vF = pow(1.0 + dot(normalize(mv.xyz), n), 3.8);
                 vDir = normalize(position);
                 gl_Position = projectionMatrix * mv;
             }`,
@@ -92,18 +130,18 @@ export function buildBodies(maps) {
             void main(){
                 // slow smooth streamers drifting around the limb
                 float a = atan(vDir.z, vDir.x);
-                float s = .62
-                    + .2 * sin(a * 7.0 + uT * .12 + vDir.y * 3.0)
-                    + .14 * sin(a * 13.0 - uT * .07)
-                    + .12 * sin(vDir.y * 11.0 + uT * .09);
-                vec3 col = vec3(1.0, .82, .5) * vF * s * .2;
-                gl_FragColor = vec4(col, clamp(vF * s * .16, 0.0, 1.0));
+                float s = .72
+                    + .16 * sin(a * 9.0 + uT * .10 + vDir.y * 2.2)
+                    + .09 * sin(a * 17.0 - uT * .06)
+                    + .08 * sin(vDir.y * 13.0 + uT * .07);
+                vec3 col = mix(vec3(1.0, .18, .025), vec3(1.0, .38, .08), vF) * vF * s * .016;
+                gl_FragColor = vec4(col, clamp(vF * s * .0075, 0.0, .032));
             }`,
     }));
     scene.add(sunCorona);
     // soft glow only — no lens flare, it blocked the view ahead
-    sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,240,180,0.85)", "rgba(255,170,60,0.4)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .5 }));
-    sunGlow.scale.setScalar(SUN_RADIUS * 10);
+    sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,196,82,0.75)", "rgba(255,104,24,0.15)"), transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, opacity: .06 }));
+    sunGlow.scale.setScalar(SUN_RADIUS * 2.2);
     scene.add(sunGlow);
     // ---- stars: three magnitude bands, blackbody-ish colors ----
     // B-V style temperature → RGB, biased toward the real bright-sky mix
@@ -118,6 +156,9 @@ export function buildBodies(maps) {
     };
     const starSprite = dotTexture("rgba(255,255,255,1)", "rgba(200,215,255,0.35)");
     const _sc = [0, 0, 0];
+    skyStars = new THREE.Group();
+    skyStars.frustumCulled = false;
+    scene.add(skyStars);
     for (const conf of [[2400, 1.3, .8, null], [780, 2.4, .9, starSprite], [190, 4.2, 1, starSprite]]) {
         const count = conf[0], pos = new Float32Array(count * 3), col = new Float32Array(count * 3), rnd = mulberry32(count * 7 + 13);
         for (let i = 0; i < count; i++) {
@@ -132,10 +173,13 @@ export function buildBodies(maps) {
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
         g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-        scene.add(new THREE.Points(g, new THREE.PointsMaterial({
+        const pts = new THREE.Points(g, new THREE.PointsMaterial({
             vertexColors: true, size: conf[1], sizeAttenuation: false, transparent: true,
             opacity: conf[2], depthWrite: false, map: conf[3], blending: THREE.AdditiveBlending,
-        })));
+        }));
+        pts.frustumCulled = false;
+        pts.renderOrder = -2;
+        skyStars.add(pts);
     }
     if (maps.milky && !location.search.includes("sky=0")) {
         // the sky sphere rides with the camera: keeps its geometry identical at
@@ -280,14 +324,7 @@ export function buildBodies(maps) {
     scene.add(moon);
     // moon orbit ring
     {
-        const segs = 240, pos = new Float32Array(segs * 3);
-        for (let i = 0; i < segs; i++) {
-            const a = i / segs * Math.PI * 2;
-            pos[i * 3] = A_MOON * K * Math.cos(a);
-            pos[i * 3 + 2] = -A_MOON * K * Math.sin(a);
-        }
-        const g = new THREE.BufferGeometry();
-        g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        const g = orbitEllipseGeometry(A_MOON, E_MOON, 0, 240);
         moonOrbitRing = new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: 0x2a3442, transparent: true, opacity: .55 }));
         scene.add(moonOrbitRing);
     }
@@ -311,7 +348,9 @@ export function buildBodies(maps) {
         const p = PL[i];
         const g = new THREE.Group();
         const map = maps.planets[i] || planetTextureProc(p.color, p.gas, 1000 + i * 31);
-        g.add(new THREE.Mesh(new THREE.SphereGeometry(p.R * K, 48, 32), new THREE.MeshPhongMaterial({ map, shininess: p.gas ? 8 : 4 })));
+        const surface = new THREE.Mesh(new THREE.SphereGeometry(p.R * K, 48, 32), new THREE.MeshPhongMaterial({ map, shininess: p.gas ? 8 : 4 }));
+        g.rotation.z = p.visualTilt || 0;
+        g.add(surface);
         if (p.ring) {
             const ringMap = maps.ring || ringTextureProc();
             const rg = new THREE.RingGeometry(p.ring[0] * K, p.ring[1] * K, 128, 1);
@@ -324,25 +363,20 @@ export function buildBodies(maps) {
             const ring = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ map: ringMap, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
             ring.rotation.x = -Math.PI / 2;
             g.add(ring);
-            g.rotation.z = .45;
         }
         scene.add(g);
-        const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(220,228,240,.9)", "rgba(140,170,220,.35)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .75 }));
+        const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: dotTexture(rgbaFromHex(p.color, .46), rgbaFromHex(p.color, .16)),
+            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .28,
+        }));
         scene.add(glow);
-        const segs = 720, pos = new Float32Array(segs * 3);
-        for (let k = 0; k < segs; k++) {
-            const a2 = k / segs * Math.PI * 2;
-            pos[k * 3] = p.a * K * Math.cos(a2);
-            pos[k * 3 + 2] = -p.a * K * Math.sin(a2);
-        }
-        const og = new THREE.BufferGeometry();
-        og.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        const og = orbitEllipseGeometry(p.a, p.e, p.varpi, 720);
         const orbit = new THREE.LineLoop(og, new THREE.LineBasicMaterial({ color: 0x2c3a4a, transparent: true, opacity: .5 }));
         scene.add(orbit);
         const sp = document.createElement("span");
         sp.className = "lbl";
         sp.textContent = p.name;
         rootEl.appendChild(sp);
-        plGroups.push(g); plGlows.push(glow); plOrbitRings.push(orbit); plLabels.push(sp);
+        plGroups.push(g); plSurfaces.push(surface); plGlows.push(glow); plOrbitRings.push(orbit); plLabels.push(sp);
     }
 }

@@ -196,7 +196,15 @@ function syncModalClass() {
     document.body.classList.toggle("ui-modal", open);
 }
 
+function requestAppFullscreen() {
+    if (document.fullscreenElement) return;
+    const root = $("root") || document.documentElement;
+    if (!root.requestFullscreen) return;
+    root.requestFullscreen({ navigationUI: "hide" }).catch(() => { });
+}
+
 function dismissIntro() {
+    requestAppFullscreen();
     $("intro").style.display = "none";
     try { localStorage.setItem("ap_introSeen", "1"); } catch (e) { }
     syncModalClass();
@@ -250,5 +258,6 @@ export function initScenarios(hooks) {
     $("simsClose").onclick = closeMenu;
     $("simsMenu").addEventListener("click", e => { if (e.target === e.currentTarget) closeMenu(); });
     $("physCard").onclick = () => { $("physCard").style.display = "none"; };
+    document.addEventListener("pointerdown", requestAppFullscreen, { once: true, capture: true });
     syncModalClass();
 }

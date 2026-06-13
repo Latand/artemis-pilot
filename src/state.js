@@ -130,7 +130,7 @@ export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0, events = null) {
     BH.sinkS[i] = rsKm * K;
     BH.obsT[i] = 1;
     BH.ev[i] = events && events.length ? events.map(e => ({ ...e }))
-        : [{ x: xKm, y: yKm, t: EPHT.t, dmu: BH.mu[i] }];
+        : [{ x: xKm, y: yKm, t: -1e18, dmu: BH.mu[i] }];
 }
 // hole i's gravitational parameter as felt at (x, y): only the mass deltas
 // whose light fronts have reached the point contribute

@@ -141,15 +141,31 @@ export function dotTexture(color, glow) {
     g.addColorStop(0, color); g.addColorStop(.35, color);
     g.addColorStop(.55, glow); g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = g; ctx.fillRect(0, 0, 64, 64);
-    return new THREE.CanvasTexture(cv);
+    const t = new THREE.CanvasTexture(cv);
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = true;
+    t.needsUpdate = true;
+    return t;
 }
-export function ringTexture(color) {
+export function ringTexture(color, size = 128, lineWidth = Math.max(5, size * .078)) {
     const cv = document.createElement("canvas");
-    cv.width = cv.height = 64;
+    cv.width = cv.height = size;
     const ctx = cv.getContext("2d");
-    ctx.strokeStyle = color; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.arc(32, 32, 22, 0, 7); ctx.stroke();
-    return new THREE.CanvasTexture(cv);
+    const c = size * .5;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.arc(c, c, size * .344, 0, Math.PI * 2);
+    ctx.stroke();
+    const t = new THREE.CanvasTexture(cv);
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = true;
+    t.needsUpdate = true;
+    return t;
 }
 
 // ---------- NASA maps (solarsystemscope.com renditions, CC BY 4.0) ----------

@@ -23,6 +23,7 @@ export const lensingPass = new ShaderPass(new THREE.ShaderMaterial({
         uC: { value: Array.from({ length: MAXL }, () => new THREE.Vector2()) },
         uT2: { value: new Float32Array(MAXL) },
         uAspect: { value: 1 },
+        uTexel: { value: new THREE.Vector2(1 / 1024, 1 / 1024) },
     },
     vertexShader: /* glsl */`
         varying vec2 vUv;
@@ -33,7 +34,18 @@ export const lensingPass = new ShaderPass(new THREE.ShaderMaterial({
         uniform vec2 uC[${MAXL}];
         uniform float uT2[${MAXL}];
         uniform float uAspect;
+        uniform vec2 uTexel;
         varying vec2 vUv;
+        vec4 lensSample(vec2 uv){
+            uv = clamp(uv, 0.0, 1.0);
+            vec2 px = uTexel;
+            vec4 c = texture2D(tDiffuse, uv) * 0.40;
+            c += texture2D(tDiffuse, clamp(uv + vec2(px.x, 0.0), 0.0, 1.0)) * 0.15;
+            c += texture2D(tDiffuse, clamp(uv - vec2(px.x, 0.0), 0.0, 1.0)) * 0.15;
+            c += texture2D(tDiffuse, clamp(uv + vec2(0.0, px.y), 0.0, 1.0)) * 0.15;
+            c += texture2D(tDiffuse, clamp(uv - vec2(0.0, px.y), 0.0, 1.0)) * 0.15;
+            return c;
+        }
         void main(){
             // tangent-plane coordinates: NDC with x stretched by aspect, so
             // angles are isotropic and θE is one number per lens
@@ -47,7 +59,7 @@ export const lensingPass = new ShaderPass(new THREE.ShaderMaterial({
                 q -= d * (uT2[i] / r2);
             }
             q.x /= uAspect;
-            gl_FragColor = texture2D(tDiffuse, clamp(q * 0.5 + 0.5, 0.0, 1.0));
+            gl_FragColor = lensSample(q * 0.5 + 0.5);
         }`,
 }));
 lensingPass.enabled = false;

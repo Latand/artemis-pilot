@@ -1,7 +1,8 @@
 import * as THREE from "three";
-import { STARS, K } from "./constants.js";
+import { STARS, K, LY_SCENE } from "./constants.js";
 import { dotTexture } from "./textures.js";
 import { scene } from "./scene.js";
+import { smooth01 } from "./format.js";
 
 // Physical renderings for the named stellar destinations. Until now a star
 // was only a point in the cosmic layer: flying 4 ly to Proxima showed a dot.
@@ -100,10 +101,12 @@ export function buildStars() {
 export function updateStars(camera, dtR) {
     for (const e of entries) {
         const d = camera.position.distanceTo(e.g.position);
-        // spark visible at any range; physical size takes over up close
+        const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
+        e.g.visible = local > .01;
+        e.glow.material.opacity = .78 * local;
         e.glow.scale.setScalar(e.star.bh
-            ? Math.max(e.star.rs * K * 2.2, d * .006)
-            : Math.max(e.star.R * K * 5, d * .012));
+            ? Math.min(e.star.rs * K * 14, Math.max(e.star.rs * K * 2.2, d * .002))
+            : Math.min(e.star.R * K * 48, Math.max(e.star.R * K * 4.5, d * .0022)));
         if (e.disk) e.disk.rotation.z += dtR * .05;
     }
 }

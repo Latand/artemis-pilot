@@ -201,11 +201,8 @@ function handleEarthContact(s) {
         s[2] = surfVx; s[3] = surfVy;
         G.landed = { body: "earth", ang: Math.atan2(s[1], s[0]), t0: G.t };
         G.heading = G.landed.ang;
-        if (G.leftHome) {
-            H.award("home");
-            H.banner("SPLASHDOWN", "Back on Earth · MET " + fmtMET(G.t) + " · Δv used " + Math.round(G.dvUsed) + " m/s", "SHIFT+W TO LIFT OFF AGAIN · R TO RESTART");
-        } else
-            H.banner("TOUCHDOWN", "On the surface of Earth.", "SHIFT+W TO LIFT OFF · R TO RESTART");
+        if (G.leftHome) H.award("home");
+        H.hideBanner();
     } else H.die("Hit Earth at " + spd.toFixed(2) + " km/s");
 }
 function handleMoonContact(s) {

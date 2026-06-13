@@ -4,7 +4,7 @@ import { BH, WORLD, EPHT, bhRegister, bhMuAt, gsPull, addPhantom } from "./state
 import { eph, setLiveGuard } from "./ephemeris.js";
 import { fmtKm, mulberry32 } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
-import { scene, camera, cvHost, lastPtr } from "./scene.js";
+import { scene, camera, cvHost, lastPtr, renderer } from "./scene.js";
 
 export const BH_META = []; // visual groups, parallel to the data arrays
 
@@ -17,6 +17,10 @@ export function initBHHooks(hooks) { H = { ...H, ...hooks }; }
 export function bhMassLabel(rs) {
     const msun = rs * C_LIGHT * C_LIGHT / 2 / MU_S;
     return (msun >= 100 ? Math.round(msun).toLocaleString("en-US") : msun.toFixed(2)) + " M☉";
+}
+function smooth01(a, b, x) {
+    const t = Math.max(0, Math.min(1, (x - a) / Math.max(1e-12, b - a)));
+    return t * t * (3 - 2 * t);
 }
 const HBAR = 1.054571817e-34, C_M = 299792458, KB = 1.380649e-23;
 function sci(v, unit) {
@@ -38,24 +42,24 @@ export function bhHawkingLabel(rsKm) {
     return "Hawking T " + sci(h.tempK, "K") + " · P " + sci(h.powerW, "W");
 }
 function makeHawkingPoints(seed) {
-    const N = 180, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+    const N = 140, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
     const rnd = mulberry32(seed);
     for (let i = 0; i < N; i++) {
         const th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1);
-        const r = 1.2 + Math.pow(rnd(), .55) * 7.8;
+        const r = .16 + Math.pow(rnd(), .55) * 1.1;
         pos[i * 3] = Math.sin(ph) * Math.cos(th) * r;
-        pos[i * 3 + 1] = (rnd() - .5) * .9;
+        pos[i * 3 + 1] = (rnd() - .5) * .16;
         pos[i * 3 + 2] = Math.sin(ph) * Math.sin(th) * r;
         const hot = Math.pow(1 / r, .35);
-        col[i * 3] = .45 + hot * .55;
-        col[i * 3 + 1] = .7 + hot * .3;
-        col[i * 3 + 2] = 1;
+        col[i * 3] = .22 + hot * .32;
+        col[i * 3 + 1] = .52 + hot * .32;
+        col[i * 3 + 2] = .9 + hot * .1;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     g.setAttribute("color", new THREE.BufferAttribute(col, 3));
     const mat = new THREE.PointsMaterial({
-        size: .02, vertexColors: true, transparent: true, opacity: .55,
+        size: .008, vertexColors: true, transparent: true, opacity: .16,
         depthWrite: false, blending: THREE.AdditiveBlending,
         map: dotTexture("rgba(230,250,255,1)", "rgba(90,170,255,0.0)"),
     });
@@ -65,22 +69,25 @@ function makeHawkingPoints(seed) {
     return pts;
 }
 function makeSpaghettificationStream(seed) {
-    const N = 320, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+    const N = 920, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
+    const phase = new Float32Array(N), lane = new Float32Array(N), jitter = new Float32Array(N);
     const rnd = mulberry32(seed);
     for (let i = 0; i < N; i++) {
         pos[i * 3] = 0; pos[i * 3 + 1] = 0; pos[i * 3 + 2] = 0;
-        const hot = Math.pow(i / Math.max(1, N - 1), .45);
-        col[i * 3] = .65 + hot * .35;
-        col[i * 3 + 1] = .26 + hot * .58;
-        col[i * 3 + 2] = .12 + hot * .88;
-        // keep the PRNG stream deterministic for later geometry refreshes
-        rnd();
+        phase[i] = rnd() * Math.PI * 2;
+        lane[i] = rnd() < .5 ? -1 : 1;
+        jitter[i] = rnd();
+        col[i * 3] = .58;
+        col[i * 3 + 1] = .36;
+        col[i * 3 + 2] = .22;
     }
     const g = new THREE.BufferGeometry();
     const attr = new THREE.BufferAttribute(pos, 3);
+    const colAttr = new THREE.BufferAttribute(col, 3);
     attr.setUsage(THREE.DynamicDrawUsage);
+    colAttr.setUsage(THREE.DynamicDrawUsage);
     g.setAttribute("position", attr);
-    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    g.setAttribute("color", colAttr);
     const mat = new THREE.PointsMaterial({
         size: .035, vertexColors: true, transparent: true, opacity: 0,
         depthWrite: false, blending: THREE.AdditiveBlending,
@@ -89,20 +96,106 @@ function makeSpaghettificationStream(seed) {
     const pts = new THREE.Points(g, mat);
     pts.frustumCulled = false;
     pts.renderOrder = 7;
-    return { pts, pos, attr, mat, seed };
+    const arms = 5, segs = 112;
+    const linePos = new Float32Array(arms * (segs - 1) * 2 * 3);
+    const lineG = new THREE.BufferGeometry();
+    const lineAttr = new THREE.BufferAttribute(linePos, 3);
+    lineAttr.setUsage(THREE.DynamicDrawUsage);
+    lineG.setAttribute("position", lineAttr);
+    const lines = new THREE.LineSegments(lineG, new THREE.LineBasicMaterial({
+        color: 0xd7b073, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    lines.frustumCulled = false;
+    lines.renderOrder = 6;
+    const remnantUniforms = {
+        uRock: { value: new THREE.Color(0x9b8068) },
+        uHeat: { value: 0 },
+        uAlpha: { value: 0 },
+    };
+    const remnant = new THREE.Mesh(new THREE.SphereGeometry(1, 72, 48), new THREE.ShaderMaterial({
+        uniforms: remnantUniforms,
+        transparent: true, depthWrite: false,
+        vertexShader: /* glsl */`
+            varying vec3 vN; varying vec3 vP;
+            void main(){
+                vN = normalize(normalMatrix * normal);
+                vP = position;
+                vec3 p = position;
+                float pinch = smoothstep(-.25, .9, p.x);
+                p.yz *= mix(1.0, .52, pinch);
+                vec4 mv = modelViewMatrix * vec4(p, 1.0);
+                gl_Position = projectionMatrix * mv;
+            }`,
+        fragmentShader: /* glsl */`
+            uniform vec3 uRock; uniform float uHeat; uniform float uAlpha;
+            varying vec3 vN; varying vec3 vP;
+            float hash(vec3 p){ return fract(sin(dot(p, vec3(17.13, 71.91, 43.27))) * 43758.5453); }
+            void main(){
+                float grain = hash(floor((vP + 1.0) * 18.0));
+                float nose = smoothstep(.05, 1.0, vP.x);
+                float rim = pow(1.0 - abs(vN.z) * .55 - abs(vN.y) * .25, 2.0);
+                vec3 hot = mix(vec3(1.0, .32, .06), vec3(1.0, .86, .56), nose);
+                vec3 col = mix(uRock * (.72 + grain * .32), hot, clamp(uHeat * (.25 + nose * .75), 0.0, 1.0));
+                col += vec3(1.0, .42, .12) * rim * uHeat * .35;
+                gl_FragColor = vec4(col, uAlpha);
+            }`,
+    }));
+    remnant.frustumCulled = false;
+    remnant.renderOrder = 5;
+    const fragCount = 210;
+    const fragGeo = new THREE.DodecahedronGeometry(1, 0);
+    const fragMat = new THREE.MeshBasicMaterial({
+        vertexColors: true, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+    });
+    const fragments = new THREE.InstancedMesh(fragGeo, fragMat, fragCount);
+    fragments.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    fragments.frustumCulled = false;
+    fragments.renderOrder = 8;
+    const fragPhase = new Float32Array(fragCount);
+    const fragQ = new Float32Array(fragCount);
+    const fragLane = new Float32Array(fragCount);
+    const fragSize = new Float32Array(fragCount);
+    const c = new THREE.Color();
+    for (let i = 0; i < fragCount; i++) {
+        fragPhase[i] = rnd() * Math.PI * 2;
+        fragQ[i] = Math.pow(rnd(), .7);
+        fragLane[i] = rnd() < .5 ? -1 : 1;
+        fragSize[i] = .35 + rnd() * 1.4;
+        fragments.setColorAt(i, c.setRGB(.6, .38, .22));
+    }
+    if (fragments.instanceColor) fragments.instanceColor.needsUpdate = true;
+    const group = new THREE.Group();
+    group.add(lines, remnant, pts, fragments);
+    return {
+        group, pts, pos, col, attr, colAttr, mat, seed,
+        phase, lane, jitter, lines, linePos, lineAttr,
+        remnant, remnantUniforms, fragments, fragPhase, fragQ, fragLane, fragSize,
+    };
 }
-function blackCoreTexture() {
+function polishCanvasTexture(t, srgb = false) {
+    if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = true;
+    t.anisotropy = Math.min(16, renderer.capabilities.getMaxAnisotropy?.() || 1);
+    t.needsUpdate = true;
+    return t;
+}
+function blackCoreTexture(size = 512) {
     const cv = document.createElement("canvas");
-    cv.width = cv.height = 96;
+    cv.width = cv.height = size;
     const ctx = cv.getContext("2d");
-    const g = ctx.createRadialGradient(48, 48, 4, 48, 48, 48);
+    const c = size * .5;
+    const g = ctx.createRadialGradient(c, c, size * .04, c, c, c);
     g.addColorStop(0, "rgba(0,0,0,1)");
     g.addColorStop(.52, "rgba(0,0,0,1)");
     g.addColorStop(.78, "rgba(0,0,0,.72)");
     g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 96, 96);
-    return new THREE.CanvasTexture(cv);
+    ctx.fillRect(0, 0, size, size);
+    return polishCanvasTexture(new THREE.CanvasTexture(cv));
 }
 export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, events = null) {
     if (BH.n >= BH_MAX) { if (!quiet) H.toast("Maximum " + BH_MAX + " black holes"); return; }
@@ -110,40 +203,44 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, ev
     bhRegister(i, xKm, yKm, rsKm, vx0, vy0, events);
     const g = new THREE.Group();
     g.position.set(BH.sx[i], 0, BH.sz[i]);
-    const horizon = new THREE.Mesh(new THREE.SphereGeometry(rsKm * K, 48, 32), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    const photon = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(255,244,224,0.82)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .62 }));
+    const horizon = new THREE.Mesh(new THREE.SphereGeometry(rsKm * K, 128, 96), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    const photon = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(255,244,224,0.82)", 512, 34), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .62 }));
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(168,150,255,0.22)", "rgba(90,90,255,0.08)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .22 }));
-    const hawkGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(190,235,255,0.65)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .18 }));
+    const hawkGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(190,235,255,0.65)", 512, 26), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .18 }));
     const coreMask = new THREE.Sprite(new THREE.SpriteMaterial({ map: blackCoreTexture(), transparent: true, depthWrite: false, depthTest: false, opacity: 1 }));
     coreMask.renderOrder = 20;
     const hawk = makeHawkingPoints(8800 + i * 97);
     const spag = makeSpaghettificationStream(17000 + i * 173);
     const cv = document.createElement("canvas");
-    cv.width = cv.height = 256;
+    const diskRes = 1024;
+    cv.width = cv.height = diskRes;
     const ctx = cv.getContext("2d");
-    const gr = ctx.createRadialGradient(128, 128, 34, 128, 128, 128);
+    const dc = diskRes * .5;
+    const gr = ctx.createRadialGradient(dc, dc, diskRes * .133, dc, dc, dc);
     gr.addColorStop(0, "rgba(255,255,255,0)");
     gr.addColorStop(.16, "rgba(255,240,210,0.7)");
     gr.addColorStop(.4, "rgba(255,158,66,0.34)");
     gr.addColorStop(.75, "rgba(196,76,28,0.12)");
     gr.addColorStop(1, "rgba(120,40,20,0)");
     ctx.fillStyle = gr;
-    ctx.fillRect(0, 0, 256, 256);
+    ctx.fillRect(0, 0, diskRes, diskRes);
     ctx.globalCompositeOperation = "destination-out";
     const rnd2 = mulberry32(1234 + i * 77);
-    for (let k = 0; k < 26; k++) {
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (let k = 0; k < 96; k++) {
         ctx.beginPath();
-        ctx.lineWidth = .6 + rnd2() * 1.8;
-        ctx.strokeStyle = "rgba(0,0,0," + (.12 + rnd2() * .3) + ")";
-        const rr = 38 + rnd2() * 88, a0 = rnd2() * 7;
-        ctx.arc(128, 128, rr, a0, a0 + 1.5 + rnd2() * 3);
+        ctx.lineWidth = diskRes * (.0012 + rnd2() * .0032);
+        ctx.strokeStyle = "rgba(0,0,0," + (.055 + rnd2() * .18) + ")";
+        const rr = diskRes * (.148 + rnd2() * .344), a0 = rnd2() * Math.PI * 2;
+        ctx.arc(dc, dc, rr, a0, a0 + .9 + rnd2() * 3.6);
         ctx.stroke();
     }
-    const diskTex = new THREE.CanvasTexture(cv);
+    const diskTex = polishCanvasTexture(new THREE.CanvasTexture(cv), true);
     diskTex.center.set(.5, .5);
     const disk = new THREE.Mesh(new THREE.PlaneGeometry(rsKm * K * 13, rsKm * K * 13), new THREE.MeshBasicMaterial({ map: diskTex, transparent: true, opacity: .82, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
     disk.rotation.x = -Math.PI / 2;
-    g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.pts, coreMask);
+    g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.group, coreMask);
     scene.add(g);
     BH_META.push({ g, disk, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0 });
     BH.n++;
@@ -295,18 +392,21 @@ function tryMerge() {
             const dx = BH.x[i] - BH.x[j], dy = BH.y[i] - BH.y[j];
             const d = Math.sqrt(dx * dx + dy * dy);
             if (d < (BH.rs[i] + BH.rs[j]) * 1.2) {
-                const mu = BH.mu[i] + BH.mu[j];
-                const x = (BH.x[i] * BH.mu[i] + BH.x[j] * BH.mu[j]) / mu;
-                const y = (BH.y[i] * BH.mu[i] + BH.y[j] * BH.mu[j]) / mu;
-                const vx = (BH.vx[i] * BH.mu[i] + BH.vx[j] * BH.mu[j]) / mu;
-                const vy = (BH.vy[i] * BH.mu[i] + BH.vy[j] * BH.mu[j]) / mu;
-                const rs = BH.rs[i] + BH.rs[j];
-                // both parents' fields keep propagating; their mass deltas sum
-                // to the merged hole's μ wherever every front has passed
+                const muI = BH.mu[i], muJ = BH.mu[j], muTotal = muI + muJ;
+                const x = (BH.x[i] * muI + BH.x[j] * muJ) / muTotal;
+                const y = (BH.y[i] * muI + BH.y[j] * muJ) / muTotal;
+                const vx = (BH.vx[i] * muI + BH.vx[j] * muJ) / muTotal;
+                const vy = (BH.vy[i] * muI + BH.vy[j] * muJ) / muTotal;
+                const eta = muI * muJ / (muTotal * muTotal);
+                const gwLossFrac = clamp(.192 * eta, 0, .06);
+                const muLoss = muTotal * gwLossFrac;
+                const mu = muTotal - muLoss;
+                const rs = 2 * mu / (C_LIGHT * C_LIGHT);
                 const ev = BH.ev[i].concat(BH.ev[j]);
+                if (muLoss > 0) ev.push({ x, y, t: EPHT.t, dmu: -muLoss });
                 removeBHIndex(j); removeBHIndex(i);
                 addBlackHole(x, y, rs, vx, vy, false, ev);
-                H.toast("⚫ Black-hole merger → r_s " + fmtKm(rs));
+                H.toast("⚫ Black-hole merger → r_s " + fmtKm(rs) + " · GW loss " + (gwLossFrac * 100).toFixed(1) + "%");
                 return true;
             }
         }
@@ -374,6 +474,13 @@ function isDisrupting(target) {
     return DISRUPT.some(d => sameTarget(d.target, target));
 }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function targetDisruptionColor(target) {
+    if (target === "earth") return 0x4d78a8;
+    if (target === "moon") return 0x9b9a93;
+    if (target === "sun") return 0xff8a22;
+    if (typeof target === "number" && PL[target]) return PL[target].color;
+    return 0x9b8068;
+}
 function disruptionDuration(radius, dist, muBH, muBody, rel) {
     const r = Math.max(1, dist);
     const tidalAcc = 2 * muBH * radius / (r * r * r);
@@ -412,6 +519,7 @@ function beginDisruption(i, target, x, y, vx, vy, radius, muBody, dist, limit) {
     DISRUPT.push({
         bh: i, target, name, x, y, vx, vy, radius, muBody,
         age: 0, visual: 0, duration,
+        color: targetDisruptionColor(target),
         limit: Math.max(limit, radius), bornRt: performance.now(),
         // the doomed body's mass keeps gravitating as frozen debris until the
         // absorption completes; deleting it here changed orbits system-wide
@@ -476,6 +584,7 @@ function checkBHBodyBoundaries() {
 setLiveGuard(checkBHBodyBoundaries);
 export function bhAdvance(dtTotal, _tEnd) {
     if (!BH.n) return;
+    while (tryMerge()) { }
     let rem = dtTotal, guard = 0;
     while (rem > 1e-9 && guard++ < 200 && BH.n) {
         // step: a fraction of the tightest orbital timescale in play
@@ -509,7 +618,7 @@ export function bhAdvance(dtTotal, _tEnd) {
         bhRk4(-rem, dt);
         rem -= dt;
         advanceDisruptions(dt);
-        tryMerge();
+        while (tryMerge()) { }
         checkBHBodyBoundaries();
     }
     for (let i = 0; i < BH.n; i++) {
@@ -540,40 +649,149 @@ export function observerTimeScaleForBH(bi, scenePos = null) {
     const eventR = Math.max(BH.rs[bi] * 1.08, BH.rs[bi] + 1e-6);
     return clamp(lapseAt(eventR, BH.rs[bi]) / lapseAt(obsR, BH.rs[bi]), .08, 2.4);
 }
+const _fragObj = new THREE.Object3D();
+const _fragCol = new THREE.Color();
+const _bodyCol = new THREE.Color();
+const _hotFragCol = new THREE.Color(1, .48, .12);
 function updateSpagVisual(d, m, dtLocal, dBH, obsRate) {
     if (!m?.spag) return;
-    const visualWindow = Math.max(4, Math.min(16, d.duration / 14400));
+    const visualWindow = Math.max(5, Math.min(22, d.duration / 10800));
     const realAge = (performance.now() - d.bornRt) * .001;
     d.visual = Math.max(d.visual, clamp(realAge * obsRate / visualWindow, 0, 1));
     d.visual = clamp(d.visual + dtLocal / visualWindow, 0, 1);
-    const pos = m.spag.pos;
-    const rnd = mulberry32(m.spag.seed + Math.floor(d.visual * 1000));
     disruptionBodyState(d);
+    const plasmaTarget = d.target === "sun" || (typeof d.target === "number" && PL[d.target]?.gas);
+    const solidTarget = !plasmaTarget;
+    const sourceRadiusU = d.radius * K;
+    const visualRadiusU = plasmaTarget
+        ? Math.max(m.rs * K * .08, Math.min(sourceRadiusU * .12, dBH * .0026))
+        : sourceRadiusU;
     const debrisX = (d.x - BH.x[d.bh]) * K;
     const debrisZ = -(d.y - BH.y[d.bh]) * K;
-    const len0 = Math.max(Math.hypot(debrisX, debrisZ), d.radius * K * .5, m.rs * K * 4);
-    const cap = Math.max(d.radius * K * 10, m.rs * K * 60, dBH * .12);
+    const len0 = Math.max(Math.hypot(debrisX, debrisZ), visualRadiusU * .5, m.rs * K * 4);
+    const cap = Math.min(
+        Math.max(visualRadiusU * (plasmaTarget ? 2.2 : 3.2), m.rs * K * 8),
+        Math.max(m.rs * K * 4.5, dBH * .025),
+    );
     const len = Math.min(len0, cap);
     const ux = len0 > 1e-9 ? debrisX / len0 : 1, uz = len0 > 1e-9 ? debrisZ / len0 : 0;
-    const px = -uz, pz = ux;
-    const inner = Math.max(m.rs * K * 1.18, dBH * .002);
-    const tail = Math.max(inner * 1.4, len * (1 + d.visual * 1.5));
+    const spag = m.spag;
+    spag.group.rotation.y = Math.atan2(-uz, ux);
+    const inner = Math.max(m.rs * K * 1.12, dBH * .0008);
+    const radiusU = Math.max(visualRadiusU, m.rs * K * .018);
+    const pixelU = Math.max(dBH * .00032, m.rs * K * .012);
+    const stress = clamp((d.limit / Math.max(d.radius, 1) - 1) / 15, 0, 1);
+    const tail = Math.max(inner * 1.12, len * (.16 + d.visual * (.42 + stress * .25)));
+    const outer = Math.min(tail * .72, Math.max(len * .45, radiusU * 1.8));
+    const heatPulse = .55 + .45 * Math.sin(performance.now() * .009 + d.visual * 9);
+    const pos = spag.pos, col = spag.col;
+    const rockBase = _bodyCol.setHex(d.color);
     const N = pos.length / 3;
     for (let n = 0; n < N; n++) {
         const q = n / Math.max(1, N - 1);
-        const phase = q * 36 + d.visual * 19;
-        const along = inner + (1 - q) * tail;
-        const pinch = Math.pow(q, .55);
-        const spread = (1 - pinch) * Math.max(d.radius * K * .18, dBH * .0015);
-        const swirl = Math.sin(phase) * spread * (0.35 + rnd() * .65);
-        const lift = Math.cos(phase * .73) * spread * .22;
-        pos[n * 3] = ux * along + px * swirl;
+        const reveal = smooth01(q * .55, .18 + q * .92, d.visual);
+        const qq = Math.pow(q, 1.18);
+        const phase = spag.phase[n] + qq * 38 - d.visual * 24 + spag.lane[n] * stress;
+        const neck = 1 - smooth01(.02, .34, q);
+        const plasmaThin = plasmaTarget ? .42 : 1;
+        const width = (radiusU * (.018 + Math.pow(q, 1.55) * .16) * plasmaThin + pixelU) * (1.05 - d.visual * .32);
+        const spiral = Math.sin(phase) * width * (.42 + spag.jitter[n] * 1.35) * reveal;
+        const lift = Math.cos(phase * .71 + spag.jitter[n] * 2.2) * width * (.34 + neck * .18) * reveal;
+        const shear = Math.sin(phase * .31) * width * .55 * stress;
+        const along = inner + qq * tail + shear;
+        pos[n * 3] = along;
         pos[n * 3 + 1] = lift;
-        pos[n * 3 + 2] = uz * along + pz * swirl;
+        pos[n * 3 + 2] = spiral;
+        const hot = Math.pow(1 - q, plasmaTarget ? 2.4 : 3.2) * (.45 + heatPulse * .28);
+        col[n * 3] = rockBase.r * (.34 + q * .5) + hot * (plasmaTarget ? 1.25 : .92);
+        col[n * 3 + 1] = rockBase.g * (.33 + q * .42) + hot * (plasmaTarget ? .72 : .52);
+        col[n * 3 + 2] = rockBase.b * (.32 + q * .38) + hot * (plasmaTarget ? .22 : .16);
     }
-    m.spag.attr.needsUpdate = true;
-    m.spag.mat.size = Math.max(.018, dBH * .0009);
-    m.spag.mat.opacity = .78 * Math.sin(Math.PI * d.visual) + .18 * (1 - d.visual);
+    spag.attr.needsUpdate = true;
+    spag.colAttr.needsUpdate = true;
+    spag.mat.size = Math.max(.01, dBH * (plasmaTarget ? .00072 : .00042) + stress * dBH * .0002);
+    spag.mat.opacity = plasmaTarget
+        ? clamp(.18 + .52 * Math.sin(Math.PI * Math.min(.98, d.visual)) + stress * .08, 0, .72)
+        : clamp(.07 + .4 * Math.sin(Math.PI * Math.min(.98, d.visual)) + stress * .06, 0, .5);
+    let li = 0;
+    const arms = 5, segs = 112;
+    for (let a = 0; a < arms; a++) {
+        const armPhase = a / arms * Math.PI * 2 + d.visual * (5.2 + a * .13);
+        for (let s = 0; s < segs - 1; s++) {
+            for (let end = 0; end < 2; end++) {
+                const q = (s + end) / (segs - 1);
+                const qq = Math.pow(q, 1.08);
+                const ang = armPhase + qq * (13 + stress * 8) - d.visual * 16;
+                const width = (radiusU * (.012 + Math.pow(q, 1.35) * .105) * (plasmaTarget ? .38 : 1) + pixelU * .75) * (1 - d.visual * .18);
+                spag.linePos[li++] = inner + qq * tail * (.78 + .16 * Math.sin(a * 1.7));
+                spag.linePos[li++] = Math.sin(ang * .67 + a) * width * .36;
+                spag.linePos[li++] = Math.cos(ang) * width;
+            }
+        }
+    }
+    spag.lineAttr.needsUpdate = true;
+    spag.lines.material.opacity = plasmaTarget
+        ? clamp(.06 + .22 * d.visual + stress * .07, 0, .32)
+        : clamp(.018 + .1 * d.visual + stress * .05, 0, .16);
+    const remnantAlpha = plasmaTarget ? clamp(.05 + (1 - Math.pow(d.visual, 1.6)) * .14, 0, .18) : 0;
+    spag.remnant.visible = remnantAlpha > .015;
+    if (spag.remnant.visible) {
+        const wantBlend = plasmaTarget ? THREE.AdditiveBlending : THREE.NormalBlending;
+        if (spag.remnant.material.blending !== wantBlend) {
+            spag.remnant.material.blending = wantBlend;
+            spag.remnant.material.needsUpdate = true;
+        }
+        spag.remnant.position.set(outer, 0, 0);
+        if (plasmaTarget) {
+            spag.remnant.scale.set(
+                Math.min(radiusU * (1.4 + d.visual * 4.6), Math.max(radiusU * 1.25, tail * .16)),
+                Math.max(radiusU * .28, radiusU * (1 - d.visual * .35)),
+                Math.max(radiusU * .25, radiusU * (1 - d.visual * .32)),
+            );
+        } else {
+            spag.remnant.scale.set(
+                Math.min(radiusU * (1.05 + d.visual * (4.2 + stress * 4.8)), Math.max(radiusU * 1.25, tail * .11)),
+                Math.max(radiusU * .32, radiusU * (1 - d.visual * .58)),
+                Math.max(radiusU * .3, radiusU * (1 - d.visual * .55)),
+            );
+        }
+        spag.remnant.rotation.x = Math.sin(d.visual * 5) * .18;
+        spag.remnant.rotation.z = Math.cos(d.visual * 4.2) * .12;
+        spag.remnantUniforms.uRock.value.setHex(d.color);
+        spag.remnantUniforms.uHeat.value = plasmaTarget ? 1 : clamp(d.visual * 1.4 + stress * .45, 0, 1);
+        spag.remnantUniforms.uAlpha.value = remnantAlpha;
+    }
+    const count = spag.fragments.count;
+    for (let i = 0; i < count; i++) {
+        const q = spag.fragQ[i];
+        const reveal = smooth01(q * .35, .2 + q * .85, d.visual);
+        const ang = spag.fragPhase[i] + q * (18 + stress * 10) - d.visual * (17 + spag.fragLane[i] * 4);
+        const width = (radiusU * (.028 + Math.pow(q, 1.7) * .16) * (plasmaTarget ? .36 : 1) + pixelU) * reveal;
+        const along = inner + Math.pow(q, 1.12) * tail + Math.sin(ang * .27) * width * .6;
+        const y = Math.sin(ang * .71) * width * .45;
+        const z = Math.cos(ang) * width;
+        const scale = Math.max(.00001, radiusU * (.006 + .012 * spag.fragSize[i]) * reveal * (1 - d.visual * .35) * (plasmaTarget ? .32 : 1));
+        _fragObj.position.set(along, y, z);
+        _fragObj.rotation.set(ang * .17, ang * .31, ang * .23);
+        _fragObj.scale.setScalar(scale);
+        _fragObj.updateMatrix();
+        spag.fragments.setMatrixAt(i, _fragObj.matrix);
+        const hot = Math.pow(1 - q, 2.2) * clamp(d.visual * 1.3, 0, 1);
+        spag.fragments.setColorAt(i, _fragCol.setHex(d.color).lerp(_hotFragCol, hot));
+    }
+    spag.fragments.instanceMatrix.needsUpdate = true;
+    if (spag.fragments.instanceColor) spag.fragments.instanceColor.needsUpdate = true;
+    spag.fragments.material.opacity = plasmaTarget
+        ? clamp(.12 + d.visual * .38, 0, .48)
+        : clamp(.12 + d.visual * .42, 0, .54);
+}
+function fadeSpagVisual(spag, dtR) {
+    if (!spag) return;
+    spag.mat.opacity = Math.max(0, spag.mat.opacity - dtR * .85);
+    spag.lines.material.opacity = Math.max(0, spag.lines.material.opacity - dtR * .7);
+    spag.fragments.material.opacity = Math.max(0, spag.fragments.material.opacity - dtR * .75);
+    spag.remnantUniforms.uAlpha.value = Math.max(0, spag.remnantUniforms.uAlpha.value - dtR * .9);
+    spag.remnant.visible = spag.remnantUniforms.uAlpha.value > .01;
 }
 export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
     for (let bi = 0; bi < BH_META.length; bi++) {
@@ -584,29 +802,31 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         BH.obsT[bi] = obsRate;
         const dtLocal = dtR * obsRate;
         m.flare = Math.max(0, m.flare - dtLocal * .55);
-        m.photon.scale.setScalar(Math.max(m.rs * K * 4.2, dBH * .006));
-        m.glow.scale.setScalar(Math.max(m.rs * K * 8, dBH * .012));
+        const massVis = smooth01(.5, 5000, m.rs);
+        const diskVis = smooth01(50, 100000, m.rs);
+        const screenRing = dBH * (.0026 + .002 * massVis);
+        m.photon.scale.setScalar(Math.max(m.rs * K * 4.2, screenRing));
+        m.glow.scale.setScalar(Math.max(m.rs * K * 8, dBH * (.0035 + .0055 * massVis)));
         const hot = Math.min(1, Math.max(.14, Math.pow(1000 / Math.max(1, m.rs), .34)));
         const flare = m.flare * m.flare;
-        m.glow.material.opacity = .12 + hot * .14 + flare * .34;
-        const hVis = Math.max(m.rs * K * 5.5, dBH * .0065);
+        m.disk.material.opacity = .045 + diskVis * .6 + flare * .28;
+        m.glow.material.opacity = .025 + hot * (.025 + .075 * massVis) + flare * .24;
+        const hVis = Math.max(m.rs * K * 5.5, dBH * (.0015 + .0018 * massVis));
         m.hawk.scale.setScalar(hVis);
         m.hawk.rotation.y += dtLocal * (1.4 + hot * 4.8);
         m.hawk.rotation.z -= dtLocal * (.35 + hot * 1.2);
-        m.hawk.material.opacity = .06 + hot * .22;
-        m.hawk.material.size = Math.max(.006, dBH * .00075) * (.55 + hot * .7);
-        m.hawkGlow.scale.setScalar(Math.max(m.rs * K * (4.6 + flare * 5), dBH * (.0055 + flare * .009)));
-        m.hawkGlow.material.opacity = .035 + hot * .11 * (0.65 + 0.35 * Math.sin(performance.now() * .004 + bi)) + flare * .38;
+        m.hawk.material.opacity = (.018 + hot * .055) * (.35 + .65 * massVis) + flare * .08;
+        m.hawk.material.size = Math.max(.0025, dBH * (.00018 + .00018 * massVis)) * (.65 + hot * .35);
+        m.hawkGlow.scale.setScalar(Math.max(m.rs * K * (4.6 + flare * 5), dBH * (.0022 + .0035 * massVis + flare * .004)));
+        m.hawkGlow.material.opacity = .015 + hot * (.018 + .052 * massVis) * (0.65 + 0.35 * Math.sin(performance.now() * .004 + bi)) + flare * .22;
         if (m.coreMask) {
-            m.coreMask.scale.setScalar(Math.max(m.rs * K * 3, dBH * .009));
+            m.coreMask.scale.setScalar(Math.max(m.rs * K * 3, dBH * (.0025 + .0045 * massVis)));
             m.coreMask.material.opacity = 1;
             m.coreMask.quaternion.copy(camera.quaternion);
         }
         const d = DISRUPT.find(x => x.bh === bi);
         if (d) updateSpagVisual(d, m, dtLocal, dBH, obsRate);
-        else if (m.spag) {
-            m.spag.mat.opacity = Math.max(0, m.spag.mat.opacity - dtR * .85);
-        }
+        else fadeSpagVisual(m.spag, dtR);
         m.tex.rotation -= dtLocal * (.25 + 9 / Math.sqrt(m.rs));
     }
 }

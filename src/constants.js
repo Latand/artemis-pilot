@@ -53,17 +53,19 @@ export const VARPI_EARTH = 102.95 * DEG;
 // atmH/atmD0: exponential atmosphere scale height (km) and surface density
 // relative to Earth sea level; atmTop is where drag becomes negligible.
 export const PL = [
-    { name: "MERCURY", tag: "ME", a: 57.909e6, e: 0.2056, varpi: 77.46 * DEG, R: 2439.7, mu: 22031.9, color: 0x9c8e7e, phase: 4.2, gas: false, tex: "2k_mercury.jpg" },
-    { name: "VENUS", tag: "VE", a: 108.21e6, e: 0.0068, varpi: 131.53 * DEG, R: 6051.8, mu: 324858.6, color: 0xe6c98e, phase: 1.1, gas: false, tex: "2k_venus_atmosphere.jpg", atmH: 15.9, atmTop: 380, atmD0: 53 },
-    { name: "MARS", tag: "MA", a: 227.956e6, e: 0.0934, varpi: 336.04 * DEG, R: 3389.5, mu: 42828.4, color: 0xc96b4a, phase: 5.4, gas: false, tex: "2k_mars.jpg", atmH: 11.1, atmTop: 200, atmD0: 0.016 },
-    { name: "JUPITER", tag: "JU", a: 778.479e6, e: 0.0484, varpi: 14.75 * DEG, R: 69911, mu: 126686531, color: 0xc9a47a, phase: 2.6, gas: true, tex: "2k_jupiter.jpg", atmH: 27, atmTop: 520, atmD0: 0.13 },
-    { name: "SATURN", tag: "SA", a: 1432.041e6, e: 0.0542, varpi: 92.43 * DEG, R: 58232, mu: 37931206, color: 0xe0d0a4, phase: 0.4, gas: true, ring: [74500, 140200], tex: "2k_saturn.jpg", atmH: 59.5, atmTop: 1100, atmD0: 0.155 },
-    { name: "URANUS", tag: "UR", a: 2867.043e6, e: 0.0472, varpi: 170.96 * DEG, R: 25362, mu: 5793951, color: 0x9fd6dd, phase: 3.5, gas: true, tex: "2k_uranus.jpg", atmH: 27.7, atmTop: 540, atmD0: 0.34 },
-    { name: "NEPTUNE", tag: "NE", a: 4514.953e6, e: 0.0086, varpi: 44.97 * DEG, R: 24622, mu: 6835100, color: 0x5d7fe8, phase: 5.9, gas: true, tex: "2k_neptune.jpg", atmH: 19.7, atmTop: 390, atmD0: 0.37 },
+    { name: "MERCURY", tag: "ME", a: 57.909e6, e: 0.2056, varpi: 77.46 * DEG, R: 2439.7, mu: 22031.9, color: 0x9c8e7e, phase: 4.2, rotD: 58.6462, tilt: 0.034, gas: false, tex: "2k_mercury.jpg" },
+    { name: "VENUS", tag: "VE", a: 108.21e6, e: 0.0068, varpi: 131.53 * DEG, R: 6051.8, mu: 324858.6, color: 0xe6c98e, phase: 1.1, rotD: -243.018, tilt: 177.4, gas: false, tex: "2k_venus_atmosphere.jpg", atmH: 15.9, atmTop: 380, atmD0: 53 },
+    { name: "MARS", tag: "MA", a: 227.956e6, e: 0.0934, varpi: 336.04 * DEG, R: 3389.5, mu: 42828.4, color: 0xc96b4a, phase: 5.4, rotD: 1.02595676, tilt: 25.2, gas: false, tex: "2k_mars.jpg", atmH: 11.1, atmTop: 200, atmD0: 0.016 },
+    { name: "JUPITER", tag: "JU", a: 778.479e6, e: 0.0484, varpi: 14.75 * DEG, R: 69911, mu: 126686531, color: 0xc9a47a, phase: 2.6, rotD: 0.41354, tilt: 3.1, gas: true, tex: "2k_jupiter.jpg", atmH: 27, atmTop: 520, atmD0: 0.13 },
+    { name: "SATURN", tag: "SA", a: 1432.041e6, e: 0.0542, varpi: 92.43 * DEG, R: 58232, mu: 37931206, color: 0xe0d0a4, phase: 0.4, rotD: 0.44401, tilt: 26.7, gas: true, ring: [74500, 140200], tex: "2k_saturn.jpg", atmH: 59.5, atmTop: 1100, atmD0: 0.155 },
+    { name: "URANUS", tag: "UR", a: 2867.043e6, e: 0.0472, varpi: 170.96 * DEG, R: 25362, mu: 5793951, color: 0x9fd6dd, phase: 3.5, rotD: -0.71833, tilt: 97.8, gas: true, tex: "2k_uranus.jpg", atmH: 27.7, atmTop: 540, atmD0: 0.34 },
+    { name: "NEPTUNE", tag: "NE", a: 4514.953e6, e: 0.0086, varpi: 44.97 * DEG, R: 24622, mu: 6835100, color: 0x5d7fe8, phase: 5.9, rotD: 0.67125, tilt: 28.3, gas: true, tex: "2k_neptune.jpg", atmH: 19.7, atmTop: 390, atmD0: 0.37 },
 ];
 for (const p of PL) {
     p.n = Math.sqrt(MU_S / (p.a * p.a * p.a));
     p.soi = p.a * Math.pow(p.mu / MU_S, .4);
+    p.spin = Math.PI * 2 / (p.rotD * 86400);
+    p.visualTilt = (p.tilt > 90 ? 180 - p.tilt : p.tilt) * DEG;
 }
 export const SOI_M = 66100;          // lunar dominance radius, km
 export const SOI_E = 924000;         // Earth's heliocentric SOI, km

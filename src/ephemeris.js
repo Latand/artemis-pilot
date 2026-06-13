@@ -237,6 +237,9 @@ export function indirectAccel(st, out, tau = 0) {
 // samples the field where the bodies actually are instead of where they were
 // at the start of the step (and between ephemeris flushes).
 export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind = null) {
+    return relGravityAtOpt(x, y, out, skipBody, st, tau, ind, true);
+}
+function relGravityAtOpt(x, y, out, skipBody = -1, st = null, tau = 0, ind = null, includeDarkEnergy = true) {
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
     const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
     const tEval = (st && st.t !== undefined ? st.t : EPHT.t) + tau;
@@ -332,7 +335,7 @@ export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind =
             ax -= _gp[0]; ay -= _gp[1];
         }
     }
-    if (G.darkEnergy) {
+    if (includeDarkEnergy && G.darkEnergy) {
         darkEnergyAccel(x, y, _de);
         ax += _de[0]; ay += _de[1];
     }
@@ -342,6 +345,19 @@ export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind =
 }
 
 const _a = [0, 0];
+const _pnBody = [0, 0], _pnEarth = [0, 0];
+const PN_R2_MAX = 7.5e7 * 7.5e7;
+function sun1PN(dx, dy, dvx, dvy, out) {
+    const r2 = dx * dx + dy * dy;
+    if (WORLD.sunDestroyed || r2 <= 1e-12 || r2 > PN_R2_MAX) { out[0] = 0; out[1] = 0; return out; }
+    const r = Math.sqrt(r2);
+    const v2 = dvx * dvx + dvy * dvy;
+    const rv = dx * dvx + dy * dvy;
+    const k = MU_S / (C_LIGHT * C_LIGHT * r2 * r);
+    out[0] = k * ((4 * MU_S / r - v2) * dx + 4 * rv * dvx);
+    out[1] = k * ((4 * MU_S / r - v2) * dy + 4 * rv * dvy);
+    return out;
+}
 const _k = [];
 for (let i = 0; i < 4; i++)
     _k.push({ x: new Float64Array(NB), y: new Float64Array(NB), vx: new Float64Array(NB), vy: new Float64Array(NB), earthX: 0, earthY: 0, earthVx: 0, earthVy: 0 });
@@ -371,18 +387,27 @@ function derivAll(st, K_) {
     // the indirect frame term is identical for every body: compute it once
     // (Earth's inertial acceleration is exactly its negative)
     indirectAccel(st, _ind);
+    sun1PN(-st.x[IDX_SUN], -st.y[IDX_SUN], -st.vx[IDX_SUN], -st.vy[IDX_SUN], _pnEarth);
     for (let i = 0; i < NB; i++) {
         if (!isBodyActive(i)) {
             K_.x[i] = 0; K_.y[i] = 0; K_.vx[i] = 0; K_.vy[i] = 0;
             continue;
         }
-        relGravityAt(st.x[i], st.y[i], _a, i, st, 0, _ind);
+        relGravityAtOpt(st.x[i], st.y[i], _a, i, st, 0, _ind, false);
+        if (!WORLD.sunDestroyed) {
+            if (i === IDX_SUN) { _a[0] -= _pnEarth[0]; _a[1] -= _pnEarth[1]; }
+            else {
+                sun1PN(st.x[i] - st.x[IDX_SUN], st.y[i] - st.y[IDX_SUN], st.vx[i] - st.vx[IDX_SUN], st.vy[i] - st.vy[IDX_SUN], _pnBody);
+                _a[0] += _pnBody[0] - _pnEarth[0];
+                _a[1] += _pnBody[1] - _pnEarth[1];
+            }
+        }
         K_.x[i] = st.vx[i]; K_.y[i] = st.vy[i];
         K_.vx[i] = _a[0]; K_.vy[i] = _a[1];
     }
     K_.earthX = st.earthVx; K_.earthY = st.earthVy;
     if (WORLD.earthDestroyed) { K_.earthVx = 0; K_.earthVy = 0; }
-    else { K_.earthVx = -_ind[0]; K_.earthVy = -_ind[1]; }
+    else { K_.earthVx = -_ind[0] + _pnEarth[0]; K_.earthVy = -_ind[1] + _pnEarth[1]; }
 }
 function rk4Bodies(st, dt) {
     derivAll(st, _k[0]);
