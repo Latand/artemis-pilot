@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { C_LIGHT, DARK_ENERGY, FLOW, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, STARS, SUN_RADIUS } from "./constants.js";
+import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, STARS, SUN_RADIUS } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { dotTexture } from "./textures.js";
@@ -14,7 +14,8 @@ const TEXW = (() => {
     return Math.min(1024, Math.max(64, v));
 })();
 const NPART = TEXW * TEXW;
-const MAXB = 32; // earth + moon + sun + planets + named stars + black holes
+const RIVER_STAR_SOURCE_MAX = 48;
+const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX;
 
 export const river = { enabled: false, radius: 22, count: NPART };
 
@@ -65,13 +66,22 @@ uniform float uPlaneBias;
 uniform float uTimeRate;
 uniform float uLoadShed;
 uniform float uLocalFocus;
+float sourceCore(float sink, float isHole) {
+    // Tiny holes get a display core so their local flow direction stays visible.
+    float visualBH = min(max(uRadius * 0.0008, 0.45), 64.0);
+    return mix(sink, max(sink, visualBH), isHole);
+}
+float sourceSoft(float sink, float isHole) {
+    float core = sourceCore(sink, isHole);
+    return mix(sink * 0.5, max(sink * 0.5, core * 0.35), isHole);
+}
 vec3 flowField(vec3 p) {
     vec3 v = vec3(0.0);
     vec3 pull = vec3(0.0);
     for (int i = 0; i < ${MAXB}; i++) {
         if (i >= uNB) break;
         vec3 d = p - uBody[i].xyz;
-        float rSoft = max(uSink[i] * 0.5, uRadius * 0.006 * uHole[i]);
+        float rSoft = sourceSoft(uSink[i], uHole[i]);
         float r = max(rSoft, length(d));
         float invR = 1.0 / r;
         float s = uBody[i].w * inversesqrt(r) / r;
@@ -112,7 +122,7 @@ void main() {
     if (distance(p, uCenter) > uRadius * 1.04) kill = true;
     for (int i = 0; i < ${MAXB}; i++) {
         if (i >= uNB) break;
-        float sink = max(uSink[i], uRadius * 0.010 * uHole[i]);
+        float sink = sourceCore(uSink[i], uHole[i]);
         if (distance(p, uBody[i].xyz) < sink) { kill = true; break; }
     }
     if (hash13(vec3(vUv * 913.7, uTick)) < 0.002) kill = true;
@@ -130,7 +140,7 @@ void main() {
             if (i >= uNB) break;
             vec3 d = p - uBody[i].xyz;
             float r = length(d);
-            float sink = max(uSink[i], uRadius * 0.010 * uHole[i]);
+            float sink = sourceCore(uSink[i], uHole[i]);
             if (r < sink * 1.15)
                 p = uBody[i].xyz + d / max(r, 1e-6) * (sink * (1.2 + 2.0 * h2));
         }
@@ -154,10 +164,10 @@ void main() {
     float t = clamp(log2(1.0 + rel) * 0.72, 0.0, 1.0);
     float warpInk = clamp(log2(max(uTimeRate, 1.0)) / 16.0, 0.0, 1.0);
     float timeInk = smoothstep(0.0, 1.0, log2(max(uTimeRate, 1.0)) / 13.0);
-    float visibleTime = max(timeInk, uLocalFocus * 0.34);
+    float visibleTime = max(timeInk, max(uLocalFocus * 0.58, 0.18));
     float tVis = smoothstep(mix(0.004, 0.0015, uPlaneBias), mix(0.20, 0.09, uPlaneBias), t);
     float loadTrim = mix(1.0, 0.46, uLoadShed);
-    float timeTrim = mix(0.12, 1.0, visibleTime);
+    float timeTrim = mix(0.32, 1.0, visibleTime);
     float maxL = mix(760.0, uRadius * 0.055, uPlaneBias) * loadTrim * timeTrim;
     float L = clamp(uRadius * mix(0.032, 0.0055, pow(tVis, 0.72)) * mix(0.22, 1.85, warpInk) * loadTrim * timeTrim, uRadius * 0.0012, maxL);
     vec3 tail = p - v / spd * L;
@@ -173,7 +183,7 @@ void main() {
         float dB = distance(p, uBody[i].xyz);
         float surfaceBand = mix(uSink[i] * 1.5 + uRadius * 0.02, max(uRadius * 0.035, uSink[i] * 0.055), uLocalFocus);
         float regularSinkFade = clamp((dB - uSink[i]) / max(1e-6, surfaceBand), 0.0, 1.0);
-        float bhCore = max(uSink[i], uRadius * 0.010 * uHole[i]);
+        float bhCore = sourceCore(uSink[i], uHole[i]);
         float bhSinkFade = smoothstep(bhCore * 0.9, max(bhCore * 9.0, uRadius * 0.13), dB);
         fade *= mix(regularSinkFade, bhSinkFade, uHole[i]);
     }
@@ -195,7 +205,7 @@ void main() {
     for (int i = 0; i < ${MAXB}; i++) {
         if (i >= uNB) break;
         float dSrc = distance(p, uBody[i].xyz);
-        float bhCore = max(uSink[i], uRadius * 0.010 * uHole[i]);
+        float bhCore = sourceCore(uSink[i], uHole[i]);
         curv += uRs[i] / max(uSink[i], dSrc);
         float gSrc = (uBody[i].w * uBody[i].w) / max(uSink[i] * uSink[i], dSrc * dSrc);
         localPull += gSrc;
@@ -238,7 +248,7 @@ void main() {
     vec3 localBright = max(localColor * 1.22, vec3(0.30, 0.34, 0.40));
     fieldColor = mix(fieldColor, localBright, localInk * 0.74);
     fieldColor = mix(fieldColor, cHole, holeInk);
-    vColor = fieldColor * fade * fieldInk * (1.0 + localInk * 1.7 + uLocalFocus * 0.65) * mix(0.85, 1.24, tVis) * mix(0.9, 0.14, aEnd) * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.22, 1.0, visibleTime);
+    vColor = fieldColor * fade * fieldInk * (1.0 + localInk * 1.7 + uLocalFocus * 0.65) * mix(0.85, 1.24, tVis) * mix(0.9, 0.14, aEnd) * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
 
@@ -304,7 +314,7 @@ export function initRiver() {
         uniforms: uniformsShared,
         vertexShader: LINE_VERT,
         fragmentShader: LINE_FRAG,
-        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false,
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
     });
     lines = new THREE.LineSegments(geom, lineMat);
     lines.frustumCulled = false;
@@ -316,7 +326,9 @@ export function initRiver() {
 let lastR = 0, lastCx = 0, lastCz = 0;
 const smoothCenter = new THREE.Vector3();
 let smoothR = 0;
-// bodies: 0 earth, 1 moon, 2 sun, 3..9 planets, 10+ black holes
+const bhRiverPos = new THREE.Vector3();
+const riverStarPick = [];
+// bodies: 0 earth, 1 moon, 2 sun, 3..9 planets, then player holes and stars
 export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0) {
     river.dtVis = dtSim;
     if (!river.enabled) return;
@@ -345,12 +357,18 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         const clear = Math.max(0, camera.position.distanceTo(plPos[i]) - sink);
         localFocus = Math.max(localFocus, 0.95 * (1 - smooth01(Math.max(8, sink * 1.5), Math.max(90, sink * 34), clear)));
     }
+    for (let i = 0; i < BH.n; i++) {
+        bhRiverPos.set(earthV.x + BH.sx[i], earthV.y, earthV.z + BH.sz[i]);
+        const sink = Math.max(BH.sinkS[i], .45);
+        const clear = Math.max(0, camera.position.distanceTo(bhRiverPos) - sink);
+        localFocus = Math.max(localFocus, 0.97 * (1 - smooth01(Math.max(16, sink * 3), Math.max(220, sink * 120), clear)));
+    }
     const nearEarthLoad = (1 - smooth01(38, 760, earthClear)) * (1 - smooth01(R_EARTH * K * 28, R_EARTH * K * 150, earthCamD));
     const loadShed = Math.max(0, Math.min(1, nearEarthLoad * (1 - localFocus * .78)));
     uniformsShared.uLoadShed.value = loadShed;
     uniformsShared.uLocalFocus.value = localFocus;
-    uniformsShared.uOpacity.value = .26 * fEff * (1 + planeBias * .45 + localFocus * .72) * (1 - loadShed * .22);
-    const drawFrac = Math.max(.42, 1 - loadShed * .36, .68 + localFocus * .32);
+    uniformsShared.uOpacity.value = .44 * fEff * (1 + planeBias * .62 + localFocus * 1.15) * (1 - loadShed * .12);
+    const drawFrac = Math.max(.62, 1 - loadShed * .28, .78 + localFocus * .22);
     lines.geometry.setDrawRange(0, Math.floor(NPART * drawFrac) * 2);
     if (!lines.visible) return;
 
@@ -414,21 +432,31 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         colorVals[3 + i].set(colorTmp.r, colorTmp.g, colorTmp.b);
     }
     let nb = 3 + PL.length;
-    for (let i = 0; i < STARS.length && nb < MAXB; i++, nb++) {
-        const s = STARS[i];
-        bodyVals[nb].set(s.x * K, 0, -s.y * K, .001 * Math.sqrt(2 * s.mu / 1000));
-        sinkVals[nb] = (s.bh ? s.rs : s.R) * K;
-        rsVals[nb] = (s.bh ? s.rs : 2 * s.mu / C2) * K;
-        holeVals[nb] = s.bh ? 1 : 0;
-        colorTmp.setHex(s.color);
-        colorVals[nb].set(colorTmp.r, colorTmp.g, colorTmp.b);
-    }
     for (let i = 0; i < BH.n && nb < MAXB; i++, nb++) {
         bodyVals[nb].set(earthV.x + BH.sx[i], earthV.y, earthV.z + BH.sz[i], BH.c[i] * Math.max(.08, BH.obsT[i] || 1));
         sinkVals[nb] = BH.sinkS[i];
         rsVals[nb] = BH.rs[i] * K;
         holeVals[nb] = 1;
         colorVals[nb].set(0.5, 0.72, 1.0);
+    }
+    riverStarPick.length = 0;
+    for (let i = 0; i < STARS.length; i++) {
+        const s = STARS[i];
+        const sx = s.x * K, sy = (s.z || 0) * K, sz = -s.y * K;
+        const source = .001 * Math.sqrt(2 * s.mu / 1000);
+        const sink = (s.bh ? s.rs : s.R) * K;
+        const d = Math.max(sink, Math.hypot(smoothCenter.x - sx, smoothCenter.y - sy, smoothCenter.z - sz));
+        riverStarPick.push({ i, score: source / Math.sqrt(d) * (s.bh ? 4 : 1) });
+    }
+    riverStarPick.sort((a, b) => b.score - a.score);
+    for (let p = 0; p < riverStarPick.length && p < RIVER_STAR_SOURCE_MAX && nb < MAXB; p++, nb++) {
+        const s = STARS[riverStarPick[p].i];
+        bodyVals[nb].set(s.x * K, (s.z || 0) * K, -s.y * K, .001 * Math.sqrt(2 * s.mu / 1000));
+        sinkVals[nb] = (s.bh ? s.rs : s.R) * K;
+        rsVals[nb] = (s.bh ? s.rs : 2 * s.mu / C2) * K;
+        holeVals[nb] = s.bh ? 1 : 0;
+        colorTmp.setHex(s.color);
+        colorVals[nb].set(colorTmp.r, colorTmp.g, colorTmp.b);
     }
     uniformsShared.uNB.value = nb;
     // color/length normalization follows the same absolute field as the

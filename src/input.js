@@ -3,7 +3,7 @@ import { G, keys, BH } from "./state.js";
 import { cam } from "./scene.js";
 import { initAudio, thrustGain } from "./audio.js";
 import { toast } from "./achievements.js";
-import { placeBHAtCursor, removeLastBH } from "./blackholes.js";
+import { cancelBHPlacementMode, isBHPlacementMode, removeLastBH, toggleBHPlacementMode } from "./blackholes.js";
 import { computePrediction } from "./trails.js";
 import { saveState, loadState } from "./saves.js";
 import { help, hideHelp, toggleHelp } from "./hud.js";
@@ -11,6 +11,7 @@ import { cycleCosmicScale } from "./cosmic.js";
 import { look } from "./cockpit.js";
 import { apTravelToFocus, apCircularize, apOff } from "./autopilot.js";
 import { toggleScenarioMenu } from "./scenarios.js";
+import { openCatalogSearch } from "./catalogSearch.js";
 
 export function setFocus(f) {
     G.focus = f;
@@ -64,6 +65,9 @@ function onKeyDown(e) {
     if (e.code === "Period") G.warp = Math.min(WARP_MAX, G.warp * 2);
     if (e.repeat) return;
     switch (e.code) {
+        case "Escape":
+            if (isBHPlacementMode()) cancelBHPlacementMode();
+            break;
         case "Space": G.paused = !G.paused; break;
         case "KeyT":
             if (e.shiftKey) apTravelToFocus(toast);
@@ -100,8 +104,14 @@ function onKeyDown(e) {
         case "KeyK": saveState(); break;
         case "KeyL": loadState(); break;
         case "KeyN": focusNextBlackHole(); break;
-        case "KeyU": focusNextStar(); break;
-        case "KeyB": placeBHAtCursor(); break;
+        case "KeyU":
+            if (e.shiftKey) {
+                e.preventDefault();
+                openCatalogSearch();
+            }
+            else focusNextStar();
+            break;
+        case "KeyB": toggleBHPlacementMode(); break;
         case "KeyV": removeLastBH(); break;
         case "BracketLeft": BH.sizeIdx = Math.max(0, BH.sizeIdx - 1); break;
         case "BracketRight": BH.sizeIdx = Math.min(BH_SIZES.length - 1, BH.sizeIdx + 1); break;

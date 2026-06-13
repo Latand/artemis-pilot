@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, R_SUN, PL, K, SOI_M } from "./constants.js";
+import { R_EARTH, R_MOON, R_SUN, PL, K, SOI_M, STARS } from "./constants.js";
 import {
     eph, moonState,
     snapshotEphem, loadEphemSnapshot, advanceEphemSnapshot,
@@ -11,6 +11,7 @@ import { speedColor } from "./format.js";
 import { rk4Step, stepSize } from "./physics.js";
 import { dotTexture, ringTexture } from "./textures.js";
 import { scene } from "./scene.js";
+import { segmentSphereHit } from "./geometry.js";
 
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 
@@ -30,16 +31,16 @@ scene.add(trail);
 let trN = 0;
 const _tc = [0, 0, 0];
 export function pushTrail(force) {
-    const sx = (eph.earthX + G.x) * K, sz = -(eph.earthY + G.y) * K;
+    const sx = (eph.earthX + G.x) * K, sy = G.z * K, sz = -(eph.earthY + G.y) * K;
     if (trN > 0 && !force) {
-        const lx = trPos[(trN - 1) * 3], lz = trPos[(trN - 1) * 3 + 2];
+        const lx = trPos[(trN - 1) * 3], ly = trPos[(trN - 1) * 3 + 1], lz = trPos[(trN - 1) * 3 + 2];
         moonState(G.t, _m);
-        let rNear = Math.min(Math.hypot(G.x, G.y), Math.hypot(G.x - _m.mx, G.y - _m.my) * 2.5, Math.hypot(G.x - eph.sunX, G.y - eph.sunY));
-        for (let i = 0; i < PL.length; i++) rNear = Math.min(rNear, Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i]));
+        let rNear = Math.min(Math.hypot(G.x, G.y, G.z), Math.hypot(G.x - _m.mx, G.y - _m.my, G.z) * 2.5, Math.hypot(G.x - eph.sunX, G.y - eph.sunY, G.z));
+        for (let i = 0; i < PL.length; i++) rNear = Math.min(rNear, Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i], G.z));
         const thr = Math.max(.012, Math.min(400, rNear * K * .02));
-        if (Math.hypot(sx - lx, sz - lz) < thr) {
+        if (Math.hypot(sx - lx, sy - ly, sz - lz) < thr) {
             // refresh last point so the line always touches the ship
-            trPos[(trN - 1) * 3] = sx; trPos[(trN - 1) * 3 + 2] = sz;
+            trPos[(trN - 1) * 3] = sx; trPos[(trN - 1) * 3 + 1] = sy; trPos[(trN - 1) * 3 + 2] = sz;
             trPosAttr.needsUpdate = true;
             return;
         }
@@ -55,8 +56,8 @@ export function pushTrail(force) {
         }
         trN = TRN / 2;
     }
-    speedColor(Math.hypot(G.vx, G.vy), _tc);
-    trPos[trN * 3] = sx; trPos[trN * 3 + 1] = 0; trPos[trN * 3 + 2] = sz;
+    speedColor(Math.hypot(G.vx, G.vy, G.vz), _tc);
+    trPos[trN * 3] = sx; trPos[trN * 3 + 1] = sy; trPos[trN * 3 + 2] = sz;
     trCol[trN * 3] = _tc[0]; trCol[trN * 3 + 1] = _tc[1]; trCol[trN * 3 + 2] = _tc[2];
     trN++;
     trPosAttr.needsUpdate = true;
@@ -80,14 +81,14 @@ journey.renderOrder = 3;
 scene.add(journey);
 let jrN = 0;
 export function pushJourney() {
-    const sx = (eph.earthX + G.x) * K, sz = -(eph.earthY + G.y) * K;
+    const sx = (eph.earthX + G.x) * K, sy = G.z * K, sz = -(eph.earthY + G.y) * K;
     if (jrN > 0) {
-        const lx = jrPos[(jrN - 1) * 3], lz = jrPos[(jrN - 1) * 3 + 2];
+        const lx = jrPos[(jrN - 1) * 3], ly = jrPos[(jrN - 1) * 3 + 1], lz = jrPos[(jrN - 1) * 3 + 2];
         // spacing scales with distance from Earth: fine in cislunar space,
         // coarse on interplanetary arcs — 6000 points cover ~10 AU of path
         const thr = Math.max(1.2, Math.hypot(sx, sz) * .01);
-        if (Math.hypot(sx - lx, sz - lz) < thr) {
-            jrPos[(jrN - 1) * 3] = sx; jrPos[(jrN - 1) * 3 + 2] = sz;
+        if (Math.hypot(sx - lx, sy - ly, sz - lz) < thr) {
+            jrPos[(jrN - 1) * 3] = sx; jrPos[(jrN - 1) * 3 + 1] = sy; jrPos[(jrN - 1) * 3 + 2] = sz;
             jrPosAttr.needsUpdate = true;
             return;
         }
@@ -103,8 +104,8 @@ export function pushJourney() {
         }
         jrN = JRN / 2;
     }
-    speedColor(Math.hypot(G.vx, G.vy), _tc);
-    jrPos[jrN * 3] = sx; jrPos[jrN * 3 + 1] = 0; jrPos[jrN * 3 + 2] = sz;
+    speedColor(Math.hypot(G.vx, G.vy, G.vz), _tc);
+    jrPos[jrN * 3] = sx; jrPos[jrN * 3 + 1] = sy; jrPos[jrN * 3 + 2] = sz;
     // lift the floor so the line stays readable against deep space
     jrCol[jrN * 3] = .3 + .7 * _tc[0]; jrCol[jrN * 3 + 1] = .25 + .65 * _tc[1]; jrCol[jrN * 3 + 2] = .3 + .6 * _tc[2];
     jrN++;
@@ -150,74 +151,72 @@ const ghostMoon = (() => {
 const caDot = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(140,220,255,1)", "rgba(100,180,255,0.4)"), transparent: true, depthWrite: false }));
 caDot.visible = false;
 scene.add(caDot);
-const _ps = [0, 0, 0, 0];
+const _ps = [0, 0, 0, 0, 0, 0];
 // per-call time cap so long predictions never hitch a frame — but only after a
 // guaranteed minimum of steps, so near-field impact warnings are never starved
 // (a cold, un-JITed first call can be slow enough to truncate otherwise)
 const PRED_BUDGET_MS = 10, PRED_MIN_STEPS = 600;
-// did the segment (x0,y0)→(x1,y1), in body-relative coordinates, pass within R
-// of the body center?
-function segHit(x0, y0, x1, y1, R) {
-    const dx = x1 - x0, dy = y1 - y0;
-    const L2 = dx * dx + dy * dy;
-    let t = L2 > 1e-12 ? -(x0 * dx + y0 * dy) / L2 : 0;
-    t = t < 0 ? 0 : t > 1 ? 1 : t;
-    const qx = x0 + dx * t, qy = y0 + dy * t;
-    return qx * qx + qy * qy < R * R;
-}
 export function computePrediction() {
     if (!G.predict || G.dead || G.landed) { prGeom.setDrawRange(0, 0); impactSpr.visible = false; ghostMoon.visible = false; caDot.visible = false; return; }
     const liveEphem = snapshotEphem();
     const predEphem = snapshotEphem();
-    _ps[0] = G.x; _ps[1] = G.y; _ps[2] = G.vx; _ps[3] = G.vy;
-    let pt = G.t, n = 0, minRM = Infinity, caT = 0, caX = 0, caY = 0, caMX = 0, caMY = 0, caEX = 0, caEY = 0, impact = 0;
+    _ps[0] = G.x; _ps[1] = G.y; _ps[2] = G.z; _ps[3] = G.vx; _ps[4] = G.vy; _ps[5] = G.vz;
+    let pt = G.t, n = 0, minRM = Infinity, caT = 0, caX = 0, caY = 0, caZ = 0, caMX = 0, caMY = 0, caEX = 0, caEY = 0, impact = 0;
     const t0 = performance.now();
     try {
         loadEphemSnapshot(predEphem);
         beginPredictionBH(); // holes coast linearly from their snapshot state
-        const far = Math.hypot(G.x, G.y) > 2e6;
+        const far = Math.hypot(G.x, G.y, G.z) > 2e6;
         const tMax = G.t + 86400 * (far ? 160 : 8);
-        let pmx = 0, pmy = 0, pex = 0, pey = 0, hasPrev = false, plNear = false;
+        let pmx = 0, pmy = 0, pmz = 0, pex = 0, pey = 0, pez = 0, hasPrev = false, plNear = false;
         while (n < PRN && pt < tMax) {
-            prPos[n * 3] = (predEphem.earthX + _ps[0]) * K; prPos[n * 3 + 1] = 0; prPos[n * 3 + 2] = -(predEphem.earthY + _ps[1]) * K;
+            prPos[n * 3] = (predEphem.earthX + _ps[0]) * K; prPos[n * 3 + 1] = _ps[2] * K; prPos[n * 3 + 2] = -(predEphem.earthY + _ps[1]) * K;
             n++;
             if (n > PRED_MIN_STEPS && (n & 31) === 0 && performance.now() - t0 > PRED_BUDGET_MS) break;
-            const rE = Math.sqrt(_ps[0] * _ps[0] + _ps[1] * _ps[1]);
+            const rE = Math.sqrt(_ps[0] * _ps[0] + _ps[1] * _ps[1] + _ps[2] * _ps[2]);
             moonState(pt, _m);
-            const dmx = _ps[0] - _m.mx, dmy = _ps[1] - _m.my;
-            const rM = Math.sqrt(dmx * dmx + dmy * dmy);
-            if (rM < minRM) { minRM = rM; caT = pt; caX = _ps[0]; caY = _ps[1]; caMX = _m.mx; caMY = _m.my; caEX = predEphem.earthX; caEY = predEphem.earthY; }
-            const dsx = _ps[0] - eph.sunX, dsy = _ps[1] - eph.sunY;
-            const rSp = Math.sqrt(dsx * dsx + dsy * dsy);
+            const dmx = _ps[0] - _m.mx, dmy = _ps[1] - _m.my, dmz = _ps[2];
+            const rM = Math.sqrt(dmx * dmx + dmy * dmy + dmz * dmz);
+            if (rM < minRM) { minRM = rM; caT = pt; caX = _ps[0]; caY = _ps[1]; caZ = _ps[2]; caMX = _m.mx; caMY = _m.my; caEX = predEphem.earthX; caEY = predEphem.earthY; }
+            const dsx = _ps[0] - eph.sunX, dsy = _ps[1] - eph.sunY, dsz = _ps[2];
+            const rSp = Math.sqrt(dsx * dsx + dsy * dsy + dsz * dsz);
             if (rE < R_EARTH) { impact = 1; break; }
             if (rM < R_MOON) { impact = 2; break; }
             // grazing chords: a step can jump across a body between samples, so
             // near Earth/Moon also test the closest approach along the segment
             if (hasPrev) {
-                if (rM < SOI_M && segHit(pmx, pmy, dmx, dmy, R_MOON)) { impact = 2; break; }
-                if (rE < 60000 && segHit(pex, pey, _ps[0], _ps[1], R_EARTH)) { impact = 1; break; }
+                if (rM < SOI_M && segmentSphereHit(pmx, pmy, pmz, dmx, dmy, dmz, R_MOON)) { impact = 2; break; }
+                if (rE < 60000 && segmentSphereHit(pex, pey, pez, _ps[0], _ps[1], _ps[2], R_EARTH)) { impact = 1; break; }
             }
-            pmx = dmx; pmy = dmy; pex = _ps[0]; pey = _ps[1]; hasPrev = true;
+            pmx = dmx; pmy = dmy; pmz = dmz; pex = _ps[0]; pey = _ps[1]; pez = _ps[2]; hasPrev = true;
             if (rSp < R_SUN) { impact = 3; break; }
             plNear = false;
             for (let pi = 0; pi < PL.length; pi++) {
-                const dx = _ps[0] - eph.plX[pi], dy = _ps[1] - eph.plY[pi];
-                const d2 = dx * dx + dy * dy;
+                const dx = _ps[0] - eph.plX[pi], dy = _ps[1] - eph.plY[pi], dz = _ps[2];
+                const d2 = dx * dx + dy * dy + dz * dz;
                 if (d2 <= PL[pi].R * PL[pi].R) { impact = 5; break; }
                 if (d2 < PL[pi].soi * PL[pi].soi * .25) plNear = true;
             }
+            if (impact) break;
+            const wx = predEphem.earthX + _ps[0], wy = predEphem.earthY + _ps[1], wz = _ps[2];
+            for (let si = 0; si < STARS.length; si++) {
+                const st = STARS[si];
+                const dx = wx - st.x, dy = wy - st.y, dz = wz - (st.z || 0);
+                if (dx * dx + dy * dy + dz * dz <= st.R * st.R) { impact = 6; break; }
+            }
+            if (impact) break;
             for (let bi = 0; bi < BH.n; bi++) {
-                const dx = _ps[0] - predBHX(bi, pt), dy = _ps[1] - predBHY(bi, pt);
+                const dx = _ps[0] - predBHX(bi, pt), dy = _ps[1] - predBHY(bi, pt), dz = _ps[2];
                 const lim = BH.rs[bi] * 1.5;
-                if (dx * dx + dy * dy <= lim * lim) { impact = 4; break; }
+                if (dx * dx + dy * dy + dz * dz <= lim * lim) { impact = 4; break; }
             }
             if (impact) break;
             // full fidelity through flybys: the post-encounter path is too
             // sensitive for coarsened steps near the Moon or a planet
             const mult = (rM < SOI_M * 1.5 || plNear) ? 1 : far ? 14 : 3;
-            let dt = stepSize(rE, rM, rSp, rE - R_EARTH, Math.hypot(_ps[2], _ps[3]), _ps[0], _ps[1], _ps[2], _ps[3]) * mult;
+            let dt = stepSize(rE, rM, rSp, rE - R_EARTH, Math.hypot(_ps[3], _ps[4], _ps[5]), _ps[0], _ps[1], _ps[2], _ps[3], _ps[4], _ps[5]) * mult;
             dt = Math.max(.5, Math.min(far ? 3200 : 600, dt));
-            rk4Step(_ps, 0, dt, 0, 0);
+            rk4Step(_ps, 0, dt, 0, 0, 0);
             advanceEphemSnapshot(predEphem, dt);
             pt += dt;
         }
@@ -228,14 +227,15 @@ export function computePrediction() {
     prPosAttr.needsUpdate = true;
     prGeom.setDrawRange(0, n);
     if (impact) {
+        const impactIdx = (n - 1) * 3;
         impactSpr.visible = true;
-        impactSpr.position.set(prPos[(n - 1) * 3], 0, prPos[(n - 1) * 3 + 2]);
+        impactSpr.position.set(prPos[impactIdx], prPos[impactIdx + 1], prPos[impactIdx + 2]);
     } else impactSpr.visible = false;
     if (minRM < 120000 && caT > G.t + 30) {
         ghostMoon.visible = true;
         ghostMoon.position.set((caEX + caMX) * K, 0, -(caEY + caMY) * K);
         caDot.visible = true;
-        caDot.position.set((caEX + caX) * K, 0, -(caEY + caY) * K);
+        caDot.position.set((caEX + caX) * K, caZ * K, -(caEY + caY) * K);
     } else { ghostMoon.visible = false; caDot.visible = false; }
 }
 

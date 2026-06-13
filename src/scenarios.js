@@ -73,9 +73,10 @@ const SCENARIOS = [
             const cF = Math.sqrt(MU_E / p);
             const vr = cF * e * Math.sin(nu), vt = cF * (1 + e * Math.cos(nu));
             const ct = Math.cos(th), st = Math.sin(th);
-            G.x = r0 * ct; G.y = r0 * st;
-            G.vx = vr * ct - vt * st; G.vy = vr * st + vt * ct;
+            G.x = r0 * ct; G.y = r0 * st; G.z = 0;
+            G.vx = vr * ct - vt * st; G.vy = vr * st + vt * ct; G.vz = 0;
             G.heading = Math.atan2(G.vy, G.vx);
+            G.pitch = 0;
             G.warp = 21600;
             G.focus = "earth";
             cam.dist = 520;
@@ -100,10 +101,11 @@ const SCENARIOS = [
             const vJ = Math.hypot(jvxH, jvyH);
             const tx = jvxH / vJ, ty = jvyH / vJ;
             G.x = eph.plX[J] + ahead * tx - b * ty;
-            G.y = eph.plY[J] + ahead * ty + b * tx;
+            G.y = eph.plY[J] + ahead * ty + b * tx; G.z = 0;
             G.vx = eph.plVx[J] - vinf * tx;
-            G.vy = eph.plVy[J] - vinf * ty;
+            G.vy = eph.plVy[J] - vinf * ty; G.vz = 0;
             G.heading = Math.atan2(G.vy, G.vx);
+            G.pitch = 0;
             G.warp = 86400;
             G.focus = J;
             cam.dist = 2800;
@@ -121,6 +123,7 @@ const SCENARIOS = [
             "Gravity here is Paczyński–Wiita: the sandbox reproduces the correct ISCO and capture radius.",
         ],
         setup() {
+            G.z = 0; G.vz = 0; G.pitch = 0;
             const r = Math.hypot(G.x, G.y) || 1;
             const ux = G.x / r, uy = G.y / r;
             addBlackHole(G.x + 80000 * ux, G.y + 80000 * uy, 100, 0, 0, true);
@@ -144,9 +147,10 @@ const SCENARIOS = [
             const sd = Math.hypot(eph.sunX, eph.sunY) || 1;
             const ux = -eph.sunX / sd, uy = -eph.sunY / sd; // heliocentric outward through Earth
             const rH = 5 * AU_KM;
-            G.x = ux * (rH - sd); G.y = uy * (rH - sd);
-            G.vx = ux * 18.6 + eph.sunVx; G.vy = uy * 18.6 + eph.sunVy;
+            G.x = ux * (rH - sd); G.y = uy * (rH - sd); G.z = 0;
+            G.vx = ux * 18.6 + eph.sunVx; G.vy = uy * 18.6 + eph.sunVy; G.vz = 0;
             G.heading = Math.atan2(G.vy, G.vx);
+            G.pitch = 0;
             G.darkEnergy = true;
             G.gr = true;
             G.warp = SEC_YEAR;

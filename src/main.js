@@ -14,7 +14,7 @@ import {
     buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, moon, moonOrbitRing, moonSoiRing,
     plGroups, plSurfaces, plGlows, plOrbitRings, plLabels, galaxyBackdrop, sunDirW, updateBodyShaders,
 } from "./bodies.js";
-import { buildStars, updateStars } from "./stars.js";
+import { addStarVisual, buildStars, updateStars } from "./stars.js";
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff } from "./autopilot.js";
@@ -43,6 +43,7 @@ import { initInput, setFocus, blackHoleFocusIndex, starFocusIndex } from "./inpu
 import { initScenarios } from "./scenarios.js";
 import { initHints, hintTick } from "./hints.js";
 import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
+import { initCatalogSearch } from "./catalogSearch.js";
 
 // ============================ WIRING ============================
 function die(reason, swallowed) {
@@ -54,7 +55,7 @@ function die(reason, swallowed) {
     if (!swallowed) { // black-hole loss suppresses the explosion effect
         const cd = camera.position.distanceTo(shipG.position);
         const cs = Math.min(2.4, Math.max(.012, cd * .02));
-        triggerExplosion(G.x * K, 0, -G.y * K, cs);
+        triggerExplosion(G.x * K, G.z * K, -G.y * K, cs);
         boom();
     }
     showBanner("VEHICLE LOST", reason + " · MET " + fmtMET(G.t) + " · max Earth distance " + fmtKm(G.maxRE) + " · Δv used " + Math.round(G.dvUsed) + " m/s", "R TO REBUILD SHIP");
@@ -154,10 +155,10 @@ function unlockBodyPrediction() {
 }
 function bodyPhys(target) {
     const key = bodyKey(target);
-    if (key === "earth") return { x: 0, y: 0, vx: 0, vy: 0, mu: MU_E, R: R_EARTH };
-    if (key === "moon") return { x: eph.moonX, y: eph.moonY, vx: eph.moonVx, vy: eph.moonVy, mu: MU_M, R: R_MOON };
-    if (key === "sun") return { x: eph.sunX, y: eph.sunY, vx: eph.sunVx, vy: eph.sunVy, mu: MU_S, R: R_SUN };
-    if (typeof key === "number") return { x: eph.plX[key], y: eph.plY[key], vx: eph.plVx[key], vy: eph.plVy[key], mu: PL[key].mu, R: PL[key].R };
+    if (key === "earth") return { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, mu: MU_E, R: R_EARTH };
+    if (key === "moon") return { x: eph.moonX, y: eph.moonY, z: 0, vx: eph.moonVx, vy: eph.moonVy, vz: 0, mu: MU_M, R: R_MOON };
+    if (key === "sun") return { x: eph.sunX, y: eph.sunY, z: 0, vx: eph.sunVx, vy: eph.sunVy, vz: 0, mu: MU_S, R: R_SUN };
+    if (typeof key === "number") return { x: eph.plX[key], y: eph.plY[key], z: 0, vx: eph.plVx[key], vy: eph.plVy[key], vz: 0, mu: PL[key].mu, R: PL[key].R };
     return null;
 }
 function markBodyDestroyed(target, reason, refocus = true, ghost = true) {
@@ -167,7 +168,7 @@ function markBodyDestroyed(target, reason, refocus = true, ghost = true) {
     // feeling the old field until the front reaches them
     const phys = ghost ? bodyPhys(target) : null;
     destroyBody(key);
-    if (phys) addGhost(phys.x, phys.y, phys.vx, phys.vy, phys.mu, phys.R, G.t);
+    if (phys) addGhost(phys.x, phys.y, phys.z, phys.vx, phys.vy, phys.vz, phys.mu, phys.R, G.t);
     const name = bodyName(target);
     if (lockedBodyTarget !== BODY_NONE && bodyKey(lockedBodyTarget) === key) unlockBodyPrediction();
     if (G.landed && ((key === "earth" && G.landed.body === "earth") ||
@@ -191,7 +192,7 @@ function bhScenePos(i, out = _bhFocusPos) {
     return out.set((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K);
 }
 function starScenePos(i, out = _starFocusPos) {
-    return out.set(STARS[i].x * K, 0, -STARS[i].y * K);
+    return out.set(STARS[i].x * K, (STARS[i].z || 0) * K, -STARS[i].y * K);
 }
 function isBHTarget(target) { return blackHoleFocusIndex(target) >= 0; }
 function targetBHIndex(target) { return blackHoleFocusIndex(target); }
@@ -217,8 +218,8 @@ function addFocusCandidate(list, target, focus, pos, minDist) {
     if (!isTargetDestroyed(target)) list.push({ name: bodyName(target), target, focus, pos: pos.clone(), minDist });
 }
 function focusNearestSurvivor() {
-    const sx = (eph.earthX + G.x) * K, sz = -(eph.earthY + G.y) * K;
-    _focusOrigin.set(sx, 0, sz);
+    const sx = (eph.earthX + G.x) * K, sy = G.z * K, sz = -(eph.earthY + G.y) * K;
+    _focusOrigin.set(sx, sy, sz);
     const cands = [];
     addFocusCandidate(cands, BODY_EARTH, "earth", earthG.position, R_EARTH * K * 18);
     addFocusCandidate(cands, BODY_MOON, "moon", moon.position, R_MOON * K * 32);
@@ -277,14 +278,32 @@ const bhLabels = Array.from({ length: BH_MAX }, (_, i) => {
     bindBodyLabel(el, bhFocusValue(i), () => focusBlackHole(i));
     return el;
 });
-const starLabels = STARS.map((star, i) => {
+const starLabels = [];
+function ensureStarLabel(i) {
+    if (starLabels[i]) return starLabels[i];
+    const star = STARS[i];
+    if (!star) return null;
     const el = document.createElement("span");
     el.className = "lbl starLbl";
     el.style.color = "#" + star.color.toString(16).padStart(6, "0");
     el.textContent = star.name;
     document.getElementById("root").appendChild(el);
     bindBodyLabel(el, starFocusValue(i), () => { setFocus(starFocusValue(i)); unlockBodyPrediction(); });
+    starLabels[i] = el;
     return el;
+}
+for (let i = 0; i < STARS.length; i++) ensureStarLabel(i);
+initCatalogSearch({
+    toast,
+    onPromote(i, star, existing, reason = "promote") {
+        addStarVisual(star);
+        ensureStarLabel(i);
+        if (reason === "restore") return;
+        setFocus(starFocusValue(i));
+        unlockBodyPrediction();
+        computePrediction();
+        toast((existing ? "HYG destination focused · " : "HYG destination promoted · ") + star.name + " · " + star.dLy.toFixed(2) + " ly");
+    },
 });
 
 let pickDown = null;
@@ -397,12 +416,14 @@ function checkBodyContacts() {
         const [bx, by, brs] = s.split(":").map(Number);
         if (isFinite(bx) && isFinite(by) && brs > 0) addBlackHole(bx, by, brs);
     }
-    if (q.get("vmul")) { const m = +q.get("vmul"); G.vx *= m; G.vy *= m; }
+    if (q.get("vmul")) { const m = +q.get("vmul"); G.vx *= m; G.vy *= m; G.vz *= m; }
+    if (q.get("z")) G.z = +q.get("z");
+    if (q.get("vz")) G.vz = +q.get("vz");
     if (q.get("simt")) {
         const target = +q.get("simt");
         let guard = 0;
         while (G.t < target && !G.dead && !G.landed && guard++ < 4000) {
-            advance(Math.min(21600, target - G.t), 0, 0, 0);
+            advance(Math.min(21600, target - G.t), 0, 0, 0, 0);
             pushTrail(false); pushJourney();
         }
         computePrediction();
@@ -417,8 +438,9 @@ function checkBodyContacts() {
         const bhD = [];
         for (let i = 0; i < BH.n; i++) bhD.push(Math.round(Math.hypot(BH.x[i], BH.y[i])));
         document.getElementById("hint").textContent = "PROBE " + JSON.stringify({
-            t: Math.round(G.t), rE: Math.round(Math.hypot(G.x, G.y)),
-            v: +Math.hypot(G.vx, G.vy).toFixed(4), dv: Math.round(G.dvUsed),
+            t: Math.round(G.t), rE: Math.round(Math.hypot(G.x, G.y, G.z)),
+            z: +G.z.toFixed(4), vz: +G.vz.toFixed(6),
+            v: +Math.hypot(G.vx, G.vy, G.vz).toFixed(4), dv: Math.round(G.dvUsed),
             dead: G.dead, bhRE: bhD, bhN: BH.n,
         });
     }, 400);
@@ -596,9 +618,9 @@ function expansionSpeedLabel(kmps) {
 }
 function nearestStarInfo() {
     let best = -1, bestD = Infinity;
-    const wx = eph.earthX + G.x, wy = eph.earthY + G.y;
+    const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
     for (let i = 0; i < STARS.length; i++) {
-        const d = Math.hypot(wx - STARS[i].x, wy - STARS[i].y);
+        const d = Math.hypot(wx - STARS[i].x, wy - STARS[i].y, wz - (STARS[i].z || 0));
         if (d < bestD) { bestD = d; best = i; }
     }
     return { i: best, d: bestD };
@@ -613,7 +635,7 @@ function updateCabinHUD(cosmicView, oi) {
         cabinHudEl.innerHTML =
             '<span class="chMain">T+ ' + fmtMET(G.t) +
             ' · ⏩ ' + warpLabel(G.warp) + (G.paused ? " ❚❚" : "") +
-            ' · VEL ' + Math.hypot(G.vx, G.vy).toFixed(2) + " km/s" +
+            ' · VEL ' + Math.hypot(G.vx, G.vy, G.vz).toFixed(2) + " km/s" +
             ' · ALT ' + fmtDist(Math.max(0, oi.r - oi.R)) + " · " + oi.body +
             (apOn ? ' · <span class="chAp">AP ' + AP.mode.toUpperCase() + "</span>" : "") +
             "</span><br><span class=\"chHint\">DRAG TO LOOK · J EXTERNAL VIEW</span>";
@@ -643,8 +665,9 @@ function frame() {
     if (!rotIn) rotIn = vrIn.rot;
     if (rotIn) { G.hold = null; G.heading += rotIn * ROT_RATE * dtR; }
     if (!G.landed) {
-        if (G.hold === "pro") G.heading = Math.atan2(G.vy, G.vx);
-        else if (G.hold === "retro") G.heading = Math.atan2(-G.vy, -G.vx);
+        const vh = Math.hypot(G.vx, G.vy);
+        if (G.hold === "pro") { G.heading = Math.atan2(G.vy, G.vx); G.pitch = Math.atan2(G.vz, vh); }
+        else if (G.hold === "retro") { G.heading = Math.atan2(-G.vy, -G.vx); G.pitch = Math.atan2(-G.vz, vh); }
     }
     let mainIn = (keys.has("KeyW") || keys.has("ArrowUp")) ? 1 : ((keys.has("KeyS") || keys.has("ArrowDown")) ? -1 : 0);
     if (!mainIn) mainIn = vrIn.main;
@@ -653,34 +676,30 @@ function frame() {
     G.boost = keys.has("ShiftLeft") || keys.has("ShiftRight") || vrIn.boost;
     // the pilot always outranks the flight computer
     if ((rotIn || mainIn || latIn) && AP.mode !== "off") apOff("pilot override", toast);
-    let atx = 0, aty = 0, aMag = 0;
+    let atx = 0, aty = 0, atz = 0, aMag = 0;
     const canThrust = !G.dead && !G.paused && (G.infinite || G.fuel > 0);
     if (canThrust && AP.mode !== "off" && !mainIn && !latIn) {
         const ap = apStep(dtR, dtR * G.warp, orbitInfo(), { toast });
-        if (ap && ap.aMag > 0) { atx = ap.atx; aty = ap.aty; aMag = ap.aMag; mainIn = ap.mainIn; }
+        if (ap && ap.aMag > 0) { atx = ap.atx; aty = ap.aty; atz = ap.atz || 0; aMag = ap.aMag; mainIn = ap.mainIn; }
     }
     if (canThrust && (mainIn || latIn) && aMag === 0) {
         const mult = G.boost ? BOOST : 1;
-        const hx = Math.cos(G.heading), hy = Math.sin(G.heading);
-        if (mainIn) { const a = MAIN_A * G.throttle * mult * mainIn; atx += a * hx; aty += a * hy; }
+        const cp = Math.cos(G.pitch || 0), hx = cp * Math.cos(G.heading), hy = cp * Math.sin(G.heading), hz = Math.sin(G.pitch || 0);
+        if (mainIn) { const a = MAIN_A * G.throttle * mult * mainIn; atx += a * hx; aty += a * hy; atz += a * hz; }
         if (latIn) { const a = RCS_A * mult * latIn; atx += -a * hy; aty += a * hx; }
-        aMag = Math.hypot(atx, aty);
+        aMag = Math.hypot(atx, aty, atz);
         if (G.landed && mainIn > 0) {
             // liftoff: nudge off the surface and hand back to physics
             let radial;
             if (G.landed.body === "earth") radial = Math.atan2(G.y, G.x);
             else if (G.landed.body === "planet") radial = Math.atan2(G.y - eph.plY[G.landed.i], G.x - eph.plX[G.landed.i]);
             else { moonState(G.t, _m); radial = Math.atan2(G.y - _m.my, G.x - _m.mx); }
-            G.x += 0.03 * Math.cos(radial); G.y += 0.03 * Math.sin(radial);
+            G.x += 0.03 * Math.cos(radial); G.y += 0.03 * Math.sin(radial); G.z = 0;
             G.landed = null;
             hideBanner();
         }
     }
     // ---- physics ----
-    // holes disable the deep-time Kepler jump (their field breaks the
-    // two-body decomposition), so uncapped warp would force giant RK4 steps
-    // and blow the system up to NaN — cap while any hole exists
-    if (BH.n && G.warp > 2592000) { G.warp = 2592000; toast("Time warp capped at 30 d/s while black holes exist"); }
     let advanced = 0;
     if (!G.paused) {
         if (G.dead) {
@@ -693,7 +712,7 @@ function frame() {
             advanceEphem(advanced);
             bhAdvance(advanced, G.t);
             G.t += advanced;
-        } else advanced = advance(dtR * G.warp, atx, aty, aMag);
+        } else advanced = advance(dtR * G.warp, atx, aty, atz, aMag);
     }
     snapLanded();
     const oi = orbitInfo();
@@ -760,8 +779,8 @@ function frame() {
     if (focusBH >= BH.n) setFocus("ship");
     const focusStar = starFocusIndex(G.focus);
     if (focusStar >= STARS.length) setFocus("ship");
-    const oriX = (eph.earthX + G.x) * K, oriZ = -(eph.earthY + G.y) * K;
-    shipG.position.set(oriX, 0, oriZ);
+    const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
+    shipG.position.set(oriX, oriY, oriZ);
     const cosmicView = cam.dist > LY_SCENE * .2;
     shipG.visible = !G.dead && !cosmicView && !G.cabin;
     clouds.rotation.y += dtR * .01;
@@ -769,7 +788,10 @@ function frame() {
     // "free" focus: the target stays wherever panning put it
     const activeBHFocus = focusBH >= 0 && focusBH < BH.n;
     const activeStarFocus = focusStar >= 0 && focusStar < STARS.length;
-    dirV.set(Math.cos(G.heading), 0, -Math.sin(G.heading));
+    {
+        const cp = Math.cos(G.pitch || 0);
+        dirV.set(cp * Math.cos(G.heading), Math.sin(G.pitch || 0), -cp * Math.sin(G.heading));
+    }
     const tgt = activeBHFocus ? bhScenePos(focusBH) : activeStarFocus ? starScenePos(focusStar) :
         G.focus === "free" ? cam.tgt : typeof G.focus === "number" ? plGroups[G.focus].position :
         G.focus === "moon" ? moon.position : G.focus === "earth" ? earthG.position : G.focus === "sun" ? sunCore.position : shipG.position;
@@ -793,13 +815,13 @@ function frame() {
     if (VR.active) {
         // rigs follow the ship (or the god transform); the desktop camera is
         // re-pointed at the VR eye so camera-dependent systems keep working
-        vrUpdateRigs(oriX, oriZ, dtR);
+        vrUpdateRigs(oriX, oriZ, dtR, oriY);
     } else if (cabinActive) {
         // head direction = ship heading + look offsets (drag to look around)
         const a = G.heading - look.yaw;
         const cp = Math.cos(look.pitch);
-        cabinEye.set(oriX, .03, oriZ);
-        cabinLook.set(oriX + Math.cos(a) * cp, .03 + Math.sin(look.pitch), oriZ - Math.sin(a) * cp);
+        cabinEye.set(oriX, oriY + .03, oriZ);
+        cabinLook.set(oriX + Math.cos(a) * cp, oriY + .03 + Math.sin(look.pitch), oriZ - Math.sin(a) * cp);
         camera.position.copy(cabinEye);
         camera.lookAt(cabinLook);
     } else applyCamera();
@@ -839,7 +861,7 @@ function frame() {
     craft.quaternion.setFromUnitVectors(upV, dirV);
     const cd = camera.position.distanceTo(shipG.position);
     const cs = Math.min(2.4, Math.max(.012, cd * .02));
-    const shipSpeed = Math.hypot(G.vx, G.vy);
+    const shipSpeed = Math.hypot(G.vx, G.vy, G.vz);
     const directionAlpha = 1 - smooth01(DIR_FADE_START_KMS, DIR_FADE_END_KMS, shipSpeed);
     const velAngle = shipSpeed > 1e-9 ? Math.atan2(G.vy, G.vx) : G.heading;
     const headingRate = prevHeadingVis === null || dtR <= 0 ? 0 : Math.abs(angleDelta(G.heading, prevHeadingVis)) / dtR;
@@ -850,21 +872,21 @@ function frame() {
     craft.scale.setScalar(cs);
     dot.scale.setScalar(cd * .014);
     dot.material.opacity = G.dead ? 0 : (cd > 4 ? 1 : Math.max(0, (cd - 1.2) / 2.8));
-    updateHeadingArrow(oriX, oriZ, dirV, cd, directionVisualActive && !G.dead && !cosmicView && !cabinActive, directionAlpha);
+    updateHeadingArrow(oriX, oriY, oriZ, dirV, cd, directionVisualActive && !G.dead && !cosmicView && !cabinActive, directionAlpha);
     // ---- engine flame & exhaust ----
     const thrustingMain = aMag > 0 && mainIn !== 0;
     flame.visible = thrustingMain && !G.dead;
     if (flame.visible) {
         const thrVis = Math.min(2, G.throttle); // visuals saturate; physics doesn't
         const off = -mainIn * cs * 1.05;
-        flame.position.set(dirV.x * off, 0, dirV.z * off);
+        flame.position.set(dirV.x * off, dirV.y * off, dirV.z * off);
         flame.scale.setScalar(cs * (.7 + .6 * thrVis * (G.boost ? 1.7 : 1)) * (1 + .2 * Math.sin(performance.now() * .03)));
         flame.material.opacity = .9;
         exAcc = Math.min(20, exAcc + Math.min(280, (G.boost ? 170 : 95) * thrVis) * dtR);
-        const epx = oriX + dirV.x * off * 1.05, epz = oriZ + dirV.z * off * 1.05;
+        const epx = oriX + dirV.x * off * 1.05, epy = oriY + dirV.y * off * 1.05, epz = oriZ + dirV.z * off * 1.05;
         while (exAcc > 1) {
             exAcc--;
-            spawnExhaust(epx, 0, epz, -dirV.x * mainIn, 0, -dirV.z * mainIn, cs, G.boost);
+            spawnExhaust(epx, epy, epz, -dirV.x * mainIn, -dirV.y * mainIn, -dirV.z * mainIn, cs, G.boost);
         }
     }
     // advect exhaust (real-time, cosmetic)
@@ -909,7 +931,7 @@ function frame() {
         const I = clamp01(aero.aD / 35);
         if (I > .02) {
             plasma.visible = true;
-            velV.set(aero.vx, 0, -aero.vy).normalize();
+            velV.set(aero.vx, aero.vz || 0, -aero.vy).normalize();
             plasma.position.copy(velV).multiplyScalar(cs * .9);
             plasma.scale.setScalar(cs * (1.6 + 3.4 * I) * (1 + .15 * Math.sin(performance.now() * .05)));
             plasma.material.opacity = Math.min(1, .25 + I);
@@ -939,33 +961,33 @@ function frame() {
     grB += (grT - grB) * Math.min(1, dtR * 3.4);
     if (Math.abs(grT - grB) < .004) grB = grT;
     const fB = grB;
-    const fRiver = fB * (1 - smooth01(4.8e6, 8.0e6, cam.dist));
+    const fRiver = fB * (1 - smooth01(2.0e7, 7.0e7, cam.dist));
     updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR);
     updateShells(river.dtVis ?? advanced, fRiver);
     if (fRiver > .01) {
-        fFlow.textContent = (flowVel(oriX, 0, oriZ, moonV.x, moonV.y, moonV.z, fv) * 1000).toFixed(2) + " km/s";
-        const deShip = G.darkEnergy ? Math.hypot(oriX - earthX, oriZ - earthZ) * DARK_ENERGY.H_SIM * 1000 : 0;
+        fFlow.textContent = (flowVel(oriX, oriY, oriZ, moonV.x, moonV.y, moonV.z, fv) * 1000).toFixed(2) + " km/s";
+        const deShip = G.darkEnergy ? Math.hypot(oriX - earthX, oriY, oriZ - earthZ) * DARK_ENERGY.H_SIM * 1000 : 0;
         fDark.textContent = G.darkEnergy ? expansionSpeedLabel(deShip) : "OFF";
     }
     moonSoiRing.visible = fRiver > .01 && !WORLD.moonDestroyed;
     moonSoiRing.material.opacity = fRiver * (.14 + .1 * Math.sin(performance.now() * .002));
     // ---- velocity & flow vectors (one shared scale) ----
-    velV.set(G.vx, 0, -G.vy);
+    velV.set(G.vx, G.vz, -G.vy);
     const sp = shipSpeed;
     let kVLoc = sp;
     if (directionVisualActive && sp > 1e-9 && !G.dead && !cosmicView && !cabinActive) {
         const dMo = oi.rM * K;
         const qLoc = fRiver * (1 - smooth01(14, 56, dMo));
-        const lvx = G.vx - qLoc * _m.vmx, lvy = G.vy - qLoc * _m.vmy;
-        const kV = Math.hypot(lvx, lvy);
+        const lvx = G.vx - qLoc * _m.vmx, lvy = G.vy - qLoc * _m.vmy, lvz = G.vz;
+        const kV = Math.hypot(lvx, lvy, lvz);
         kVLoc = kV;
         speedColor(kV, arrC);
         arrow.material.color.setRGB(arrC[0], arrC[1], arrC[2]);
         arrow.material.opacity = .92 * directionAlpha;
         const SCL = cd * .06, MAXL = cd * .55;
         const aL = Math.min(MAXL, SCL * kV) / Math.max(1e-9, kV);
-        arrPos[0] = oriX; arrPos[1] = 0; arrPos[2] = oriZ;
-        arrPos[3] = oriX + lvx * aL; arrPos[4] = 0; arrPos[5] = oriZ - lvy * aL;
+        arrPos[0] = oriX; arrPos[1] = oriY; arrPos[2] = oriZ;
+        arrPos[3] = oriX + lvx * aL; arrPos[4] = oriY + lvz * aL; arrPos[5] = oriZ - lvy * aL;
         arrAttr.needsUpdate = true;
         arrow.visible = directionAlpha > .03;
         tipV.visible = directionAlpha > .03;
@@ -974,11 +996,11 @@ function frame() {
         tipV.material.color.setRGB(arrC[0], arrC[1], arrC[2]);
         tipV.material.opacity = directionAlpha;
         if (fRiver > .02) {
-            const kF = flowVel(oriX, 0, oriZ, moonV.x, moonV.y, moonV.z, fv) * 1000;
+            const kF = flowVel(oriX, oriY, oriZ, moonV.x, moonV.y, moonV.z, fv) * 1000;
             const fL = Math.min(MAXL, SCL * kF) / Math.max(1e-12, kF * .001);
-            flArrPos[0] = oriX; flArrPos[1] = 0; flArrPos[2] = oriZ;
+            flArrPos[0] = oriX; flArrPos[1] = oriY; flArrPos[2] = oriZ;
             flArrPos[3] = oriX + fv[0] * fL;
-            flArrPos[4] = fv[1] * fL;
+            flArrPos[4] = oriY + fv[1] * fL;
             flArrPos[5] = oriZ + fv[2] * fL;
             flArrAttr.needsUpdate = true;
             flowArrow.material.opacity = .95 * fRiver;
@@ -989,14 +1011,15 @@ function frame() {
             tipF.material.opacity = fRiver;
             if (G.darkEnergy) {
                 const deVX = (oriX - earthX) * DARK_ENERGY.H_SIM;
+                const deVY = oriY * DARK_ENERGY.H_SIM;
                 const deVZ = (oriZ - earthZ) * DARK_ENERGY.H_SIM;
-                const deScene = Math.hypot(deVX, deVZ);
+                const deScene = Math.hypot(deVX, deVY, deVZ);
                 if (deScene > 1e-12) {
                     const deK = deScene * 1000;
                     const deL = Math.min(MAXL, SCL * deK) / deScene;
-                    deArrPos[0] = oriX; deArrPos[1] = 0; deArrPos[2] = oriZ;
+                    deArrPos[0] = oriX; deArrPos[1] = oriY; deArrPos[2] = oriZ;
                     deArrPos[3] = oriX + deVX * deL;
-                    deArrPos[4] = 0;
+                    deArrPos[4] = oriY + deVY * deL;
                     deArrPos[5] = oriZ + deVZ * deL;
                     deArrAttr.needsUpdate = true;
                     darkEnergyArrow.material.opacity = .9 * fRiver;
@@ -1034,8 +1057,10 @@ function frame() {
     const w = cvHost.clientWidth, h = cvHost.clientHeight;
     const showStarLabels = (cam.dist > LY_SCENE * .001 && cam.dist < LY_SCENE * 180) || activeStarFocus;
     for (let i = 0; i < STARS.length; i++) {
-        if (showStarLabels) put(starLabels[i], starScenePos(i, _starLabelPos), -8, w, h);
-        else starLabels[i].style.opacity = "0";
+        const starLabel = ensureStarLabel(i);
+        if (!starLabel) continue;
+        if (showStarLabels) put(starLabel, starScenePos(i, _starLabelPos), -8, w, h);
+        else starLabel.style.opacity = "0";
     }
     if (cosmicView || cabinActive || VR.active) {
         hoverTipEl.style.display = "none";
@@ -1078,6 +1103,5 @@ function frame() {
     else put(lblO, shipG.position, -22, w, h);
     renderFrame(cabinActive);
 }
-// setAnimationLoop instead of requestAnimationFrame: WebXR sessions drive
-// the loop through the session's frame callback when presenting
+// setAnimationLoop lets WebXR sessions drive the frame callback when presenting.
 renderer.setAnimationLoop(frame);

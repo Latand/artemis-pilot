@@ -167,12 +167,12 @@ const warnLights = {};
 // ---- interior lighting: even ambient, sun direction, tucked accents ----
 const ambient = new THREE.AmbientLight(0x4c5c74, .95);
 const sunInterior = new THREE.DirectionalLight(0xfff2dc, 1.05);
-// console accent: small, tucked under the deck lip — a glow line, not a blob
+// console accent: compact glow line tucked under the deck lip
 const panelGlow = new THREE.PointLight(0x6fd8e8, .28, .9);
 panelGlow.position.set(0, -.2, -.62);
 const thrustLight = new THREE.PointLight(0xff8a4a, 0, 4);
 thrustLight.position.set(0, -.2, 1.4);
-// dim warm dome light so the rear cabin reads instead of vanishing
+// dim warm dome light so the rear cabin stays legible in shadow
 const domeLight = new THREE.PointLight(0xffd9b0, .4, 3.4);
 domeLight.position.set(0, .75, .7);
 cockpitScene.add(ambient, sunInterior, panelGlow, thrustLight, domeLight);

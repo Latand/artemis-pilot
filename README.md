@@ -13,11 +13,14 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 - **Accurate ephemerides**: full n-body RK4 world seeded from real J2000 eccentric orbital elements for all planets, Earth, and the Moon (27.32-day month), with J2 oblateness, Sun 1PN precession, atmospheres, and light-speed gravity fronts.
 - **One clock at every scale**: past the integrator budget the system rides exact osculating Kepler orbits (barycenter coasting), so planets stay on their tracks and T+ runs at the commanded warp from real time to Myr/s — the MET reads years/kyr/Myr/Gyr at deep time.
 - **Visible gravitational lensing**: a screen-space point-mass lens around every black hole and SGR A* — Einstein ring, flipped background, magnified shadow — applied before bloom so the warped disk light glows.
-- **Stellar destinations with physics**: eight named stars plus SGR A* (4.15M solar masses, accretion disk, polar jets) as real positions with live gravity and contact surfaces — fly there and die in a photosphere or photon sphere of your choosing.
+- **Stellar destinations with physics**: curated nearby/famous stars, a capped HYG physical subset, plus SGR A* (4.15M solar masses, accretion disk, polar jets) as real-distance 3D RA/declination destinations with live gravity and contact surfaces — fly there and die in a photosphere or photon sphere of your choosing.
+- **Real catalog sky layer**: the Solar System sky and cosmic view asynchronously load a compact HYG v4.1 point cloud of 119,625 Hipparcos/Yale/Gliese stars. The close sky uses apparent magnitude, B-V color, bright-star labels, and readable constellation/asterism guide linework; the binary catalog also carries absolute magnitude, luminosity, temperature, estimated mass, and estimated radius, with a runtime subset plus on-demand HYG search promoted into the fast gravity/navigation loops.
+- **Durable catalog travel**: quicksave stores promoted HYG destinations with their physical fields and restores them before focus/trajectory prediction, so catalog travel targets survive a browser refresh.
+- **Mouse inertial control**: grab the ship marker, pull it through space, and release; the release velocity becomes the ship's new momentum.
 - **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, black holes, and boosted dark-energy expansion.
 - **Dynamic black holes** with configurable Schwarzschild radius, Paczynski-Wiita capture behavior, mergers, Hawking readouts, accretion visuals, and dark event-horizon cores.
 - **Earth that looks alive**: day/night terminator with real city-lights map, ocean sun glint, camera-aware atmosphere; limb-darkened granulated Sun with an animated corona; magnitude/color-varied starfield; ACES filmic tone mapping.
-- **Contextual onboarding**: a one-time title overlay with the voyage lore, milestone hint cards instead of a wall of hotkeys, and persistence of camera, focus, warp, and UI state across refreshes.
+- **Contextual onboarding**: a one-time title overlay with the voyage lore, milestone hint cards, and persistence of camera, focus, warp, and UI state across refreshes.
 
 ## Screenshots
 
@@ -81,8 +84,10 @@ The static build is written to `dist/`.
 | `Shift+F` | Cycle planets |
 | `C` | Cycle Solar System, Milky Way, and Local Group scale |
 | `U` | Cycle nearby physical stellar destinations |
+| `Shift+U` | Search HYG catalog and promote a physical star destination |
 | `J` | Toggle in-ship cabin view |
 | `0` or body label click | Focus a body and lock its trajectory prediction |
+| Mouse drag on ship | Grab and throw the ship; release preserves the drag velocity |
 | `P` | Toggle trajectory prediction |
 | `G` | Toggle spacetime river visualization |
 | `O` | Toggle dark-energy expansion |
@@ -140,7 +145,7 @@ src/
   river.js        GPU particle river field
   scenarios.js    travel simulations menu and title overlay
   lensing.js      screen-space Einstein-ring lensing pass for holes and SGR A*
-  stars.js        named-star meshes and the SGR A* accretion system
+  stars.js        named/catalog-star meshes and the SGR A* accretion system
   trails.js       ship and body prediction traces
   vr.js           WebXR rigs, PSVR2 controller bindings, god-mode grab/zoom
 public/textures/  planet, Moon, Sun, ring, Earth night, and Milky Way maps
@@ -149,5 +154,9 @@ public/textures/  planet, Moon, Sun, ring, Earth night, and Milky Way maps
 ## Assets And License
 
 Planet, Moon, Sun, Saturn ring, and Milky Way texture maps in `public/textures/` are derived from Solar System Scope texture maps based on NASA imagery and are credited under CC BY 4.0.
+
+The generated star catalog files `public/data/hyg-stars-v41.json`, `public/data/hyg-stars-v41.bin`, and `src/generated/hygPhysicalStars.js` are derived from the Astronexus HYG v4.1 database, which combines Hipparcos, Yale Bright Star, and Gliese catalog data and is licensed under CC BY-SA 4.0. Regenerate them with `bun run catalog:hyg`; verify the local schema with `bun run smoke:catalog`.
+
+Current scientific boundary: planets, Moon, Sun, player-placed black holes, landing, and body prediction remain in the simulator's established coplanar Solar-system model; named and HYG-promoted stellar destinations plus ship travel support full 3D position and velocity. Close-sky guide lines are simplified constellation and asterism figures; IAU boundary polygons and complete atlas coverage are outside this slice.
 
 Code is licensed under MIT. Texture assets keep their original attribution requirements.

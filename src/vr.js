@@ -60,7 +60,7 @@ scene.add(worldRig);
 const cockpitRig = new THREE.Group();
 const cockpitOffset = new THREE.Group();
 // near/far must match the world camera: both passes share one XR session
-// depth state (updateRenderState applies per frame, not per render call)
+// depth state (updateRenderState applies once per frame).
 const vrCockpitCam = new THREE.PerspectiveCamera(50, 1, .07, CAM_DIST_MAX * 1.35);
 cockpitRig.add(cockpitOffset);
 cockpitOffset.add(vrCockpitCam);
@@ -144,7 +144,7 @@ function drawPanel() {
     c.fillText("GOD MODE · T+ " + fmtMET(G.t), 20, 38);
     c.font = "24px ui-monospace, Menlo, monospace";
     c.fillStyle = "#cfe8f8";
-    c.fillText("WARP " + warpLabel(G.warp) + (G.paused ? " ❚❚" : "") + " · VEL " + Math.hypot(G.vx, G.vy).toFixed(2) + " km/s", 20, 74);
+    c.fillText("WARP " + warpLabel(G.warp) + (G.paused ? " ❚❚" : "") + " · VEL " + Math.hypot(G.vx, G.vy, G.vz).toFixed(2) + " km/s", 20, 74);
     c.fillText("FOCUS " + focusName() + " · 1 m = " + fmtDist(VR.god.scale / K), 20, 108);
     c.fillStyle = "#5d7587";
     c.font = "20px ui-monospace, Menlo, monospace";
@@ -282,7 +282,7 @@ function tourList() {
     for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i])
         l.push({ name: PL[i].name, focus: i, pos: plGroups[i].position, R: PL[i].R * K });
     for (let i = 0; i < STARS.length; i++)
-        l.push({ name: STARS[i].name, focus: "star:" + i, pos: new THREE.Vector3(STARS[i].x * K, 0, -STARS[i].y * K), R: STARS[i].R * K });
+        l.push({ name: STARS[i].name, focus: "star:" + i, pos: new THREE.Vector3(STARS[i].x * K, (STARS[i].z || 0) * K, -STARS[i].y * K), R: STARS[i].R * K });
     return l;
 }
 function godAnchor(e) {
@@ -486,7 +486,7 @@ function updateAim() {
 
 // ---- per-frame rig update + shadow camera ----
 let pendRecenter = 0, panelT = 0;
-export function vrUpdateRigs(oriX, oriZ, dtR) {
+export function vrUpdateRigs(oriX, oriZ, dtR, oriY = 0) {
     if (!VR.active) return;
     if (pendRecenter > 0 && --pendRecenter === 0) recenter();
     if (VR.mode === "ship" && G.dead) {
@@ -494,7 +494,7 @@ export function vrUpdateRigs(oriX, oriZ, dtR) {
         say("VEHICLE LOST · OBSERVER MODE · HOLD R-STICK TO REBUILD");
     }
     if (VR.mode === "ship") {
-        worldRig.position.set(oriX, 0, oriZ);
+        worldRig.position.set(oriX, oriY, oriZ);
         worldRig.rotation.y = G.heading - Math.PI / 2;   // rig -Z = ship nose
         worldRig.scale.setScalar(SHIP_WORLD_SCALE);
         if (sky) sky.scale.setScalar(1);

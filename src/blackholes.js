@@ -1,10 +1,10 @@
 import * as THREE from "three";
 import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, K } from "./constants.js";
-import { BH, WORLD, EPHT, bhRegister, bhMuAt, gsPull, addPhantom } from "./state.js";
+import { G, BH, WORLD, EPHT, bhRegister, bhMuAt, gsPull, addPhantom } from "./state.js";
 import { eph, setLiveGuard } from "./ephemeris.js";
-import { fmtKm, mulberry32 } from "./format.js";
+import { fmtAccel, fmtDist, fmtKm, mulberry32 } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
-import { scene, camera, cvHost, lastPtr, renderer } from "./scene.js";
+import { scene, camera, cam, cvHost, lastPtr, renderer } from "./scene.js";
 
 export const BH_META = []; // visual groups, parallel to the data arrays
 
@@ -14,9 +14,12 @@ let H = {
 };
 export function initBHHooks(hooks) { H = { ...H, ...hooks }; }
 
+const SOLAR_MASS_KG = 1.98847e30;
 export function bhMassLabel(rs) {
     const msun = rs * C_LIGHT * C_LIGHT / 2 / MU_S;
-    return (msun >= 100 ? Math.round(msun).toLocaleString("en-US") : msun.toFixed(2)) + " M☉";
+    if (msun >= 100) return Math.round(msun).toLocaleString("en-US") + " M☉";
+    if (msun >= .01) return msun.toFixed(2) + " M☉";
+    return sci(msun * SOLAR_MASS_KG, "kg") + " · " + msun.toExponential(2) + " M☉";
 }
 function smooth01(a, b, x) {
     const t = Math.max(0, Math.min(1, (x - a) / Math.max(1e-12, b - a)));
@@ -40,6 +43,19 @@ export function hawkingStats(rsKm) {
 export function bhHawkingLabel(rsKm) {
     const h = hawkingStats(rsKm);
     return "Hawking T " + sci(h.tempK, "K") + " · P " + sci(h.powerW, "W");
+}
+function bhSizeShort(rsKm) {
+    if (rsKm < 1) return Math.round(rsKm * 1000) + " m";
+    if (rsKm < 1000) return Math.round(rsKm) + " km";
+    if (rsKm < 1000000) return Math.round(rsKm / 1000) + "k";
+    return (rsKm / 1000000).toFixed(rsKm >= 1000000 ? 1 : 2).replace(/\.0$/, "") + "M";
+}
+function gravityPanelLabel(ms2) {
+    return ms2 >= 1e5 ? sci(ms2, "m/s²") : fmtAccel(ms2);
+}
+export function pwAccelMs2(mu, rKm, rsKm) {
+    const eff = Math.max(rKm - rsKm, rsKm * .02);
+    return 1000 * mu / Math.max(1e-30, eff * eff);
 }
 function makeHawkingPoints(seed) {
     const N = 140, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
@@ -197,8 +213,282 @@ function blackCoreTexture(size = 512) {
     ctx.fillRect(0, 0, size, size);
     return polishCanvasTexture(new THREE.CanvasTexture(cv));
 }
+const BH_PLACE = {
+    active: false,
+    valid: false,
+    point: new THREE.Vector3(),
+    xKm: 0,
+    yKm: 0,
+    uiReady: false,
+    uiKey: "",
+    preview: null,
+    ctx: null,
+    canvas: null,
+};
+const placeRaycaster = new THREE.Raycaster();
+const placeNdc = new THREE.Vector2();
+const placeHit = new THREE.Vector3();
+function ensureBHPlacementPreview() {
+    if (BH_PLACE.preview) return BH_PLACE.preview;
+    const g = new THREE.Group();
+    g.visible = false;
+    const disk = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({
+            map: ringTexture("rgba(255,184,88,0.72)", 512, 42),
+            transparent: true, opacity: .68, depthWrite: false,
+            blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+        }));
+    disk.rotation.x = -Math.PI / 2;
+    const horizon = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 80, 48),
+        new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: .92 }));
+    const photon = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: ringTexture("rgba(245,232,255,0.9)", 512, 30),
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .72,
+    }));
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: dotTexture("rgba(181,156,255,0.32)", "rgba(80,70,210,0.0)"),
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .34,
+    }));
+    const core = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: blackCoreTexture(), transparent: true, depthWrite: false, depthTest: false, opacity: .96,
+    }));
+    core.renderOrder = 30;
+    const aim = new THREE.Mesh(
+        new THREE.RingGeometry(.84, 1, 96),
+        new THREE.MeshBasicMaterial({
+            color: 0x9d86ff, transparent: true, opacity: .55,
+            depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+        }));
+    aim.rotation.x = -Math.PI / 2;
+    g.add(glow, disk, horizon, photon, core, aim);
+    scene.add(g);
+    BH_PLACE.preview = { g, disk, horizon, photon, glow, core, aim };
+    return BH_PLACE.preview;
+}
+function cursorPlaneHit(clientX = null, clientY = null, out = placeHit) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const w = rect.width || cvHost.clientWidth || 1;
+    const h = rect.height || cvHost.clientHeight || 1;
+    const px = Number.isFinite(clientX) ? clientX : lastPtr ? lastPtr[0] : rect.left + w * .5;
+    const py = Number.isFinite(clientY) ? clientY : lastPtr ? lastPtr[1] : rect.top + h * .5;
+    placeNdc.set(((px - rect.left) / Math.max(1, w)) * 2 - 1, -((py - rect.top) / Math.max(1, h)) * 2 + 1);
+    placeRaycaster.setFromCamera(placeNdc, camera);
+    const dy = placeRaycaster.ray.direction.y;
+    if (Math.abs(dy) < 1e-10) return null;
+    const t = -placeRaycaster.ray.origin.y / dy;
+    if (!isFinite(t) || t <= 0) return null;
+    return out.copy(placeRaycaster.ray.origin).addScaledVector(placeRaycaster.ray.direction, t);
+}
+function updateBHPlacementPreview(dtR = 0) {
+    const p = ensureBHPlacementPreview();
+    if (!BH_PLACE.active) {
+        p.g.visible = false;
+        BH_PLACE.valid = false;
+        return;
+    }
+    const hit = cursorPlaneHit(null, null, BH_PLACE.point);
+    if (!hit) {
+        p.g.visible = false;
+        BH_PLACE.valid = false;
+        return;
+    }
+    const rs = BH_SIZES[BH.sizeIdx];
+    const dCam = camera.position.distanceTo(hit);
+    const massVis = smooth01(.5, 5000, rs);
+    const diskVis = smooth01(50, 100000, rs);
+    const visualCore = Math.max(rs * K * 2.2, dCam * (.0018 + .0024 * massVis));
+    p.g.visible = true;
+    p.g.position.copy(hit);
+    p.horizon.scale.setScalar(visualCore);
+    p.photon.scale.setScalar(Math.max(rs * K * 4.2, dCam * (.006 + .004 * massVis)));
+    p.glow.scale.setScalar(Math.max(rs * K * 9, dCam * (.016 + .012 * massVis)));
+    p.core.scale.setScalar(Math.max(rs * K * 4.8, dCam * (.006 + .006 * massVis)));
+    p.core.quaternion.copy(camera.quaternion);
+    p.disk.scale.setScalar(Math.max(rs * K * 13, dCam * (.018 + .02 * diskVis)));
+    p.disk.material.opacity = .14 + diskVis * .58;
+    p.disk.rotation.z -= dtR * (.45 + 8 / Math.sqrt(Math.max(.001, rs)));
+    p.aim.scale.setScalar(Math.max(rs * K * 18, dCam * (.018 + .012 * massVis)));
+    p.aim.material.opacity = .34 + .22 * (0.5 + 0.5 * Math.sin(performance.now() * .006));
+    BH_PLACE.valid = true;
+    BH_PLACE.xKm = hit.x / K - eph.earthX;
+    BH_PLACE.yKm = -hit.z / K - eph.earthY;
+}
+function ensureBHPanel() {
+    if (BH_PLACE.uiReady) return;
+    BH_PLACE.uiReady = true;
+    BH_PLACE.canvas = document.getElementById("bhPreviewCanvas");
+    BH_PLACE.ctx = BH_PLACE.canvas?.getContext("2d") || null;
+    const rail = document.getElementById("bhSizeRail");
+    if (rail) {
+        rail.textContent = "";
+        for (let i = 0; i < BH_SIZES.length; i++) {
+            const b = document.createElement("button");
+            b.type = "button";
+            b.className = "bhSizeBtn";
+            b.textContent = bhSizeShort(BH_SIZES[i]);
+            b.title = "Schwarzschild radius " + fmtKm(BH_SIZES[i]);
+            b.onclick = e => {
+                e.preventDefault();
+                BH.sizeIdx = i;
+                setBHPlacementMode(true);
+                updateBHPlacementUI(true);
+            };
+            rail.appendChild(b);
+        }
+    }
+}
+function drawBHPanelPreview(rs, active) {
+    ensureBHPanel();
+    const cv = BH_PLACE.canvas, ctx = BH_PLACE.ctx;
+    if (!cv || !ctx) return;
+    const w = cv.width, h = cv.height, cx = w * .5, cy = h * .52;
+    const massVis = smooth01(.5, 5000, rs);
+    const diskVis = smooth01(50, 100000, rs);
+    const spin = performance.now() * .00055;
+    ctx.clearRect(0, 0, w, h);
+    const bg = ctx.createRadialGradient(cx, cy, 2, cx, cy, w * .55);
+    bg.addColorStop(0, "rgba(78,61,132,.42)");
+    bg.addColorStop(.56, "rgba(9,12,20,.92)");
+    bg.addColorStop(1, "rgba(3,5,8,.98)");
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-.18 + spin);
+    ctx.scale(1.78, .34);
+    const diskR = 30 + diskVis * 38 + massVis * 18;
+    const dg = ctx.createRadialGradient(0, 0, diskR * .18, 0, 0, diskR);
+    dg.addColorStop(0, "rgba(255,255,255,0)");
+    dg.addColorStop(.25, "rgba(255,221,170,.58)");
+    dg.addColorStop(.5, "rgba(255,137,57,.32)");
+    dg.addColorStop(1, "rgba(108,44,24,0)");
+    ctx.fillStyle = dg;
+    ctx.beginPath();
+    ctx.arc(0, 0, diskR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    const glow = ctx.createRadialGradient(cx, cy, 8, cx, cy, 58 + massVis * 30);
+    glow.addColorStop(0, "rgba(191,174,255,.42)");
+    glow.addColorStop(.42, "rgba(124,96,255,.16)");
+    glow.addColorStop(1, "rgba(42,36,110,0)");
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+    const coreR = 18 + massVis * 16;
+    ctx.fillStyle = "#020205";
+    ctx.beginPath();
+    ctx.arc(cx, cy, coreR, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = active ? "rgba(226,217,255,.8)" : "rgba(154,137,210,.42)";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, coreR * 1.38, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = active ? "rgba(220,210,255,.9)" : "rgba(126,138,160,.8)";
+    ctx.font = "9px ui-monospace, monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(active ? "ARMED" : "SELECTED", cx, h - 12);
+}
+function updateBHPlacementUI(force = false) {
+    ensureBHPanel();
+    document.body.classList.toggle("bh-place-mode", BH_PLACE.active);
+    const rs = BH_SIZES[BH.sizeIdx];
+    const mu = rs * C_LIGHT * C_LIGHT / 2;
+    const hint = document.getElementById("bhPlaceHint");
+    const updateHint = () => {
+        if (!hint) return;
+        if (BH.n >= BH_MAX) hint.textContent = "Maximum " + BH_MAX + " active holes · V removes the last one";
+        else if (BH_PLACE.active && BH_PLACE.valid) hint.textContent = "CLICK TO PLACE · ship distance " + fmtDist(Math.hypot(G.x - BH_PLACE.xKm, G.y - BH_PLACE.yKm, G.z));
+        else if (BH_PLACE.active) hint.textContent = "AIM AT THE ORBITAL PLANE";
+        else hint.textContent = "B arms placement · size buttons arm it too";
+    };
+    const key = [
+        BH_PLACE.active ? 1 : 0,
+        BH_PLACE.valid ? 1 : 0,
+        BH.sizeIdx,
+        BH.n,
+        Array.from({ length: BH.n }, (_, i) => Math.round(BH.rs[i] * 1000)).join(","),
+    ].join(":");
+    if (!force && key === BH_PLACE.uiKey) {
+        updateHint();
+        drawBHPanelPreview(rs, BH_PLACE.active);
+        return;
+    }
+    BH_PLACE.uiKey = key;
+    const pill = document.getElementById("bhModePill");
+    const rsEl = document.getElementById("bhRsVal");
+    const massEl = document.getElementById("bhMassVal");
+    const gravEl = document.getElementById("bhGravityVal");
+    if (pill) pill.textContent = BH_PLACE.active ? "ARMED" : "B ARM";
+    if (rsEl) rsEl.textContent = fmtKm(rs);
+    if (massEl) massEl.textContent = bhMassLabel(rs);
+    if (gravEl) gravEl.textContent = gravityPanelLabel(pwAccelMs2(mu, rs * 3, rs));
+    updateHint();
+    const buttons = document.querySelectorAll(".bhSizeBtn");
+    buttons.forEach((b, i) => b.classList.toggle("active", i === BH.sizeIdx));
+    const list = document.getElementById("bhActiveList");
+    if (list) {
+        list.textContent = "";
+        const count = document.createElement("div");
+        count.className = "bhActiveRow bhActiveEmpty";
+        count.innerHTML = "<span>ACTIVE</span><strong>" + BH.n + " / " + BH_MAX + "</strong>";
+        list.appendChild(count);
+        for (let i = 0; i < BH.n; i++) {
+            const row = document.createElement("button");
+            row.type = "button";
+            row.className = "bhActiveRow";
+            row.innerHTML = "<span>BH " + (i + 1) + "</span><strong>r<sub>s</sub> " + fmtKm(BH.rs[i]) + "</strong>";
+            row.onclick = e => {
+                e.preventDefault();
+                G.focus = "bh:" + i;
+                if (BH_META[i]) cam.tgt.copy(BH_META[i].g.position);
+                cam.dist = Math.max(cam.dist, Math.max(80, BH.rs[i] * K * 12));
+            };
+            list.appendChild(row);
+        }
+    }
+    drawBHPanelPreview(rs, BH_PLACE.active);
+}
+export function isBHPlacementMode() { return BH_PLACE.active; }
+export function setBHPlacementMode(active) {
+    const requested = !!active;
+    if (requested && BH.n >= BH_MAX) {
+        H.toast("Maximum " + BH_MAX + " black holes");
+        active = false;
+    }
+    const was = BH_PLACE.active;
+    BH_PLACE.active = !!active;
+    ensureBHPlacementPreview();
+    updateBHPlacementPreview();
+    updateBHPlacementUI(true);
+    if (was !== BH_PLACE.active) H.toast(BH_PLACE.active ? "Black-hole placement armed · click the orbital plane" : "Black-hole placement off");
+}
+export function toggleBHPlacementMode() { setBHPlacementMode(!BH_PLACE.active); }
+export function cancelBHPlacementMode() {
+    if (!BH_PLACE.active) return;
+    setBHPlacementMode(false);
+}
+function commitBHPlacement(clientX, clientY) {
+    const hit = cursorPlaneHit(clientX, clientY, placeHit);
+    if (!hit) {
+        H.toast("Aim the cursor at the orbital plane");
+        return;
+    }
+    addBlackHole(hit.x / K - eph.earthX, -hit.z / K - eph.earthY, BH_SIZES[BH.sizeIdx]);
+    if (BH.n >= BH_MAX) BH_PLACE.active = false;
+    updateBHPlacementPreview();
+    updateBHPlacementUI(true);
+}
+renderer.domElement.addEventListener("pointerdown", e => {
+    if (!BH_PLACE.active || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    commitBHPlacement(e.clientX, e.clientY);
+}, true);
 export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, events = null) {
-    if (BH.n >= BH_MAX) { if (!quiet) H.toast("Maximum " + BH_MAX + " black holes"); return; }
+    if (BH.n >= BH_MAX) { if (!quiet) H.toast("Maximum " + BH_MAX + " black holes"); return -1; }
     const i = BH.n;
     bhRegister(i, xKm, yKm, rsKm, vx0, vy0, events);
     const g = new THREE.Group();
@@ -244,9 +534,10 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, ev
     scene.add(g);
     BH_META.push({ g, disk, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0 });
     BH.n++;
-    if (quiet) return;
+    if (quiet) return i;
     H.toast("⚫ Black hole: r_s " + fmtKm(rsKm) + " · " + bhMassLabel(rsKm) + " · " + bhHawkingLabel(rsKm));
     H.predict();
+    return i;
 }
 function removeBHIndex(i) {
     for (let k = DISRUPT.length - 1; k >= 0; k--) {
@@ -303,7 +594,7 @@ function bodyPull(x, y, bx, by, mu, rsI) {
         _bay -= w0 * by;
     }
 }
-const _gp = [0, 0];
+const _gp = [0, 0, 0];
 // `tau` offsets body positions from the live ephemeris (holes integrate over
 // the interval just *behind* the freshly advanced bodies, so tau ≤ 0).
 function bhAccel(i, X, Y, tau, out) {
@@ -322,19 +613,19 @@ function bhAccel(i, X, Y, tau, out) {
     for (let p = 0; p < PL.length; p++)
         if (!WORLD.plDestroyed[p]) bodyPull(x, y, eph.plX[p] + eph.plVx[p] * tau, eph.plY[p] + eph.plVy[p] * tau, PL[p].mu, rsI);
     // phantom debris & ghost shells pull the hole too
-    _gp[0] = 0; _gp[1] = 0;
-    gsPull(x, y, tEval, _gp);
+    _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
+    gsPull(x, y, 0, tEval, _gp);
     let ax = _bax + _gp[0], ay = _bay + _gp[1];
     if (!WORLD.earthDestroyed) {
-        _gp[0] = 0; _gp[1] = 0;
-        gsPull(0, 0, tEval, _gp);
+        _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
+        gsPull(0, 0, 0, tEval, _gp);
         ax -= _gp[0]; ay -= _gp[1];
     }
     for (let j = 0; j < BH.n; j++) {
         if (j !== i) {
             const dx = x - X[j], dy = y - Y[j];
             const d = Math.sqrt(dx * dx + dy * dy);
-            const mu = bhMuAt(j, x, y, tEval);
+            const mu = bhMuAt(j, x, y, 0, tEval);
             if (mu > 0) {
                 // shared pair softening so unequal holes obey action–reaction
                 const rsP = rsI + BH.rs[j];
@@ -345,7 +636,7 @@ function bhAccel(i, X, Y, tau, out) {
         }
         // indirect: every hole accelerates the Earth-centered frame origin
         if (!WORLD.earthDestroyed) {
-            const mu0 = bhMuAt(j, 0, 0, tEval);
+            const mu0 = bhMuAt(j, 0, 0, 0, tEval);
             if (mu0 > 0) {
                 const r0 = Math.sqrt(X[j] * X[j] + Y[j] * Y[j]);
                 const eff0 = Math.max(r0 - BH.rs[j], BH.rs[j] * .02);
@@ -403,7 +694,7 @@ function tryMerge() {
                 const mu = muTotal - muLoss;
                 const rs = 2 * mu / (C_LIGHT * C_LIGHT);
                 const ev = BH.ev[i].concat(BH.ev[j]);
-                if (muLoss > 0) ev.push({ x, y, t: EPHT.t, dmu: -muLoss });
+                if (muLoss > 0) ev.push({ x, y, z: 0, t: EPHT.t, dmu: -muLoss });
                 removeBHIndex(j); removeBHIndex(i);
                 addBlackHole(x, y, rs, vx, vy, false, ev);
                 H.toast("⚫ Black-hole merger → r_s " + fmtKm(rs) + " · GW loss " + (gwLossFrac * 100).toFixed(1) + "%");
@@ -429,7 +720,7 @@ function absorbBody(i, target, x, y, vx, vy, muBody) {
     BH.vx[i] = (BH.vx[i] * mu0 + vx * muBody) / mu;
     BH.vy[i] = (BH.vy[i] * mu0 + vy * muBody) / mu;
     BH.mu[i] = mu;
-    BH.ev[i].push({ x, y, t: EPHT.t, dmu: muBody }); // mass gain spreads at c
+    BH.ev[i].push({ x, y, z: 0, t: EPHT.t, dmu: muBody }); // mass gain spreads at c
     BH.rs[i] = 2 * mu / (C_LIGHT * C_LIGHT);
     BH.c[i] = .001 * Math.sqrt(2 * BH.mu[i] / 1000);
     BH.sinkS[i] = BH.rs[i] * K;
@@ -493,7 +784,7 @@ function disruptionDuration(radius, dist, muBH, muBody, rel) {
 function disruptionBodyState(d) {
     if (d.phantom) {
         // the debris cloud coasts at the body's last velocity; the stream and
-        // the final absorption track it instead of the frozen ephemeris slot
+        // final absorption follow that coasting cloud.
         const ph = d.phantom, age = EPHT.t - ph.t0;
         d.x = ph.x + ph.vx * age; d.y = ph.y + ph.vy * age;
         d.vx = ph.vx; d.vy = ph.vy;
@@ -524,7 +815,7 @@ function beginDisruption(i, target, x, y, vx, vy, radius, muBody, dist, limit) {
         // the doomed body's mass keeps gravitating as frozen debris until the
         // absorption completes; deleting it here changed orbits system-wide
         // in a single step and scattered everything
-        phantom: addPhantom(x, y, vx, vy, muBody, radius),
+        phantom: addPhantom(x, y, 0, vx, vy, 0, muBody, radius),
     });
     const m = BH_META[i];
     if (m) m.flare = Math.max(m.flare, .55);
@@ -564,20 +855,20 @@ function checkBHBodyBoundaries() {
         // a hole can only shred a body its gravity has actually reached
         if (!WORLD.earthDestroyed) {
             const d2 = x * x + y * y;
-            if (d2 < L.earth * L.earth && bhMuAt(i, 0, 0, EPHT.t) > 0) beginDisruption(i, "earth", 0, 0, 0, 0, R_EARTH, MU_E, Math.sqrt(d2), L.earth);
+            if (d2 < L.earth * L.earth && bhMuAt(i, 0, 0, 0, EPHT.t) > 0) beginDisruption(i, "earth", 0, 0, 0, 0, R_EARTH, MU_E, Math.sqrt(d2), L.earth);
         }
         if (!WORLD.moonDestroyed) {
             const dx = x - eph.moonX, dy = y - eph.moonY, d2 = dx * dx + dy * dy;
-            if (d2 < L.moon * L.moon && bhMuAt(i, eph.moonX, eph.moonY, EPHT.t) > 0) beginDisruption(i, "moon", eph.moonX, eph.moonY, eph.moonVx, eph.moonVy, R_MOON, MU_M, Math.sqrt(d2), L.moon);
+            if (d2 < L.moon * L.moon && bhMuAt(i, eph.moonX, eph.moonY, 0, EPHT.t) > 0) beginDisruption(i, "moon", eph.moonX, eph.moonY, eph.moonVx, eph.moonVy, R_MOON, MU_M, Math.sqrt(d2), L.moon);
         }
         if (!WORLD.sunDestroyed) {
             const dx = x - eph.sunX, dy = y - eph.sunY, d2 = dx * dx + dy * dy;
-            if (d2 < L.sun * L.sun && bhMuAt(i, eph.sunX, eph.sunY, EPHT.t) > 0) beginDisruption(i, "sun", eph.sunX, eph.sunY, eph.sunVx, eph.sunVy, R_SUN, MU_S, Math.sqrt(d2), L.sun);
+            if (d2 < L.sun * L.sun && bhMuAt(i, eph.sunX, eph.sunY, 0, EPHT.t) > 0) beginDisruption(i, "sun", eph.sunX, eph.sunY, eph.sunVx, eph.sunVy, R_SUN, MU_S, Math.sqrt(d2), L.sun);
         }
         for (let p = 0; p < PL.length; p++) {
             if (WORLD.plDestroyed[p]) continue;
             const dx = x - eph.plX[p], dy = y - eph.plY[p], d2 = dx * dx + dy * dy;
-            if (d2 < L.pl[p] * L.pl[p] && bhMuAt(i, eph.plX[p], eph.plY[p], EPHT.t) > 0) beginDisruption(i, p, eph.plX[p], eph.plY[p], eph.plVx[p], eph.plVy[p], PL[p].R, PL[p].mu, Math.sqrt(d2), L.pl[p]);
+            if (d2 < L.pl[p] * L.pl[p] && bhMuAt(i, eph.plX[p], eph.plY[p], 0, EPHT.t) > 0) beginDisruption(i, p, eph.plX[p], eph.plY[p], eph.plVx[p], eph.plVy[p], PL[p].R, PL[p].mu, Math.sqrt(d2), L.pl[p]);
         }
     }
 }
@@ -625,14 +916,9 @@ export function bhAdvance(dtTotal, _tEnd) {
         BH.sx[i] = BH.x[i] * K; BH.sz[i] = -BH.y[i] * K;
     }
 }
-const raycaster = new THREE.Raycaster();
 export function placeBHAtCursor() {
-    const w = cvHost.clientWidth || 1, h = cvHost.clientHeight || 1;
-    const px = lastPtr ? lastPtr[0] : w * .5, py = lastPtr ? lastPtr[1] : h * .5;
-    raycaster.setFromCamera(new THREE.Vector2(px / w * 2 - 1, -(py / h * 2 - 1)), camera);
-    const t = -raycaster.ray.origin.y / raycaster.ray.direction.y;
-    if (!isFinite(t) || t <= 0) { H.toast("Aim the cursor at the orbital plane"); return; }
-    const p = raycaster.ray.origin.clone().addScaledVector(raycaster.ray.direction, t);
+    const p = cursorPlaneHit();
+    if (!p) { H.toast("Aim the cursor at the orbital plane"); return; }
     addBlackHole(p.x / K - eph.earthX, -p.z / K - eph.earthY, BH_SIZES[BH.sizeIdx]);
 }
 window.__addBH = addBlackHole; // debug/testing handle
@@ -794,6 +1080,8 @@ function fadeSpagVisual(spag, dtR) {
     spag.remnant.visible = spag.remnantUniforms.uAlpha.value > .01;
 }
 export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
+    updateBHPlacementPreview(dtR);
+    updateBHPlacementUI();
     for (let bi = 0; bi < BH_META.length; bi++) {
         const m = BH_META[bi];
         m.g.position.set(earthScX + BH.sx[bi], 0, earthScZ + BH.sz[bi]);

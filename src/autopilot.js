@@ -19,16 +19,16 @@ function targetState(t) {
     if (typeof t === "number") {
         if (!PL[t]) return null;
         planetVel(t, G.t, _pv);
-        return { x: eph.plX[t], y: eph.plY[t], vx: _pv.vx, vy: _pv.vy, R: PL[t].R, mu: PL[t].mu, name: PL[t].name, soi: PL[t].soi };
+        return { x: eph.plX[t], y: eph.plY[t], z: 0, vx: _pv.vx, vy: _pv.vy, vz: 0, R: PL[t].R, mu: PL[t].mu, name: PL[t].name, soi: PL[t].soi };
     }
-    if (t === "moon") { moonState(G.t, _m); return { x: _m.mx, y: _m.my, vx: _m.vmx, vy: _m.vmy, R: R_MOON, mu: MU_M, name: "MOON", soi: SOI_M }; }
-    if (t === "earth") return { x: 0, y: 0, vx: 0, vy: 0, R: R_EARTH, mu: MU_E, name: "EARTH", soi: 924000 };
-    if (t === "sun") return { x: eph.sunX, y: eph.sunY, vx: eph.sunVx, vy: eph.sunVy, R: R_SUN, mu: MU_S, name: "SUN", soi: 5e9 };
+    if (t === "moon") { moonState(G.t, _m); return { x: _m.mx, y: _m.my, z: 0, vx: _m.vmx, vy: _m.vmy, vz: 0, R: R_MOON, mu: MU_M, name: "MOON", soi: SOI_M }; }
+    if (t === "earth") return { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, R: R_EARTH, mu: MU_E, name: "EARTH", soi: 924000 };
+    if (t === "sun") return { x: eph.sunX, y: eph.sunY, z: 0, vx: eph.sunVx, vy: eph.sunVy, vz: 0, R: R_SUN, mu: MU_S, name: "SUN", soi: 5e9 };
     const m = typeof t === "string" && t.match(/^star:(\d+)$/);
     if (m) {
         const st = STARS[+m[1]];
         if (!st) return null;
-        return { x: st.x - eph.earthX, y: st.y - eph.earthY, vx: -eph.earthVx, vy: -eph.earthVy, R: st.R, mu: st.mu, name: st.name, star: true, bh: !!st.bh };
+        return { x: st.x - eph.earthX, y: st.y - eph.earthY, z: st.z || 0, vx: -eph.earthVx, vy: -eph.earthVy, vz: 0, R: st.R, mu: st.mu, name: st.name, star: true, bh: !!st.bh };
     }
     return null;
 }
@@ -57,12 +57,28 @@ export function apOff(reason, toast) {
 }
 
 // rotate the nose toward a desired angle, autopilot-fast but bounded
-function steer(want, dtR) {
-    let d = want - G.heading;
+function steerYawPitch(wantYaw, wantPitch, dtR) {
+    let d = wantYaw - G.heading;
     d = ((d + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     const mx = ROT_RATE * 3 * dtR;
     G.heading += Math.abs(d) <= mx ? d : Math.sign(d) * mx;
-    return Math.abs(d) < .25; // aligned enough to burn
+    const dp = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, wantPitch)) - (G.pitch || 0);
+    G.pitch = (G.pitch || 0) + (Math.abs(dp) <= mx ? dp : Math.sign(dp) * mx);
+    return Math.hypot(d, dp) < .25; // aligned enough to burn
+}
+function steerVector(x, y, z, dtR) {
+    const h = Math.hypot(x, y);
+    return steerYawPitch(Math.atan2(y, x), Math.atan2(z, h), dtR);
+}
+function thrustVector(a) {
+    const cp = Math.cos(G.pitch || 0);
+    return {
+        atx: a * cp * Math.cos(G.heading),
+        aty: a * cp * Math.sin(G.heading),
+        atz: a * Math.sin(G.pitch || 0),
+        aMag: a,
+        mainIn: 1,
+    };
 }
 
 // arrival orbit radius per target class
@@ -72,7 +88,7 @@ function arrivalRadius(ts) {
     return Math.max(ts.R * 3.2, Math.min(ts.soi * .25, ts.R * 60));
 }
 
-// Returns {atx, aty, aMag, mainIn} or null when idle. dtSim is this frame's
+// Returns {atx, aty, atz, aMag, mainIn} or null when idle. dtSim is this frame's
 // sim-time advance (dtR · warp): burn decisions must use sim-time impulse.
 export function apStep(dtR, dtSim, oi, hooks) {
     if (AP.mode === "off" || G.dead || G.paused) return null;
@@ -81,43 +97,41 @@ export function apStep(dtR, dtSim, oi, hooks) {
     if (AP.mode === "circ") {
         // burn toward the circular velocity vector at the current radius
         const { rx, ry, rvx, rvy, mu } = oi;
-        const r = Math.hypot(rx, ry) || 1;
+        const r = Math.hypot(rx, ry, oi.rz || 0) || 1;
         // keep the current orbit direction (sign of angular momentum)
         const hSign = Math.sign(rx * rvy - ry * rvx) || 1;
         const vc = Math.sqrt(mu / r);
         const wantVx = -hSign * vc * ry / r, wantVy = hSign * vc * rx / r;
-        const dvx = wantVx - rvx, dvy = wantVy - rvy;
-        const dv = Math.hypot(dvx, dvy);
+        const dvx = wantVx - rvx, dvy = wantVy - rvy, dvz = -(oi.rvz || 0);
+        const dv = Math.hypot(dvx, dvy, dvz);
         AP.msg = "CIRC Δv " + (dv * 1000).toFixed(0) + " m/s";
         if (dv < .004) { apOff("orbit circularized", hooks.toast); return null; }
-        const ang = Math.atan2(dvy, dvx);
-        const aligned = steer(ang, dtR);
-        if (!aligned) return { atx: 0, aty: 0, aMag: 0, mainIn: 0 };
+        const aligned = steerVector(dvx, dvy, dvz, dtR);
+        if (!aligned) return { atx: 0, aty: 0, atz: 0, aMag: 0, mainIn: 0 };
         // throttle down near the end so we don't overshoot in one sim step
         const a = Math.min(MAIN_A * Math.max(G.throttle, 1), dv / Math.max(dtSim, 1e-6) * .8);
-        return { atx: a * Math.cos(G.heading), aty: a * Math.sin(G.heading), aMag: a, mainIn: 1 };
+        return thrustVector(a);
     }
     // ---- travel ----
     const ts = targetState(AP.target);
     if (!ts) { apOff("target lost", hooks.toast); return null; }
-    const dx = ts.x - G.x, dy = ts.y - G.y;
-    const dist = Math.hypot(dx, dy);
-    // bound to a body that is not the destination: climb out prograde first —
+    const dx = ts.x - G.x, dy = ts.y - G.y, dz = (ts.z || 0) - G.z;
+    const dist = Math.hypot(dx, dy, dz);
+    // bound to a different body: climb out prograde first —
     // pointing at the target from low orbit just flies you into the ground
     const domIsTarget = ts.name === oi.body;
     if (!domIsTarget && oi.E < 0 && oi.mu > 1e4 && dist > oi.r * 1.5) {
         AP.phase = "climb";
         AP.msg = "CLIMBING OUT OF " + oi.body + " ORBIT";
-        const ang = Math.atan2(oi.rvy, oi.rvx); // prograde w.r.t. the dominant body
-        const aligned = steer(ang, dtR);
-        if (!aligned) return { atx: 0, aty: 0, aMag: 0, mainIn: 0 };
+        const aligned = steerVector(oi.rvx, oi.rvy, oi.rvz || 0, dtR);
+        if (!aligned) return { atx: 0, aty: 0, atz: 0, aMag: 0, mainIn: 0 };
         const a = MAIN_A * Math.max(G.throttle, 1) * 4;
-        return { atx: a * Math.cos(G.heading), aty: a * Math.sin(G.heading), aMag: a, mainIn: 1 };
+        return thrustVector(a);
     }
     const rArr = arrivalRadius(ts);
-    const wx = G.vx - ts.vx, wy = G.vy - ts.vy;        // velocity relative to target
-    const closing = (wx * dx + wy * dy) / Math.max(dist, 1e-9); // >0 → approaching
-    const wMag = Math.hypot(wx, wy);
+    const wx = G.vx - ts.vx, wy = G.vy - ts.vy, wz = G.vz - (ts.vz || 0);        // velocity relative to target
+    const closing = (wx * dx + wy * dy + wz * dz) / Math.max(dist, 1e-9); // >0 → approaching
+    const wMag = Math.hypot(wx, wy, wz);
     const aCap = MAIN_A * Math.max(G.throttle, 1) * 4; // autopilot may use boost-grade accel
     if (dist <= rArr * 1.6 && wMag < Math.sqrt((ts.mu || 1) / Math.max(rArr, 1)) * 1.5) {
         if (ts.mu > 1e4) {
@@ -130,26 +144,26 @@ export function apStep(dtR, dtSim, oi, hooks) {
     }
     // stopping distance at full deceleration against current closing speed
     const sStop = closing > 0 ? closing * closing / (2 * aCap) : 0;
-    let phase, ang;
+    let phase, tx, ty, tz;
     if (closing > 0 && dist - rArr < sStop * 1.2) {
         phase = "brake";
-        ang = Math.atan2(-wy, -wx); // kill relative velocity
+        tx = -wx; ty = -wy; tz = -wz; // kill relative velocity
     } else if (wMag > 1e-6 && closing < wMag * .92) {
         // course correction: steer the relative velocity onto the target line
         phase = "align";
-        const cx = dx / dist * Math.max(wMag, .01) - wx;
-        const cy = dy / dist * Math.max(wMag, .01) - wy;
-        ang = Math.atan2(cy, cx);
+        tx = dx / dist * Math.max(wMag, .01) - wx;
+        ty = dy / dist * Math.max(wMag, .01) - wy;
+        tz = dz / dist * Math.max(wMag, .01) - wz;
     } else {
         phase = "accel";
-        ang = Math.atan2(dy, dx);
+        tx = dx; ty = dy; tz = dz;
     }
     AP.phase = phase;
     AP.msg = ts.name + " " + (dist > 1e9 ? (dist / 9.4607e12).toFixed(3) + " ly" : Math.round(dist).toLocaleString("en-US") + " km") +
         " · rel " + (wMag >= 1000 ? Math.round(wMag).toLocaleString("en-US") : wMag.toFixed(2)) + " km/s";
-    const aligned = steer(ang, dtR);
-    if (!aligned) return { atx: 0, aty: 0, aMag: 0, mainIn: 0 };
+    const aligned = steerVector(tx, ty, tz, dtR);
+    if (!aligned) return { atx: 0, aty: 0, atz: 0, aMag: 0, mainIn: 0 };
     let a = aCap;
     if (phase === "brake") a = Math.min(aCap, closing / Math.max(dtSim, 1e-6) * .9);
-    return { atx: a * Math.cos(G.heading), aty: a * Math.sin(G.heading), aMag: a, mainIn: 1 };
+    return thrustVector(a);
 }

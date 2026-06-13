@@ -62,40 +62,43 @@ function radialRing(rIn, rOut, map) {
     }));
 }
 
-export function buildStars() {
-    for (const star of STARS) {
-        const g = new THREE.Group();
-        let disk = null;
-        if (star.bh) {
-            const rsU = star.rs * K;
-            g.add(new THREE.Mesh(new THREE.SphereGeometry(rsU, 48, 32), new THREE.MeshBasicMaterial({ color: 0x000000 })));
-            // thin photon-ring halo hugging the horizon
-            g.add(fresnelShell(rsU * 1.06, 0xfff2d8, 5.0, .9));
-            disk = radialRing(rsU * 1.9, rsU * 7.5, accretionTexture(0xffb46a));
-            disk.rotation.x = -Math.PI / 2 + .3;
-            g.add(disk);
-            // polar jets: stretched additive sprites
-            const jetMap = dotTexture("rgba(190,220,255,0.9)", "rgba(120,160,255,0.25)");
-            for (const dir of [1, -1]) {
-                const jet = new THREE.Sprite(new THREE.SpriteMaterial({ map: jetMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .55 }));
-                jet.scale.set(rsU * 1.6, rsU * 14, 1);
-                jet.position.y = dir * rsU * 7.5;
-                g.add(jet);
-            }
-        } else {
-            const col = new THREE.Color(star.color);
-            g.add(new THREE.Mesh(new THREE.SphereGeometry(star.R * K, 48, 32), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(1.15) })));
-            g.add(fresnelShell(star.R * K * 1.3, star.color, 2.2, .5));
+export function addStarVisual(star) {
+    if (entries.some(e => e.star === star)) return;
+    const g = new THREE.Group();
+    let disk = null;
+    if (star.bh) {
+        const rsU = star.rs * K;
+        g.add(new THREE.Mesh(new THREE.SphereGeometry(rsU, 48, 32), new THREE.MeshBasicMaterial({ color: 0x000000 })));
+        // thin photon-ring halo hugging the horizon
+        g.add(fresnelShell(rsU * 1.06, 0xfff2d8, 5.0, .9));
+        disk = radialRing(rsU * 1.9, rsU * 7.5, accretionTexture(0xffb46a));
+        disk.rotation.x = -Math.PI / 2 + .3;
+        g.add(disk);
+        // polar jets: stretched additive sprites
+        const jetMap = dotTexture("rgba(190,220,255,0.9)", "rgba(120,160,255,0.25)");
+        for (const dir of [1, -1]) {
+            const jet = new THREE.Sprite(new THREE.SpriteMaterial({ map: jetMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .55 }));
+            jet.scale.set(rsU * 1.6, rsU * 14, 1);
+            jet.position.y = dir * rsU * 7.5;
+            g.add(jet);
         }
-        const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: dotTexture(hexRgba(star.color, 1), hexRgba(star.color, .4)),
-            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .9,
-        }));
-        g.add(glow);
-        g.position.set(star.x * K, 0, -star.y * K);
-        scene.add(g);
-        entries.push({ g, glow, disk, star });
+    } else {
+        const col = new THREE.Color(star.color);
+        g.add(new THREE.Mesh(new THREE.SphereGeometry(star.R * K, 48, 32), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(1.15) })));
+        g.add(fresnelShell(star.R * K * 1.3, star.color, 2.2, .5));
     }
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: dotTexture(hexRgba(star.color, 1), hexRgba(star.color, .4)),
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .9,
+    }));
+    g.add(glow);
+    g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
+    scene.add(g);
+    entries.push({ g, glow, disk, star });
+}
+
+export function buildStars() {
+    for (const star of STARS) addStarVisual(star);
 }
 
 export function updateStars(camera, dtR) {

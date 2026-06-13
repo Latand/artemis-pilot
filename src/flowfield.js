@@ -13,6 +13,12 @@ export const flowCtx = {
     starC: STARS.map(s => .001 * Math.sqrt(2 * s.mu / 1000)),
     starSink: STARS.map(s => (s.bh ? s.rs : s.R) * K),
 };
+function starFlowC(i) {
+    return flowCtx.starC[i] ?? (flowCtx.starC[i] = STARS[i].flowC ?? .001 * Math.sqrt(2 * STARS[i].mu / 1000));
+}
+function starFlowSink(i) {
+    return flowCtx.starSink[i] ?? (flowCtx.starSink[i] = STARS[i].flowSink ?? (STARS[i].bh ? STARS[i].rs : STARS[i].R) * K);
+}
 export function flowVel(x, y, z, mx, my, mz, out) {
     const edx = x - flowCtx.earthScX, edz = z - flowCtx.earthScZ;
     const rE = Math.max(0.6, Math.hypot(edx, y, edz));
@@ -48,12 +54,13 @@ export function flowVel(x, y, z, mx, my, mz, out) {
         pullX -= pdx * pPull; pullY -= y * pPull; pullZ -= pdz * pPull;
     }
     for (let i = 0; i < STARS.length; i++) {
-        const sdx0 = x - STARS[i].x * K, sdz0 = z + STARS[i].y * K;
-        const rStar = Math.max(flowCtx.starSink[i] * .9, Math.hypot(sdx0, y, sdz0));
-        const sStar = flowCtx.starC[i] / Math.sqrt(rStar) / rStar;
-        exVX -= sdx0 * sStar; exVY -= y * sStar; exVZ -= sdz0 * sStar;
-        const starPull = flowCtx.starC[i] * flowCtx.starC[i] / (rStar * rStar * rStar);
-        pullX -= sdx0 * starPull; pullY -= y * starPull; pullZ -= sdz0 * starPull;
+        const sdx0 = x - STARS[i].x * K, sdy0 = y - (STARS[i].z || 0) * K, sdz0 = z + STARS[i].y * K;
+        const cStar = starFlowC(i);
+        const rStar = Math.max(starFlowSink(i) * .9, Math.hypot(sdx0, sdy0, sdz0));
+        const sStar = cStar / Math.sqrt(rStar) / rStar;
+        exVX -= sdx0 * sStar; exVY -= sdy0 * sStar; exVZ -= sdz0 * sStar;
+        const starPull = cStar * cStar / (rStar * rStar * rStar);
+        pullX -= sdx0 * starPull; pullY -= sdy0 * starPull; pullZ -= sdz0 * starPull;
     }
     for (let i = 0; i < BH.n; i++) {
         // black-hole river: v = √(2μ/r) — exactly c at the horizon

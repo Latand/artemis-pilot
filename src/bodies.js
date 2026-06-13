@@ -6,6 +6,7 @@ import {
     planetTextureProc, ringTextureProc,
 } from "./textures.js";
 import { scene } from "./scene.js";
+import { initRealSky } from "./realSky.js";
 
 export const sunPos = new THREE.Vector3();
 export let sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, galaxyBackdrop;
@@ -43,7 +44,7 @@ export function updateBodyShaders(camera, t) {
         const dCam = camera.position.distanceTo(earthG.position);
         const rAtm = R_EARTH * K * 1.07;
         // inside or skimming the shell: fade the additive glow hard so the
-        // cabin view at 300 km reads as space + thin horizon, not white-out
+        // cabin view at 300 km reads as space plus a thin horizon.
         u.atmoUniforms.uFade.value = Math.min(1, Math.max(.05, (dCam / rAtm - 1) * 1.4 + .08));
     }
     if (u.coronaUniforms) u.coronaUniforms.uT.value = t;
@@ -154,33 +155,36 @@ export function buildBodies(maps) {
         else { out[0] = 1; out[1] = .55 + rnd() * .14; out[2] = .38 + rnd() * .12; }                  // M red
         return out;
     };
-    const starSprite = dotTexture("rgba(255,255,255,1)", "rgba(200,215,255,0.35)");
+    const starSprite = dotTexture("rgba(255,255,255,1)", "rgba(200,215,255,0.48)");
     const _sc = [0, 0, 0];
     skyStars = new THREE.Group();
     skyStars.frustumCulled = false;
     scene.add(skyStars);
-    for (const conf of [[2400, 1.3, .8, null], [780, 2.4, .9, starSprite], [190, 4.2, 1, starSprite]]) {
-        const count = conf[0], pos = new Float32Array(count * 3), col = new Float32Array(count * 3), rnd = mulberry32(count * 7 + 13);
-        for (let i = 0; i < count; i++) {
-            const th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1), r = 6.0e6;
-            pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
-            pos[i * 3 + 1] = r * Math.cos(ph);
-            pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
-            starColor(rnd, _sc);
-            const b = .45 + .55 * Math.pow(rnd(), 1.6); // magnitude spread inside each band
-            col[i * 3] = _sc[0] * b; col[i * 3 + 1] = _sc[1] * b; col[i * 3 + 2] = _sc[2] * b;
+    if (location.search.includes("realsky=0")) {
+        for (const conf of [[2400, 1.55, .9, null], [780, 2.75, .98, starSprite], [190, 4.9, 1, starSprite]]) {
+            const count = conf[0], pos = new Float32Array(count * 3), col = new Float32Array(count * 3), rnd = mulberry32(count * 7 + 13);
+            for (let i = 0; i < count; i++) {
+                const th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1), r = 6.0e6;
+                pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+                pos[i * 3 + 1] = r * Math.cos(ph);
+                pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
+                starColor(rnd, _sc);
+                const b = .45 + .55 * Math.pow(rnd(), 1.6); // magnitude spread inside each band
+                col[i * 3] = _sc[0] * b; col[i * 3 + 1] = _sc[1] * b; col[i * 3 + 2] = _sc[2] * b;
+            }
+            const g = new THREE.BufferGeometry();
+            g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+            g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+            const pts = new THREE.Points(g, new THREE.PointsMaterial({
+                vertexColors: true, size: conf[1], sizeAttenuation: false, transparent: true,
+                opacity: conf[2], depthWrite: false, map: conf[3], blending: THREE.AdditiveBlending,
+            }));
+            pts.frustumCulled = false;
+            pts.renderOrder = -2;
+            skyStars.add(pts);
         }
-        const g = new THREE.BufferGeometry();
-        g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-        g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-        const pts = new THREE.Points(g, new THREE.PointsMaterial({
-            vertexColors: true, size: conf[1], sizeAttenuation: false, transparent: true,
-            opacity: conf[2], depthWrite: false, map: conf[3], blending: THREE.AdditiveBlending,
-        }));
-        pts.frustumCulled = false;
-        pts.renderOrder = -2;
-        skyStars.add(pts);
     }
+    initRealSky(skyStars);
     if (maps.milky && !location.search.includes("sky=0")) {
         // the sky sphere rides with the camera: keeps its geometry identical at
         // any camera position (a 5.85e6-unit sphere at a far-away camera fed

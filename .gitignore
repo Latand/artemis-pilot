@@ -11,4 +11,7 @@ artemis-*.png
 playwright-report/
 test-results/
 generated/
+!src/generated/
+!src/generated/**
 .playwright-mcp/
+.tmux-multi-agent/

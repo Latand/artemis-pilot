@@ -2,7 +2,7 @@ import { DARK_ENERGY, PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FU
 import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { fmtKm, fmtDist, fmtMET, escapeKmS, accelMs2, fmtAccel } from "./format.js";
-import { bhHawkingLabel, bhMassLabel } from "./blackholes.js";
+import { bhHawkingLabel, bhMassLabel, pwAccelMs2 } from "./blackholes.js";
 import { clockRateAtShip, clockRateLabel } from "./relativity.js";
 
 const $ = id => document.getElementById(id);
@@ -58,16 +58,16 @@ applyEscOpen();
 const fmtV = v => v >= 1000 ? Math.round(v).toLocaleString("en-US") : v >= 100 ? v.toFixed(1) : v.toFixed(2);
 export function updateEscapeTracker(oi) {
     if (!escOpen) return;
-    const v = Math.hypot(G.vx, G.vy);
+    const v = Math.hypot(G.vx, G.vy, G.vz);
     // heliocentric speed in the current n-body state
-    const vH = Math.hypot(G.vx - eph.sunVx, G.vy - eph.sunVy);
+    const vH = Math.hypot(G.vx - eph.sunVx, G.vy - eph.sunVy, G.vz);
     const rows = [
         { name: "EARTH ESC", v, need: WORLD.earthDestroyed ? Infinity : Math.sqrt(2 * MU_E / Math.max(R_EARTH, oi.rE)) },
         { name: "SUN ESC", v: vH, need: WORLD.sunDestroyed ? Infinity : Math.sqrt(2 * MU_S / Math.max(R_SUN, oi.rS)) },
     ];
     let bi = -1, bd = Infinity;
     for (let i = 0; i < BH.n; i++) {
-        const d = Math.hypot(G.x - BH.x[i], G.y - BH.y[i]);
+        const d = Math.hypot(G.x - BH.x[i], G.y - BH.y[i], G.z);
         if (d < bd) { bd = d; bi = i; }
     }
     if (bi >= 0) rows.push({
@@ -113,29 +113,28 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     const aShS = WORLD.sunDestroyed ? 0 : MU_S / Math.pow(Math.max(R_SUN, oi.rS), 2);
     let aShB = 0;
     for (let bi = 0; bi < BH.n; bi++) {
-        const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi]);
+        const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi], G.z);
         const effB = Math.max(dB - BH.rs[bi], BH.rs[bi] * .02);
         aShB += BH.mu[bi] / (effB * effB);
     }
     const aShP = oi.pNear >= 0 && !WORLD.plDestroyed[oi.pNear] ? PL[oi.pNear].mu / Math.pow(Math.max(PL[oi.pNear].R, oi.pNearD), 2) : 0;
-    const aDE = G.darkEnergy ? DARK_ENERGY.H2_SIM * Math.hypot(G.x, G.y) : 0;
+    const aDE = G.darkEnergy ? DARK_ENERGY.H2_SIM * Math.hypot(G.x, G.y, G.z) : 0;
     const gTot = aShE + aShM + aShS + aShB + aShP + aDE;
     const shares = [["E", aShE], ["M", aShM], ["S", aShS], ["⚫", aShB], [oi.pNear >= 0 ? PL[oi.pNear].tag : "P", aShP], ["DE", aDE]].sort((p, q) => q[1] - p[1]);
     cGrav.textContent = gTot > 0 ? shares[0][0] + " " + Math.round(shares[0][1] / gTot * 100) + "% · " + shares[1][0] + " " + Math.round(shares[1][1] / gTot * 100) + "%" : "—";
     const focusBH = bhFocusIndex(G.focus);
     let bhReadoutRs = BH_SIZES[BH.sizeIdx], bhNearestD = Infinity;
     for (let bi = 0; bi < BH.n; bi++) {
-        const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi]);
+        const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi], G.z);
         if (dB < bhNearestD) { bhNearestD = dB; bhReadoutRs = BH.rs[bi]; }
     }
     if (focusBH >= 0 && focusBH < BH.n) {
-        const dShip = Math.hypot(G.x - BH.x[focusBH], G.y - BH.y[focusBH]);
+        const dShip = Math.hypot(G.x - BH.x[focusBH], G.y - BH.y[focusBH], G.z);
         const vFrame = Math.hypot(BH.vx[focusBH], BH.vy[focusBH]);
         const vSun = Math.hypot(BH.vx[focusBH] + eph.earthVx, BH.vy[focusBH] + eph.earthVy);
-        const eff = Math.max(dShip - BH.rs[focusBH], BH.rs[focusBH] * .02);
         document.getElementById("bhLine").textContent = "⚫ BH " + (focusBH + 1) + "/" + BH.n +
             " · v " + vFrame.toFixed(2) + " km/s · helio " + vSun.toFixed(2) + " km/s · ship " + fmtDist(dShip) +
-            " · g " + fmtAccel(accelMs2(BH.mu[focusBH], eff)) + " · r_s " + fmtKm(BH.rs[focusBH]);
+            " · g " + fmtAccel(pwAccelMs2(BH.mu[focusBH], dShip, BH.rs[focusBH])) + " · r_s " + fmtKm(BH.rs[focusBH]);
     } else document.getElementById("bhLine").textContent = "⚫ r_s " + fmtKm(bhReadoutRs) + " · " + bhMassLabel(bhReadoutRs) + " · " + bhHawkingLabel(bhReadoutRs) + " · B PLACE · N FOCUS · [ ] SIZE" + (BH.n ? " · ACTIVE " + BH.n + "/6" : "");
     if (fB > .25) {
         const clock = clockRateAtShip();

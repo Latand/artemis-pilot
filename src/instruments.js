@@ -42,7 +42,7 @@ function drawAttitude(ctx, oi) {
     ctx.font = "17px ui-monospace, monospace";
     ctx.textAlign = "right";
     ctx.fillStyle = TXT;
-    ctx.fillText(Math.hypot(G.vx, G.vy).toFixed(3) + " km/s", W - 16, 30);
+    ctx.fillText(Math.hypot(G.vx, G.vy, G.vz).toFixed(3) + " km/s", W - 16, 30);
     ctx.fillStyle = DIM;
     ctx.fillText("ALT " + fmtDist(Math.max(0, oi.r - oi.R)), W - 16, 56);
     const hdg = (-G.heading * 180 / Math.PI % 360 + 360) % 360; // compass-style

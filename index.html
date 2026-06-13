@@ -17,6 +17,7 @@
   <meta name="twitter:image" content="/social-preview.jpg" />
   <meta name="twitter:image:alt" content="Artemis Pilot spacecraft orbiting Earth through a spacetime river field." />
   <title>Artemis Pilot — Earth–Moon Gravity Sandbox</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='42' cy='28' r='8' fill='%238b95a3'/%3E%3Cpath d='M7 52 C 24 51, 54 43, 59 18' stroke='%23ff4226' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -56,6 +57,23 @@
       <div class="panel" style="padding:9px 12px">
         <div style="font-size:9px;letter-spacing:.2em;color:#ff8a73">FLIGHT OBJECTIVES</div>
         <ul id="objList"></ul>
+      </div>
+      <div id="bhPlacer" class="panel" aria-live="polite">
+        <div id="bhPanelHead"><span>BLACK HOLE SELECTOR</span><span id="bhModePill">B ARM</span></div>
+        <canvas id="bhPreviewCanvas" width="220" height="124" aria-label="Selected black hole preview"></canvas>
+        <div id="bhReadout">
+          <div><span>r<sub>s</sub></span><strong id="bhRsVal">—</strong></div>
+          <div><span>MASS</span><strong id="bhMassVal">—</strong></div>
+          <div><span>PW GRAVITY @ 3r<sub>s</sub></span><strong id="bhGravityVal">—</strong></div>
+        </div>
+        <div id="bhSizeRail" aria-label="Black hole size selector"></div>
+        <div id="bhPlaceHint">B arms placement · click the orbital plane</div>
+        <div id="bhActiveList"></div>
+      </div>
+      <div id="hygSearch" class="panel" aria-live="polite">
+        <div id="hygHead"><span>HYG CATALOG</span><button id="hygClose" type="button">×</button></div>
+        <input id="hygQuery" autocomplete="off" spellcheck="false" placeholder="NAME / HIP / HD / HR / INDEX" />
+        <div id="hygResults"></div>
       </div>
       <div id="toasts"></div>
     </div>
@@ -97,13 +115,16 @@
         <tr><td>SHIFT+F</td><td>cycle the planets (Mercury … Neptune)</td></tr>
         <tr><td>C</td><td>cycle Solar System / Milky Way / Local Group scale</td></tr>
         <tr><td>U</td><td>cycle nearby stellar destinations</td></tr>
+        <tr><td>SHIFT+U</td><td>search HYG catalog and promote a physical destination</td></tr>
         <tr><td>J</td><td>toggle in-ship cabin view</td></tr>
         <tr><td>0 / click label</td><td>focus ship / focus body and lock its trajectory</td></tr>
+        <tr><td>drag ship</td><td>grab the ship, throw it, and release with that velocity</td></tr>
         <tr><td>RMB drag</td><td>pan — free camera, detached from any body</td></tr>
         <tr><td>P</td><td>trajectory prediction on/off</td></tr>
         <tr><td>G</td><td>spacetime river view on/off</td></tr>
         <tr><td>O</td><td>dark-energy expansion on/off</td></tr>
-        <tr><td>B</td><td>place black hole at cursor (on the plane)</td></tr>
+        <tr><td>B</td><td>black-hole placement mode; click the plane to place</td></tr>
+        <tr><td>ESC</td><td>exit black-hole placement mode</td></tr>
         <tr><td>N / click BH label</td><td>focus next black hole and show its telemetry</td></tr>
         <tr><td>[ / ]</td><td>black-hole size: r_s 1 m … 5,000,000 km</td></tr>
         <tr><td>V</td><td>remove last black hole</td></tr>
@@ -121,11 +142,12 @@
         each with its own SOI; you can land on the rocky ones.
         Exponential Earth atmosphere below 160 km.
         Black holes are real point masses (μ = r_s·c²/2) with the Paczyński–Wiita
-        potential — correct ISCO and capture; the river hits light speed at the
-        horizon. Dark energy adds outward a = H²r expansion in the live field,
-        boosted for visible sandbox time. Cosmic scale adds generated world-space stars, nearby named stars,
+        potential for ISCO and capture. The river view follows v = √(2μ/r) and
+        uses a small visual core for tiny holes so their local direction stays readable. Dark energy adds outward a = H²r expansion in the live field,
+        boosted for visible sandbox time. Cosmic scale adds HYG real-star catalog points with estimated mass/radius/luminosity/temperature,
+        generated world-space stars, nearby named stars,
         the Milky Way disk, Andromeda, Triangulum, and Local Group dwarf bodies.
-        Nearby named stars are physical destinations with fixed light-year positions,
+        Nearby named stars and a capped HYG physical subset are destinations with true light-year 3D RA/declination positions,
         photosphere contact, and gravity in the live field. Holes and planets move through the live n-body field.
         Drag to orbit the camera, scroll to zoom.
         Aim for the Moon, capture orbit, land, come home — or dive into something dark.
@@ -133,7 +155,7 @@
       <div style="font-size:10px;color:#ff8a73;margin-top:10px;letter-spacing:.12em">PRESS H OR START FLYING</div>
     </div>
 
-    <div id="hint">H HELP · J CABIN · U STARS · C COSMIC SCALE · P PREDICT · F FOCUS</div>
+    <div id="hint">H HELP · DRAG SHIP · J CABIN · U STARS · C COSMIC SCALE · P PREDICT</div>
 
     <div id="cabinHud" aria-hidden="true">CABIN · DRAG TO LOOK · J EXTERNAL VIEW</div>
 

@@ -15,26 +15,28 @@ export function schwarzschildRadiusKm(mu) {
 
 export function clockRateAtShip() {
     let curv = 0;
-    if (!WORLD.earthDestroyed) curv = addCurvature(curv, MU_E, Math.hypot(G.x, G.y), R_EARTH);
-    if (!WORLD.moonDestroyed) curv = addCurvature(curv, MU_M, Math.hypot(G.x - eph.moonX, G.y - eph.moonY), R_MOON);
-    if (!WORLD.sunDestroyed) curv = addCurvature(curv, MU_S, Math.hypot(G.x - eph.sunX, G.y - eph.sunY), R_SUN);
+    if (!WORLD.earthDestroyed) curv = addCurvature(curv, MU_E, Math.hypot(G.x, G.y, G.z), R_EARTH);
+    if (!WORLD.moonDestroyed) curv = addCurvature(curv, MU_M, Math.hypot(G.x - eph.moonX, G.y - eph.moonY, G.z), R_MOON);
+    if (!WORLD.sunDestroyed) curv = addCurvature(curv, MU_S, Math.hypot(G.x - eph.sunX, G.y - eph.sunY, G.z), R_SUN);
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) continue;
-        curv = addCurvature(curv, PL[i].mu, Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i]), PL[i].R);
+        curv = addCurvature(curv, PL[i].mu, Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i], G.z), PL[i].R);
     }
     const wx = eph.earthX + G.x;
     const wy = eph.earthY + G.y;
+    const wz = G.z;
     for (const star of STARS) {
         const floorR = star.bh ? Math.max(star.rs * 1.002, star.R) : star.R;
-        curv = addCurvature(curv, star.mu, Math.hypot(wx - star.x, wy - star.y), floorR);
+        curv = addCurvature(curv, star.mu, Math.hypot(wx - star.x, wy - star.y, wz - (star.z || 0)), floorR);
     }
     for (let i = 0; i < BH.n; i++) {
         const floorR = Math.max(BH.rs[i] * 1.002, 1e-9);
-        curv = addCurvature(curv, BH.mu[i], Math.hypot(G.x - BH.x[i], G.y - BH.y[i]), floorR);
+        curv = addCurvature(curv, BH.mu[i], Math.hypot(G.x - BH.x[i], G.y - BH.y[i], G.z), floorR);
     }
     const vx = G.vx + eph.earthVx;
     const vy = G.vy + eph.earthVy;
-    const speedTerm = (vx * vx + vy * vy) / C2;
+    const vz = G.vz;
+    const speedTerm = (vx * vx + vy * vy + vz * vz) / C2;
     const rate = Math.sqrt(Math.max(1e-6, 1 - curv - speedTerm));
     return { rate, curv, speedTerm };
 }

@@ -1,8 +1,46 @@
 // Physical constants and configuration. km, km/s, km³/s² everywhere;
 // the scene uses K to map km → scene units (1 unit = 1,000 km).
+import { HYG_PHYSICAL_STARS } from "./generated/hygPhysicalStars.js";
+
 export const MU_E = 398600.4418, MU_M = 4902.8001, MU_S = 132712440018;
 export const R_EARTH = 6371, R_MOON = 1737.4, R_SUN = 696340;
 const DEG = Math.PI / 180;
+// Curated physical destinations use true 3-D equatorial placement from
+// distance, right ascension, and declination. The HYG catalog layer remains a
+// separate visual point cloud, while this list carries physical destinations.
+const skyStar = (name, dLy, raDeg, decDeg, color, mass, radiusSolar, extra = {}) => {
+    const ra = raDeg * DEG, dec = decDeg * DEG;
+    const dKm = dLy * 9460730472580.8;
+    const cd = Math.cos(dec);
+    return {
+        name, dLy, raDeg, decDeg, color, mass, R: radiusSolar * R_SUN,
+        x: cd * Math.cos(ra) * dKm,
+        y: cd * Math.sin(ra) * dKm,
+        z: Math.sin(dec) * dKm,
+        catalog: "nearby-real",
+        ...extra,
+    };
+};
+const catalogStar = row => skyStar(
+    row.name,
+    row.dLy,
+    row.raDeg,
+    row.decDeg,
+    row.color,
+    row.mass,
+    row.radiusSolar,
+    {
+        catalog: "hyg-v41-physical",
+        hip: row.hip,
+        hd: row.hd,
+        hr: row.hr,
+        spect: row.spect,
+        lumSolar: row.lumSolar,
+        tempK: row.tempK,
+        absMag: row.absMag,
+        mag: row.mag,
+    },
+);
 export const A_MOON = 384400;        // lunar semi-major axis, km (27.32-day month)
 export const E_MOON = 0.0549;        // lunar eccentricity
 export const OMEGA = Math.sqrt((MU_E + MU_M) / (A_MOON * A_MOON * A_MOON));
@@ -19,25 +57,76 @@ export const COSMIC_ZOOMS = {
 };
 export const SUN_DIST = AU_KM * K;
 export const SUN_RADIUS = R_SUN * K;
+export const STAR_CATALOG_META = {
+    builtIn: "nearby physical destinations from published nearby-star values",
+    hygUrl: "/data/hyg-stars-v41.json",
+    hygSource: "Astronexus HYG v4.1: Hipparcos, Yale Bright Star, and Gliese merge",
+    gaiaDr3SourceCount: 1812000000,
+};
+export const CATALOG_PROMOTION_MAX = 128;
 export const STARS = [
-    { name: "PROXIMA", dLy: 4.246, xDir: -0.8, yDir: 0.22, color: 0xff8f66, mass: .122, R: 107280 },
-    { name: "ALPHA CEN", dLy: 4.37, xDir: -0.78, yDir: 0.24, color: 0xffd99a, mass: 1.1, R: 854000 },
-    { name: "BARNARD", dLy: 5.96, xDir: 0.35, yDir: -0.9, color: 0xff9f75, mass: .144, R: 136000 },
-    { name: "WOLF 359", dLy: 7.86, xDir: 0.82, yDir: .12, color: 0xff6a58, mass: .11, R: 111000 },
-    { name: "SIRIUS", dLy: 8.61, xDir: -0.22, yDir: -0.72, color: 0xbfd8ff, mass: 2.06, R: 1189000 },
-    { name: "EPSILON ERIDANI", dLy: 10.5, xDir: .64, yDir: .42, color: 0xffd38b, mass: .82, R: 512000 },
-    { name: "TAU CETI", dLy: 11.9, xDir: -.52, yDir: .68, color: 0xffd89d, mass: .78, R: 552000 },
-    { name: "VEGA", dLy: 25.0, xDir: .18, yDir: -.36, color: 0xdce8ff, mass: 2.14, R: 1670000 },
-    // the galactic-center supermassive black hole: contact surface = photon
-    // sphere (1.5 r_s); placed to coincide with the Milky Way disk center in
-    // cosmic.js (GALAXY.centerX = -26,000 ly, centerZ = 0)
-    { name: "SGR A*", dLy: 26000, xDir: -1, yDir: 0, color: 0xd9c8ff, mass: 4.154e6, R: 1.839e7, bh: true, rs: 1.226e7 },
+    skyStar("PROXIMA", 4.2465, 217.4292, -62.6795, 0xff8f66, .1221, .1542),
+    skyStar("ALPHA CEN A", 4.37, 219.9021, -60.8339, 0xffd99a, 1.10, 1.224),
+    skyStar("BARNARD", 5.963, 269.4521, 4.6934, 0xff9f75, .144, .196),
+    skyStar("WOLF 359", 7.86, 164.1200, 7.0140, 0xff6a58, .11, .16),
+    skyStar("SIRIUS A", 8.60, 101.2872, -16.7161, 0xbfd8ff, 2.06, 1.71),
+    skyStar("EPSILON ERIDANI", 10.47, 53.2327, -9.4583, 0xffd38b, .82, .735),
+    skyStar("TAU CETI", 11.91, 26.0170, -15.9375, 0xffd89d, .78, .793),
+    skyStar("VEGA", 25.04, 279.2347, 38.7837, 0xdce8ff, 2.14, 2.36),
+    // Galactic-center supermassive black hole. Contact surface = photon sphere
+    // (1.5 r_s); position uses its observed sky direction.
+    skyStar("SGR A*", 26000, 266.4168, -29.0078, 0xd9c8ff, 4.154e6, 1.839e7 / R_SUN, { bh: true, rs: 1.226e7 }),
+    skyStar("ALPHA CEN B", 4.37, 219.9021, -60.8339, 0xffbf85, .907, .863, { companion: "ALPHA CEN A" }),
+    skyStar("LUHMAN 16", 6.50, 162.3100, -53.3180, 0xb86a4f, .065, .10),
+    skyStar("WISE 0855-0714", 7.43, 133.7925, -7.2450, 0x7d5b51, .005, .10),
+    skyStar("LALANDE 21185", 8.31, 165.8340, 35.9700, 0xffad7a, .46, .39),
+    skyStar("ROSS 154", 9.69, 279.2350, -23.8370, 0xff805f, .17, .24),
+    skyStar("ROSS 248", 10.30, 355.4790, 44.1770, 0xff8162, .12, .16),
+    skyStar("LACAILLE 9352", 10.74, 346.4667, -35.8531, 0xffa36f, .49, .47),
+    skyStar("ROSS 128", 11.01, 176.9370, .7990, 0xff7f5f, .17, .20),
+    skyStar("PROCYON A", 11.46, 114.8255, 5.2250, 0xf4f1d1, 1.50, 2.03),
+    skyStar("61 CYGNI A", 11.40, 316.7240, 38.7500, 0xffc18a, .70, .67),
+    skyStar("61 CYGNI B", 11.40, 316.7240, 38.7500, 0xffb37a, .63, .60, { companion: "61 CYGNI A" }),
+    skyStar("GROOMBRIDGE 34 A", 11.62, 4.5840, 43.7830, 0xffa476, .38, .38),
+    skyStar("EPSILON INDI A", 11.87, 330.8410, -56.7860, 0xffd49a, .76, .71),
+    skyStar("TEEGARDEN", 12.58, 43.2540, 16.8820, 0xff765d, .089, .107),
+    skyStar("KAPTEYN", 12.83, 77.9190, -45.0180, 0xff9870, .28, .29),
+    skyStar("VAN MAANEN", 14.07, 12.2880, 5.3880, 0xdce8ff, .68, .011),
+    skyStar("ALTAIR", 16.73, 297.6958, 8.8683, 0xe6eeff, 1.79, 1.63),
+    skyStar("FOMALHAUT", 25.13, 344.4128, -29.6222, 0xdde9ff, 1.92, 1.84),
+    skyStar("ARCTURUS", 36.7, 213.9154, 19.1825, 0xffbd7a, 1.08, 25.4),
+    skyStar("CAPELLA", 42.9, 79.1723, 45.9980, 0xffd692, 2.57, 11.9),
+    skyStar("ALDEBARAN", 65.3, 68.9800, 16.5093, 0xffa06b, 1.16, 44.2),
+    skyStar("REGULUS", 79.3, 152.0929, 11.9672, 0xdde9ff, 3.8, 3.1),
+    skyStar("SPICA", 250, 201.2983, -11.1614, 0xbfd8ff, 10.25, 7.47),
+    skyStar("POLARIS", 447, 37.9550, 89.2641, 0xffe0aa, 5.4, 37.5),
+    skyStar("BETELGEUSE", 548, 88.7929, 7.4071, 0xff7c4a, 16.5, 764),
+    skyStar("ANTARES", 550, 247.3519, -26.4320, 0xff6d4c, 12, 680),
+    skyStar("RIGEL", 860, 78.6345, -8.2016, 0xbfd8ff, 21, 78.9),
+    skyStar("DENEB", 2615, 310.3580, 45.2803, 0xeaf2ff, 19, 203),
+    ...HYG_PHYSICAL_STARS.map(catalogStar),
 ];
-for (const s of STARS) {
-    const len = Math.hypot(s.xDir, s.yDir) || 1;
-    s.x = s.xDir / len * s.dLy * LY_KM;
-    s.y = s.yDir / len * s.dLy * LY_KM;
+function finalizeStar(s) {
+    if (s.x === undefined || s.y === undefined) {
+        const len = Math.hypot(s.xDir, s.yDir) || 1;
+        s.x = s.xDir / len * s.dLy * LY_KM;
+        s.y = s.yDir / len * s.dLy * LY_KM;
+    }
+    if (s.z === undefined) s.z = 0;
     s.mu = MU_S * s.mass;
+    s.flowC = .001 * Math.sqrt(2 * s.mu / 1000);
+    s.flowSink = (s.bh ? s.rs : s.R) * K;
+    return s;
+}
+for (const s of STARS) finalizeStar(s);
+export const INITIAL_STAR_COUNT = STARS.length;
+export function addRuntimeStar(star) {
+    if (STARS.length - INITIAL_STAR_COUNT >= CATALOG_PROMOTION_MAX) {
+        throw new Error("runtime catalog star promotion cap reached");
+    }
+    finalizeStar(star);
+    STARS.push(star);
+    return STARS.length - 1;
 }
 // Initial Sun/Earth geometry. The runtime integrates a live Earth world-state
 // plus Earth-local relative states for the ship, Moon, planets, and holes.
@@ -82,9 +171,10 @@ export const DARK_ENERGY = {
 };
 DARK_ENERGY.H2_SIM = DARK_ENERGY.H_SIM * DARK_ENERGY.H_SIM;
 DARK_ENERGY.H2_PHYS = DARK_ENERGY.H_PHYS * DARK_ENERGY.H_PHYS;
-export function darkEnergyAccel(x, y, out, h2 = DARK_ENERGY.H2_SIM) {
+export function darkEnergyAccel(x, y, out, h2 = DARK_ENERGY.H2_SIM, z = 0) {
     out[0] = h2 * x;
     out[1] = h2 * y;
+    if (out.length > 2) out[2] = h2 * z;
     return out;
 }
 // the ephemeris advances in chunks of at most this many seconds while the

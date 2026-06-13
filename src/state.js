@@ -2,8 +2,8 @@ import { R_EARTH, MU_E, FUEL_DV0, BH_MAX, C_LIGHT, K, PL } from "./constants.js"
 
 // ---- game state ----
 export const G = {
-    t: 0, x: 0, y: 0, vx: 0, vy: 0,
-    heading: 0, throttle: 1,
+    t: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
+    heading: 0, pitch: 0, throttle: 1,
     warp: 60, paused: false,
     fuel: FUEL_DV0, infinite: true, dvUsed: 0,
     hold: null,                // 'pro' | 'retro' | null
@@ -36,7 +36,7 @@ export function resetWorld() {
 
 // ---- simulation clock for gravity-front bookkeeping ----
 // ephemeris.js advances it on every flush; prediction snapshots carry their
-// own copy so traces see the fronts where they will be, not where they are.
+// own copy so traces see the future gravity-front positions.
 export const EPHT = { t: 0 };
 
 // ---- phantom & ghost gravity sources ----
@@ -49,28 +49,32 @@ export const EPHT = { t: 0 };
 // light front c·(tEval − t) — the news of the absorption expands at c.
 export const GS = [];
 window.__GS = GS;
-export function addPhantom(x, y, vx, vy, mu, R) {
-    const s = { x, y, vx, vy, mu, R, t0: EPHT.t, t: Infinity };
+export function addPhantom(x, y, z, vx, vy, vz, mu, R) {
+    const s = { x, y, z, vx, vy, vz, mu, R, t0: EPHT.t, t: Infinity };
     GS.push(s);
     return s;
 }
-export function addGhost(x, y, vx, vy, mu, R, t) {
-    GS.push({ x, y, vx, vy, mu, R, t0: t, t });
+export function addGhost(x, y, z, vx, vy, vz, mu, R, t) {
+    GS.push({ x, y, z, vx, vy, vz, mu, R, t0: t, t });
 }
-// accumulate the pull of every phantom/ghost at (x, y) into out[0..1]
-export function gsPull(x, y, tEval, out) {
+// accumulate the pull of every phantom/ghost at (x, y, z) into out
+export function gsPull(x, y, zOrT, maybeT, maybeOut) {
+    const z = maybeOut === undefined ? 0 : zOrT;
+    const tEval = maybeOut === undefined ? zOrT : maybeT;
+    const out = maybeOut === undefined ? maybeT : maybeOut;
     for (let k = 0; k < GS.length; k++) {
         const s = GS[k];
         const ft = (tEval - s.t) * C_LIGHT;
         if (ft > 0) {
-            const fx = x - s.x, fy = y - s.y; // front expands from the event point
-            if (fx * fx + fy * fy <= ft * ft) continue; // news arrived: source gone
+            const fx = x - s.x, fy = y - s.y, fz = z - (s.z || 0); // front expands from the event point
+            if (fx * fx + fy * fy + fz * fz <= ft * ft) continue; // news arrived: source gone
         }
         const age = tEval - s.t0;
-        const dx = x - (s.x + s.vx * age), dy = y - (s.y + s.vy * age);
-        const s2 = dx * dx + dy * dy + s.R * s.R;
+        const dx = x - (s.x + s.vx * age), dy = y - (s.y + s.vy * age), dz = z - ((s.z || 0) + (s.vz || 0) * age);
+        const s2 = dx * dx + dy * dy + dz * dz + s.R * s.R;
         const w = s.mu / (s2 * Math.sqrt(s2));
         out[0] -= w * dx; out[1] -= w * dy;
+        if (out.length > 2) out[2] -= w * dz;
     }
 }
 
@@ -96,9 +100,10 @@ export function resetShip() {
     const r0 = R_EARTH + 300, th0 = -0.6;
     const v0 = Math.sqrt(MU_E / r0);
     G.t = 0;
-    G.x = r0 * Math.cos(th0); G.y = r0 * Math.sin(th0);
-    G.vx = -v0 * Math.sin(th0); G.vy = v0 * Math.cos(th0);
+    G.x = r0 * Math.cos(th0); G.y = r0 * Math.sin(th0); G.z = 0;
+    G.vx = -v0 * Math.sin(th0); G.vy = v0 * Math.cos(th0); G.vz = 0;
     G.heading = Math.atan2(G.vy, G.vx);
+    G.pitch = 0;
     G.fuel = FUEL_DV0; G.dvUsed = 0;
     G.landed = null; G.dead = false; G.deadReason = ""; G.deathT = 0; G.deathRt = 0; G.observerMode = false;
     G.leftHome = false; G.maxRE = r0;
@@ -116,8 +121,8 @@ export const BH = {
     sx: new Float64Array(BH_MAX), sz: new Float64Array(BH_MAX),
     c: new Float64Array(BH_MAX), sinkS: new Float64Array(BH_MAX),
     obsT: new Float64Array(BH_MAX),
-    // per-hole mass-gain events {x, y, t, dmu}: birth, absorptions, and
-    // merger inheritance — each delta's influence expands at c from (x, y)
+    // per-hole mass-gain events {x, y, z, t, dmu}: birth, absorptions, and
+    // merger inheritance — each delta's influence expands at c from that point
     ev: new Array(BH_MAX).fill(null),
 };
 window.__BH = BH;
@@ -129,12 +134,14 @@ export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0, events = null) {
     BH.c[i] = .001 * Math.sqrt(2 * BH.mu[i] / 1000);
     BH.sinkS[i] = rsKm * K;
     BH.obsT[i] = 1;
-    BH.ev[i] = events && events.length ? events.map(e => ({ ...e }))
-        : [{ x: xKm, y: yKm, t: -1e18, dmu: BH.mu[i] }];
+    BH.ev[i] = events && events.length ? events.map(e => ({ z: 0, ...e }))
+        : [{ x: xKm, y: yKm, z: 0, t: -1e18, dmu: BH.mu[i] }];
 }
-// hole i's gravitational parameter as felt at (x, y): only the mass deltas
+// hole i's gravitational parameter as felt at (x, y, z): only the mass deltas
 // whose light fronts have reached the point contribute
-export function bhMuAt(i, x, y, tEval) {
+export function bhMuAt(i, x, y, zOrT, maybeT) {
+    const z = maybeT === undefined ? 0 : zOrT;
+    const tEval = maybeT === undefined ? zOrT : maybeT;
     const ev = BH.ev[i];
     if (!ev) return BH.mu[i];
     let mu = 0;
@@ -142,15 +149,15 @@ export function bhMuAt(i, x, y, tEval) {
         const e = ev[k];
         const ft = (tEval - e.t) * C_LIGHT;
         if (ft <= 0) continue;
-        const dx = x - e.x, dy = y - e.y;
-        if (dx * dx + dy * dy <= ft * ft) mu += e.dmu;
+        const dx = x - e.x, dy = y - e.y, dz = z - (e.z || 0);
+        if (dx * dx + dy * dy + dz * dz <= ft * ft) mu += e.dmu;
     }
     return mu;
 }
 // restart rewinds the clock to 0: treat surviving holes as long-established
 export function rebaseBHEvents() {
     for (let i = 0; i < BH.n; i++)
-        BH.ev[i] = [{ x: BH.x[i], y: BH.y[i], t: -1e18, dmu: BH.mu[i] }];
+        BH.ev[i] = [{ x: BH.x[i], y: BH.y[i], z: 0, t: -1e18, dmu: BH.mu[i] }];
 }
 window.__bhMuAt = bhMuAt; // debug/testing handle
 window.__EPHT = EPHT;

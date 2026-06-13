@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, SEC_YEAR, STARS } from "./constants.js";
+import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, SEC_YEAR, STARS, STAR_CATALOG_META } from "./constants.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
 import { cam } from "./scene.js";
@@ -17,12 +17,19 @@ let inited = false;
 const root = new THREE.Group();
 const diskRoot = new THREE.Group();
 const galaxyRoot = new THREE.Group();
+const catalogRoot = new THREE.Group();
 const nearStarRoot = new THREE.Group();
 const localRoot = new THREE.Group();
 const labelRoot = new THREE.Group();
-diskRoot.add(galaxyRoot, nearStarRoot);
+diskRoot.add(galaxyRoot, catalogRoot, nearStarRoot);
 root.add(diskRoot, localRoot, labelRoot);
 let pointMap = null;
+let catalogCount = 0;
+let catalogStats = null;
+let catalogLoading = false;
+let catalogLoaded = false;
+const PC_SCENE = LY_SCENE * 3.261563777;
+const PC_LY = 3.261563777;
 
 function cosmicPointMap() {
     if (!pointMap) {
@@ -48,6 +55,148 @@ function colorMix(a, b, t, jitter = 0) {
         a[1] * (1 - t) + b[1] * t + jitter,
         a[2] * (1 - t) + b[2] * t + jitter,
     ];
+}
+
+function bvColor(ci, mag, out) {
+    const bv = Number.isFinite(ci) ? Math.max(-0.35, Math.min(2.0, ci)) : 0.65;
+    const t = Math.max(0, Math.min(1, (bv + .35) / 2.35));
+    let c;
+    if (t < .34) c = colorMix([.58, .68, 1.0], [.93, .96, 1.0], t / .34);
+    else if (t < .58) c = colorMix([.93, .96, 1.0], [1.0, .86, .58], (t - .34) / .24);
+    else c = colorMix([1.0, .86, .58], [1.0, .42, .28], (t - .58) / .42);
+    const gain = Math.max(.32, Math.min(1.55, 1.12 - ((Number.isFinite(mag) ? mag : 9) - 5) * .055));
+    out[0] = Math.min(1, c[0] * gain);
+    out[1] = Math.min(1, c[1] * gain);
+    out[2] = Math.min(1, c[2] * gain);
+}
+
+function installCatalogObject(pos, col, count, stats) {
+    const obj = points({ pos, col }, .92, .42);
+    obj.name = "HYG v4.1 catalog";
+    catalogRoot.add(obj);
+    catalogCount = count;
+    catalogStats = stats || null;
+    catalogLoaded = true;
+    catalogLoading = false;
+}
+
+async function loadCatalogStarsFallback(reason) {
+    if (reason) console.warn("HYG catalog worker unavailable, using main thread", reason);
+    try {
+        const res = await fetch(STAR_CATALOG_META.hygUrl);
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        const binRes = await fetch(new URL(data.binary, new URL(STAR_CATALOG_META.hygUrl, location.href)));
+        if (!binRes.ok) throw new Error("catalog binary HTTP " + binRes.status);
+        const vals = new Float32Array(await binRes.arrayBuffer());
+        const fields = data.fields || [];
+        const field = name => {
+            const i = fields.indexOf(name);
+            return i >= 0 ? i : null;
+        };
+        const stride = data.stride || fields.length || 5;
+        const iX = field("xPc") ?? 0;
+        const iY = field("yPc") ?? 1;
+        const iZ = field("zPc") ?? 2;
+        const iBv = field("bv") ?? 3;
+        const iMag = field("mag") ?? 4;
+        const iMass = field("massSolar");
+        const iRadius = field("radiusSolar");
+        const iLum = field("lumSolar");
+        const iTemp = field("tempK");
+        const count = Math.floor(vals.length / stride);
+        const pos = new Float32Array(count * 3);
+        const col = new Float32Array(count * 3);
+        const c = [1, 1, 1];
+        const stats = {
+            sourceCount: count,
+            massEstimated: 0,
+            radiusEstimated: 0,
+            lumEstimated: 0,
+            tempEstimated: 0,
+            massSolarSum: 0,
+        };
+        for (let i = 0, j = 0; i < count; i++, j += stride) {
+            const xPc = vals[j + iX], yPc = vals[j + iY], zPc = vals[j + iZ];
+            pos[i * 3] = xPc * PC_SCENE;
+            pos[i * 3 + 1] = zPc * PC_SCENE;
+            pos[i * 3 + 2] = -yPc * PC_SCENE;
+            bvColor(vals[j + iBv], vals[j + iMag], c);
+            col[i * 3] = c[0];
+            col[i * 3 + 1] = c[1];
+            col[i * 3 + 2] = c[2];
+            const mass = iMass === null ? NaN : vals[j + iMass];
+            const radius = iRadius === null ? NaN : vals[j + iRadius];
+            const lum = iLum === null ? NaN : vals[j + iLum];
+            const temp = iTemp === null ? NaN : vals[j + iTemp];
+            if (mass > 0) { stats.massEstimated++; stats.massSolarSum += mass; }
+            if (radius > 0) stats.radiusEstimated++;
+            if (lum > 0) stats.lumEstimated++;
+            if (temp > 0) stats.tempEstimated++;
+        }
+        installCatalogObject(pos, col, count, stats);
+    } catch (err) {
+        console.warn("HYG catalog layer unavailable", err);
+        catalogLoading = false;
+    }
+}
+
+async function loadCatalogStars() {
+    if (catalogLoading || catalogLoaded) return;
+    catalogLoading = true;
+    if (window.Worker) {
+        let worker = null;
+        let settled = false;
+        const fallback = reason => {
+            if (settled) return;
+            settled = true;
+            if (worker) worker.terminate();
+            loadCatalogStarsFallback(reason);
+        };
+        try {
+            worker = new Worker(new URL("./catalogWorker.js", import.meta.url), { type: "module" });
+            worker.onerror = e => fallback(e?.message || "worker error");
+            worker.onmessage = e => {
+                if (settled) return;
+                const msg = e.data || {};
+                if (!msg.ok) {
+                    fallback(msg.error || "worker returned failure");
+                    return;
+                }
+                settled = true;
+                installCatalogObject(
+                    new Float32Array(msg.pos),
+                    new Float32Array(msg.col),
+                    msg.count,
+                    msg.stats,
+                );
+                worker.terminate();
+            };
+            worker.postMessage({ url: STAR_CATALOG_META.hygUrl, pcScene: PC_SCENE, suppress: destinationSuppressPc() });
+            return;
+        } catch (err) {
+            fallback(err?.message || String(err));
+            return;
+        }
+    }
+    await loadCatalogStarsFallback();
+}
+
+function scheduleCatalogLoad() {
+    const start = () => loadCatalogStars();
+    if (window.requestIdleCallback) window.requestIdleCallback(start, { timeout: 2400 });
+    else setTimeout(start, 0);
+}
+
+function destinationSuppressPc() {
+    const out = [];
+    for (const star of STARS) {
+        if (!Number.isFinite(star.raDeg) || !Number.isFinite(star.decDeg) || !Number.isFinite(star.dLy)) continue;
+        const ra = star.raDeg * Math.PI / 180, dec = star.decDeg * Math.PI / 180;
+        const dPc = star.dLy / PC_LY, cd = Math.cos(dec);
+        out.push(Math.cos(ra) * cd * dPc, Math.sin(ra) * cd * dPc, Math.sin(dec) * dPc);
+    }
+    return out;
 }
 
 function makeMilkyWayStars() {
@@ -99,7 +248,7 @@ function makeLocalStars() {
     let n = 0;
     for (const star of STARS) {
         pos[n * 3] = star.x * K;
-        pos[n * 3 + 1] = (rnd() - .5) * star.dLy * LY_SCENE * .08;
+        pos[n * 3 + 1] = (star.z || 0) * K + (rnd() - .5) * Math.min(star.dLy * LY_SCENE * .015, LY_SCENE * .04);
         pos[n * 3 + 2] = -star.y * K;
         col[n * 3] = ((star.color >> 16) & 255) / 255;
         col[n * 3 + 1] = ((star.color >> 8) & 255) / 255;
@@ -227,11 +376,13 @@ export function initCosmicLayer(scene) {
     galaxyRoot.add(points(makeMilkyWayStars(), 1.05, .45));
     galaxyRoot.add(ring(0, 0, 0, 26000, 0x53617a, .34));
     galaxyRoot.add(ring(0, 0, 0, 54000, 0x344058, .28));
+    catalogRoot.frustumCulled = false;
     nearStarRoot.add(points(makeLocalStars(), 2.4, .78));
     buildLocalGroup();
     root.frustumCulled = false;
     scene.add(root);
     scaleEl = document.getElementById("cosmicScale");
+    scheduleCatalogLoad();
 }
 
 export function cosmicScaleLabel(dist = cam.dist) {
@@ -240,6 +391,13 @@ export function cosmicScaleLabel(dist = cam.dist) {
     if (ly < 1000) return ly.toFixed(2) + " ly";
     if (ly < 1e6) return (ly / 1000).toFixed(1) + " kly";
     return (ly / 1e6).toFixed(2) + " Mly";
+}
+
+function catalogCoverageLabel() {
+    if (!catalogCount) return "";
+    const massEstimated = catalogStats?.massEstimated || 0;
+    const phys = massEstimated ? " · est mass " + Math.round(massEstimated / 1000) + "K" : "";
+    return " · HYG " + Math.round(catalogCount / 1000) + "K" + phys;
 }
 
 export function cycleCosmicScale() {
@@ -264,9 +422,11 @@ export function updateCosmicLayer() {
     if (!inited) return;
     const gal = smooth01(LY_SCENE * .15, LY_SCENE * 2500, cam.dist);
     const near = 1 - smooth01(LY_SCENE * 80, LY_SCENE * 1200, cam.dist);
+    const catalog = 1 - smooth01(LY_SCENE * 180, LY_SCENE * 2400, cam.dist);
     const group = smooth01(LY_SCENE * 70000, LY_SCENE * 1200000, cam.dist);
     root.visible = true;
     diskRoot.visible = true;
+    catalogRoot.visible = catalog > .01;
     nearStarRoot.visible = near > .01;
     galaxyRoot.rotation.y = G.t / (SEC_YEAR * 230000000) * Math.PI * 2;
     localRoot.visible = group > .01;
@@ -278,10 +438,14 @@ export function updateCosmicLayer() {
         child.visible = near > .01;
         child.material.opacity = (.12 + .34 * gal) * near;
     }
+    for (const child of catalogRoot.children) if (child.material) {
+        child.visible = catalog > .01;
+        child.material.opacity = (.08 + .34 * near) * catalog * (1 - group * .75);
+    }
     for (const child of localRoot.children) if (child.material) child.material.opacity = .03 + .2 * group;
     if (scaleEl) {
         scaleEl.style.opacity = gal > .01 ? "1" : "0";
-        scaleEl.textContent = "COSMIC SCALE · " + cosmicScaleLabel();
+        scaleEl.textContent = "COSMIC SCALE · " + cosmicScaleLabel() + catalogCoverageLabel();
     }
 }
 

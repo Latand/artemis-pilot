@@ -72,16 +72,16 @@ headLine.renderOrder = 6; headTip.renderOrder = 6;
 headArrow.add(headLine, headTip);
 scene.add(headArrow);
 const upY = new THREE.Vector3(0, 1, 0);
-export function updateHeadingArrow(oriX, oriZ, dirV, cd, visible, alpha = 1) {
+export function updateHeadingArrow(oriX, oriY, oriZ, dirV, cd, visible, alpha = 1) {
     headArrow.visible = visible && alpha > .03;
     if (!visible) return;
     headLine.material.opacity = .85 * alpha;
     headTip.material.opacity = .92 * alpha;
     const len = cd * .21, tipS = cd * .0075;
-    headLinePos[0] = oriX; headLinePos[1] = 0; headLinePos[2] = oriZ;
-    headLinePos[3] = oriX + dirV.x * len; headLinePos[4] = 0; headLinePos[5] = oriZ + dirV.z * len;
+    headLinePos[0] = oriX; headLinePos[1] = oriY; headLinePos[2] = oriZ;
+    headLinePos[3] = oriX + dirV.x * len; headLinePos[4] = oriY + dirV.y * len; headLinePos[5] = oriZ + dirV.z * len;
     headLineAttr.needsUpdate = true;
-    headTip.position.set(oriX + dirV.x * len, 0, oriZ + dirV.z * len);
+    headTip.position.set(oriX + dirV.x * len, oriY + dirV.y * len, oriZ + dirV.z * len);
     headTip.scale.setScalar(tipS);
     headTip.quaternion.setFromUnitVectors(upY, dirV);
 }

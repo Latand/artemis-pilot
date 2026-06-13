@@ -181,15 +181,15 @@ export function predBHY(i, t) { return PRED_BH.active ? PRED_BH.y[i] + PRED_BH.v
 // Indirect (frame) acceleration: every body and hole pulls the Earth-centered
 // origin. Identical for all field points, so callers evaluating many points
 // against one state compute it once and pass it as `ind`.
-const _gp = [0, 0];
-const _de = [0, 0];
+const _gp = [0, 0, 0];
+const _de = [0, 0, 0];
 export function indirectAccel(st, out, tau = 0) {
     // with Earth gone the origin coasts inertially: no frame correction at all
-    if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; return out; }
+    if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; if (out.length > 2) out[2] = 0; return out; }
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
     const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
     const tEval = (st && st.t !== undefined ? st.t : EPHT.t) + tau;
-    let ax = 0, ay = 0;
+    let ax = 0, ay = 0, az = 0;
     for (let i = 0; i < NB; i++) {
         const mu = activeBodyMu(i);
         if (mu <= 0) continue;
@@ -203,7 +203,7 @@ export function indirectAccel(st, out, tau = 0) {
     }
     const bhDt = PRED_BH.active ? tEval - PRED_BH.t0 : tau;
     for (let i = 0; i < BH.n; i++) {
-        const mu0 = bhMuAt(i, 0, 0, tEval);
+        const mu0 = bhMuAt(i, 0, 0, 0, tEval);
         if (mu0 <= 0) continue;
         const bx = PRED_BH.active ? PRED_BH.x[i] + PRED_BH.vx[i] * bhDt : BH.x[i] + BH.vx[i] * bhDt;
         const by = PRED_BH.active ? PRED_BH.y[i] + PRED_BH.vy[i] * bhDt : BH.y[i] + BH.vy[i] * bhDt;
@@ -216,43 +216,48 @@ export function indirectAccel(st, out, tau = 0) {
         }
     }
     for (const star of STARS) {
-        const bx = star.x - (st ? st.earthX : earthX), by = star.y - (st ? st.earthY : earthY);
-        const r0 = Math.sqrt(bx * bx + by * by);
+        const bx = star.x - (st ? st.earthX : earthX), by = star.y - (st ? st.earthY : earthY), bz = star.z || 0;
+        const r0 = Math.sqrt(bx * bx + by * by + bz * bz);
         if (r0 > 1e-9) {
             const w0 = star.mu / (r0 * r0 * r0);
             ax -= w0 * bx;
             ay -= w0 * by;
+            az -= w0 * bz;
         }
     }
     if (GS.length) {
-        _gp[0] = 0; _gp[1] = 0;
-        gsPull(0, 0, tEval, _gp);
-        ax -= _gp[0]; ay -= _gp[1];
+        _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
+        gsPull(0, 0, 0, tEval, _gp);
+        ax -= _gp[0]; ay -= _gp[1]; az -= _gp[2];
     }
     out[0] = ax; out[1] = ay;
+    if (out.length > 2) out[2] = az;
     return out;
 }
 
 // `tau` linearly extrapolates body/hole positions, so an RK4 stage at t+τ
-// samples the field where the bodies actually are instead of where they were
-// at the start of the step (and between ephemeris flushes).
+// samples the field at the stage time and between ephemeris flushes.
 export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind = null) {
-    return relGravityAtOpt(x, y, out, skipBody, st, tau, ind, true);
+    return relGravityAtOpt(x, y, 0, out, skipBody, st, tau, ind, true);
 }
-function relGravityAtOpt(x, y, out, skipBody = -1, st = null, tau = 0, ind = null, includeDarkEnergy = true) {
+export function relGravityAt3(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = null) {
+    return relGravityAtOpt(x, y, z, out, skipBody, st, tau, ind, true);
+}
+function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = null, includeDarkEnergy = true) {
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
     const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
     const tEval = (st && st.t !== undefined ? st.t : EPHT.t) + tau;
     // inline indirect terms only while Earth anchors an accelerating frame
     const indir = ind === null && !WORLD.earthDestroyed;
-    let ax = 0, ay = 0;
+    let ax = 0, ay = 0, az = 0;
     const muE = activeEarthMu();
     if (muE > 0) {
-        const r2 = x * x + y * y;
+        const r2 = x * x + y * y + z * z;
         if (r2 > 1e-18) {
             const w = muE / (r2 * Math.sqrt(r2));
             ax -= w * x;
             ay -= w * y;
+            az -= w * z;
         }
     }
     for (let i = 0; i < NB; i++) {
@@ -260,12 +265,13 @@ function relGravityAtOpt(x, y, out, skipBody = -1, st = null, tau = 0, ind = nul
         if (mu <= 0) continue;
         const bx = X[i] + VX[i] * tau, by = Y[i] + VY[i] * tau;
         if (i !== skipBody) {
-            const dx = x - bx, dy = y - by;
-            const r2 = dx * dx + dy * dy;
+            const dx = x - bx, dy = y - by, dz = z;
+            const r2 = dx * dx + dy * dy + dz * dz;
             if (r2 > 1e-18) {
                 const w = mu / (r2 * Math.sqrt(r2));
                 ax -= w * dx;
                 ay -= w * dy;
+                az -= w * dz;
             }
         }
         if (indir) {
@@ -281,20 +287,21 @@ function relGravityAtOpt(x, y, out, skipBody = -1, st = null, tau = 0, ind = nul
     for (let i = 0; i < BH.n; i++) {
         const bx = PRED_BH.active ? PRED_BH.x[i] + PRED_BH.vx[i] * bhDt : BH.x[i] + BH.vx[i] * bhDt;
         const by = PRED_BH.active ? PRED_BH.y[i] + PRED_BH.vy[i] * bhDt : BH.y[i] + BH.vy[i] * bhDt;
-        const dx = x - bx, dy = y - by;
-        const r = Math.sqrt(dx * dx + dy * dy);
+        const dx = x - bx, dy = y - by, dz = z;
+        const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (r > 1e-9) {
             // only the mass whose light front has reached this point pulls
-            const mu = bhMuAt(i, x, y, tEval);
+            const mu = bhMuAt(i, x, y, z, tEval);
             if (mu > 0) {
                 const eff = Math.max(r - BH.rs[i], BH.rs[i] * .02);
                 const am = mu / (eff * eff) / r;
                 ax -= dx * am;
                 ay -= dy * am;
+                az -= dz * am;
             }
         }
         if (indir) {
-            const mu0 = bhMuAt(i, 0, 0, tEval);
+            const mu0 = bhMuAt(i, 0, 0, 0, tEval);
             if (mu0 > 0) {
                 const r0 = Math.sqrt(bx * bx + by * by);
                 if (r0 > 1e-9) {
@@ -308,39 +315,43 @@ function relGravityAtOpt(x, y, out, skipBody = -1, st = null, tau = 0, ind = nul
     }
     for (const star of STARS) {
         const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
-        const bx = star.x - ex, by = star.y - ey;
-        const dx = x - bx, dy = y - by;
-        const r2 = dx * dx + dy * dy;
+        const bx = star.x - ex, by = star.y - ey, bz = star.z || 0;
+        const dx = x - bx, dy = y - by, dz = z - bz;
+        const r2 = dx * dx + dy * dy + dz * dz;
         if (r2 > 1e-18) {
             const w = star.mu / (r2 * Math.sqrt(r2));
             ax -= w * dx;
             ay -= w * dy;
+            az -= w * dz;
         }
         if (indir) {
-            const r02 = bx * bx + by * by;
+            const r02 = bx * bx + by * by + bz * bz;
             if (r02 > 1e-18) {
                 const w0 = star.mu / (r02 * Math.sqrt(r02));
                 ax -= w0 * bx;
                 ay -= w0 * by;
+                az -= w0 * bz;
             }
         }
     }
     if (GS.length) {
-        _gp[0] = 0; _gp[1] = 0;
-        gsPull(x, y, tEval, _gp);
-        ax += _gp[0]; ay += _gp[1];
+        _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
+        gsPull(x, y, z, tEval, _gp);
+        ax += _gp[0]; ay += _gp[1]; az += _gp[2];
         if (indir) {
-            _gp[0] = 0; _gp[1] = 0;
-            gsPull(0, 0, tEval, _gp);
-            ax -= _gp[0]; ay -= _gp[1];
+            _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
+            gsPull(0, 0, 0, tEval, _gp);
+            ax -= _gp[0]; ay -= _gp[1]; az -= _gp[2];
         }
     }
     if (includeDarkEnergy && G.darkEnergy) {
-        darkEnergyAccel(x, y, _de);
+        darkEnergyAccel(x, y, _de, undefined, z);
         ax += _de[0]; ay += _de[1];
+        az += _de[2] || 0;
     }
-    if (ind !== null) { ax += ind[0]; ay += ind[1]; }
+    if (ind !== null) { ax += ind[0]; ay += ind[1]; if (ind.length > 2) az += ind[2]; }
     out[0] = ax; out[1] = ay;
+    if (out.length > 2) out[2] = az;
     return out;
 }
 
@@ -393,7 +404,7 @@ function derivAll(st, K_) {
             K_.x[i] = 0; K_.y[i] = 0; K_.vx[i] = 0; K_.vy[i] = 0;
             continue;
         }
-        relGravityAtOpt(st.x[i], st.y[i], _a, i, st, 0, _ind, false);
+        relGravityAtOpt(st.x[i], st.y[i], 0, _a, i, st, 0, _ind, false);
         if (!WORLD.sunDestroyed) {
             if (i === IDX_SUN) { _a[0] -= _pnEarth[0]; _a[1] -= _pnEarth[1]; }
             else {
@@ -528,6 +539,50 @@ export function keplerAdvance(x, y, vx, vy, mu, dt, out) {
     out.x = nx; out.y = ny * mir;
     out.vx = nvx; out.vy = nvy * mir;
     out.ok = true;
+    return out;
+}
+
+const _ka2 = { x: 0, y: 0, vx: 0, vy: 0, ok: false };
+export function keplerAdvance3(x, y, z, vx, vy, vz, mu, dt, out) {
+    out.x = x + vx * dt; out.y = y + vy * dt; out.z = z + vz * dt;
+    out.vx = vx; out.vy = vy; out.vz = vz; out.ok = false;
+    const r = Math.hypot(x, y, z);
+    if (!(mu > 0) || !(r > 1e-9)) return out;
+    const hx = y * vz - z * vy;
+    const hy = z * vx - x * vz;
+    const hz = x * vy - y * vx;
+    const h = Math.hypot(hx, hy, hz);
+    if (!(h > 1e-12)) return out;
+    const ih = 1 / h;
+    const nhx = hx * ih, nhy = hy * ih, nhz = hz * ih;
+    const vchx = vy * hz - vz * hy;
+    const vchy = vz * hx - vx * hz;
+    const vchz = vx * hy - vy * hx;
+    let px = vchx / mu - x / r;
+    let py = vchy / mu - y / r;
+    let pz = vchz / mu - z / r;
+    let p = Math.hypot(px, py, pz);
+    if (p < 1e-10) {
+        px = x / r; py = y / r; pz = z / r; p = 1;
+    } else {
+        px /= p; py /= p; pz /= p;
+    }
+    const qx = nhy * pz - nhz * py;
+    const qy = nhz * px - nhx * pz;
+    const qz = nhx * py - nhy * px;
+    const x2 = x * px + y * py + z * pz;
+    const y2 = x * qx + y * qy + z * qz;
+    const vx2 = vx * px + vy * py + vz * pz;
+    const vy2 = vx * qx + vy * qy + vz * qz;
+    keplerAdvance(x2, y2, vx2, vy2, mu, dt, _ka2);
+    if (!_ka2.ok) return out;
+    out.x = px * _ka2.x + qx * _ka2.y;
+    out.y = py * _ka2.x + qy * _ka2.y;
+    out.z = pz * _ka2.x + qz * _ka2.y;
+    out.vx = px * _ka2.vx + qx * _ka2.vy;
+    out.vy = py * _ka2.vx + qy * _ka2.vy;
+    out.vz = pz * _ka2.vx + qz * _ka2.vy;
+    out.ok = isFinite(out.x + out.y + out.z + out.vx + out.vy + out.vz);
     return out;
 }
 

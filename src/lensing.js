@@ -72,7 +72,7 @@ function consider(cands, wx, wy, wz, rsU, camera, f) {
     const d = _v.length();
     if (d < rsU * 1.5) return;                 // at/inside the horizon: the mesh owns the view
     // cap the ring at ~half the frame height: past that the whole view sits
-    // inside the Einstein radius and reads as smeared mush, not lensing
+    // inside the Einstein radius and loses readable lens structure.
     const t = Math.min(f * Math.tan(Math.min(Math.sqrt(2 * rsU / d), .6)), .55);
     if (t < .004) return;                      // sub-pixel ring
     const cx = f * (_v.x / -_v.z), cy = f * (_v.y / -_v.z);
@@ -89,7 +89,7 @@ export function updateLensing(camera, aspect) {
         consider(_cand, (eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera, f);
     }
     for (const s of STARS) {
-        if (s.bh) consider(_cand, s.x * K, 0, -s.y * K, s.rs * K, camera, f);
+        if (s.bh) consider(_cand, s.x * K, (s.z || 0) * K, -s.y * K, s.rs * K, camera, f);
     }
     _cand.sort((a, b) => b.t2 - a.t2);
     const n = Math.min(MAXL, _cand.length);
