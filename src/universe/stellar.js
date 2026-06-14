@@ -40,7 +40,9 @@ export function sampleKroupaMass(rng, mMin = 0.08, mMax = 120) {
 // --- Eker 2018 mass→luminosity (main sequence): log L = a·log M + b ---------
 function ekerLogL(M) {
     const x = Math.log10(M);
-    if (M <= 0.45) return 2.028 * x - 0.976;
+    // Segment boundaries are half-open [lo, hi) to match build-hyg-catalog.mjs
+    // EKER_MLR exactly (M = 0.45 falls in the second segment).
+    if (M < 0.45) return 2.028 * x - 0.976;
     if (M <= 0.72) return 4.572 * x - 0.102;
     if (M <= 1.05) return 5.743 * x - 0.007;
     if (M <= 2.40) return 4.329 * x + 0.010;

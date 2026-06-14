@@ -230,6 +230,12 @@ function physicalRow(row) {
         // mass from coarse prior (low-confidence).
         radius = sbRadius(lum, tempK);
         mass   = clamp(EVOLVED_MASS_PRIOR[lumClass] ?? 2.5, 0.5, 200);
+    } else if (isSubgiant) {
+        // Subgiant (IV): expanded past the main sequence, so its radius is the
+        // Stefan-Boltzmann value from L and T (a main-sequence MRR would
+        // underestimate it); mass is still near main-sequence (Eker inversion).
+        radius = sbRadius(lum, tempK);
+        mass   = lum ? ekerMassFromLum(lum) : EVOLVED_MASS_PRIOR.IV;
     } else {
         // Main sequence (V, IV, or unknown): invert Eker MLR for mass.
         mass = lum ? ekerMassFromLum(lum) : null;

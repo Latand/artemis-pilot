@@ -34,7 +34,10 @@ export function hashInts(...vals) {
     for (let i = 0; i < vals.length; i++) {
         const v = vals[i];
         h = round32(h, v | 0);
-        const hi = Math.floor(v / U32) | 0;
+        // Fold the high word only for values that truly exceed 32 bits. Use
+        // trunc (toward zero) so negative indices |v| < 2^32 give hi = 0 and
+        // hash by their low word alone, matching the documented behaviour.
+        const hi = Math.trunc(v / U32) | 0;
         if (hi !== 0) h = round32(h, hi);
     }
     return mix32(h ^ (vals.length >>> 0));

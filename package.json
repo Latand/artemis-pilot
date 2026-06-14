@@ -8,6 +8,7 @@
     "catalog:hyg": "node scripts/build-hyg-catalog.mjs",
     "smoke:catalog": "bun scripts/smoke-catalog.mjs",
     "smoke:core": "bun scripts/smoke-core.mjs",
+    "smoke:universe": "node scripts/smoke-universe.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },
