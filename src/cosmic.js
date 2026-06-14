@@ -76,7 +76,7 @@ function bvColor(ci, mag, out) {
 }
 
 function installCatalogObject(pos, col, count, stats) {
-    const obj = points({ pos, col }, .92, .42);
+    const obj = points({ pos, col }, 1.18, .5);
     obj.name = "HYG v4.1 catalog";
     catalogRoot.add(obj);
     catalogCount = count;
@@ -350,7 +350,7 @@ export function initCosmicLayer(scene) {
     // Sol-centred equatorial coordinates with the Galactic centre toward Sgr A*,
     // so the band lines up with the real HYG catalog rather than the old ~87°
     // misaligned decorative spiral.
-    galaxyRoot.add(points(makeGalaxyCloud(170000), 1.05, .5));
+    galaxyRoot.add(points(makeGalaxyCloud(170000), 1.20, .5));
     galaxyRoot.add(galacticPlaneRing(8200, 0x53617a, .30));
     galaxyRoot.add(galacticPlaneRing(16000, 0x344058, .24));
     catalogRoot.frustumCulled = false;
@@ -397,9 +397,16 @@ export function cycleCosmicScale() {
 
 export function updateCosmicLayer() {
     if (!inited) return;
-    const gal = smooth01(LY_SCENE * .15, LY_SCENE * 2500, cam.dist);
-    const near = 1 - smooth01(LY_SCENE * 80, LY_SCENE * 1200, cam.dist);
-    const catalog = 1 - smooth01(LY_SCENE * 180, LY_SCENE * 2400, cam.dist);
+    // LOD cross-fade tuned so a star field is ALWAYS visible while zooming:
+    //  - near: 73 curated bright stars, accents up close
+    //  - catalog: 119k real HYG stars — the dominant local field; kept bright and
+    //    visible far out (real data spans kpc) so it overlaps the galaxy band
+    //  - galaxy: procedural Milky Way band, fades in to back the catalog
+    // The earlier tuning let the catalog die out (~300–2000 ly) before the galaxy
+    // appeared, leaving an empty "dead zone" that flickered while zooming.
+    const gal = smooth01(LY_SCENE * 40, LY_SCENE * 5000, cam.dist);
+    const near = 1 - smooth01(LY_SCENE * 500, LY_SCENE * 8000, cam.dist);
+    const catalog = 1 - smooth01(LY_SCENE * 12000, LY_SCENE * 110000, cam.dist);
     const group = smooth01(LY_SCENE * 70000, LY_SCENE * 1200000, cam.dist);
     root.visible = true;
     diskRoot.visible = true;
@@ -408,15 +415,15 @@ export function updateCosmicLayer() {
     localRoot.visible = group > .01;
     for (const child of galaxyRoot.children) if (child.material) {
         child.visible = child.isPoints || gal > .01;
-        child.material.opacity = child.isPoints ? .08 + .42 * gal * (1 - group * .7) : .06 + .2 * gal * (1 - group * .55);
+        child.material.opacity = child.isPoints ? .12 + .60 * gal * (1 - group * .6) : .05 + .20 * gal * (1 - group * .55);
     }
     for (const child of nearStarRoot.children) if (child.material) {
         child.visible = near > .01;
-        child.material.opacity = (.12 + .34 * gal) * near;
+        child.material.opacity = (.55 + .25 * gal) * near;
     }
     for (const child of catalogRoot.children) if (child.material) {
         child.visible = catalog > .01;
-        child.material.opacity = (.08 + .34 * near) * catalog * (1 - group * .75);
+        child.material.opacity = (.50 + .22 * gal) * catalog * (1 - group * .55);
     }
     for (const child of localRoot.children) if (child.material) child.material.opacity = .03 + .2 * group;
     if (scaleEl) {

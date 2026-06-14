@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, STARS, SUN_RADIUS } from "./constants.js";
+import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, STARS, SUN_RADIUS } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { dotTexture } from "./textures.js";
@@ -332,7 +332,15 @@ const riverStarPick = [];
 export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0) {
     river.dtVis = dtSim;
     if (!river.enabled) return;
-    const fEff = fB;
+    // Fade the river out as the camera zooms past the local system into
+    // interstellar/cosmic scale. Out there every body's inflow collapses onto a
+    // sub-pixel point and the additive streaks pile into a blinding white core
+    // (the reported bug). Folding the fade into fEff also makes lines.visible go
+    // false below, which short-circuits the expensive 64-source GPU compute — so
+    // zoomed-out frames cost nothing. The river stays fully on through the whole
+    // solar-system survey and whenever the camera is near a star/system.
+    const zoomFade = 1 - smooth01(LY_SCENE * 0.05, LY_SCENE * 0.9, cam.dist);
+    const fEff = fB * zoomFade;
     lines.visible = fEff > .01;
     const planeBias = smooth01(6000, 420000, cam.dist);
     let localFocus = 0;
