@@ -93,9 +93,13 @@ body.bh-place-mode #bhPlaceHint { color: #d8cfff; text-shadow: 0 0 10px rgba(148
 .hygResult { width: 100%; border: 1px solid #203344; border-radius: 6px; padding: 6px 7px;
   background: rgba(8,12,18,.82); color: #b8c9d8; text-align: left; font-family: inherit; cursor: pointer; }
 .hygResult:hover { border-color: #68c7e8; background: rgba(15,26,36,.9); }
+.hygActiveResult { border-color: #274152; }
+.hygActiveResult[data-source="procedural"] { border-color: #354054; }
+.hygActiveResult[data-source="hyg"] { border-color: #1f4d59; }
 .hygResult strong { display: block; color: #eefbff; font-size: 10px; letter-spacing: .1em; overflow-wrap: anywhere; }
 .hygResult span { display: block; margin-top: 2px; color: #7891a4; font-size: 9px; line-height: 1.35; overflow-wrap: anywhere; }
 .hygEmpty { color: #6d7a8a; font-size: 9px; line-height: 1.45; letter-spacing: .08em; }
+.hygActiveIntro { color: #8fb6c9; padding: 1px 0 3px; }
 #objList { margin: 6px 0 0; padding: 0; list-style: none; }
 #objList li { font-size: 10px; line-height: 1.7; color: #6d7a8a; }
 #objList li.done { color: #7fe0a2; }

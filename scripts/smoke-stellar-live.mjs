@@ -38,6 +38,11 @@ try {
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => window.__G && window.__cam);
 
+  const activeBrowseResult = await runActiveNeighborhoodSmoke(page);
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => window.__G && window.__cam);
+
   const result = await page.evaluate(async () => {
     const { G } = await import("/src/state.js");
     const { STARS } = await import("/src/constants.js");
@@ -106,13 +111,48 @@ try {
   assert(Math.abs(result.postJumpR - result.orbitR) / result.orbitR < 1e-6, "shipDeepJump should preserve circular stellar radius");
   assert(dragResult.cameraMoved && dragResult.shipStill && dragResult.releaseSpeed > 0 && dragResult.releaseSpeed <= 32.000001,
     "ship drag should require a deliberate hold and release under the speed cap");
+  assert(activeBrowseResult.rows > 0 && activeBrowseResult.procFocus && activeBrowseResult.resolved && activeBrowseResult.travelStarted,
+    "active-neighborhood browser should focus a procedural star and start travel");
   if (errors.length) throw new Error("console errors: " + errors.join(" | "));
 
   console.log("stellar live smoke passed");
-  console.log(JSON.stringify({ ...result, drag: dragResult }));
+  console.log(JSON.stringify({ ...result, drag: dragResult, activeBrowse: activeBrowseResult }));
 } finally {
   await browser.close();
   await viteServer?.close();
+}
+
+async function runActiveNeighborhoodSmoke(page) {
+  await page.keyboard.down("Shift");
+  await page.keyboard.press("KeyU");
+  await page.keyboard.up("Shift");
+  await page.waitForSelector(".hygActiveResult");
+  const rows = await page.locator(".hygActiveResult").count();
+  const proc = page.locator('.hygActiveResult[data-source="procedural"]').first();
+  const procFocus = await proc.getAttribute("data-focus");
+  await proc.click();
+  await page.waitForTimeout(80);
+  await page.evaluate(() => document.activeElement?.blur?.());
+  await page.keyboard.down("Shift");
+  await page.keyboard.press("KeyT");
+  await page.keyboard.up("Shift");
+  await page.waitForTimeout(80);
+  const status = await page.evaluate(async () => {
+    const { G } = await import("/src/state.js");
+    const { activeStarForFocus } = await import("/src/universe/activeStars.js");
+    const { AP } = await import("/src/autopilot.js");
+    return {
+      focus: G.focus,
+      resolved: !!activeStarForFocus(G.focus),
+      travelStarted: AP.mode !== "off",
+    };
+  });
+  return {
+    rows,
+    procFocus: procFocus?.startsWith("proc:") && status.focus === procFocus,
+    resolved: status.resolved,
+    travelStarted: status.travelStarted,
+  };
 }
 
 async function runShipDragSmoke(page) {

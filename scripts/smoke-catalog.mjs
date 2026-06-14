@@ -3,6 +3,7 @@ import { HYG_PHYSICAL_STARS } from "../src/generated/hygPhysicalStars.js";
 import { cachedHygCatalogData, loadHygCatalogData, rememberHygCatalogData } from "../src/universe/catalogData.js";
 import {
   findExistingCatalogStar,
+  activeNeighborhoodRows,
   restorePromotedCatalogStars,
   searchCatalogLabels,
   serializePromotedCatalogStars,
@@ -108,6 +109,17 @@ assert(strongestActiveStarWell([activeHyg], activeHyg.x + hygOrbitR, activeHyg.y
 assert(ACTIVE_STARS.filter(star => star.activeCatalog).every(star => star.radiusSolar >= 0.01 &&
   !(star.mass > 4 && star.radiusSolar < 1 && star.lumSolar < 100)),
   "HYG active stars should avoid grossly inconsistent mass-radius-luminosity rows");
+const activeRows = activeNeighborhoodRows(128);
+assert(activeRows.length > 4 && activeRows.every(row => row.focus && row.star && row.dKm >= 0),
+  "blank catalog panel should expose bounded active-neighborhood rows");
+assert(activeRows.some(row => row.sourceKey === "procedural" && row.focus.startsWith("proc:")),
+  "active-neighborhood browser should expose procedural focus tokens");
+assert(activeRows.some(row => row.sourceKey === "hyg" && row.focus.startsWith("hyg:")),
+  "active-neighborhood browser should expose active HYG focus tokens after catalog registration");
+assert(activeRows.every((row, i, rows) => i === 0 || rows[i - 1].dKm <= row.dKm),
+  "active-neighborhood browser should sort rows by ship-relative distance");
+assert(activeStarForFocus(activeRows.find(row => row.sourceKey === "procedural").focus),
+  "procedural active-neighborhood focus should resolve through active-star lookup");
 const proximaHyg = searchCatalogLabels(meta, "proxima centauri", 1)[0];
 assert(proximaHyg, "HYG labels should expose Proxima for duplicate-focus checks");
 const proximaFocus = hygCatalogFocusValue(proximaHyg.index);
@@ -207,8 +219,12 @@ assert(
     catalogSearchSrc.includes("CATALOG_PROMOTION_MAX") &&
     mainSrc.includes("initCatalogSearch") &&
     mainSrc.includes("ensureStarLabel") &&
-    mainSrc.includes("addStarVisual(star)"),
-  "HYG catalog search should direct-focus active catalog rows while preserving promoted-star restore support",
+    mainSrc.includes("addStarVisual(star)") &&
+    catalogSearchSrc.includes("renderActiveNeighborhood") &&
+    catalogSearchSrc.includes("hooks.onFocusActive") &&
+    catalogSearchSrc.includes('btn.dataset.focus = row.focus') &&
+    catalogSearchSrc.includes('btn.dataset.source = row.sourceKey'),
+  "star catalog panel should direct-focus active-neighborhood rows and HYG search rows while preserving promoted-star restore support",
 );
 const canopusMatch = searchCatalogLabels(meta, "canopus", 1)[0];
 const canopus = starFromCatalogRecord(meta, vals, canopusMatch.index, canopusMatch.row);

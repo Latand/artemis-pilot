@@ -1,4 +1,7 @@
 import { addRuntimeStar, CATALOG_PROMOTION_MAX, INITIAL_STAR_COUNT, LY_KM, R_SUN, STARS } from "./constants.js";
+import {
+    ACTIVE_STARS, ACTIVE_STAR_CONFIG, activeStarFocusValue, activeStarStats, refreshActiveStars,
+} from "./universe/activeStars.js";
 import { loadHygCatalogData, loadHygCatalogMeta } from "./universe/catalogData.js";
 import {
     catalogPhysicsUsable, catalogRuntimeRadiusSolar, hygCatalogFocusValue, hygStarByIndex, registerHygCatalog,
@@ -8,7 +11,11 @@ const PC_LY = 3.261563777;
 const PC_KM = LY_KM * PC_LY;
 const SOLAR_TEMP_K = 5772;
 
-let hooks = { onPromote: () => { }, onFocusCatalog: () => { }, toast: () => { } };
+let hooks = {
+    onPromote: () => { }, onFocusCatalog: () => { }, onFocusActive: () => { },
+    getActiveOrigin: () => ({ wx: 0, wy: 0, wz: 0, focus: "ship" }),
+    toast: () => { },
+};
 let ui = null;
 let labelMap = null;
 let searchTimer = 0;
@@ -184,6 +191,45 @@ function describeStar(star) {
     return [formatLy(star.dLy), mass, temp, star.spect].filter(Boolean).join(" · ");
 }
 
+function formatActiveDistance(km) {
+    const ly = km / LY_KM;
+    return ly < .01 ? (ly * 63241.077).toFixed(1) + " AU" : formatLy(ly);
+}
+
+function describeActiveStar(star, dKm, source, focus) {
+    const mass = Number.isFinite(star.mass) ? star.mass.toFixed(star.mass < 1 ? 3 : 2) + " M☉" : "";
+    const radius = Number.isFinite(star.radiusSolar) ? star.radiusSolar.toFixed(star.radiusSolar < 1 ? 3 : 2) + " R☉" : "";
+    const temp = Number.isFinite(star.tempK) ? Math.round(star.tempK).toLocaleString("en-US") + " K" : "";
+    const lum = Number.isFinite(star.lumSolar) ? star.lumSolar.toFixed(star.lumSolar < 1 ? 4 : 2) + " L☉" : "";
+    const kind = star.spect || star.cls || "";
+    return [source, formatActiveDistance(dKm), mass, radius, temp, lum, kind, focus].filter(Boolean).join(" · ");
+}
+
+function activeSource(star) {
+    if (star.activeCatalog) return { label: "HYG V4.1 CATALOG ROW", key: "hyg" };
+    if (star.procedural) return { label: "SEEDED MILKY WAY MODEL ROW", key: "procedural" };
+    return { label: "CURATED", key: "known" };
+}
+
+export function activeNeighborhoodRows(limit = 10) {
+    const origin = hooks.getActiveOrigin?.() || {};
+    const wx = Number.isFinite(origin.wx) ? origin.wx : 0;
+    const wy = Number.isFinite(origin.wy) ? origin.wy : 0;
+    const wz = Number.isFinite(origin.wz) ? origin.wz : 0;
+    const focus = origin.focus || "ship";
+    refreshActiveStars(wx, wy, wz, focus);
+    return ACTIVE_STARS
+        .filter(star => (star.procedural || star.activeCatalog) && activeStarFocusValue(star))
+        .map(star => {
+            const dx = wx - star.x, dy = wy - star.y, dz = wz - (star.z || 0);
+            const source = activeSource(star);
+            const dKm = Math.hypot(dx, dy, dz);
+            return { star, focus: activeStarFocusValue(star), source: source.label, sourceKey: source.key, dKm };
+        })
+        .sort((a, b) => a.dKm - b.dKm || a.star.name.localeCompare(b.star.name))
+        .slice(0, Math.max(0, limit));
+}
+
 function sameNamedDestination(a, b) {
     const aa = canonicalDestinationName(a);
     const bb = canonicalDestinationName(b);
@@ -268,6 +314,44 @@ function renderMessage(text) {
     ui.results.appendChild(div);
 }
 
+function focusActiveNeighborhood(row) {
+    hooks.onFocusActive(row.focus, row.star, row);
+    setOpen(false);
+    return row.focus;
+}
+
+function renderActiveNeighborhood() {
+    ui.results.innerHTML = "";
+    const rows = activeNeighborhoodRows(12);
+    const stats = activeStarStats();
+    const head = document.createElement("div");
+    head.className = "hygEmpty hygActiveIntro";
+    head.textContent = "ACTIVE NEIGHBORHOOD · NEARBY GRAVITY SOURCES STREAMED AROUND THE SHIP · " +
+        stats.total + "/" + ACTIVE_STAR_CONFIG.totalLimit + " LIVE SOURCES";
+    ui.results.appendChild(head);
+    if (!rows.length) {
+        const div = document.createElement("div");
+        div.className = "hygEmpty";
+        div.textContent = "NO ACTIVE PROCEDURAL OR HYG STARS NEAR THE SHIP";
+        ui.results.appendChild(div);
+        return;
+    }
+    for (const row of rows) {
+        const btn = document.createElement("button");
+        btn.className = "hygResult hygActiveResult";
+        btn.type = "button";
+        btn.dataset.focus = row.focus;
+        btn.dataset.source = row.sourceKey;
+        const name = document.createElement("strong");
+        name.textContent = row.star.name;
+        const details = document.createElement("span");
+        details.textContent = describeActiveStar(row.star, row.dKm, row.source, row.focus);
+        btn.append(name, details);
+        btn.onclick = () => focusActiveNeighborhood(row);
+        ui.results.appendChild(btn);
+    }
+}
+
 async function promoteIndex(index) {
     const { meta, vals } = await loadCatalog();
     const row = labelMap?.get(index) || null;
@@ -306,7 +390,7 @@ async function renderResults() {
     if (!ui) return;
     const query = ui.input.value;
     if (!query.trim()) {
-        renderMessage("TYPE NAME / HIP / HD / HR / INDEX");
+        renderActiveNeighborhood();
         return;
     }
     renderMessage("LOADING HYG CATALOG");
@@ -340,7 +424,7 @@ async function renderResults() {
 export function openCatalogSearch(seed = "") {
     if (!ui) return;
     setOpen(true);
-    if (seed) ui.input.value = seed;
+    ui.input.value = seed || "";
     ui.input.focus();
     renderResults();
 }
@@ -380,7 +464,10 @@ export function initCatalogSearch(options = {}) {
         e.stopPropagation();
         if (e.code === "Escape") closeCatalogSearch();
         if (e.code === "Enter") {
-            focusCatalogQuery(ui.input.value).catch(err => hooks.toast(err?.message || String(err)));
+            if (!ui.input.value.trim()) {
+                const row = activeNeighborhoodRows(1)[0];
+                if (row) focusActiveNeighborhood(row);
+            } else focusCatalogQuery(ui.input.value).catch(err => hooks.toast(err?.message || String(err)));
         }
     });
     if (ui.close) ui.close.onclick = closeCatalogSearch;

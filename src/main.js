@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import {
     R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
-    MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_ENERGY, LY_SCENE, STARS,
+    MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_ENERGY, LY_SCENE, LY_KM, STARS,
     OMEGA_EARTH, FUEL_DV0, warpLabel,
 } from "./constants.js";
 import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
@@ -315,6 +315,9 @@ function ensureStarLabel(i) {
 for (let i = 0; i < STARS.length; i++) ensureStarLabel(i);
 initCatalogSearch({
     toast,
+    getActiveOrigin() {
+        return { wx: eph.earthX + G.x, wy: eph.earthY + G.y, wz: G.z, focus: G.focus };
+    },
     onPromote(i, star, existing, reason = "promote") {
         addStarVisual(star);
         ensureStarLabel(i);
@@ -330,6 +333,13 @@ initCatalogSearch({
         unlockBodyPrediction();
         computePrediction();
         toast("HYG destination focused · " + star.name + " · " + star.dLy.toFixed(2) + " ly");
+    },
+    onFocusActive(focus, star, row) {
+        addStarVisual(star);
+        setFocus(focus);
+        unlockBodyPrediction();
+        computePrediction();
+        toast(row.source + " focused · " + star.name + " · " + (row.dKm / LY_KM).toFixed(2) + " ly");
     },
 });
 
