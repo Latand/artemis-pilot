@@ -269,55 +269,85 @@ function points(data, size, opacity) {
     return obj;
 }
 
-function galaxySpriteTexture(colorA, colorB, seed) {
-    const rnd = mulberry32(seed);
-    const W = 512, H = 256;
+function galaxyCoreTexture(colorA, colorB) {
+    const W = 128;
     const cv = document.createElement("canvas");
-    cv.width = W; cv.height = H;
+    cv.width = cv.height = W;
     const ctx = cv.getContext("2d");
-    const img = ctx.createImageData(W, H);
-    for (let y = 0; y < H; y++) {
-        const yy = (y / H - .5) * 2.4;
-        for (let x = 0; x < W; x++) {
-            const xx = (x / W - .5) * 2.2;
-            const r = Math.hypot(xx, yy * 1.75);
-            const a = Math.atan2(yy * 1.75, xx);
-            const arm = .5 + .5 * Math.cos(a * 3.0 - r * 8.6 + seed * .013);
-            const dust = .5 + .5 * Math.sin(a * 5.0 + r * 17.0 + seed * .031);
-            const disk = Math.exp(-r * 2.8);
-            const core = Math.exp(-r * r * 28.0);
-            const alpha = Math.min(1, disk * (.18 + .56 * Math.pow(arm, 2.2)) + core * .34);
-            const warm = Math.min(1, core * 1.3 + arm * .25 + rnd() * .035);
-            const c = colorMix(colorA, colorB, warm, 0);
-            const shade = .62 + .38 * dust;
-            const i = (y * W + x) * 4;
-            img.data[i] = Math.min(255, c[0] * shade * 255);
-            img.data[i + 1] = Math.min(255, c[1] * shade * 255);
-            img.data[i + 2] = Math.min(255, c[2] * shade * 255);
-            img.data[i + 3] = Math.round(Math.max(0, Math.min(1, alpha)) * 255);
-        }
-    }
-    ctx.putImageData(img, 0, 0);
+    const g = ctx.createRadialGradient(W / 2, W / 2, 0, W / 2, W / 2, W / 2);
+    const ca = `rgba(${Math.round(colorB[0] * 255)},${Math.round(colorB[1] * 255)},${Math.round(colorB[2] * 255)},`;
+    const cb = `rgba(${Math.round(colorA[0] * 255)},${Math.round(colorA[1] * 255)},${Math.round(colorA[2] * 255)},`;
+    g.addColorStop(0, ca + ".70)");
+    g.addColorStop(.25, ca + ".25)");
+    g.addColorStop(.65, cb + ".055)");
+    g.addColorStop(1, cb + "0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, W);
     const t = new THREE.CanvasTexture(cv);
     t.colorSpace = THREE.SRGBColorSpace;
     return t;
 }
 
 function diskGalaxy(cx, cy, cz, radiusLy, tilt, colorA, colorB, seed, count = 9000) {
-    const mat = new THREE.SpriteMaterial({
-        map: galaxySpriteTexture(colorA, colorB, seed),
+    const rnd = mulberry32(seed);
+    const radius = radiusLy * LY_SCENE;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+        const arm = Math.floor(rnd() * 4);
+        const rn = Math.pow(rnd(), 1.55);
+        const r = radius * rn;
+        const spiral = arm * Math.PI * .5 + rn * 5.1 + (rnd() - .5) * (.55 + rn * .75);
+        const bar = Math.max(0, 1 - rn * 8);
+        const stretch = 1 + bar * 1.9;
+        const x = Math.cos(spiral) * r * stretch;
+        const z = Math.sin(spiral) * r * (.62 + bar * .25);
+        const y = (rnd() + rnd() - 1) * radius * (.018 + .018 * rn);
+        pos[i * 3] = cx + x;
+        pos[i * 3 + 1] = cy + y;
+        pos[i * 3 + 2] = cz + z;
+        const core = Math.max(0, 1 - rn * 4.5);
+        const hot = .18 + core * .75 + rnd() * .08;
+        const c = colorMix(colorA, colorB, Math.min(1, hot), (rnd() - .5) * .035);
+        col[i * 3] = Math.max(0, Math.min(1, c[0]));
+        col[i * 3 + 1] = Math.max(0, Math.min(1, c[1]));
+        col[i * 3 + 2] = Math.max(0, Math.min(1, c[2]));
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    const mat = new THREE.PointsMaterial({
+        vertexColors: true,
+        size: 1.18,
+        sizeAttenuation: false,
         transparent: true,
-        opacity: .34,
+        map: cosmicPointMap(),
+        alphaTest: .015,
+        opacity: .66,
         depthWrite: false,
         depthTest: true,
-        blending: THREE.NormalBlending,
+        blending: THREE.AdditiveBlending,
     });
-    mat.userData.baseOpacity = .34;
-    const sprite = new THREE.Sprite(mat);
-    sprite.position.set(cx, cy, cz);
-    sprite.scale.set(radiusLy * LY_SCENE * 2.25, radiusLy * LY_SCENE * 1.05, 1);
-    sprite.frustumCulled = false;
-    return sprite;
+    mat.userData.baseOpacity = .66;
+    const disk = new THREE.Points(geom, mat);
+    disk.frustumCulled = false;
+    const coreMat = new THREE.SpriteMaterial({
+        map: galaxyCoreTexture(colorA, colorB),
+        transparent: true,
+        opacity: .32,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending,
+    });
+    coreMat.userData.baseOpacity = .32;
+    const core = new THREE.Sprite(coreMat);
+    core.scale.set(radius * .55, radius * .28, 1);
+    core.frustumCulled = false;
+    const group = new THREE.Group();
+    group.add(disk, core);
+    group.rotation.set(tilt || 0, seed * .017, (seed % 31) * .021);
+    group.frustumCulled = false;
+    return group;
 }
 
 function ring(cx, cy, cz, rLy, color, opacity) {
@@ -363,7 +393,7 @@ function addMovingGalaxy(cfg) {
     group.name = cfg.name;
     const base = new THREE.Vector3(cfg.xLy * LY_SCENE, cfg.yLy * LY_SCENE, cfg.zLy * LY_SCENE);
     group.position.copy(base);
-    group.add(diskGalaxy(0, 0, 0, cfg.radiusLy, cfg.tilt || 0, cfg.colorA, cfg.colorB, cfg.seed));
+    group.add(diskGalaxy(0, 0, 0, cfg.radiusLy, cfg.tilt || 0, cfg.colorA, cfg.colorB, cfg.seed, cfg.count || 9000));
     localRoot.add(group);
     const velocity = new THREE.Vector3();
     if (cfg.approachKmS) velocity.copy(base).normalize().multiplyScalar(-cfg.approachKmS * K);
