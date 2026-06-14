@@ -1,4 +1,4 @@
-html, body { margin: 0; width: 100%; height: 100%; background: #04060a; overflow: hidden; user-select: none; -webkit-user-select: none; }
+html, body { margin: 0; width: 100%; height: 100%; background: #000; overflow: hidden; user-select: none; -webkit-user-select: none; }
 body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #cfd8e3; }
 #root { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; user-select: none; -webkit-user-select: none; }
 #gl, #gl canvas { position: absolute; inset: 0; width: 100%; height: 100%; }

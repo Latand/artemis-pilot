@@ -19,7 +19,7 @@ export const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
-renderer.setClearColor(0x04060a, 1);
+renderer.setClearColor(0x000000, 1);
 renderer.domElement.style.display = "block";
 renderer.domElement.style.touchAction = "none";
 cvHost.appendChild(renderer.domElement);
