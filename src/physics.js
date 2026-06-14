@@ -1,11 +1,12 @@
 import {
     MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, C_LIGHT, J2_E, OMEGA_EARTH,
-    PL, STARS, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME, EPH_CHUNK,
+    PL, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME, EPH_CHUNK,
 } from "./constants.js";
 import { eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance, keplerAdvance3 } from "./ephemeris.js";
 import { G, BH, WORLD, GS, EPHT, bhMuAt } from "./state.js";
 import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
+import { ACTIVE_STARS, refreshActiveStars } from "./universe/activeStars.js";
 
 // hooks into the presentation layer, wired once by main.js
 let H = { die: () => { }, award: () => { }, banner: () => { }, hideBanner: () => { } };
@@ -124,7 +125,7 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 
             }
         }
     }
-    for (const star of STARS) {
+    for (const star of ACTIVE_STARS) {
         const sx = star.x - eph.earthX, sy = star.y - eph.earthY;
         const sz = star.z || 0;
         const dx = x - sx, dy = y - sy, dz = z - sz;
@@ -300,7 +301,7 @@ function bodiesNeedFlush(x, y, z, lag) {
         const lim = Math.max(BH.rs[i] * 150, 5000);
         if (dx * dx + dy * dy + dz * dz < lim * lim) return true;
     }
-    for (const star of STARS) {
+    for (const star of ACTIVE_STARS) {
         const sx = star.x - (eph.earthX + eph.earthVx * lag);
         const sy = star.y - (eph.earthY + eph.earthVy * lag);
         const sz = star.z || 0;
@@ -315,6 +316,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     const s = _gs;
     s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
     updEphem(G.t);
+    refreshActiveStars(eph.earthX + s[0], eph.earthY + s[1], s[2], G.focus);
     // a frame budget far beyond the step cap: integrating the cap first is
     // wasted work (the jump leaps it anyway), and at low fps it starves the
     // clock — jump the whole frame in O(1) and keep 60 fps at any warp
@@ -357,18 +359,18 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         }
         // Earth sits at the frame origin: its contact check is always exact
         if (!WORLD.earthDestroyed && Math.sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]) <= R_EARTH) { handleEarthContact(s); break; }
-        let hitStar = -1;
-        for (let i = 0; i < STARS.length; i++) {
-            const sx = STARS[i].x - (eph.earthX + eph.earthVx * lag);
-            const sy = STARS[i].y - (eph.earthY + eph.earthVy * lag);
-            const sz = STARS[i].z || 0;
-            if (Math.hypot(s[0] - sx, s[1] - sy, s[2] - sz) <= STARS[i].R) { hitStar = i; break; }
+        let hitStar = null;
+        for (const star of ACTIVE_STARS) {
+            const sx = star.x - (eph.earthX + eph.earthVx * lag);
+            const sy = star.y - (eph.earthY + eph.earthVy * lag);
+            const sz = star.z || 0;
+            if (Math.hypot(s[0] - sx, s[1] - sy, s[2] - sz) <= star.R) { hitStar = star; break; }
         }
-        if (hitStar >= 0) {
+        if (hitStar) {
             G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
-            H.die(STARS[hitStar].bh
-                ? "Crossed " + STARS[hitStar].name + "'s photon sphere; captured into the boundary flow"
-                : "Entered " + STARS[hitStar].name + "'s photosphere", STARS[hitStar].bh);
+            H.die(hitStar.bh
+                ? "Crossed " + hitStar.name + "'s photon sphere; captured into the boundary flow"
+                : "Entered " + hitStar.name + "'s photosphere", hitStar.bh);
             break;
         }
         // every other surface lies deep inside a flush zone, so these checks
@@ -514,16 +516,16 @@ function shipDeepJump(dt) {
     const oi = orbitInfo();
     const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
     let starI = -1, starAcc = 0;
-    for (let i = 0; i < STARS.length; i++) {
-        const dx = wx - STARS[i].x, dy = wy - STARS[i].y, dz = wz - (STARS[i].z || 0);
-        const a = STARS[i].mu / (dx * dx + dy * dy + dz * dz);
+    for (let i = 0; i < ACTIVE_STARS.length; i++) {
+        const dx = wx - ACTIVE_STARS[i].x, dy = wy - ACTIVE_STARS[i].y, dz = wz - (ACTIVE_STARS[i].z || 0);
+        const a = ACTIVE_STARS[i].mu / (dx * dx + dy * dy + dz * dz);
         if (a > starAcc) { starAcc = a; starI = i; }
     }
     const domAcc = oi.mu / (oi.r * oi.r);
     if (starAcc > domAcc) {
         // a named star owns the well; they are static, so recomposition only
         // has to undo the Earth-frame offset
-        const st = STARS[starI];
+        const st = ACTIVE_STARS[starI];
         const d = Math.hypot(wx - st.x, wy - st.y, wz - (st.z || 0));
         if (st.bh && d < st.rs * 200) return 0;
         if (d <= st.R * 1.1 || domAcc > starAcc * .02) return 0;

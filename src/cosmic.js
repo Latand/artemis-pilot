@@ -5,6 +5,7 @@ import { G } from "./state.js";
 import { cam } from "./scene.js";
 import { toast } from "./achievements.js";
 import { makeGalaxyCloud, galacticCenterScene, galacticRingPositions } from "./universe/starfield.js";
+import { registerHygCatalog } from "./universe/hygActiveCatalog.js";
 
 // Galactic-centre position in scene units (toward Sgr A*, ~26,000 ly). The
 // procedural galaxy cloud and the real HYG catalog share this equatorial frame.
@@ -94,6 +95,7 @@ async function loadCatalogStarsFallback(reason) {
         const binRes = await fetch(new URL(data.binary, new URL(STAR_CATALOG_META.hygUrl, location.href)));
         if (!binRes.ok) throw new Error("catalog binary HTTP " + binRes.status);
         const vals = new Float32Array(await binRes.arrayBuffer());
+        registerHygCatalog(data, vals, { deferIndex: true });
         const fields = data.fields || [];
         const field = name => {
             const i = fields.indexOf(name);
@@ -169,6 +171,7 @@ async function loadCatalogStars() {
                     return;
                 }
                 settled = true;
+                registerHygCatalog(msg.meta, new Float32Array(msg.vals), { deferIndex: true });
                 installCatalogObject(
                     new Float32Array(msg.pos),
                     new Float32Array(msg.col),

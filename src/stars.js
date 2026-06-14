@@ -3,6 +3,7 @@ import { STARS, K, LY_SCENE } from "./constants.js";
 import { dotTexture } from "./textures.js";
 import { scene } from "./scene.js";
 import { smooth01 } from "./format.js";
+import { ACTIVE_STARS } from "./universe/activeStars.js";
 
 // Physical renderings for the named stellar destinations. Until now a star
 // was only a point in the cosmic layer: flying 4 ly to Proxima showed a dot.
@@ -12,7 +13,18 @@ import { smooth01 } from "./format.js";
 // close approaches render, but sub-1000 km precision out there is not exact.
 
 const entries = [];
+const entryById = new Map();
 const hexRgba = (hex, a) => "rgba(" + ((hex >> 16) & 255) + "," + ((hex >> 8) & 255) + "," + (hex & 255) + "," + a + ")";
+const ACTIVE_VISUAL_MAX = 48;
+const ACTIVE_VISUAL_RADIUS = LY_SCENE * .24;
+const ACTIVE_VISUAL_SYNC_S = .12;
+const ACTIVE_VISUAL_MOVE_SYNC = ACTIVE_VISUAL_RADIUS * .04;
+
+function starVisualId(star) {
+    if (star.id) return star.id;
+    if (star.hygIndex !== undefined) return "hyg:" + star.hygIndex;
+    return star.name;
+}
 
 function fresnelShell(radius, color, power, gain) {
     return new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 32), new THREE.ShaderMaterial({
@@ -62,8 +74,46 @@ function radialRing(rIn, rOut, map) {
     }));
 }
 
+function collectMaterialTextures(material, textures) {
+    if (!material) return;
+    const mats = Array.isArray(material) ? material : [material];
+    for (const mat of mats) {
+        for (const key in mat) {
+            const value = mat[key];
+            if (value?.isTexture) textures.add(value);
+        }
+        if (mat.uniforms) {
+            for (const key in mat.uniforms) {
+                const value = mat.uniforms[key]?.value;
+                if (value?.isTexture) textures.add(value);
+            }
+        }
+    }
+}
+
+function disposeMaterial(material) {
+    if (!material) return;
+    const mats = Array.isArray(material) ? material : [material];
+    for (const mat of mats) mat.dispose();
+}
+
+function disposeStarVisual(entry) {
+    const textures = new Set();
+    entry.g.traverse(obj => {
+        if (obj.geometry) obj.geometry.dispose();
+        collectMaterialTextures(obj.material, textures);
+        disposeMaterial(obj.material);
+    });
+    for (const texture of textures) texture.dispose();
+}
+
 export function addStarVisual(star) {
-    if (entries.some(e => e.star === star)) return;
+    const id = starVisualId(star);
+    const existing = entryById.get(id);
+    if (existing) {
+        existing.star = star;
+        return existing;
+    }
     const g = new THREE.Group();
     let disk = null;
     if (star.bh) {
@@ -94,15 +144,56 @@ export function addStarVisual(star) {
     g.add(glow);
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
     scene.add(g);
-    entries.push({ g, glow, disk, star });
+    const entry = { g, glow, disk, star, id };
+    entries.push(entry);
+    entryById.set(id, entry);
+    return entry;
 }
 
 export function buildStars() {
     for (const star of STARS) addStarVisual(star);
 }
 
+const _procPos = new THREE.Vector3();
+const _lastActiveVisualSync = new THREE.Vector3();
+let activeVisualSynced = false;
+let activeVisualSyncAge = Infinity;
+const activeVisualKeep = new Set();
+const activeVisualCands = [];
+function syncActiveStarVisuals(camera, dtR = 0) {
+    activeVisualSyncAge += dtR;
+    const moved = activeVisualSynced ? camera.position.distanceTo(_lastActiveVisualSync) : Infinity;
+    if (activeVisualSyncAge < ACTIVE_VISUAL_SYNC_S && moved < ACTIVE_VISUAL_MOVE_SYNC) return;
+    activeVisualKeep.clear();
+    activeVisualCands.length = 0;
+    for (const star of ACTIVE_STARS) {
+        if (!star.procedural && !star.activeCatalog) continue;
+        _procPos.set(star.x * K, (star.z || 0) * K, -star.y * K);
+        const d = camera.position.distanceTo(_procPos);
+        if (d < ACTIVE_VISUAL_RADIUS) activeVisualCands.push({ star, d, id: starVisualId(star) });
+    }
+    activeVisualCands.sort((a, b) => a.d - b.d);
+    for (let i = 0; i < activeVisualCands.length && i < ACTIVE_VISUAL_MAX; i++) {
+        activeVisualKeep.add(activeVisualCands[i].id);
+        addStarVisual(activeVisualCands[i].star);
+    }
+    for (let i = entries.length - 1; i >= 0; i--) {
+        const e = entries[i];
+        if ((!e.star.procedural && !e.star.activeCatalog) || activeVisualKeep.has(e.id)) continue;
+        scene.remove(e.g);
+        disposeStarVisual(e);
+        entryById.delete(e.id);
+        entries.splice(i, 1);
+    }
+    _lastActiveVisualSync.copy(camera.position);
+    activeVisualSynced = true;
+    activeVisualSyncAge = 0;
+}
+
 export function updateStars(camera, dtR) {
+    syncActiveStarVisuals(camera, dtR);
     for (const e of entries) {
+        e.g.position.set(e.star.x * K, (e.star.z || 0) * K, -e.star.y * K);
         const d = camera.position.distanceTo(e.g.position);
         const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
         e.g.visible = local > .01;

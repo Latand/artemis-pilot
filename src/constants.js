@@ -61,7 +61,10 @@ export const STAR_CATALOG_META = {
     builtIn: "nearby physical destinations from published nearby-star values",
     hygUrl: "/data/hyg-stars-v41.json",
     hygSource: "Astronexus HYG v4.1: Hipparcos, Yale Bright Star, and Gliese merge",
-    gaiaDr3SourceCount: 1812000000,
+    gaiaDr3AstrometricSourceCount: 1467744818,
+    gaiaDr3GMagSourceCount: 1806254432,
+    gaiaFprTotalSourceCount: 1812236358,
+    gaiaDr4PlannedRelease: "2026-12-02",
 };
 export const CATALOG_PROMOTION_MAX = 128;
 export const STARS = [

@@ -1,6 +1,7 @@
-import { DARK_ENERGY, FLOW, PL, K, STARS } from "./constants.js";
+import { DARK_ENERGY, FLOW, PL, K } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { smooth01 } from "./format.js";
+import { ACTIVE_STARS } from "./universe/activeStars.js";
 
 // Scene-unit river field: the medium falls at v = sqrt(2mu/r) toward every
 // body. This is the same absolute field used by the GPU river shader.
@@ -10,14 +11,14 @@ export const flowCtx = {
     plScX: new Float64Array(PL.length), plScZ: new Float64Array(PL.length),
     plC: PL.map(p => .001 * Math.sqrt(2 * p.mu / 1000)),
     plSink: PL.map(p => p.R * K),
-    starC: STARS.map(s => .001 * Math.sqrt(2 * s.mu / 1000)),
-    starSink: STARS.map(s => (s.bh ? s.rs : s.R) * K),
+    starC: [],
+    starSink: [],
 };
-function starFlowC(i) {
-    return flowCtx.starC[i] ?? (flowCtx.starC[i] = STARS[i].flowC ?? .001 * Math.sqrt(2 * STARS[i].mu / 1000));
+function starFlowC(star) {
+    return star.flowC ?? .001 * Math.sqrt(2 * star.mu / 1000);
 }
-function starFlowSink(i) {
-    return flowCtx.starSink[i] ?? (flowCtx.starSink[i] = STARS[i].flowSink ?? (STARS[i].bh ? STARS[i].rs : STARS[i].R) * K);
+function starFlowSink(star) {
+    return star.flowSink ?? (star.bh ? star.rs : star.R) * K;
 }
 export function flowVel(x, y, z, mx, my, mz, out) {
     const edx = x - flowCtx.earthScX, edz = z - flowCtx.earthScZ;
@@ -53,10 +54,10 @@ export function flowVel(x, y, z, mx, my, mz, out) {
         const pPull = flowCtx.plC[i] * flowCtx.plC[i] / (rP * rP * rP);
         pullX -= pdx * pPull; pullY -= y * pPull; pullZ -= pdz * pPull;
     }
-    for (let i = 0; i < STARS.length; i++) {
-        const sdx0 = x - STARS[i].x * K, sdy0 = y - (STARS[i].z || 0) * K, sdz0 = z + STARS[i].y * K;
-        const cStar = starFlowC(i);
-        const rStar = Math.max(starFlowSink(i) * .9, Math.hypot(sdx0, sdy0, sdz0));
+    for (const star of ACTIVE_STARS) {
+        const sdx0 = x - star.x * K, sdy0 = y - (star.z || 0) * K, sdz0 = z + star.y * K;
+        const cStar = starFlowC(star);
+        const rStar = Math.max(starFlowSink(star) * .9, Math.hypot(sdx0, sdy0, sdz0));
         const sStar = cStar / Math.sqrt(rStar) / rStar;
         exVX -= sdx0 * sStar; exVY -= sdy0 * sStar; exVZ -= sdz0 * sStar;
         const starPull = cStar * cStar / (rStar * rStar * rStar);

@@ -1,0 +1,317 @@
+import { K, LY_KM, MU_S, R_SUN, STAR_CATALOG_META } from "../constants.js";
+
+const PC_LY = 3.261563777;
+const PC_KM = LY_KM * PC_LY;
+const SOLAR_TEMP_K = 5772;
+const CACHE_GRID_PC = 2;
+const INDEX_CELL_PC = 8;
+
+let META = null;
+let VALS = null;
+let LABELS = new Map();
+let FIELD = Object.create(null);
+let INDEX = new Map();
+let INDEX_READY = false;
+let INDEXING = false;
+let INDEX_WAITERS = [];
+let VERSION = 0;
+let SIGNATURE = "";
+let loadPromise = null;
+const SAMPLE_CACHE = { key: "", stars: [] };
+
+function clamp(v, lo, hi) {
+    return Math.max(lo, Math.min(hi, v));
+}
+
+function colorMix(a, b, t) {
+    return [
+        a[0] * (1 - t) + b[0] * t,
+        a[1] * (1 - t) + b[1] * t,
+        a[2] * (1 - t) + b[2] * t,
+    ];
+}
+
+function colorHexFromBV(ci) {
+    const bv = Number.isFinite(ci) ? clamp(ci, -0.35, 2.0) : 0.65;
+    const t = clamp((bv + .35) / 2.35, 0, 1);
+    let c;
+    if (t < .34) c = colorMix([.58, .68, 1.0], [.93, .96, 1.0], t / .34);
+    else if (t < .58) c = colorMix([.93, .96, 1.0], [1.0, .86, .58], (t - .34) / .24);
+    else c = colorMix([1.0, .86, .58], [1.0, .42, .28], (t - .58) / .42);
+    const r = Math.round(clamp(c[0], 0, 1) * 255);
+    const g = Math.round(clamp(c[1], 0, 1) * 255);
+    const b = Math.round(clamp(c[2], 0, 1) * 255);
+    return (r << 16) | (g << 8) | b;
+}
+
+function displayName(row, index) {
+    return String(row?.[1] || (row?.[2] ? "HIP " + row[2] : row?.[3] ? "HD " + row[3] : "HYG " + index)).toUpperCase();
+}
+
+function field(name, fallback) {
+    const i = META?.fields?.indexOf(name) ?? -1;
+    return i >= 0 ? i : fallback;
+}
+
+function rebuildFieldMap() {
+    FIELD = {
+        x: field("xPc", 0),
+        y: field("yPc", 1),
+        z: field("zPc", 2),
+        bv: field("bv", 3),
+        mag: field("mag", 4),
+        absMag: field("absMag", 5),
+        lum: field("lumSolar", 6),
+        temp: field("tempK", 7),
+        mass: field("massSolar", 8),
+        radius: field("radiusSolar", 9),
+    };
+}
+
+function indexKey(ci, cj, ck) {
+    return ci + "," + cj + "," + ck;
+}
+
+function rebuildSpatialIndex() {
+    INDEX = new Map();
+    INDEX_READY = false;
+    INDEXING = false;
+    if (!META || !VALS) return;
+    const stride = META.stride || 10;
+    for (let i = 0, base = 0; i < META.count; i++, base += stride) {
+        const mass = VALS[base + FIELD.mass], radius = VALS[base + FIELD.radius];
+        if (!(mass > 0) || !(radius > 0)) continue;
+        const ci = Math.floor(VALS[base + FIELD.x] / INDEX_CELL_PC);
+        const cj = Math.floor(VALS[base + FIELD.y] / INDEX_CELL_PC);
+        const ck = Math.floor(VALS[base + FIELD.z] / INDEX_CELL_PC);
+        const key = indexKey(ci, cj, ck);
+        let bucket = INDEX.get(key);
+        if (!bucket) INDEX.set(key, bucket = []);
+        bucket.push(i);
+    }
+    INDEX_READY = true;
+    resolveIndexWaiters();
+}
+
+function scheduleIndexStep(fn) {
+    if (typeof requestIdleCallback === "function") requestIdleCallback(fn, { timeout: 80 });
+    else setTimeout(fn, 0);
+}
+
+function resolveIndexWaiters() {
+    const waiters = INDEX_WAITERS;
+    INDEX_WAITERS = [];
+    for (const resolve of waiters) resolve(hygCatalogStats());
+}
+
+export function waitForHygCatalogIndex() {
+    if (INDEX_READY) return Promise.resolve(hygCatalogStats());
+    if (!INDEXING) return Promise.resolve(hygCatalogStats());
+    return new Promise(resolve => INDEX_WAITERS.push(resolve));
+}
+
+function catalogSignature(meta, vals) {
+    return [
+        meta.schema || 1,
+        meta.count || Math.floor(vals.length / (meta.stride || 10)),
+        meta.stride || 10,
+        vals.length,
+        meta.binary || "",
+        meta.source || "",
+    ].join(":");
+}
+
+function startSpatialIndexBuild() {
+    const meta = META, vals = VALS, fieldMap = FIELD;
+    if (!meta || !vals || INDEXING) return;
+    const next = new Map();
+    const stride = meta.stride || 10;
+    let i = 0, base = 0;
+    INDEX = new Map();
+    INDEX_READY = false;
+    INDEXING = true;
+    const step = () => {
+        let processed = 0;
+        while (i < meta.count && processed++ < 4096) {
+            const mass = vals[base + fieldMap.mass], radius = vals[base + fieldMap.radius];
+            if (mass > 0 && radius > 0) {
+                const ci = Math.floor(vals[base + fieldMap.x] / INDEX_CELL_PC);
+                const cj = Math.floor(vals[base + fieldMap.y] / INDEX_CELL_PC);
+                const ck = Math.floor(vals[base + fieldMap.z] / INDEX_CELL_PC);
+                const key = indexKey(ci, cj, ck);
+                let bucket = next.get(key);
+                if (!bucket) next.set(key, bucket = []);
+                bucket.push(i);
+            }
+            i++;
+            base += stride;
+        }
+        if (i < meta.count) {
+            scheduleIndexStep(step);
+            return;
+        }
+        INDEX = next;
+        INDEX_READY = true;
+        INDEXING = false;
+        VERSION++;
+        SAMPLE_CACHE.key = "";
+        SAMPLE_CACHE.stars = [];
+        resolveIndexWaiters();
+    };
+    scheduleIndexStep(step);
+}
+
+export function registerHygCatalog(meta, values, options = {}) {
+    if (!meta || !values) return false;
+    const vals = values instanceof Float32Array ? values : new Float32Array(values);
+    const stride = meta.stride || meta.fields?.length || 10;
+    const count = Math.floor(vals.length / stride);
+    if (!(count > 0) || count < meta.count) return false;
+    const sig = catalogSignature(meta, vals);
+    const sameCatalog = sig === SIGNATURE;
+    META = meta;
+    VALS = vals;
+    LABELS = new Map((meta.labels || []).map(row => [row[0], row]));
+    rebuildFieldMap();
+    if (sameCatalog && (INDEX_READY || INDEXING)) {
+        VERSION++;
+        SAMPLE_CACHE.key = "";
+        SAMPLE_CACHE.stars = [];
+        return true;
+    }
+    SIGNATURE = sig;
+    VERSION++;
+    if (options.deferIndex) startSpatialIndexBuild();
+    else rebuildSpatialIndex();
+    SAMPLE_CACHE.key = "";
+    SAMPLE_CACHE.stars = [];
+    return true;
+}
+
+export function hygCatalogStats() {
+    return {
+        loaded: !!(META && VALS),
+        version: VERSION,
+        count: META?.count || 0,
+        indexedCells: INDEX.size,
+        indexReady: INDEX_READY,
+        indexing: INDEXING,
+        source: META?.source || "HYG v4.1",
+    };
+}
+
+export function hygCatalogFocusId(focus) {
+    if (typeof focus !== "string") return "";
+    const m = focus.match(/^hyg:(\d+)$/);
+    return m ? "hyg:" + Number(m[1]) : "";
+}
+
+export function hygCatalogFocusValue(indexOrStar) {
+    if (typeof indexOrStar === "number") return "hyg:" + indexOrStar;
+    if (typeof indexOrStar === "string" && /^hyg:\d+$/.test(indexOrStar)) return indexOrStar;
+    const index = Number(indexOrStar?.hygIndex);
+    return Number.isFinite(index) && index >= 0 ? "hyg:" + index : "";
+}
+
+export function hygStarById(id) {
+    const m = String(id || "").match(/^hyg:(\d+)$/);
+    return m ? hygStarByIndex(Number(m[1])) : null;
+}
+
+export function hygStarByIndex(index) {
+    if (!META || !VALS || !Number.isInteger(index) || index < 0 || index >= META.count) return null;
+    const stride = META.stride || 10;
+    const base = index * stride;
+    if (base + stride > VALS.length) return null;
+    const xPc = VALS[base + FIELD.x], yPc = VALS[base + FIELD.y], zPc = VALS[base + FIELD.z];
+    const mass = VALS[base + FIELD.mass], radiusSolar = VALS[base + FIELD.radius];
+    const dPc = Math.hypot(xPc, yPc, zPc);
+    if (!(dPc > 0) || !(mass > 0) || !(radiusSolar > 0)) return null;
+    const row = LABELS.get(index);
+    const radiusKm = radiusSolar * R_SUN;
+    return {
+        id: "hyg:" + index,
+        name: displayName(row, index),
+        catalog: "hyg-v41-active",
+        activeCatalog: true,
+        hygIndex: index,
+        hip: row?.[2] || "",
+        hd: row?.[3] || "",
+        hr: row?.[4] || "",
+        spect: row?.[5] || "",
+        x: xPc * PC_KM,
+        y: yPc * PC_KM,
+        z: zPc * PC_KM,
+        dLy: dPc * PC_LY,
+        color: colorHexFromBV(VALS[base + FIELD.bv]),
+        mass,
+        mu: MU_S * mass,
+        R: radiusKm,
+        radiusSolar,
+        lumSolar: VALS[base + FIELD.lum],
+        tempK: VALS[base + FIELD.temp] || SOLAR_TEMP_K,
+        mag: VALS[base + FIELD.mag],
+        absMag: VALS[base + FIELD.absMag],
+        estimated: true,
+        flowC: .001 * Math.sqrt(2 * MU_S * mass / 1000),
+        flowSink: radiusKm * K,
+    };
+}
+
+export function sampleHygStarsNear(wx, wy, wz, radiusPc = 20, limit = 96) {
+    if (!META || !VALS || !INDEX_READY) return [];
+    const gx = wx / PC_KM, gy = wy / PC_KM, gz = wz / PC_KM;
+    const key = [
+        VERSION,
+        Math.floor(gx / CACHE_GRID_PC),
+        Math.floor(gy / CACHE_GRID_PC),
+        Math.floor(gz / CACHE_GRID_PC),
+        radiusPc,
+        limit,
+    ].join(":");
+    if (SAMPLE_CACHE.key === key) return SAMPLE_CACHE.stars;
+    const stride = META.stride || 10;
+    const r2 = radiusPc * radiusPc;
+    const found = [];
+    const ciLo = Math.floor((gx - radiusPc) / INDEX_CELL_PC), ciHi = Math.floor((gx + radiusPc) / INDEX_CELL_PC);
+    const cjLo = Math.floor((gy - radiusPc) / INDEX_CELL_PC), cjHi = Math.floor((gy + radiusPc) / INDEX_CELL_PC);
+    const ckLo = Math.floor((gz - radiusPc) / INDEX_CELL_PC), ckHi = Math.floor((gz + radiusPc) / INDEX_CELL_PC);
+    for (let ci = ciLo; ci <= ciHi; ci++)
+        for (let cj = cjLo; cj <= cjHi; cj++)
+            for (let ck = ckLo; ck <= ckHi; ck++) {
+                const bucket = INDEX.get(indexKey(ci, cj, ck));
+                if (!bucket) continue;
+                for (const i of bucket) {
+                    const base = i * stride;
+                    const dx = VALS[base + FIELD.x] - gx;
+                    const dy = VALS[base + FIELD.y] - gy;
+                    const dz = VALS[base + FIELD.z] - gz;
+                    const d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 <= r2) found.push({ index: i, d2 });
+                }
+            }
+    found.sort((a, b) => a.d2 - b.d2 || a.index - b.index);
+    if (found.length > limit) found.length = limit;
+    SAMPLE_CACHE.key = key;
+    SAMPLE_CACHE.stars = found.map(item => hygStarByIndex(item.index)).filter(Boolean);
+    return SAMPLE_CACHE.stars;
+}
+
+export async function ensureHygCatalogLoaded() {
+    if (META && VALS) return waitForHygCatalogIndex();
+    if (!loadPromise) {
+        loadPromise = (async () => {
+            const baseUrl = typeof location !== "undefined" ? location.href : undefined;
+            const metaUrl = baseUrl ? new URL(STAR_CATALOG_META.hygUrl, baseUrl) : STAR_CATALOG_META.hygUrl;
+            const res = await fetch(metaUrl);
+            if (!res.ok) throw new Error("HYG active catalog metadata HTTP " + res.status);
+            const meta = await res.json();
+            const binUrl = new URL(meta.binary, metaUrl);
+            const binRes = await fetch(binUrl);
+            if (!binRes.ok) throw new Error("HYG active catalog binary HTTP " + binRes.status);
+            registerHygCatalog(meta, new Float32Array(await binRes.arrayBuffer()), { deferIndex: typeof window !== "undefined" });
+            return waitForHygCatalogIndex();
+        })();
+    }
+    return loadPromise;
+}

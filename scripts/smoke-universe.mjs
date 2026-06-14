@@ -8,10 +8,17 @@
 //
 // Run: node scripts/smoke-universe.mjs   (or: bun scripts/smoke-universe.mjs)
 
-const { starsInCell, sampleStarsNear, densityAt, clearCache, CELL_PC, N_SUN_PC3 } =
+const {
+    starsInCell, sampleLocalStarsNear, localStarById, densityAt, clearCache, setSeed, getSeed,
+    CELL_PC, LOCAL_CELL_PC, N_SUN_PC3,
+} =
     await import("../src/universe/galaxy.js");
 const { galToEquatorialKm, SUN_GAL, R0_PC } = await import("../src/universe/coords.js");
 const { deriveStar } = await import("../src/universe/stellar.js");
+const {
+    ACTIVE_STAR_CONFIG, ACTIVE_STARS, activeStarForFocus, activeStarStats, proceduralFocusValue, refreshActiveStars,
+    restorePinnedProceduralStars, serializePinnedProceduralStars,
+} = await import("../src/universe/activeStars.js");
 
 let pass = 0, fail = 0;
 const ok = (cond, label, detail = "") => {
@@ -32,6 +39,18 @@ for (let i = 0; identical && i < a.length; i += Math.max(1, (a.length / 50) | 0)
 ok(identical, "cell (82,0,0) reproduces exactly across a cache clear", `n=${a.length}`);
 const far = starsInCell(82, 0, 0);
 ok(far === a || (far.length === a.length), "re-query returns the same set", `n=${far.length}`);
+{
+    const originalSeed = getSeed();
+    setSeed(originalSeed ^ 0x5a5a5a5a);
+    const seeded = starsInCell(82, 0, 0);
+    let changed = seeded.length !== far.length;
+    for (let i = 0; !changed && i < Math.min(seeded.length, far.length, 50); i++) {
+        if (seeded[i].id !== far[i].id || seeded[i].mass !== far[i].mass || seeded[i].x !== far[i].x) changed = true;
+    }
+    ok(changed, "coarse cell cache respects seed changes", `seed=${getSeed()}`);
+    setSeed(originalSeed);
+    clearCache();
+}
 
 // ── 2. Frame correctness: GC direction → Sgr A* ───────────────────────────
 hr("Frame: Galactic centre maps to Sgr A*");
@@ -97,6 +116,66 @@ hr("Eker 2018 derived properties");
     const b = deriveStar(10);
     ok((b.cls === "B" || b.cls === "O") && b.L > 1000, "10 M⊙ → hot luminous B star",
         `L=${b.L | 0} R=${b.R.toFixed(1)} T=${b.Teff | 0}K ${b.cls}`);
+}
+
+// ── 7. Local procedural streaming for the active universe layer ───────────
+hr("Local procedural streaming");
+{
+    const a = sampleLocalStarsNear(R0_PC, 0, 20, 8, 420);
+    const b = sampleLocalStarsNear(R0_PC, 0, 20, 8, 420);
+    let same = a.length === b.length;
+    for (let i = 0; same && i < Math.min(a.length, 40); i++) {
+        if (a[i].id !== b[i].id || a[i].mass !== b[i].mass || a[i].x !== b[i].x) same = false;
+    }
+    ok(same, "local streamed stars are deterministic", `n=${a.length}, cell=${LOCAL_CELL_PC}pc`);
+    ok(a.length > 60 && a.length <= 420, "local 8 pc sample is bounded and populated", `n=${a.length}`);
+    ok(a.every(s => s.mass > 0 && s.R > 0 && Number.isFinite(s.x + s.y + s.z)), "local stars carry physical fields");
+    const sample = a[0];
+    clearCache();
+    const restored = localStarById(sample.id);
+    ok(restored && restored.id === sample.id && restored.mass === sample.mass && restored.x === sample.x,
+        "local star ID reconstructs the same generated star", sample.id);
+}
+
+// ── 8. Active-star set: bounded real/procedural bridge ────────────────────
+hr("Active stellar attractor set");
+{
+    const stats = refreshActiveStars(0, 0, 0, "star:0");
+    const proc = ACTIVE_STARS.filter(s => s.procedural);
+    const known = ACTIVE_STARS.filter(s => !s.procedural);
+    ok(stats.total === ACTIVE_STARS.length && stats.total <= 640, "active set is bounded", `total=${stats.total}`);
+    ok(known.length > 0 && proc.length > 0, "active set mixes destination stars with procedural fill",
+        `known=${known.length} procedural=${proc.length}`);
+    ok(ACTIVE_STARS.every(s => s.mu > 0 && s.R > 0 && Number.isFinite(s.x + s.y + (s.z || 0))),
+        "active stars are valid gravity/contact sources");
+    const ids = proc.slice(0, 20).map(s => s.id).join("|");
+    refreshActiveStars(0, 0, 0, "star:0");
+    const ids2 = ACTIVE_STARS.filter(s => s.procedural).slice(0, 20).map(s => s.id).join("|");
+    ok(ids === ids2, "active procedural IDs reproduce after refresh");
+    const info = activeStarStats();
+    ok(info.seed === stats.seed && info.radiusPc === stats.radiusPc, "active stats expose seed and radius");
+    const focusStar = proc[0];
+    const focus = proceduralFocusValue(focusStar);
+    const farStats = refreshActiveStars(0, 0, 0, focus);
+    const resolved = activeStarForFocus(focus);
+    ok(resolved && resolved.id === focusStar.id, "proc focus resolves through the active-star layer", focusStar.id);
+    ok(ACTIVE_STARS.filter(st => st.id === focusStar.id).length === 1 && farStats.total <= 640,
+        "proc focus is force-included once inside the bounded set", `total=${farStats.total}`);
+    restorePinnedProceduralStars([focusStar.id]);
+    ok(serializePinnedProceduralStars().includes(focusStar.id), "pinned procedural stars serialize for quicksave");
+    const overflowIds = sampleLocalStarsNear(R0_PC, 0, 20, 16, ACTIVE_STAR_CONFIG.totalLimit + 120).map(s => s.id);
+    const restoredOverflow = restorePinnedProceduralStars(overflowIds);
+    const overflowFocus = proceduralFocusValue(overflowIds[0]);
+    const overflowStats = refreshActiveStars(0, 0, 0, overflowFocus);
+    ok(serializePinnedProceduralStars().length <= ACTIVE_STAR_CONFIG.pinnedProceduralLimit,
+        "restored procedural pins stay within the save budget", `pins=${serializePinnedProceduralStars().length}`);
+    ok(restoredOverflow.length <= ACTIVE_STAR_CONFIG.pinnedProceduralLimit,
+        "restore reports only retained procedural pins", `restored=${restoredOverflow.length}`);
+    ok(overflowStats.total === ACTIVE_STARS.length && overflowStats.total <= ACTIVE_STAR_CONFIG.totalLimit,
+        "restored procedural pins cannot exceed the active-star cap", `total=${overflowStats.total}`);
+    ok(activeStarForFocus(overflowFocus)?.id === overflowIds[0] &&
+        ACTIVE_STARS.filter(st => st.id === overflowIds[0]).length === 1,
+        "focused procedural star survives pin trimming once", overflowIds[0]);
 }
 
 console.log("\n" + "=".repeat(60));

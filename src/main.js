@@ -44,6 +44,10 @@ import { initScenarios } from "./scenarios.js";
 import { initHints, hintTick } from "./hints.js";
 import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
 import { initCatalogSearch } from "./catalogSearch.js";
+import {
+    ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId,
+    refreshActiveStars,
+} from "./universe/activeStars.js";
 
 // ============================ WIRING ============================
 function die(reason, swallowed) {
@@ -124,10 +128,11 @@ function bodyScenePos(target) {
     return target === BODY_EARTH ? earthG.position : target === BODY_MOON ? moon.position : target === BODY_SUN ? sunCore.position : target >= 0 ? plGroups[target].position : null;
 }
 function bodyName(target) {
+    const st = stellarTarget(target);
     return target === "earth" || target === BODY_EARTH ? "Earth" :
         target === "moon" || target === BODY_MOON ? "Moon" :
             target === "sun" || target === BODY_SUN ? "Sun" :
-                isStarTarget(target) ? STARS[targetStarIndex(target)].name :
+                st ? st.name :
                 typeof target === "number" && target >= 0 ? PL[target].name : "";
 }
 function bodyKey(target) {
@@ -194,16 +199,31 @@ function bhScenePos(i, out = _bhFocusPos) {
 function starScenePos(i, out = _starFocusPos) {
     return out.set(STARS[i].x * K, (STARS[i].z || 0) * K, -STARS[i].y * K);
 }
+function activeStarScenePos(star, out = _starFocusPos) {
+    return out.set(star.x * K, (star.z || 0) * K, -star.y * K);
+}
 function isBHTarget(target) { return blackHoleFocusIndex(target) >= 0; }
 function targetBHIndex(target) { return blackHoleFocusIndex(target); }
 function isStarTarget(target) { return starFocusIndex(target) >= 0; }
 function targetStarIndex(target) { return starFocusIndex(target); }
+function isDynamicStarTarget(target) { return !!(proceduralFocusId(target) || hygCatalogFocusId(target)); }
+function stellarTarget(target) {
+    const si = targetStarIndex(target);
+    if (si >= 0 && si < STARS.length) return STARS[si];
+    return activeStarForFocus(target);
+}
+function stellarScenePos(target, out = _starFocusPos) {
+    const si = targetStarIndex(target);
+    if (si >= 0 && si < STARS.length) return starScenePos(si, out);
+    const st = activeStarForFocus(target);
+    return st ? activeStarScenePos(st, out) : null;
+}
 function velocityForTarget(target, out) {
     if (isBHTarget(target)) {
         const bi = targetBHIndex(target);
         out.vx = eph.earthVx + BH.vx[bi];
         out.vy = eph.earthVy + BH.vy[bi];
-    } else if (isStarTarget(target)) {
+    } else if (stellarTarget(target)) {
         out.vx = 0;
         out.vy = 0;
     } else hoverVelocity(target, out);
@@ -211,7 +231,7 @@ function velocityForTarget(target, out) {
 }
 function focusTarget(target) {
     if (isBHTarget(target)) focusBlackHole(targetBHIndex(target));
-    else if (isStarTarget(target)) { setFocus(target); unlockBodyPrediction(); }
+    else if (stellarTarget(target)) { setFocus(target); unlockBodyPrediction(); }
     else focusAndLockBody(target, target === BODY_EARTH ? "earth" : target === BODY_MOON ? "moon" : target === BODY_SUN ? "sun" : target);
 }
 function addFocusCandidate(list, target, focus, pos, minDist) {
@@ -304,13 +324,20 @@ initCatalogSearch({
         computePrediction();
         toast((existing ? "HYG destination focused · " : "HYG destination promoted · ") + star.name + " · " + star.dLy.toFixed(2) + " ly");
     },
+    onFocusCatalog(index, star) {
+        addStarVisual(star);
+        setFocus(hygCatalogFocusValue(index));
+        unlockBodyPrediction();
+        computePrediction();
+        toast("HYG destination focused · " + star.name + " · " + star.dLy.toFixed(2) + " ly");
+    },
 });
 
 let pickDown = null;
 function targetPickRadius(target, pos) {
     const d = camera.position.distanceTo(pos);
     if (isBHTarget(target)) return Math.max(24, Math.min(64, BH.rs[targetBHIndex(target)] * K / Math.max(1e-9, d) * 1200 + 30));
-    if (isStarTarget(target)) return 22;
+    if (stellarTarget(target)) return 22;
     const r = target === BODY_EARTH ? R_EARTH * K : target === BODY_MOON ? R_MOON * K : target === BODY_SUN ? SUN_RADIUS : PL[target].R * K;
     return Math.max(target === BODY_SUN ? 52 : 24, Math.min(target === BODY_SUN ? 92 : 54, r / Math.max(1e-9, d) * 1500 + 18));
 }
@@ -325,6 +352,8 @@ function pickSceneTarget(clientX, clientY) {
     for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) cands.push([i, plGroups[i].position]);
     for (let i = 0; i < BH.n; i++) cands.push([bhFocusValue(i), bhScenePos(i, _bhLabelPos).clone()]);
     if (cam.dist > LY_SCENE * .001) for (let i = 0; i < STARS.length; i++) cands.push([starFocusValue(i), starScenePos(i, _starLabelPos).clone()]);
+    if (cam.dist > LY_SCENE * .001) for (const star of ACTIVE_STARS)
+        if (star.procedural || star.activeCatalog) cands.push([activeStarFocusValue(star), activeStarScenePos(star, _starLabelPos).clone()]);
     let best = BODY_NONE, bestD = Infinity;
     for (const [target, pos] of cands) {
         const pr = project(pos, w, h);
@@ -486,10 +515,10 @@ function updateHover(w, h) {
     let best = BODY_NONE, bestD = 18, bestPos = null;
     const ptr = labelPtr || lastPtr;
     if (labelHoverTarget !== BODY_NONE && (isBHTarget(labelHoverTarget) ? targetBHIndex(labelHoverTarget) < BH.n :
-        isStarTarget(labelHoverTarget) ? targetStarIndex(labelHoverTarget) < STARS.length : !isTargetDestroyed(labelHoverTarget))) {
+        stellarTarget(labelHoverTarget) ? true : !isTargetDestroyed(labelHoverTarget))) {
         best = labelHoverTarget;
         bestPos = isBHTarget(best) ? bhScenePos(targetBHIndex(best), _bhFocusPos) :
-            isStarTarget(best) ? starScenePos(targetStarIndex(best), _starFocusPos) : bodyScenePos(best);
+            stellarTarget(best) ? stellarScenePos(best, _starFocusPos) : bodyScenePos(best);
     } else if (lastPtr) {
         const cands = [];
         if (!WORLD.earthDestroyed) cands.push([BODY_EARTH, earthG.position]);
@@ -498,6 +527,8 @@ function updateHover(w, h) {
         for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) cands.push([i, plGroups[i].position]);
         for (let i = 0; i < BH.n; i++) cands.push([bhFocusValue(i), bhScenePos(i, _bhLabelPos).clone()]);
         if (cam.dist > LY_SCENE * .001) for (let i = 0; i < STARS.length; i++) cands.push([starFocusValue(i), starScenePos(i, _starLabelPos).clone()]);
+        if (cam.dist > LY_SCENE * .001) for (const star of ACTIVE_STARS)
+            if (star.procedural || star.activeCatalog) cands.push([activeStarFocusValue(star), activeStarScenePos(star, _starLabelPos).clone()]);
         for (const [idx, pos] of cands) {
             const pr = project(pos, w, h);
             if (!pr) continue;
@@ -516,17 +547,18 @@ function updateHover(w, h) {
         const bi = targetBHIndex(best);
         _hv.vx = eph.earthVx + BH.vx[bi];
         _hv.vy = eph.earthVy + BH.vy[bi];
-    } else if (isStarTarget(best)) {
+    } else if (stellarTarget(best)) {
         _hv.vx = 0;
         _hv.vy = 0;
     } else hoverVelocity(best, _hv);
     const v = Math.hypot(_hv.vx, _hv.vy);
+    const st = stellarTarget(best);
     const name = isBHTarget(best) ? "BH " + (targetBHIndex(best) + 1) :
-        isStarTarget(best) ? STARS[targetStarIndex(best)].name :
+        st ? st.name :
         best === BODY_EARTH ? "EARTH" : best === BODY_SUN ? "SUN" : best === BODY_MOON ? "MOON" : PL[best].name;
     let txt = name + " — " + v.toFixed(2) + " km/s";
     if (best >= 0) txt += " · helio " + Math.hypot(_hv.vx - (eph.earthVx + eph.sunVx), _hv.vy - (eph.earthVy + eph.sunVy)).toFixed(2) + " km/s";
-    if (isStarTarget(best)) txt += " · " + STARS[targetStarIndex(best)].dLy.toFixed(2) + " ly";
+    if (st) txt += " · " + st.dLy.toFixed(2) + " ly";
     if (isBHTarget(best)) txt += " · r_s " + fmtKm(BH.rs[targetBHIndex(best)]);
     if (lockedBodyTarget === best) txt += " · LOCKED";
     if (G.focus === best) txt += " · FOCUS";
@@ -555,6 +587,7 @@ function focusTargetValue() {
     if (bi >= 0 && bi < BH.n) return G.focus;
     const si = starFocusIndex(G.focus);
     if (si >= 0 && si < STARS.length) return G.focus;
+    if (activeStarForFocus(G.focus)) return G.focus;
     if (G.focus === "earth") return BODY_EARTH;
     if (G.focus === "moon") return BODY_MOON;
     if (G.focus === "sun") return BODY_SUN;
@@ -563,7 +596,7 @@ function focusTargetValue() {
 }
 function updateFocusVelocityVector(alpha = 1) {
     const target = focusTargetValue();
-    if (target === BODY_NONE || isStarTarget(target)) {
+    if (target === BODY_NONE || stellarTarget(target)) {
         focusVelLine.visible = false; focusVelCone.visible = false;
         return;
     }
@@ -617,13 +650,9 @@ function expansionSpeedLabel(kmps) {
     return mps >= .001 ? mps.toFixed(3) + " m/s" : mps.toExponential(2) + " m/s";
 }
 function nearestStarInfo() {
-    let best = -1, bestD = Infinity;
     const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
-    for (let i = 0; i < STARS.length; i++) {
-        const d = Math.hypot(wx - STARS[i].x, wy - STARS[i].y, wz - (STARS[i].z || 0));
-        if (d < bestD) { bestD = d; best = i; }
-    }
-    return { i: best, d: bestD };
+    const nearest = nearestActiveStar(wx, wy, wz);
+    return { star: nearest.star, d: nearest.d };
 }
 function updateCabinHUD(cosmicView, oi) {
     const cabinActive = G.cabin && !G.dead && !cosmicView;
@@ -779,6 +808,9 @@ function frame() {
     if (focusBH >= BH.n) setFocus("ship");
     const focusStar = starFocusIndex(G.focus);
     if (focusStar >= STARS.length) setFocus("ship");
+    if (proceduralFocusId(G.focus) && !activeStarForFocus(G.focus)) setFocus("ship");
+    if (hygCatalogFocusId(G.focus) && hygCatalogStats().loaded && !activeStarForFocus(G.focus)) setFocus("ship");
+    refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus);
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
     const cosmicView = cam.dist > LY_SCENE * .2;
@@ -788,11 +820,13 @@ function frame() {
     // "free" focus: the target stays wherever panning put it
     const activeBHFocus = focusBH >= 0 && focusBH < BH.n;
     const activeStarFocus = focusStar >= 0 && focusStar < STARS.length;
+    const activeDynamicFocus = activeStarForFocus(G.focus);
     {
         const cp = Math.cos(G.pitch || 0);
         dirV.set(cp * Math.cos(G.heading), Math.sin(G.pitch || 0), -cp * Math.sin(G.heading));
     }
     const tgt = activeBHFocus ? bhScenePos(focusBH) : activeStarFocus ? starScenePos(focusStar) :
+        activeDynamicFocus ? activeStarScenePos(activeDynamicFocus) :
         G.focus === "free" ? cam.tgt : typeof G.focus === "number" ? plGroups[G.focus].position :
         G.focus === "moon" ? moon.position : G.focus === "earth" ? earthG.position : G.focus === "sun" ? sunCore.position : shipG.position;
     if (G.focus !== "free") {
@@ -808,6 +842,7 @@ function frame() {
     } else camPrevFocus = null;
     const minD = activeBHFocus ? Math.max(.05, BH.rs[focusBH] * K * 1.3) :
         activeStarFocus ? STARS[focusStar].R * K * 1.8 :
+        activeDynamicFocus ? activeDynamicFocus.R * K * 1.8 :
         G.focus === "free" ? .03 : typeof G.focus === "number" ? PL[G.focus].R * K * 1.3 :
         G.focus === "earth" ? R_EARTH * K * 1.3 : G.focus === "moon" ? R_MOON * K * 1.3 : G.focus === "sun" ? SUN_RADIUS * 1.25 : .05;
     cam.dist = Math.max(minD, cam.dist);
@@ -834,7 +869,10 @@ function frame() {
     if (!WORLD.moonDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(moon.position) - R_MOON * K);
     if (!WORLD.sunDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(sunCore.position) - SUN_RADIUS);
     for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) clearU = Math.min(clearU, camera.position.distanceTo(plGroups[i].position) - PL[i].R * K);
-    for (let i = 0; i < STARS.length; i++) clearU = Math.min(clearU, camera.position.distanceTo(starScenePos(i)) - (STARS[i].bh ? STARS[i].rs : STARS[i].R) * K);
+    for (const star of ACTIVE_STARS) {
+        _starLabelPos.set(star.x * K, (star.z || 0) * K, -star.y * K);
+        clearU = Math.min(clearU, camera.position.distanceTo(_starLabelPos) - (star.bh ? star.rs : star.R) * K);
+    }
     for (let i = 0; i < BH.n; i++) clearU = Math.min(clearU, camera.position.distanceTo(bhScenePos(i)) - BH.rs[i] * K);
     const nearWant = Math.min(.02, Math.max(2e-6, clearU * .5));
     if (Math.abs(nearWant - camera.near) > camera.near * .1) {

@@ -1,6 +1,7 @@
-import { C_LIGHT, MU_E, MU_M, MU_S, PL, R_EARTH, R_MOON, R_SUN, STARS } from "./constants.js";
+import { C_LIGHT, MU_E, MU_M, MU_S, PL, R_EARTH, R_MOON, R_SUN } from "./constants.js";
 import { BH, G, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
+import { ACTIVE_STARS } from "./universe/activeStars.js";
 
 const C2 = C_LIGHT * C_LIGHT;
 
@@ -25,7 +26,7 @@ export function clockRateAtShip() {
     const wx = eph.earthX + G.x;
     const wy = eph.earthY + G.y;
     const wz = G.z;
-    for (const star of STARS) {
+    for (const star of ACTIVE_STARS) {
         const floorR = star.bh ? Math.max(star.rs * 1.002, star.R) : star.R;
         curv = addCurvature(curv, star.mu, Math.hypot(wx - star.x, wy - star.y, wz - (star.z || 0)), floorR);
     }

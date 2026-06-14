@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, R_SUN, PL, K, SOI_M, STARS } from "./constants.js";
+import { R_EARTH, R_MOON, R_SUN, PL, K, SOI_M } from "./constants.js";
 import {
     eph, moonState,
     snapshotEphem, loadEphemSnapshot, advanceEphemSnapshot,
@@ -12,6 +12,7 @@ import { rk4Step, stepSize } from "./physics.js";
 import { dotTexture, ringTexture } from "./textures.js";
 import { scene } from "./scene.js";
 import { segmentSphereHit } from "./geometry.js";
+import { ACTIVE_STARS } from "./universe/activeStars.js";
 
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 
@@ -199,8 +200,8 @@ export function computePrediction() {
             }
             if (impact) break;
             const wx = predEphem.earthX + _ps[0], wy = predEphem.earthY + _ps[1], wz = _ps[2];
-            for (let si = 0; si < STARS.length; si++) {
-                const st = STARS[si];
+            for (let si = 0; si < ACTIVE_STARS.length; si++) {
+                const st = ACTIVE_STARS[si];
                 const dx = wx - st.x, dy = wy - st.y, dz = wz - (st.z || 0);
                 if (dx * dx + dy * dy + dz * dz <= st.R * st.R) { impact = 6; break; }
             }

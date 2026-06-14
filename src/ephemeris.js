@@ -1,8 +1,9 @@
 import {
-    AU_KM, SUN_TH0, E_EARTH, VARPI_EARTH, PL, STARS, A_MOON, E_MOON, OMEGA, MOON_ANG0,
+    AU_KM, SUN_TH0, E_EARTH, VARPI_EARTH, PL, A_MOON, E_MOON, OMEGA, MOON_ANG0,
     MU_E, MU_M, MU_S, C_LIGHT, BH_MAX, darkEnergyAccel,
 } from "./constants.js";
 import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
+import { ACTIVE_STARS } from "./universe/activeStars.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -215,7 +216,7 @@ export function indirectAccel(st, out, tau = 0) {
             ay -= by * am0;
         }
     }
-    for (const star of STARS) {
+    for (const star of ACTIVE_STARS) {
         const bx = star.x - (st ? st.earthX : earthX), by = star.y - (st ? st.earthY : earthY), bz = star.z || 0;
         const r0 = Math.sqrt(bx * bx + by * by + bz * bz);
         if (r0 > 1e-9) {
@@ -313,7 +314,7 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
             }
         }
     }
-    for (const star of STARS) {
+    for (const star of ACTIVE_STARS) {
         const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
         const bx = star.x - ex, by = star.y - ey, bz = star.z || 0;
         const dx = x - bx, dy = y - by, dz = z - bz;

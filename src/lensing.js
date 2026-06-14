@@ -1,8 +1,9 @@
 import * as THREE from "three";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
-import { K, STARS } from "./constants.js";
+import { K } from "./constants.js";
 import { BH } from "./state.js";
 import { eph } from "./ephemeris.js";
+import { ACTIVE_STARS } from "./universe/activeStars.js";
 
 // Gravitational lensing as a screen-space post pass, applied to the world
 // render before bloom (so the warped accretion light still glows). Each
@@ -88,7 +89,7 @@ export function updateLensing(camera, aspect) {
     for (let i = 0; i < BH.n; i++) {
         consider(_cand, (eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera, f);
     }
-    for (const s of STARS) {
+    for (const s of ACTIVE_STARS) {
         if (s.bh) consider(_cand, s.x * K, (s.z || 0) * K, -s.y * K, s.rs * K, camera, f);
     }
     _cand.sort((a, b) => b.t2 - a.t2);

@@ -14,8 +14,9 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 - **One clock at every scale**: past the integrator budget the system rides exact osculating Kepler orbits (barycenter coasting), so planets stay on their tracks and T+ runs at the commanded warp from real time to Myr/s — the MET reads years/kyr/Myr/Gyr at deep time.
 - **Visible gravitational lensing**: a screen-space point-mass lens around every black hole and SGR A* — Einstein ring, flipped background, magnified shadow — applied before bloom so the warped disk light glows.
 - **Stellar destinations with physics**: curated nearby/famous stars, a capped HYG physical subset, plus SGR A* (4.15M solar masses, accretion disk, polar jets) as real-distance 3D RA/declination destinations with live gravity and contact surfaces — fly there and die in a photosphere or photon sphere of your choosing.
-- **Real catalog sky layer**: the Solar System sky and cosmic view asynchronously load a compact HYG v4.1 point cloud of 119,625 Hipparcos/Yale/Gliese stars. The close sky uses apparent magnitude, B-V color, bright-star labels, and readable constellation/asterism guide linework; the binary catalog also carries absolute magnitude, luminosity, temperature, estimated mass, and estimated radius, with a runtime subset plus on-demand HYG search promoted into the fast gravity/navigation loops.
-- **Durable catalog travel**: quicksave stores promoted HYG destinations with their physical fields and restores them before focus/trajectory prediction, so catalog travel targets survive a browser refresh.
+- **Real catalog sky layer**: the Solar System sky and cosmic view asynchronously load a compact HYG v4.1 point cloud of 119,625 Hipparcos/Yale/Gliese stars. The close sky uses apparent magnitude, B-V color, bright-star labels, and readable constellation/asterism guide linework; the binary catalog also carries absolute magnitude, luminosity, temperature, estimated mass, and estimated radius, with direct HYG search targets wired into the fast gravity/navigation loops.
+- **Streaming full-scale stellar field**: a bounded active-neighborhood layer keeps curated stars and indexed HYG v4.1 rows in priority, then fills the ship's local 8 pc sphere with deterministic seed-generated Milky Way stars. The active set feeds gravity, contact, clock-rate, river, prediction, and lensing paths while staying capped for browser frame budgets.
+- **Durable catalog travel**: HYG search focuses stable `hyg:<index>` targets directly, quicksave preserves those focus tokens, and older promoted HYG destinations still restore with their physical fields after a refresh.
 - **Mouse inertial control**: grab the ship marker, pull it through space, and release; the release velocity becomes the ship's new momentum.
 - **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, black holes, and boosted dark-energy expansion.
 - **Dynamic black holes** with configurable Schwarzschild radius, Paczynski-Wiita capture behavior, mergers, Hawking readouts, accretion visuals, and dark event-horizon cores.
@@ -39,6 +40,10 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 ### Black Hole And Hawking Readout
 
 ![Black hole and Hawking readout](docs/screenshots/04-black-hole-hawking.png)
+
+### HYG Catalog Search
+
+![HYG catalog search focused on Canopus](docs/screenshots/05-hyg-catalog-search.png)
 
 ## Run Locally
 
@@ -84,7 +89,7 @@ The static build is written to `dist/`.
 | `Shift+F` | Cycle planets |
 | `C` | Cycle Solar System, Milky Way, and Local Group scale |
 | `U` | Cycle nearby physical stellar destinations |
-| `Shift+U` | Search HYG catalog and promote a physical star destination |
+| `Shift+U` | Search HYG catalog and focus a physical star destination |
 | `J` | Toggle in-ship cabin view |
 | `0` or body label click | Focus a body and lock its trajectory prediction |
 | Mouse drag on ship | Grab and throw the ship; release preserves the drag velocity |
@@ -157,6 +162,6 @@ Planet, Moon, Sun, Saturn ring, and Milky Way texture maps in `public/textures/`
 
 The generated star catalog files `public/data/hyg-stars-v41.json`, `public/data/hyg-stars-v41.bin`, and `src/generated/hygPhysicalStars.js` are derived from the Astronexus HYG v4.1 database, which combines Hipparcos, Yale Bright Star, and Gliese catalog data and is licensed under CC BY-SA 4.0. Regenerate them with `bun run catalog:hyg`; verify the local schema with `bun run smoke:catalog`.
 
-Current scientific boundary: planets, Moon, Sun, player-placed black holes, landing, and body prediction remain in the simulator's established coplanar Solar-system model; named and HYG-promoted stellar destinations plus ship travel support full 3D position and velocity. Close-sky guide lines are simplified constellation and asterism figures; IAU boundary polygons and complete atlas coverage are outside this slice.
+Current scientific boundary: planets, Moon, Sun, player-placed black holes, landing, and body prediction remain in the simulator's established coplanar Solar-system model; named stars, HYG-promoted rows, indexed active HYG rows, and active procedural stellar destinations plus ship travel support full 3D position and velocity. HYG active physics uses catalog positions and magnitudes with estimated luminosity, temperature, mass, and radius. The bundled browser catalog uses HYG v4.1; Gaia-scale imports require a streaming adapter because Gaia DR3/FPR source counts are far beyond a static in-browser destination list. Close-sky guide lines are simplified constellation and asterism figures; IAU boundary polygons and complete atlas coverage are outside this slice.
 
 Code is licensed under MIT. Texture assets keep their original attribution requirements.

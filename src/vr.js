@@ -10,6 +10,7 @@ import { setFocus } from "./input.js";
 import { toast } from "./achievements.js";
 import { initAudio } from "./audio.js";
 import { addBlackHole } from "./blackholes.js";
+import { ACTIVE_STARS, activeStarFocusValue, activeStarForFocus } from "./universe/activeStars.js";
 import { eph } from "./ephemeris.js";
 import { earthG, moon, sunCore, plGroups, sky, galaxyBackdrop } from "./bodies.js";
 import { shipG } from "./ship.js";
@@ -124,6 +125,8 @@ function focusName() {
     if (typeof f === "string") {
         if (f.startsWith("bh:")) return "BH " + (+f.slice(3) + 1);
         if (f.startsWith("star:")) return STARS[+f.slice(5)]?.name ?? "";
+        const proc = activeStarForFocus(f);
+        if (proc) return proc.name;
         return f.toUpperCase();
     }
     return "";
@@ -283,6 +286,8 @@ function tourList() {
         l.push({ name: PL[i].name, focus: i, pos: plGroups[i].position, R: PL[i].R * K });
     for (let i = 0; i < STARS.length; i++)
         l.push({ name: STARS[i].name, focus: "star:" + i, pos: new THREE.Vector3(STARS[i].x * K, (STARS[i].z || 0) * K, -STARS[i].y * K), R: STARS[i].R * K });
+    for (const star of ACTIVE_STARS.filter(st => st.procedural || st.activeCatalog).slice(0, 24))
+        l.push({ name: star.name, focus: activeStarFocusValue(star), pos: new THREE.Vector3(star.x * K, (star.z || 0) * K, -star.y * K), R: star.R * K });
     return l;
 }
 function godAnchor(e) {

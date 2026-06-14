@@ -12,13 +12,16 @@ import { look } from "./cockpit.js";
 import { apTravelToFocus, apCircularize, apOff } from "./autopilot.js";
 import { toggleScenarioMenu } from "./scenarios.js";
 import { openCatalogSearch } from "./catalogSearch.js";
+import { ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, proceduralFocusId } from "./universe/activeStars.js";
 
 export function setFocus(f) {
     G.focus = f;
     const bi = blackHoleFocusIndex(f);
     const si = starFocusIndex(f);
+    const ps = activeStarForFocus(f);
     cam.dist = bi >= 0 && bi < BH.n ? Math.max(80, BH.rs[bi] * K * 12) :
         si >= 0 && si < STARS.length ? Math.max(STARS[si].R * K * (STARS[si].bh ? 30 : 12), 1) :
+        ps ? Math.max(ps.R * K * 12, 1) :
         typeof f === "number" ? Math.max(PL[f].R * K * 7, 2) :
         f === "earth" ? 34 : f === "moon" ? 10 : f === "sun" ? 2600 : 2.6;
 }
@@ -40,10 +43,16 @@ function focusNextBlackHole() {
     toast("Black-hole focus " + (next + 1) + "/" + BH.n);
 }
 function focusNextStar() {
-    const cur = starFocusIndex(G.focus);
-    const next = (cur + 1) % STARS.length;
-    setFocus("star:" + next);
-    toast("Destination " + STARS[next].name + " · " + STARS[next].dLy.toFixed(2) + " ly");
+    const active = ACTIVE_STARS.filter(st => st.procedural || st.activeCatalog);
+    const targets = STARS.map((star, i) => ({ focus: "star:" + i, star }))
+        .concat(active.map(star => ({ focus: activeStarFocusValue(star), star })).filter(t => t.focus));
+    if (!targets.length) return;
+    const curFocus = G.focus;
+    const cur = targets.findIndex(t => t.focus === curFocus ||
+        (proceduralFocusId(curFocus) && t.star.id === proceduralFocusId(curFocus)));
+    const next = targets[(cur + 1 + targets.length) % targets.length];
+    setFocus(next.focus);
+    toast("Destination " + next.star.name + " · " + next.star.dLy.toFixed(2) + " ly");
 }
 
 let H = { restart: () => { } };

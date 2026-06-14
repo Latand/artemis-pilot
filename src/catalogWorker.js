@@ -87,7 +87,17 @@ self.onmessage = async e => {
             if (temp > 0) stats.tempEstimated++;
             out++;
         }
-        self.postMessage({ ok: true, count: kept, sourceCount: count, stats, schema: data.schema || 1, pos: pos.buffer, col: col.buffer }, [pos.buffer, col.buffer]);
+        self.postMessage({
+            ok: true,
+            count: kept,
+            sourceCount: count,
+            stats,
+            schema: data.schema || 1,
+            meta: data,
+            vals: vals.buffer,
+            pos: pos.buffer,
+            col: col.buffer,
+        }, [pos.buffer, col.buffer, vals.buffer]);
     } catch (err) {
         self.postMessage({ ok: false, error: err?.message || String(err) });
     }

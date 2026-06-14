@@ -8,6 +8,20 @@ import {
   starFromCatalogRecord,
 } from "../src/catalogSearch.js";
 import { STARS } from "../src/constants.js";
+import {
+  ACTIVE_STAR_CONFIG,
+  ACTIVE_STARS,
+  activeStarForFocus,
+  activeStarStats,
+  hygCatalogFocusValue,
+  refreshActiveStars,
+} from "../src/universe/activeStars.js";
+import {
+  hygCatalogStats,
+  hygStarById,
+  registerHygCatalog,
+  sampleHygStarsNear,
+} from "../src/universe/hygActiveCatalog.js";
 
 function assert(ok, message) {
   if (!ok) throw new Error(message);
@@ -18,10 +32,14 @@ const binPath = new URL("../public/data/hyg-stars-v41.bin", import.meta.url);
 const bodiesSrc = readFileSync(new URL("../src/bodies.js", import.meta.url), "utf8");
 const cosmicSrc = readFileSync(new URL("../src/cosmic.js", import.meta.url), "utf8");
 const catalogSearchSrc = readFileSync(new URL("../src/catalogSearch.js", import.meta.url), "utf8");
+const catalogWorkerSrc = readFileSync(new URL("../src/catalogWorker.js", import.meta.url), "utf8");
+const activeStarsSrc = readFileSync(new URL("../src/universe/activeStars.js", import.meta.url), "utf8");
+const hygActiveCatalogSrc = readFileSync(new URL("../src/universe/hygActiveCatalog.js", import.meta.url), "utf8");
 const mainSrc = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 const riverSrc = readFileSync(new URL("../src/river.js", import.meta.url), "utf8");
 const realSkySrc = readFileSync(new URL("../src/realSky.js", import.meta.url), "utf8");
 const savesSrc = readFileSync(new URL("../src/saves.js", import.meta.url), "utf8");
+const starsSrc = readFileSync(new URL("../src/stars.js", import.meta.url), "utf8");
 const bin = readFileSync(binPath);
 const vals = new Float32Array(bin.buffer, bin.byteOffset, bin.byteLength / 4);
 
@@ -44,6 +62,42 @@ for (let i = 0, j = 0; i < meta.count; i += 97, j = i * meta.stride) {
   if (vals[j + iMass] > 0 && vals[j + iRadius] > 0) sampledMasses++;
 }
 assert(sampledMasses > 1000, "HYG binary physical fields should be populated across the file");
+assert(registerHygCatalog(meta, vals), "HYG active catalog should register the local binary");
+const activeCatalogStats = hygCatalogStats();
+assert(activeCatalogStats.loaded && activeCatalogStats.count === meta.count && activeCatalogStats.indexReady,
+  "HYG active catalog should expose loaded ready-index stats");
+assert(activeCatalogStats.indexedCells > 1000, "HYG active catalog should build a spatial index");
+const nearbyHyg = sampleHygStarsNear(0, 0, 0, 20, 64);
+assert(nearbyHyg.length > 20 && nearbyHyg.length <= 64, "HYG active sampler should return a bounded nearby real-star set");
+assert(registerHygCatalog(meta, vals, { deferIndex: true }), "re-registering the same HYG catalog should be accepted");
+assert(hygCatalogStats().indexReady && sampleHygStarsNear(0, 0, 0, 20, 64).length === nearbyHyg.length,
+  "re-registering the same HYG catalog should keep the ready spatial index live");
+assert(nearbyHyg.every(star => star.activeCatalog && star.mu > 0 && star.R > 0 && star.id === "hyg:" + star.hygIndex),
+  "HYG active sampler should emit runtime-ready physical stars");
+const maskKm = 0.35 * 3.261563777 * 9460730472580.8;
+const uniqueHyg = nearbyHyg.find(star => !STARS.some(known => {
+  const dx = star.x - known.x, dy = star.y - known.y, dz = (star.z || 0) - (known.z || 0);
+  return dx * dx + dy * dy + dz * dz <= maskKm * maskKm;
+}));
+assert(uniqueHyg, "HYG active sampler should include at least one non-duplicate nearby catalog row");
+const hygFocus = hygCatalogFocusValue(uniqueHyg);
+assert(hygStarById(hygFocus)?.hygIndex === uniqueHyg.hygIndex, "HYG active focus ID should restore the same catalog row");
+const activeWithHyg = refreshActiveStars(0, 0, 0, hygFocus);
+assert(activeWithHyg.catalog > 0, "active set should include bounded HYG catalog stars after registration");
+assert(activeWithHyg.total === ACTIVE_STARS.length && activeWithHyg.total <= ACTIVE_STAR_CONFIG.totalLimit,
+  "HYG active stars should respect the global active-star cap");
+assert(activeStarForFocus(hygFocus)?.id === hygFocus, "hyg focus should resolve through the active-star layer");
+const proximaHyg = searchCatalogLabels(meta, "proxima centauri", 1)[0];
+assert(proximaHyg, "HYG labels should expose Proxima for duplicate-focus checks");
+const proximaFocus = hygCatalogFocusValue(proximaHyg.index);
+refreshActiveStars(0, 0, 0, proximaFocus);
+const proximaResolved = activeStarForFocus(proximaFocus);
+assert(proximaResolved?.name === "PROXIMA" && !proximaResolved.activeCatalog,
+  "duplicate HYG focus should resolve to the curated physical destination");
+assert(!ACTIVE_STARS.some(star => star.id === proximaFocus),
+  "forced duplicate HYG focus should not add a second active gravity source");
+assert(ACTIVE_STARS.filter(star => star.name === "PROXIMA").length === 1,
+  "forced duplicate HYG focus should not duplicate the curated active star");
 
 assert(HYG_PHYSICAL_STARS.length === 36, "runtime HYG physical subset should stay capped");
 const names = new Set();
@@ -66,8 +120,15 @@ assert(
 assert(
   riverSrc.includes("const RIVER_STAR_SOURCE_MAX = 48") &&
     riverSrc.includes("const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX") &&
-    riverSrc.includes("riverStarPick.sort"),
+    riverSrc.includes("insertRiverStarPick") &&
+    riverSrc.includes("ACTIVE_STARS"),
   "river source cap should cover planets, max black holes, and a bounded stellar subset",
+);
+assert(
+  starsSrc.includes("function disposeStarVisual") &&
+    starsSrc.includes("disposeStarVisual(e)") &&
+    starsSrc.includes("texture.dispose()"),
+  "dynamic active-star visuals should release GPU resources when removed",
 );
 assert(
   realSkySrc.includes("const MAG_LIMIT = 6.5") &&
@@ -114,12 +175,19 @@ for (const [query, expected] of [
   assert(existing >= 0 && STARS[existing].name === expected, "HYG alias " + star.name + " should reuse " + expected);
 }
 assert(
-  catalogSearchSrc.includes("addRuntimeStar(star)") &&
+  catalogSearchSrc.includes("export async function focusCatalogQuery") &&
+    catalogSearchSrc.includes("hooks.onFocusCatalog") &&
+    catalogSearchSrc.includes("hygCatalogFocusValue(index)") &&
+    catalogSearchSrc.includes("btn.onclick = () => focusCatalogIndex(match.index)") &&
+    catalogSearchSrc.includes("focusCatalogQuery(urlQuery)") &&
+    mainSrc.includes("onFocusCatalog(index, star)") &&
+    mainSrc.includes("setFocus(hygCatalogFocusValue(index))") &&
+    catalogSearchSrc.includes("addRuntimeStar(star)") &&
     catalogSearchSrc.includes("CATALOG_PROMOTION_MAX") &&
     mainSrc.includes("initCatalogSearch") &&
     mainSrc.includes("ensureStarLabel") &&
     mainSrc.includes("addStarVisual(star)"),
-  "HYG catalog search should promote stars into runtime visuals, labels, and physics state",
+  "HYG catalog search should direct-focus active catalog rows while preserving promoted-star restore support",
 );
 const canopusMatch = searchCatalogLabels(meta, "canopus", 1)[0];
 const canopus = starFromCatalogRecord(meta, vals, canopusMatch.index, canopusMatch.row);
@@ -137,8 +205,34 @@ assert(
     savesSrc.includes("hygStars: serializePromotedCatalogStars()") &&
     savesSrc.includes("restorePromotedCatalogStars(data.hygStars)") &&
     savesSrc.includes("focusCatalog") &&
+    savesSrc.includes("focusHygCatalog") &&
+    savesSrc.includes("hygCatalogFocusValue(data.focusHygCatalog.id)") &&
     mainSrc.includes('reason === "restore"'),
-  "quicksave should persist promoted HYG destinations and restore visuals without changing saved focus flow",
+  "quicksave should persist direct and promoted HYG destinations without changing saved focus flow",
+);
+assert(
+    savesSrc.includes("focusProcedural") &&
+    savesSrc.includes("procStars") &&
+    savesSrc.includes("restorePinnedProceduralStars(data.procStars)") &&
+    savesSrc.includes("proceduralFocusValue(data.focusProcedural.id)") &&
+    mainSrc.includes("activeStarFocusValue(star)") &&
+    mainSrc.includes("activeStarForFocus(G.focus)"),
+  "quicksave and main focus should preserve procedural star destinations",
+);
+assert(
+  hygActiveCatalogSrc.includes("INDEX_CELL_PC") &&
+    hygActiveCatalogSrc.includes("rebuildSpatialIndex") &&
+    activeStarsSrc.includes("sampleHygStarsNear") &&
+    activeStarsSrc.includes("catalogLimit") &&
+    activeStarsSrc.includes("hygCatalogFocusId(focus)") &&
+    catalogWorkerSrc.includes("vals: vals.buffer") &&
+    cosmicSrc.includes("{ deferIndex: true }") &&
+    cosmicSrc.includes("registerHygCatalog(msg.meta") &&
+    catalogSearchSrc.includes("registerHygCatalog(meta, vals, { deferIndex: true })") &&
+    hygActiveCatalogSrc.includes("waitForHygCatalogIndex") &&
+    hygActiveCatalogSrc.includes("deferIndex: typeof window") &&
+    mainSrc.includes("hygCatalogStats().loaded"),
+  "HYG active catalog should use indexed bounded sampling and preserve pending focus during async load",
 );
 
 console.log("catalog smoke passed");

@@ -1,9 +1,10 @@
 import * as THREE from "three";
-import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, STARS, SUN_RADIUS } from "./constants.js";
+import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, SUN_RADIUS } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { dotTexture } from "./textures.js";
 import { scene, renderer, camera, cam } from "./scene.js";
+import { ACTIVE_STARS } from "./universe/activeStars.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
 // Positions live in a float texture advected by a compute pass; the analytic
@@ -327,7 +328,31 @@ let lastR = 0, lastCx = 0, lastCz = 0;
 const smoothCenter = new THREE.Vector3();
 let smoothR = 0;
 const bhRiverPos = new THREE.Vector3();
-const riverStarPick = [];
+const riverStarPickIndex = new Int32Array(RIVER_STAR_SOURCE_MAX);
+const riverStarPickScore = new Float64Array(RIVER_STAR_SOURCE_MAX);
+const typSamples = new Float64Array(MAXB);
+function insertRiverStarPick(index, score, count) {
+    if (count >= RIVER_STAR_SOURCE_MAX && score <= riverStarPickScore[count - 1]) return count;
+    const nextCount = count < RIVER_STAR_SOURCE_MAX ? count + 1 : count;
+    let p = Math.min(count, RIVER_STAR_SOURCE_MAX - 1);
+    while (p > 0 && score > riverStarPickScore[p - 1]) {
+        riverStarPickScore[p] = riverStarPickScore[p - 1];
+        riverStarPickIndex[p] = riverStarPickIndex[p - 1];
+        p--;
+    }
+    riverStarPickScore[p] = score;
+    riverStarPickIndex[p] = index;
+    return nextCount;
+}
+function insertTypSample(typ, count) {
+    let p = count;
+    while (p > 0 && typSamples[p - 1] > typ) {
+        typSamples[p] = typSamples[p - 1];
+        p--;
+    }
+    typSamples[p] = typ;
+    return count + 1;
+}
 // bodies: 0 earth, 1 moon, 2 sun, 3..9 planets, then player holes and stars
 export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0) {
     river.dtVis = dtSim;
@@ -447,18 +472,17 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         holeVals[nb] = 1;
         colorVals[nb].set(0.5, 0.72, 1.0);
     }
-    riverStarPick.length = 0;
-    for (let i = 0; i < STARS.length; i++) {
-        const s = STARS[i];
+    let riverStarPickCount = 0;
+    for (let i = 0; i < ACTIVE_STARS.length; i++) {
+        const s = ACTIVE_STARS[i];
         const sx = s.x * K, sy = (s.z || 0) * K, sz = -s.y * K;
         const source = .001 * Math.sqrt(2 * s.mu / 1000);
         const sink = (s.bh ? s.rs : s.R) * K;
         const d = Math.max(sink, Math.hypot(smoothCenter.x - sx, smoothCenter.y - sy, smoothCenter.z - sz));
-        riverStarPick.push({ i, score: source / Math.sqrt(d) * (s.bh ? 4 : 1) });
+        riverStarPickCount = insertRiverStarPick(i, source / Math.sqrt(d) * (s.bh ? 4 : 1), riverStarPickCount);
     }
-    riverStarPick.sort((a, b) => b.score - a.score);
-    for (let p = 0; p < riverStarPick.length && p < RIVER_STAR_SOURCE_MAX && nb < MAXB; p++, nb++) {
-        const s = STARS[riverStarPick[p].i];
+    for (let p = 0; p < riverStarPickCount && nb < MAXB; p++, nb++) {
+        const s = ACTIVE_STARS[riverStarPickIndex[p]];
         bodyVals[nb].set(s.x * K, (s.z || 0) * K, -s.y * K, .001 * Math.sqrt(2 * s.mu / 1000));
         sinkVals[nb] = (s.bh ? s.rs : s.R) * K;
         rsVals[nb] = (s.bh ? s.rs : 2 * s.mu / C2) * K;
@@ -470,15 +494,14 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // color/length normalization follows the same absolute field as the
     // shader, using a local representative radius for each source.
     let best = 0, bestS = -1, bestTyp = .01;
-    const typSamples = [];
+    let typSampleCount = 0;
     for (let i = 0; i < nb; i++) {
         const dC = Math.max(sinkVals[i], Math.hypot(smoothCenter.x - bodyVals[i].x, smoothCenter.y - bodyVals[i].y, smoothCenter.z - bodyVals[i].z));
         const typ = bodyVals[i].w / Math.sqrt(Math.max(sinkVals[i], Math.max(dC - smoothR, sinkVals[i])));
-        typSamples.push(typ);
+        typSampleCount = insertTypSample(typ, typSampleCount);
         if (typ > bestS) { bestS = typ; best = i; bestTyp = typ; }
     }
-    typSamples.sort((a, b) => a - b);
-    const robustTyp = typSamples[Math.max(0, Math.floor(typSamples.length * .72))] || bestTyp;
+    const robustTyp = typSamples[Math.max(0, Math.floor(typSampleCount * .72))] || bestTyp;
     uniformsShared.uVRef.value = Math.max(.01, Math.min(bestTyp, robustTyp * 6));
     // River motion follows simulated time. At real time the field is almost
     // still at solar-system scale; higher warp advances it proportionally,

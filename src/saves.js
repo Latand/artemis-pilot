@@ -9,6 +9,10 @@ import { hideBanner, showBanner } from "./hud.js";
 import { fmtMET } from "./format.js";
 import { toast } from "./achievements.js";
 import { restorePromotedCatalogStars, serializePromotedCatalogStars } from "./catalogSearch.js";
+import {
+    hygCatalogFocusId, hygCatalogFocusValue, proceduralFocusId, proceduralFocusValue,
+    restorePinnedProceduralStars, serializePinnedProceduralStars,
+} from "./universe/activeStars.js";
 
 const SLOT = "artemis.quicksave.v1";
 const G_FIELDS = [
@@ -22,12 +26,18 @@ export function saveState() {
     const ephSt = snapshotEphem();
     const focusMatch = typeof G.focus === "string" && G.focus.match(/^star:(\d+)$/);
     const focusStar = focusMatch ? STARS[Number(focusMatch[1])] : null;
+    const focusProcId = proceduralFocusId(G.focus);
+    const focusHygId = hygCatalogFocusId(G.focus);
+    const procStars = Array.from(new Set(serializePinnedProceduralStars().concat(focusProcId ? [focusProcId] : [])));
     const data = {
-        v: 5,
+        v: 7,
         g: Object.fromEntries(G_FIELDS.map(k => [k, G[k]])),
         focusCatalog: focusStar && focusStar.catalog === "hyg-v41-promoted"
             ? { hygIndex: focusStar.hygIndex, name: focusStar.name }
             : null,
+        focusHygCatalog: focusHygId ? { id: focusHygId } : null,
+        focusProcedural: focusProcId ? { id: focusProcId } : null,
+        procStars,
         hygStars: serializePromotedCatalogStars(),
         world: {
             earth: WORLD.earthDestroyed, moon: WORLD.moonDestroyed, sun: WORLD.sunDestroyed,
@@ -59,12 +69,20 @@ export function saveState() {
 export function loadState() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
-    if (!data || (data.v < 1 || data.v > 5)) { toast("No saved state · K to save one"); return false; }
+    if (!data || (data.v < 1 || data.v > 7)) { toast("No saved state · K to save one"); return false; }
     const restoredStars = data.v >= 5 ? restorePromotedCatalogStars(data.hygStars) : [];
+    const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     Object.assign(G, data.g);
     if (data.focusCatalog && Number.isFinite(Number(data.focusCatalog.hygIndex))) {
         const focusIndex = STARS.findIndex(star => star.hygIndex === Number(data.focusCatalog.hygIndex));
         if (focusIndex >= 0) G.focus = "star:" + focusIndex;
+    }
+    if (data.focusHygCatalog?.id) {
+        const focusValue = hygCatalogFocusValue(data.focusHygCatalog.id);
+        if (focusValue) G.focus = focusValue;
+    }
+    if (data.focusProcedural?.id && restoredProc.includes(data.focusProcedural.id)) {
+        G.focus = proceduralFocusValue(data.focusProcedural.id);
     }
     if (!Number.isFinite(data.g.z)) G.z = 0;
     if (!Number.isFinite(data.g.vz)) G.vz = 0;
@@ -109,6 +127,7 @@ export function loadState() {
     pushTrail(true);
     computePrediction();
     if (G.dead) showBanner("VEHICLE LOST", G.deadReason + " · MET " + fmtMET(G.t), "R TO REBUILD SHIP");
-    toast("Quickload · MET " + fmtMET(G.t) + (restoredStars.length ? " · HYG " + restoredStars.length : ""));
+    toast("Quickload · MET " + fmtMET(G.t) + (restoredStars.length ? " · HYG " + restoredStars.length : "") +
+        (restoredProc.length ? " · PROC " + restoredProc.length : ""));
     return true;
 }

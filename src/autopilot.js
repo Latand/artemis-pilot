@@ -1,6 +1,7 @@
 import { MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, STARS, MAIN_A, ROT_RATE, SOI_M } from "./constants.js";
 import { G } from "./state.js";
 import { eph, moonState, planetVel } from "./ephemeris.js";
+import { activeStarForFocus } from "./universe/activeStars.js";
 
 // Flight computer: flies the ship so the player can watch the physics, and
 // hands the stick back the instant any manual input arrives.
@@ -29,6 +30,10 @@ function targetState(t) {
         const st = STARS[+m[1]];
         if (!st) return null;
         return { x: st.x - eph.earthX, y: st.y - eph.earthY, z: st.z || 0, vx: -eph.earthVx, vy: -eph.earthVy, vz: 0, R: st.R, mu: st.mu, name: st.name, star: true, bh: !!st.bh };
+    }
+    const proc = activeStarForFocus(t);
+    if (proc) {
+        return { x: proc.x - eph.earthX, y: proc.y - eph.earthY, z: proc.z || 0, vx: -eph.earthVx, vy: -eph.earthVy, vz: 0, R: proc.R, mu: proc.mu, name: proc.name, star: true, procedural: true };
     }
     return null;
 }

@@ -17,8 +17,11 @@ import { R0_PC, Z_SUN_PC, galToEquatorialKm } from "./coords.js";
 
 export const CELL_PC = 100;                 // cell edge, parsecs
 const CELL_VOL = CELL_PC * CELL_PC * CELL_PC; // pc³
+export const LOCAL_CELL_PC = 4;             // streaming cell edge, parsecs
+const LOCAL_CELL_VOL = LOCAL_CELL_PC * LOCAL_CELL_PC * LOCAL_CELL_PC;
 export const N_SUN_PC3 = 0.14;              // local stellar number density
 const LEVEL_STAR = 3;                       // hierarchy level id for hashing
+const LEVEL_LOCAL_STAR = 4;                 // fine streaming level id
 
 // Disc / halo structural parameters (parsecs).
 const HR_THIN = 2600, HZ_THIN = 300;
@@ -28,6 +31,7 @@ const R_BULGE = 600, A_BULGE = 60;          // central enhancement (approx)
 const R_DISC_MAX = 22000;                   // disc sampling cutoff
 const Z_DISC_MAX = 3500;                    // vertical sampling cutoff
 const MATERIALISE_MAX = 300000;             // max stars instantiated per cell
+const LOCAL_MATERIALISE_MAX = 80;           // max stars instantiated per local cell
 
 // Spiral arms: 4 logarithmic arms, mean pitch 12.8°, Gaussian cross-section.
 const N_ARMS = 4, ARM_PITCH = 12.8 * Math.PI / 180;
@@ -85,14 +89,18 @@ function armFactor(R, theta) {
 // Per-cell generation cache (revisits are pure but caching avoids recompute).
 const cache = new Map();
 const CACHE_MAX = 4096;
-function cacheKey(ci, cj, ck) { return ci + "," + cj + "," + ck; }
+function cacheKey(seed, ci, cj, ck) { return (seed >>> 0) + "," + ci + "," + cj + "," + ck; }
+const localCache = new Map();
+const LOCAL_CACHE_MAX = 8192;
+function localCacheKey(seed, ci, cj, ck) { return (seed >>> 0) + "," + ci + "," + cj + "," + ck; }
 
 // Generate the stars in one galactocentric cell. Pure in (SEED, ci, cj, ck).
 // Returns an array of star objects:
 //   { gx,gy,gz (pc, galactocentric), x,y,z (km, Sol-centred equatorial),
 //     mass,L,R(R⊙),Teff,color,cls, id }
 export function starsInCell(ci, cj, ck) {
-    const key = cacheKey(ci, cj, ck);
+    const seed = SEED >>> 0;
+    const key = cacheKey(seed, ci, cj, ck);
     const hit = cache.get(key);
     if (hit) return hit;
 
@@ -111,7 +119,7 @@ export function starsInCell(ci, cj, ck) {
         // neighbourhood is never throttled. Inner-galaxy LOD subsampling (which
         // renders dense regions without materialising every star) is task #10.
         if (expected > MATERIALISE_MAX) expected = MATERIALISE_MAX;
-        const rng = makeRNG(hashInts(SEED, LEVEL_STAR, ci, cj, ck));
+        const rng = makeRNG(hashInts(seed, LEVEL_STAR, ci, cj, ck));
         const n = samplePoisson(rng, expected);
         out = new Array(n);
         let w = 0;
@@ -134,7 +142,7 @@ export function starsInCell(ci, cj, ck) {
                 x: eq[0], y: eq[1], z: eq[2],
                 mass: props.mass, L: props.L, R: props.R, Teff: props.Teff,
                 color: props.color, cls: props.cls,
-                id: "g:" + ci + ":" + cj + ":" + ck + ":" + k,
+                id: "g:" + seed + ":" + ci + ":" + cj + ":" + ck + ":" + k,
             };
         }
         out.length = w;
@@ -165,4 +173,78 @@ export function sampleStarsNear(gx, gy, gz, radiusPc) {
     return found;
 }
 
-export function clearCache() { cache.clear(); }
+// Fine-grained deterministic sample for the active ship neighbourhood. It uses
+// 4 pc cells so runtime streaming never materialises a full 100 pc catalogue
+// cell just to find the few stars around the ship.
+export function sampleLocalStarsNear(gx, gy, gz, radiusPc, limit = 512) {
+    const ciLo = Math.floor((gx - radiusPc) / LOCAL_CELL_PC), ciHi = Math.floor((gx + radiusPc) / LOCAL_CELL_PC);
+    const cjLo = Math.floor((gy - radiusPc) / LOCAL_CELL_PC), cjHi = Math.floor((gy + radiusPc) / LOCAL_CELL_PC);
+    const ckLo = Math.floor((gz - radiusPc) / LOCAL_CELL_PC), ckHi = Math.floor((gz + radiusPc) / LOCAL_CELL_PC);
+    const r2 = radiusPc * radiusPc;
+    const found = [];
+    for (let ci = ciLo; ci <= ciHi; ci++)
+        for (let cj = cjLo; cj <= cjHi; cj++)
+            for (let ck = ckLo; ck <= ckHi; ck++) {
+                for (const st of localStarsInCell(ci, cj, ck)) {
+                    const dx = st.gx - gx, dy = st.gy - gy, dz = st.gz - gz;
+                    const d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 <= r2) found.push({ ...st, d2 });
+                }
+            }
+    found.sort((a, b) => a.d2 - b.d2 || (a.id < b.id ? -1 : 1));
+    if (found.length > limit) found.length = limit;
+    for (const st of found) delete st.d2;
+    return found;
+}
+
+export function localStarsInCell(ci, cj, ck, seed = SEED) {
+    seed >>>= 0;
+    const key = localCacheKey(seed, ci, cj, ck);
+    const hit = localCache.get(key);
+    if (hit) return hit;
+    const ox = ci * LOCAL_CELL_PC, oy = cj * LOCAL_CELL_PC, oz = ck * LOCAL_CELL_PC;
+    const cx = ox + LOCAL_CELL_PC / 2, cy = oy + LOCAL_CELL_PC / 2, cz = oz + LOCAL_CELL_PC / 2;
+    const R = Math.hypot(cx, cy);
+    let out = [];
+    if (R <= R_DISC_MAX + 500 && Math.abs(cz) <= Z_DISC_MAX) {
+        const dens = densityAt(cx, cy, cz);
+        if (dens > 0) {
+            const expected = Math.min(LOCAL_MATERIALISE_MAX, N_SUN_PC3 * dens * LOCAL_CELL_VOL);
+            const rng = makeRNG(hashInts(seed, LEVEL_LOCAL_STAR, ci, cj, ck));
+            const n = samplePoisson(rng, expected);
+            const densCenter = Math.max(dens, 1e-9);
+            out = [];
+            for (let k = 0; k < n; k++) {
+                const sx = ox + rng() * LOCAL_CELL_PC;
+                const sy = oy + rng() * LOCAL_CELL_PC;
+                const sz = oz + rng() * LOCAL_CELL_PC;
+                if (rng() > densityAt(sx, sy, sz) / densCenter) continue;
+                const mass = sampleKroupaMass(rng);
+                if (mass > 1 && rng() > msLifetimeWeight(mass)) continue;
+                const props = deriveStar(mass);
+                const eq = galToEquatorialKm(sx, sy, sz);
+                out.push({
+                    gx: sx, gy: sy, gz: sz,
+                    x: eq[0], y: eq[1], z: eq[2],
+                    mass: props.mass, L: props.L, R: props.R, Teff: props.Teff,
+                    color: props.color, cls: props.cls,
+                    id: "p:" + seed + ":" + ci + ":" + cj + ":" + ck + ":" + k,
+                });
+            }
+        }
+    }
+    if (localCache.size >= LOCAL_CACHE_MAX) localCache.clear();
+    localCache.set(key, out);
+    return out;
+}
+
+export function localStarById(id) {
+    const m = String(id || "").match(/^p:(\d+):(-?\d+):(-?\d+):(-?\d+):(\d+)$/);
+    if (!m) return null;
+    const seed = Number(m[1]) >>> 0;
+    const ci = Number(m[2]), cj = Number(m[3]), ck = Number(m[4]);
+    const stars = localStarsInCell(ci, cj, ck, seed);
+    return stars.find(st => st.id === id) || null;
+}
+
+export function clearCache() { cache.clear(); localCache.clear(); }

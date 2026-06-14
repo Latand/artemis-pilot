@@ -3,6 +3,7 @@ import { STARS, PL, LY_SCENE, K, FUEL_DV0, SEC_YEAR, warpLabel } from "./constan
 import { G } from "./state.js";
 import { fmtDist } from "./format.js";
 import { AP } from "./autopilot.js";
+import { activeStarForFocus } from "./universe/activeStars.js";
 
 // Three cockpit MFDs drawn into CanvasTextures: ATTITUDE (heading tape +
 // prograde/retrograde), NAV (osculating-orbit minimap around the dominant
@@ -201,6 +202,8 @@ function targetInfo() {
         const st = STARS[+m[1]];
         return { name: st.name, dist: null, star: st };
     }
+    const proc = activeStarForFocus(f);
+    if (proc) return { name: proc.name, dist: null, star: proc };
     if (typeof f === "number") return { name: PL[f].name };
     if (f === "moon" || f === "earth" || f === "sun") return { name: f.toUpperCase() };
     return null;

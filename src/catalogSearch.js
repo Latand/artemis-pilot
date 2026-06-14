@@ -1,10 +1,11 @@
 import { addRuntimeStar, CATALOG_PROMOTION_MAX, INITIAL_STAR_COUNT, LY_KM, R_SUN, STAR_CATALOG_META, STARS } from "./constants.js";
+import { hygCatalogFocusValue, hygStarByIndex, registerHygCatalog } from "./universe/hygActiveCatalog.js";
 
 const PC_LY = 3.261563777;
 const PC_KM = LY_KM * PC_LY;
 const SOLAR_TEMP_K = 5772;
 
-let hooks = { onPromote: () => { }, toast: () => { } };
+let hooks = { onPromote: () => { }, onFocusCatalog: () => { }, toast: () => { } };
 let ui = null;
 let metaPromise = null;
 let binPromise = null;
@@ -181,7 +182,9 @@ async function loadBinary(meta) {
             })
             .then(buf => new Float32Array(buf));
     }
-    return binPromise;
+    const vals = await binPromise;
+    registerHygCatalog(meta, vals, { deferIndex: true });
+    return vals;
 }
 
 async function loadCatalog() {
@@ -299,6 +302,24 @@ async function promoteIndex(index) {
     return starIndex;
 }
 
+async function focusCatalogIndex(index) {
+    const { meta, vals } = await loadCatalog();
+    const row = labelMap?.get(index) || null;
+    const star = starFromCatalogRecord(meta, vals, index, row);
+    const existing = findExistingCatalogStar(index, row, star);
+    if (existing >= 0) {
+        hooks.onPromote(existing, STARS[existing], true, "focus");
+        setOpen(false);
+        return { existing: true, promotedIndex: existing, star: STARS[existing], focus: "" };
+    }
+    const activeStar = hygStarByIndex(index);
+    if (!activeStar) throw new Error("catalog row is unavailable for direct focus");
+    const focus = hygCatalogFocusValue(index);
+    hooks.onFocusCatalog(index, activeStar, "focus");
+    setOpen(false);
+    return { existing: false, index, star: activeStar, focus };
+}
+
 async function renderResults() {
     if (!ui) return;
     const query = ui.input.value;
@@ -325,7 +346,7 @@ async function renderResults() {
             const details = document.createElement("span");
             details.textContent = describeStar(star);
             btn.append(name, details);
-            btn.onclick = () => promoteIndex(match.index).catch(err => hooks.toast(err?.message || String(err)));
+            btn.onclick = () => focusCatalogIndex(match.index).catch(err => hooks.toast(err?.message || String(err)));
             ui.results.appendChild(btn);
         }
     } catch (err) {
@@ -353,6 +374,13 @@ export async function promoteCatalogQuery(query) {
     return promoteIndex(match.index);
 }
 
+export async function focusCatalogQuery(query) {
+    const { meta } = await loadCatalog();
+    const match = searchCatalogLabels(meta, query, 1)[0];
+    if (!match) throw new Error("catalog star not found");
+    return focusCatalogIndex(match.index);
+}
+
 export function initCatalogSearch(options = {}) {
     hooks = { ...hooks, ...options };
     ui = {
@@ -370,13 +398,13 @@ export function initCatalogSearch(options = {}) {
         e.stopPropagation();
         if (e.code === "Escape") closeCatalogSearch();
         if (e.code === "Enter") {
-            promoteCatalogQuery(ui.input.value).catch(err => hooks.toast(err?.message || String(err)));
+            focusCatalogQuery(ui.input.value).catch(err => hooks.toast(err?.message || String(err)));
         }
     });
     if (ui.close) ui.close.onclick = closeCatalogSearch;
     const urlQuery = new URLSearchParams(location.search).get("hyg");
     if (urlQuery) {
-        promoteCatalogQuery(urlQuery)
+        focusCatalogQuery(urlQuery)
             .catch(err => hooks.toast(err?.message || String(err)));
     }
 }
