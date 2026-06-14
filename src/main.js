@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import {
     R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
-    MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_ENERGY, LY_SCENE, LY_KM, STARS,
+    MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS,
     OMEGA_EARTH, FUEL_DV0, warpLabel,
 } from "./constants.js";
 import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
@@ -27,6 +27,7 @@ import {
     pushTrail, pushJourney, setJourneyOpacity, clearTrail, computePrediction,
     computeBodyPrediction, clearBodyPrediction,
     arrPos, arrAttr, arrow, flArrPos, flArrAttr, flowArrow, deArrPos, deArrAttr, darkEnergyArrow, tipV, tipF, tipDE,
+    haloArrPos, haloArrAttr, haloArrow, tipHalo,
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river } from "./river.js";
@@ -37,7 +38,7 @@ import { thrustGain, boom } from "./audio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
 import {
     showBanner, hideBanner, updateHUD, updateEscapeTracker, hideHelp,
-    fFlow, fDark, lblE, lblM, lblO, lblS,
+    fFlow, fDark, fHalo, lblE, lblM, lblO, lblS,
 } from "./hud.js";
 import { initInput, setFocus, blackHoleFocusIndex, starFocusIndex } from "./input.js";
 import { initScenarios } from "./scenarios.js";
@@ -48,6 +49,10 @@ import {
     ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId,
     refreshActiveStars,
 } from "./universe/activeStars.js";
+import {
+    darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
+} from "./cosmology.js";
+import { equatorialKmToGal } from "./universe/coords.js";
 
 // ============================ WIRING ============================
 function die(reason, swallowed) {
@@ -659,6 +664,89 @@ function expansionSpeedLabel(kmps) {
     const mps = kmps * 1000;
     return mps >= .001 ? mps.toFixed(3) + " m/s" : mps.toExponential(2) + " m/s";
 }
+function accelerationLabel(kmps2) {
+    const ms2 = Math.max(0, kmps2 * 1000);
+    if (ms2 >= 1e-8) return (ms2 * 1e9).toFixed(2) + " nm/s²";
+    return ms2.toExponential(2) + " m/s²";
+}
+function sceneVecFromKm(x, y, z, out) {
+    out[0] = x * K;
+    out[1] = z * K;
+    out[2] = -y * K;
+    return out;
+}
+const cosmoDEVec = [0, 0, 0];
+const cosmoDMVec = [0, 0, 0];
+const cosmoDMAcc = [0, 0, 0];
+function setLineVector(pos, attr, x0, y0, z0, vx, vy, vz, lenScale, maxLen) {
+    const mag = Math.hypot(vx, vy, vz);
+    if (mag <= 1e-18) return false;
+    const len = Math.min(maxLen, lenScale * mag) / mag;
+    pos[0] = x0; pos[1] = y0; pos[2] = z0;
+    pos[3] = x0 + vx * len; pos[4] = y0 + vy * len; pos[5] = z0 + vz * len;
+    attr.needsUpdate = true;
+    return true;
+}
+function hideCosmologyArrows() {
+    darkEnergyArrow.visible = false; tipDE.visible = false;
+    haloArrow.visible = false; tipHalo.visible = false;
+}
+function updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cd, alpha = 1) {
+    const rKm = Math.hypot(G.x, G.y, G.z);
+    const maxLen = Math.max(cd * .14, LY_SCENE * .02);
+    const lenScale = Math.max(cd * .035, LY_SCENE * .003);
+    let any = false;
+    if (G.darkEnergy) {
+        const fade = darkEnergyVisibleFractionKm(rKm);
+        const vx = (oriX - earthX) * fade;
+        const vy = oriY * fade;
+        const vz = (oriZ - earthZ) * fade;
+        if (fade > .01 && setLineVector(deArrPos, deArrAttr, oriX, oriY, oriZ, vx, vy, vz, lenScale, maxLen)) {
+            darkEnergyArrow.material.opacity = Math.min(.95, .18 + .72 * fade) * alpha;
+            darkEnergyArrow.visible = true;
+            tipDE.visible = true;
+            tipDE.position.set(deArrPos[3], deArrPos[4], deArrPos[5]);
+            tipDE.scale.setScalar(Math.max(cd * .01, LY_SCENE * .004));
+            tipDE.material.opacity = darkEnergyArrow.material.opacity;
+            any = true;
+        } else {
+            darkEnergyArrow.visible = false; tipDE.visible = false;
+        }
+    } else {
+        darkEnergyArrow.visible = false; tipDE.visible = false;
+    }
+    if (G.darkMatter) {
+        darkMatterRelativeAccel(G.x, G.y, G.z, eph.earthX, eph.earthY, 0, cosmoDMAcc);
+        sceneVecFromKm(
+            cosmoDMAcc[0] * DARK_MATTER.ARROW_SECONDS,
+            cosmoDMAcc[1] * DARK_MATTER.ARROW_SECONDS,
+            cosmoDMAcc[2] * DARK_MATTER.ARROW_SECONDS,
+            cosmoDMVec,
+        );
+        const [gx, gy, gz] = equatorialKmToGal(eph.earthX + G.x, eph.earthY + G.y, G.z);
+        const [ex, ey, ez] = equatorialKmToGal(eph.earthX, eph.earthY, 0);
+        const fade = darkMatterVisibleFractionPc(Math.hypot(gx - ex, gy - ey, gz - ez));
+        if (fade > .01 && setLineVector(haloArrPos, haloArrAttr, oriX, oriY, oriZ, cosmoDMVec[0], cosmoDMVec[1], cosmoDMVec[2], lenScale, maxLen)) {
+            haloArrow.material.opacity = Math.min(.9, .16 + .7 * fade) * alpha;
+            haloArrow.visible = true;
+            tipHalo.visible = true;
+            tipHalo.position.set(haloArrPos[3], haloArrPos[4], haloArrPos[5]);
+            tipHalo.scale.setScalar(Math.max(cd * .01, LY_SCENE * .004));
+            tipHalo.material.opacity = haloArrow.material.opacity;
+            any = true;
+        } else {
+            haloArrow.visible = false; tipHalo.visible = false;
+        }
+    } else {
+        haloArrow.visible = false; tipHalo.visible = false;
+    }
+    return any;
+}
+function hideNearFieldLabels() {
+    lblE.style.opacity = "0"; lblM.style.opacity = "0"; lblS.style.opacity = "0"; lblO.style.opacity = "0";
+    for (let i = 0; i < PL.length; i++) plLabels[i].style.opacity = "0";
+    for (let i = 0; i < BH_MAX; i++) { bhLabels[i].style.display = "none"; bhLabels[i].style.opacity = "0"; }
+}
 function nearestStarInfo() {
     const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
     const nearest = nearestActiveStar(wx, wy, wz);
@@ -755,6 +843,10 @@ function frame() {
     }
     snapLanded();
     const oi = orbitInfo();
+    const cosmicView = cam.dist > LY_SCENE * .2;
+    const cosmicLod = cam.dist > LY_SCENE * 800000 ? 3 : cam.dist > LY_SCENE * 20000 ? 2 : cosmicView ? 1 : 0;
+    const nearFieldDue = cosmicLod === 0 || frameNo % (cosmicLod === 1 ? 6 : cosmicLod === 2 ? 18 : 45) === 0;
+    const activeStarsDue = cosmicLod === 0 || frameNo % (cosmicLod === 1 ? 12 : cosmicLod === 2 ? 45 : 120) === 0;
     checkBodyContacts();
     // achievements
     if (!G.dead) {
@@ -770,60 +862,71 @@ function frame() {
     // ---- scene positions ----
     const earthX = eph.earthX * K, earthZ = -eph.earthY * K;
     earthV.set(earthX, 0, earthZ);
-    earthG.position.copy(earthV);
-    earthG.visible = !WORLD.earthDestroyed;
-    clouds.visible = !WORLD.earthDestroyed;
-    moonOrbitRing.position.copy(earthV);
-    moonOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.moonDestroyed;
-    moonState(G.t, _m);
-    moonV.set((eph.earthX + _m.mx) * K, 0, -(eph.earthY + _m.my) * K);
-    moon.position.copy(moonV);
-    moon.visible = !WORLD.moonDestroyed;
-    moon.rotation.y = _m.ang + Math.PI * .5;
-    moonSoiRing.position.copy(moonV);
+    if (nearFieldDue) {
+        earthG.position.copy(earthV);
+        moonOrbitRing.position.copy(earthV);
+        moonState(G.t, _m);
+        moonV.set((eph.earthX + _m.mx) * K, 0, -(eph.earthY + _m.my) * K);
+        moon.position.copy(moonV);
+        moon.rotation.y = _m.ang + Math.PI * .5;
+        moonSoiRing.position.copy(moonV);
+    }
+    earthG.visible = !WORLD.earthDestroyed && !cosmicView;
+    clouds.visible = !WORLD.earthDestroyed && !cosmicView;
+    moonOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.moonDestroyed && !cosmicView;
+    moon.visible = !WORLD.moonDestroyed && !cosmicView;
     // sun & planets follow the live ephemeris (cache refreshed by orbitInfo above)
-    sunPos.set((eph.earthX + eph.sunX) * K, 0, -(eph.earthY + eph.sunY) * K);
-    sunCore.position.copy(sunPos);
-    sunGlow.position.copy(sunPos);
-    sunLight.position.copy(sunPos);
-    sunCorona.position.copy(sunPos);
-    sunCore.visible = !WORLD.sunDestroyed;
-    sunGlow.visible = !WORLD.sunDestroyed;
-    sunLight.visible = !WORLD.sunDestroyed;
-    sunCorona.visible = !WORLD.sunDestroyed;
+    if (nearFieldDue) {
+        sunPos.set((eph.earthX + eph.sunX) * K, 0, -(eph.earthY + eph.sunY) * K);
+        sunCore.position.copy(sunPos);
+        sunGlow.position.copy(sunPos);
+        sunLight.position.copy(sunPos);
+        sunCorona.position.copy(sunPos);
+    }
+    sunCore.visible = !WORLD.sunDestroyed && !cosmicView;
+    sunGlow.visible = !WORLD.sunDestroyed && !cosmicView;
+    sunLight.visible = !WORLD.sunDestroyed && !cosmicView;
+    sunCorona.visible = !WORLD.sunDestroyed && !cosmicView;
     // shader sun direction (Earth-frame) + sidereal Earth spin, kept in [0, 2π)
-    sunDirW.set(sunPos.x - earthX, 0, sunPos.z - earthZ).normalize();
-    earth.rotation.y = (OMEGA_EARTH * G.t) % (Math.PI * 2);
+    if (nearFieldDue) {
+        sunDirW.set(sunPos.x - earthX, 0, sunPos.z - earthZ).normalize();
+        earth.rotation.y = (OMEGA_EARTH * G.t) % (Math.PI * 2);
+    }
     flowCtx.earthScX = earthX; flowCtx.earthScZ = earthZ;
     flowCtx.sunScX = sunPos.x; flowCtx.sunScZ = sunPos.z;
-    for (let i = 0; i < PL.length; i++) {
-        const px = (eph.earthX + eph.plX[i]) * K, pz = -(eph.earthY + eph.plY[i]) * K;
-        plGroups[i].position.set(px, 0, pz);
-        plGlows[i].position.set(px, 0, pz);
-        plOrbitRings[i].position.copy(sunPos);
-        plGroups[i].visible = !WORLD.plDestroyed[i];
-        plGlows[i].visible = !WORLD.plDestroyed[i];
-        plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed;
-        plGroups[i].rotation.z = PL[i].visualTilt || 0;
-        plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
-        flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
-        const dCamP = camera.position.distanceTo(plGroups[i].position);
-        const glowNear = PL[i].R * K * (PL[i].gas ? 2.7 : 2.25);
-        const glowFar = PL[i].R * K * (PL[i].gas ? 8.5 : 6.5);
-        plGlows[i].scale.setScalar(Math.min(glowFar, Math.max(glowNear, dCamP * .0018)));
-        plGlows[i].material.opacity = .12 * smooth01(PL[i].R * K * 35, PL[i].R * K * 160, dCamP);
+    if (nearFieldDue) {
+        for (let i = 0; i < PL.length; i++) {
+            const px = (eph.earthX + eph.plX[i]) * K, pz = -(eph.earthY + eph.plY[i]) * K;
+            plGroups[i].position.set(px, 0, pz);
+            plGlows[i].position.set(px, 0, pz);
+            plOrbitRings[i].position.copy(sunPos);
+            plGroups[i].rotation.z = PL[i].visualTilt || 0;
+            plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
+            flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
+            const dCamP = camera.position.distanceTo(plGroups[i].position);
+            const glowNear = PL[i].R * K * (PL[i].gas ? 2.7 : 2.25);
+            const glowFar = PL[i].R * K * (PL[i].gas ? 8.5 : 6.5);
+            plGlows[i].scale.setScalar(Math.min(glowFar, Math.max(glowNear, dCamP * .0018)));
+            plGlows[i].material.opacity = .12 * smooth01(PL[i].R * K * 35, PL[i].R * K * 160, dCamP);
+        }
+        updateBHVisuals(dtR, earthX, earthZ);
     }
-    updateBHVisuals(dtR, earthX, earthZ);
+    for (let i = 0; i < PL.length; i++) {
+        plGroups[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
+        plGlows[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
+        plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed && !cosmicView;
+    }
     const focusBH = blackHoleFocusIndex(G.focus);
     if (focusBH >= BH.n) setFocus("ship");
     const focusStar = starFocusIndex(G.focus);
     if (focusStar >= STARS.length) setFocus("ship");
-    if (proceduralFocusId(G.focus) && !activeStarForFocus(G.focus)) setFocus("ship");
-    if (hygCatalogFocusId(G.focus) && hygCatalogStats().loaded && !activeStarForFocus(G.focus)) setFocus("ship");
-    refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus);
+    if (activeStarsDue) {
+        if (proceduralFocusId(G.focus) && !activeStarForFocus(G.focus)) setFocus("ship");
+        if (hygCatalogFocusId(G.focus) && hygCatalogStats().loaded && !activeStarForFocus(G.focus)) setFocus("ship");
+        refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus);
+    }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
-    const cosmicView = cam.dist > LY_SCENE * .2;
     shipG.visible = !G.dead && !cosmicView && !G.cabin;
     clouds.rotation.y += dtR * .01;
     // ---- camera ----
@@ -875,15 +978,17 @@ function frame() {
     // near (kept for depth precision in space) clipped the entire ground
     // when landed, so stars and the river shone through the planet
     let clearU = Infinity;
-    if (!WORLD.earthDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(earthG.position) - R_EARTH * K);
-    if (!WORLD.moonDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(moon.position) - R_MOON * K);
-    if (!WORLD.sunDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(sunCore.position) - SUN_RADIUS);
-    for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) clearU = Math.min(clearU, camera.position.distanceTo(plGroups[i].position) - PL[i].R * K);
-    for (const star of ACTIVE_STARS) {
-        _starLabelPos.set(star.x * K, (star.z || 0) * K, -star.y * K);
-        clearU = Math.min(clearU, camera.position.distanceTo(_starLabelPos) - (star.bh ? star.rs : star.R) * K);
-    }
-    for (let i = 0; i < BH.n; i++) clearU = Math.min(clearU, camera.position.distanceTo(bhScenePos(i)) - BH.rs[i] * K);
+    if (!cosmicView) {
+        if (!WORLD.earthDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(earthG.position) - R_EARTH * K);
+        if (!WORLD.moonDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(moon.position) - R_MOON * K);
+        if (!WORLD.sunDestroyed) clearU = Math.min(clearU, camera.position.distanceTo(sunCore.position) - SUN_RADIUS);
+        for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) clearU = Math.min(clearU, camera.position.distanceTo(plGroups[i].position) - PL[i].R * K);
+        for (const star of ACTIVE_STARS) {
+            _starLabelPos.set(star.x * K, (star.z || 0) * K, -star.y * K);
+            clearU = Math.min(clearU, camera.position.distanceTo(_starLabelPos) - (star.bh ? star.rs : star.R) * K);
+        }
+        for (let i = 0; i < BH.n; i++) clearU = Math.min(clearU, camera.position.distanceTo(bhScenePos(i)) - BH.rs[i] * K);
+    } else clearU = Math.max(.02, cam.dist * .001);
     const nearWant = Math.min(.02, Math.max(2e-6, clearU * .5));
     if (Math.abs(nearWant - camera.near) > camera.near * .1) {
         camera.near = nearWant;
@@ -892,8 +997,24 @@ function frame() {
     if (sky) { sky.position.copy(camera.position); sky.visible = !cosmicView; }
     if (skyStars) { skyStars.position.copy(camera.position); skyStars.visible = !cosmicView; }
     if (galaxyBackdrop) { galaxyBackdrop.position.copy(camera.position); galaxyBackdrop.visible = !cosmicView; }
-    updateLensing(camera, camera.aspect);
     updateCosmicLayer();
+    if (cosmicView) {
+        const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
+        const cosmicCd = camera.position.distanceTo(shipG.position);
+        updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, 1);
+        updateHUD(oi, aMag, mainIn, cosmicSpeed, cosmicSpeed, 1);
+        if (fFlow) fFlow.textContent = "LOD " + cosmicLod;
+        if (fDark) fDark.textContent = G.darkEnergy ? expansionSpeedLabel(darkEnergySpeedKmS(Math.hypot(G.x, G.y, G.z))) : "OFF";
+        if (fHalo && !G.darkMatter) fHalo.textContent = "OFF";
+        hideNearFieldLabels();
+        arrow.visible = false; flowArrow.visible = false; tipV.visible = false; tipF.visible = false;
+        moonSoiRing.visible = false;
+        clearBodyPrediction();
+        bloomPass.enabled = false;
+        renderFrame(false);
+        return;
+    }
+    updateLensing(camera, camera.aspect);
     bloomPass.enabled = !location.search.includes("bloom=0") && cam.dist < LY_SCENE * 400;
     updateBodyShaders(camera, G.t);
     updateStars(camera, dtR);
@@ -1014,7 +1135,7 @@ function frame() {
     updateShells(river.dtVis ?? advanced, fRiver);
     if (fRiver > .01) {
         fFlow.textContent = (flowVel(oriX, oriY, oriZ, moonV.x, moonV.y, moonV.z, fv) * 1000).toFixed(2) + " km/s";
-        const deShip = G.darkEnergy ? Math.hypot(oriX - earthX, oriY, oriZ - earthZ) * DARK_ENERGY.H_SIM * 1000 : 0;
+        const deShip = G.darkEnergy ? darkEnergySpeedKmS(Math.hypot(G.x, G.y, G.z)) : 0;
         fDark.textContent = G.darkEnergy ? expansionSpeedLabel(deShip) : "OFF";
     }
     moonSoiRing.visible = fRiver > .01 && !WORLD.moonDestroyed;
@@ -1057,31 +1178,12 @@ function frame() {
             tipF.position.set(flArrPos[3], flArrPos[4], flArrPos[5]);
             tipF.scale.setScalar(cd * .013);
             tipF.material.opacity = fRiver;
-            if (G.darkEnergy) {
-                const deVX = (oriX - earthX) * DARK_ENERGY.H_SIM;
-                const deVY = oriY * DARK_ENERGY.H_SIM;
-                const deVZ = (oriZ - earthZ) * DARK_ENERGY.H_SIM;
-                const deScene = Math.hypot(deVX, deVY, deVZ);
-                if (deScene > 1e-12) {
-                    const deK = deScene * 1000;
-                    const deL = Math.min(MAXL, SCL * deK) / deScene;
-                    deArrPos[0] = oriX; deArrPos[1] = oriY; deArrPos[2] = oriZ;
-                    deArrPos[3] = oriX + deVX * deL;
-                    deArrPos[4] = oriY + deVY * deL;
-                    deArrPos[5] = oriZ + deVZ * deL;
-                    deArrAttr.needsUpdate = true;
-                    darkEnergyArrow.material.opacity = .9 * fRiver;
-                    darkEnergyArrow.visible = true;
-                    tipDE.visible = true;
-                    tipDE.position.set(deArrPos[3], deArrPos[4], deArrPos[5]);
-                    tipDE.scale.setScalar(cd * .013);
-                    tipDE.material.opacity = fRiver;
-                } else { darkEnergyArrow.visible = false; tipDE.visible = false; }
-            } else { darkEnergyArrow.visible = false; tipDE.visible = false; }
-        } else { flowArrow.visible = false; tipF.visible = false; darkEnergyArrow.visible = false; tipDE.visible = false; }
+            updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cd, fRiver);
+        } else { flowArrow.visible = false; tipF.visible = false; hideCosmologyArrows(); }
     } else {
-        arrow.visible = false; flowArrow.visible = false; darkEnergyArrow.visible = false;
-        tipV.visible = false; tipF.visible = false; tipDE.visible = false;
+        arrow.visible = false; flowArrow.visible = false;
+        tipV.visible = false; tipF.visible = false;
+        hideCosmologyArrows();
     }
     updateFocusVelocityVector(cabinActive || cosmicView ? 0 : 1);
     // ---- audio ----

@@ -18,7 +18,7 @@ const SLOT = "artemis.quicksave.v1";
 const G_FIELDS = [
     "t", "x", "y", "z", "vx", "vy", "vz", "heading", "pitch", "throttle", "warp", "paused",
     "fuel", "infinite", "dvUsed", "hold", "landed", "dead", "deadReason",
-    "deathT", "leftHome", "maxRE", "gr", "predict", "darkEnergy", "muted", "focus",
+    "deathT", "leftHome", "maxRE", "gr", "predict", "darkEnergy", "darkMatter", "muted", "focus",
     "cabin",
 ];
 
@@ -30,7 +30,7 @@ export function saveState() {
     const focusHygId = hygCatalogFocusId(G.focus);
     const procStars = Array.from(new Set(serializePinnedProceduralStars().concat(focusProcId ? [focusProcId] : [])));
     const data = {
-        v: 7,
+        v: 8,
         g: Object.fromEntries(G_FIELDS.map(k => [k, G[k]])),
         focusCatalog: focusStar && focusStar.catalog === "hyg-v41-promoted"
             ? { hygIndex: focusStar.hygIndex, name: focusStar.name }
@@ -69,7 +69,7 @@ export function saveState() {
 export function loadState() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
-    if (!data || (data.v < 1 || data.v > 7)) { toast("No saved state · K to save one"); return false; }
+    if (!data || (data.v < 1 || data.v > 8)) { toast("No saved state · K to save one"); return false; }
     const restoredStars = data.v >= 5 ? restorePromotedCatalogStars(data.hygStars) : [];
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     Object.assign(G, data.g);
@@ -90,6 +90,7 @@ export function loadState() {
     for (const k of ["x", "y", "z", "vx", "vy", "vz", "heading", "pitch"])
         if (!Number.isFinite(G[k])) G[k] = 0;
     if (typeof G.darkEnergy !== "boolean") G.darkEnergy = true;
+    if (typeof G.darkMatter !== "boolean") G.darkMatter = true;
     if (typeof G.cabin !== "boolean") G.cabin = false;
     G.observerMode = false;
     G.deathRt = G.dead ? performance.now() : 0;

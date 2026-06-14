@@ -97,7 +97,17 @@ function onKeyDown(e) {
         case "Digit0": setFocus("ship"); break;
         case "KeyP": G.predict = !G.predict; computePrediction(); break;
         case "KeyG": G.gr = !G.gr; break;
-        case "KeyO": G.darkEnergy = !G.darkEnergy; computePrediction(); toast(G.darkEnergy ? "Dark energy expansion ON" : "Dark energy expansion OFF"); break;
+        case "KeyO":
+            if (e.shiftKey) {
+                G.darkMatter = !G.darkMatter;
+                computePrediction();
+                toast(G.darkMatter ? "Dark matter halo ON" : "Dark matter halo OFF");
+            } else {
+                G.darkEnergy = !G.darkEnergy;
+                computePrediction();
+                toast(G.darkEnergy ? "Dark energy expansion ON" : "Dark energy expansion OFF");
+            }
+            break;
         case "KeyC":
             if (e.shiftKey) apCircularize(toast);
             else cycleCosmicScale();

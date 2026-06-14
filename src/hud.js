@@ -1,9 +1,10 @@
-import { DARK_ENERGY, PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, warpLabel } from "./constants.js";
+import { PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, warpLabel } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { fmtKm, fmtDist, fmtMET, escapeKmS, accelMs2, fmtAccel } from "./format.js";
 import { bhHawkingLabel, bhMassLabel, pwAccelMs2 } from "./blackholes.js";
 import { clockRateAtShip, clockRateLabel } from "./relativity.js";
+import { darkEnergyAccelerationKmS2, darkMatterRelativeAccel } from "./cosmology.js";
 
 const $ = id => document.getElementById(id);
 const bhFocusIndex = f => {
@@ -14,7 +15,7 @@ const bhFocusIndex = f => {
 export const metEl = $("met"), warpEl = $("warpLine"), engineEl = $("engineLine"), throttleEl = $("throttleLine");
 export const fuelTxtEl = $("fuelTxt"), fuelFillEl = $("fuelFill");
 export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVel = $("cVel"), cApPe = $("cApPe"), cMoon = $("cMoon"), cSun = $("cSun"), cDv = $("cDv"), cGrav = $("cGrav");
-export const fFlow = $("fFlow"), fDark = $("fDark"), fShip = $("fShip"), fClock = $("fClock"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
+export const fFlow = $("fFlow"), fDark = $("fDark"), fHalo = $("fHalo"), fShip = $("fShip"), fClock = $("fClock"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
 export const flowPanelEl = $("flowPanel"), bannerEl = $("banner"), helpEl = $("help");
 export const lblE = $("lblE"), lblM = $("lblM"), lblO = $("lblO"), lblS = $("lblS");
 
@@ -118,9 +119,12 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
         aShB += BH.mu[bi] / (effB * effB);
     }
     const aShP = oi.pNear >= 0 && !WORLD.plDestroyed[oi.pNear] ? PL[oi.pNear].mu / Math.pow(Math.max(PL[oi.pNear].R, oi.pNearD), 2) : 0;
-    const aDE = G.darkEnergy ? DARK_ENERGY.H2_SIM * Math.hypot(G.x, G.y, G.z) : 0;
-    const gTot = aShE + aShM + aShS + aShB + aShP + aDE;
-    const shares = [["E", aShE], ["M", aShM], ["S", aShS], ["⚫", aShB], [oi.pNear >= 0 ? PL[oi.pNear].tag : "P", aShP], ["DE", aDE]].sort((p, q) => q[1] - p[1]);
+    const aDE = G.darkEnergy ? darkEnergyAccelerationKmS2(Math.hypot(G.x, G.y, G.z)) : 0;
+    const dm = [0, 0, 0];
+    if (G.darkMatter) darkMatterRelativeAccel(G.x, G.y, G.z, eph.earthX, eph.earthY, 0, dm);
+    const aDM = Math.hypot(dm[0], dm[1], dm[2]);
+    const gTot = aShE + aShM + aShS + aShB + aShP + aDE + aDM;
+    const shares = [["E", aShE], ["M", aShM], ["S", aShS], ["⚫", aShB], [oi.pNear >= 0 ? PL[oi.pNear].tag : "P", aShP], ["DE", aDE], ["DM", aDM]].sort((p, q) => q[1] - p[1]);
     cGrav.textContent = gTot > 0 ? shares[0][0] + " " + Math.round(shares[0][1] / gTot * 100) + "% · " + shares[1][0] + " " + Math.round(shares[1][1] / gTot * 100) + "%" : "—";
     const focusBH = bhFocusIndex(G.focus);
     let bhReadoutRs = BH_SIZES[BH.sizeIdx], bhNearestD = Infinity;
@@ -142,7 +146,8 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
         fClock.textContent = clockRateLabel(clock.rate);
         fEsc.textContent = escapeKmS(MU_E, Math.max(R_EARTH, oi.rE)).toFixed(2) + " km/s";
         fEscM.textContent = escapeKmS(MU_M, Math.max(R_MOON, oi.rM)).toFixed(2) + " km/s";
-        fAcc.textContent = fmtAccel(accelMs2(MU_E, Math.max(R_EARTH, oi.rE)) + accelMs2(MU_M, Math.max(R_MOON, oi.rM)) + accelMs2(MU_S, Math.max(R_SUN, oi.rS)) + (aShB + aShP + aDE) * 1000);
+        if (fHalo) fHalo.textContent = G.darkMatter ? fmtAccel(aDM * 1000) : "OFF";
+        fAcc.textContent = fmtAccel(accelMs2(MU_E, Math.max(R_EARTH, oi.rE)) + accelMs2(MU_M, Math.max(R_MOON, oi.rM)) + accelMs2(MU_S, Math.max(R_SUN, oi.rS)) + (aShB + aShP + aDE + aDM) * 1000);
     }
     flowPanelEl.style.display = fB > .25 ? "block" : "none";
 }

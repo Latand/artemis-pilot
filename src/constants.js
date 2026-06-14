@@ -48,6 +48,8 @@ export const AM3 = A_MOON * A_MOON * A_MOON;
 export const K = .001;
 export const AU_KM = 149597870.7;
 export const LY_KM = 9460730472580.8;
+export const PC_KM = LY_KM * 3.2615637771674;
+export const MPC_KM = PC_KM * 1e6;
 export const LY_SCENE = LY_KM * K;
 export const CAM_DIST_MAX = LY_SCENE * 4000000;
 export const COSMIC_ZOOMS = {
@@ -165,21 +167,30 @@ export const C_LIGHT = 299792.458;   // km/s
 export const J2_E = 1.08262668e-3;   // Earth oblateness (equatorial-plane radial term)
 export const OMEGA_EARTH = 7.2921159e-5; // rad/s sidereal surface rotation
 export const DRAG_CD = 0.55, DRAG_H = 8.5, ATM_TOP = 160;
-// Cosmological-constant style expansion: a = H²r. H_PHYS is the observed
-// order of magnitude; H_SIM is boosted so the sandbox shows an effect before
-// multi-million-year warps.
+// Cosmological-constant acceleration in physical coordinates:
+// a_Lambda = Omega_Lambda * H0^2 * r.
 export const DARK_ENERGY = {
-    H_PHYS: 2.2e-18,
-    H_SIM: 3.0e-10,
+    H0_KM_S_MPC: 67.66,
+    OMEGA_LAMBDA: 0.6889,
 };
-DARK_ENERGY.H2_SIM = DARK_ENERGY.H_SIM * DARK_ENERGY.H_SIM;
-DARK_ENERGY.H2_PHYS = DARK_ENERGY.H_PHYS * DARK_ENERGY.H_PHYS;
-export function darkEnergyAccel(x, y, out, h2 = DARK_ENERGY.H2_SIM, z = 0) {
-    out[0] = h2 * x;
-    out[1] = h2 * y;
-    if (out.length > 2) out[2] = h2 * z;
-    return out;
-}
+DARK_ENERGY.H0_PHYS = DARK_ENERGY.H0_KM_S_MPC / MPC_KM;
+DARK_ENERGY.H_PHYS = Math.sqrt(DARK_ENERGY.OMEGA_LAMBDA) * DARK_ENERGY.H0_PHYS;
+DARK_ENERGY.H2_PHYS = DARK_ENERGY.OMEGA_LAMBDA * DARK_ENERGY.H0_PHYS * DARK_ENERGY.H0_PHYS;
+DARK_ENERGY.SUN_BALANCE_KM = Math.cbrt(MU_S / DARK_ENERGY.H2_PHYS);
+DARK_ENERGY.VISIBLE_START_KM = DARK_ENERGY.SUN_BALANCE_KM * 0.35;
+DARK_ENERGY.VISIBLE_FULL_KM = DARK_ENERGY.SUN_BALANCE_KM;
+export const DARK_MATTER = {
+    HALO_MASS_SOLAR: 1.0e12,
+    VIRIAL_RADIUS_KPC: 211,
+    CONCENTRATION: 12,
+    SOFTENING_PC: 0.01,
+    VISIBLE_START_PC: 100,
+    VISIBLE_FULL_PC: 1000,
+    ARROW_SECONDS: 1000000 * 31557600,
+};
+DARK_MATTER.VIRIAL_RADIUS_PC = DARK_MATTER.VIRIAL_RADIUS_KPC * 1000;
+DARK_MATTER.SCALE_RADIUS_PC = DARK_MATTER.VIRIAL_RADIUS_PC / DARK_MATTER.CONCENTRATION;
+DARK_MATTER.NFW_NORM = Math.log(1 + DARK_MATTER.CONCENTRATION) - DARK_MATTER.CONCENTRATION / (1 + DARK_MATTER.CONCENTRATION);
 // the ephemeris advances in chunks of at most this many seconds while the
 // ship integrates between flushes on linearly extrapolated body positions
 export const EPH_CHUNK = 120;

@@ -9,7 +9,7 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 - **First-person 3D cockpit** (J): real interior geometry composited over the world render, three live canvas MFDs (attitude tape with prograde/retrograde, osculating-orbit nav map with apo/peri, drive/systems panel), head-look on drag, sun-tracking interior light, thrust flicker, and warning annunciators.
 - **WebXR / PSVR2 support**: sit inside the cockpit with full head tracking and fly on the Sense sticks, or switch to god mode and grab the solar system with your hands — one grip drags space, both grips zoom and twist it from tabletop Earth–Moon scale out to the Local Group. Controller haptics carry engine rumble and aero buffeting.
 - **Autopilot you can interrupt** (⇧T travel to focus, ⇧C circularize, ⇧X off): climbs out of the local gravity well, flies a flip-and-burn intercept, brakes, captures, and circularizes — any manual input returns control instantly.
-- **Travel simulations** (⇧S): curated pre-flight states with physics explainer cards — Hohmann to Mars, lunar free-return figure-8, Jupiter slingshot, photon-sphere dive, dark-energy escape, the voyage to Proxima, and the dive to SGR A*.
+- **Travel simulations** (⇧S): curated pre-flight states with physics explainer cards — Hohmann to Mars, lunar free-return figure-8, Jupiter slingshot, photon-sphere dive, Local Group expansion, the voyage to Proxima, and the dive to SGR A*.
 - **Accurate ephemerides**: full n-body RK4 world seeded from real J2000 eccentric orbital elements for all planets, Earth, and the Moon (27.32-day month), with J2 oblateness, Sun 1PN precession, atmospheres, and light-speed gravity fronts.
 - **One clock at every scale**: past the integrator budget the system rides exact osculating Kepler orbits (barycenter coasting), so planets stay on their tracks and T+ runs at the commanded warp from real time to Myr/s — the MET reads years/kyr/Myr/Gyr at deep time.
 - **Visible gravitational lensing**: a screen-space point-mass lens around every black hole and SGR A* — Einstein ring, flipped background, magnified shadow — applied before bloom so the warped disk light glows.
@@ -18,7 +18,9 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 - **Streaming full-scale stellar field**: a bounded active-neighborhood layer keeps curated stars and indexed HYG v4.1 rows in priority, then fills the ship's local 8 pc sphere with deterministic seed-generated Milky Way stars. The active set feeds gravity, contact, dominant-well orbit/capture, clock-rate, river, prediction, and lensing paths while staying capped for browser frame budgets.
 - **Durable catalog travel**: Shift+U browses the ship's active procedural/HYG neighborhood, HYG search focuses stable `hyg:<index>` targets directly, quicksave preserves those focus tokens, and older promoted HYG destinations still restore with their physical fields after a refresh.
 - **Mouse inertial control**: hold the ship marker deliberately, pull it through space, and release; the damped release velocity becomes the ship's new momentum.
-- **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, black holes, and boosted dark-energy expansion.
+- **Cosmology fields**: physical Planck18-scale dark energy, shown only where Λ is large enough to compete with stellar or galactic gravity, plus a differential NFW Milky Way dark-matter halo with green acceleration vectors and Gyr/s-safe smooth-field jumps.
+- **Scale-aware universe rendering**: Solar System, Milky Way, and Local Group views use separate LOD cadences so zoomed-out frames skip near-field body/river/star updates while keeping the HYG sky, procedural Milky Way, and moving Local Group galaxies visible.
+- **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, black holes, physical dark-energy expansion, and halo readouts.
 - **Dynamic black holes** with configurable Schwarzschild radius, Paczynski-Wiita capture behavior, mergers, Hawking readouts, accretion visuals, and dark event-horizon cores.
 - **Earth that looks alive**: day/night terminator with real city-lights map, ocean sun glint, camera-aware atmosphere; limb-darkened granulated Sun with an animated corona; magnitude/color-varied starfield; ACES filmic tone mapping.
 - **Contextual onboarding**: a one-time title overlay with the voyage lore, milestone hint cards, and persistence of camera, focus, warp, and UI state across refreshes.
@@ -44,6 +46,14 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 ### HYG Catalog Search
 
 ![HYG catalog search focused on Canopus](docs/screenshots/05-hyg-catalog-search.png)
+
+### Milky Way Scale
+
+![Milky Way scale with full galaxy LOD](docs/screenshots/06-milky-way-scale.png)
+
+### Local Group Cosmology
+
+![Local Group view with dark energy and dark matter halo vectors](docs/screenshots/07-local-group-cosmology.png)
 
 ## Run Locally
 
@@ -96,6 +106,7 @@ The static build is written to `dist/`.
 | `P` | Toggle trajectory prediction |
 | `G` | Toggle spacetime river visualization |
 | `O` | Toggle dark-energy expansion |
+| `Shift+O` | Toggle Milky Way dark-matter halo |
 | `B` | Place a black hole on the cursor plane |
 | `[` / `]` | Change black-hole Schwarzschild radius |
 | `V` | Remove last black hole |

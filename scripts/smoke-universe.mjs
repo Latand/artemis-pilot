@@ -21,7 +21,11 @@ const {
     ACTIVE_STAR_CONFIG, ACTIVE_STARS, activeStarForFocus, activeStarStats, proceduralFocusValue, refreshActiveStars,
     restorePinnedProceduralStars, serializePinnedProceduralStars,
 } = await import("../src/universe/activeStars.js");
-const { STARS, MU_E } = await import("../src/constants.js");
+const { STARS, MU_E, MU_S, PC_KM, MPC_KM, DARK_ENERGY, DARK_MATTER } = await import("../src/constants.js");
+const {
+    darkEnergyAccelerationKmS2, darkEnergyVisibleFractionKm,
+    darkMatterEnclosedMassSolar, darkMatterHaloAccelAtEquatorialKm, darkMatterLocalCircularSpeedKmS, darkMatterRelativeAccel,
+} = await import("../src/cosmology.js");
 const { STAR_DOMINANCE_MARGIN, strongestActiveStarWell } = await import("../src/universe/starDominance.js");
 const { circularVelocityVector, orbitInfoMatchesTarget } = await import("../src/autopilot.js");
 
@@ -217,6 +221,42 @@ hr("Stellar orbit/capture helpers");
         "autopilot star target matching waits for a dominant stellar well");
     ok(orbitInfoMatchesTarget({ domStar: true, star: proxima, starId: proxima.name }, { star: true, ref: proxima, id: proxima.name }),
         "autopilot star target matching accepts the dominant stellar well");
+}
+
+// ── 10. Cosmology: physical dark energy and Milky Way dark matter ─────────
+hr("Cosmology fields");
+{
+    const beta = DARK_ENERGY.H2_PHYS;
+    ok(beta > 3.2e-36 && beta < 3.5e-36,
+        "dark-energy beta uses Planck18-scale OmegaLambda H0^2", beta.toExponential(3));
+    const aMpc = darkEnergyAccelerationKmS2(MPC_KM) * 1000;
+    ok(aMpc > 9.5e-14 && aMpc < 1.1e-13,
+        "Lambda acceleration at 1 Mpc is physical", `${aMpc.toExponential(3)} m/s²`);
+    const sunEqPc = Math.cbrt(MU_S / beta) / PC_KM;
+    ok(sunEqPc > 108 && sunEqPc < 114,
+        "one solar mass balances Lambda around 111 pc", `${sunEqPc.toFixed(2)} pc`);
+    ok(darkEnergyVisibleFractionKm(PC_KM) === 0 && darkEnergyVisibleFractionKm(120 * PC_KM) > .9,
+        "dark-energy visualization starts at real stellar-balance scale");
+    const m200 = darkMatterEnclosedMassSolar(DARK_MATTER.VIRIAL_RADIUS_PC);
+    ok(Math.abs(m200 / DARK_MATTER.HALO_MASS_SOLAR - 1) < 1e-9,
+        "NFW halo encloses M200 at R200", `${(m200 / 1e12).toFixed(3)}e12 M⊙`);
+    const vLocal = darkMatterLocalCircularSpeedKmS();
+    ok(vLocal > 130 && vLocal < 160,
+        "dark-matter-only local circular speed is Milky-Way scale", `${vLocal.toFixed(1)} km/s`);
+    const softPoint = galToEquatorialKm(DARK_MATTER.SOFTENING_PC, 0, 0);
+    const corePoint = galToEquatorialKm(DARK_MATTER.SOFTENING_PC * 1e-4, 0, 0);
+    const softAccel = [0, 0, 0], coreAccel = [0, 0, 0];
+    darkMatterHaloAccelAtEquatorialKm(softPoint[0], softPoint[1], softPoint[2], softAccel);
+    darkMatterHaloAccelAtEquatorialKm(corePoint[0], corePoint[1], corePoint[2], coreAccel);
+    const softMag = Math.hypot(softAccel[0], softAccel[1], softAccel[2]);
+    const coreMag = Math.hypot(coreAccel[0], coreAccel[1], coreAccel[2]);
+    ok(Number.isFinite(coreMag) && coreMag <= softMag * 1.01,
+        "dark-matter softening keeps inner-halo acceleration bounded",
+        `core/soft=${(coreMag / softMag).toExponential(2)}`);
+    const rel0 = [1, 1, 1];
+    darkMatterRelativeAccel(0, 0, 0, 0, 0, 0, rel0);
+    ok(Math.hypot(rel0[0], rel0[1], rel0[2]) < 1e-24,
+        "halo uses differential acceleration in the Sol frame");
 }
 
 console.log("\n" + "=".repeat(60));

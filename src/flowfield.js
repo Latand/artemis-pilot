@@ -2,6 +2,7 @@ import { DARK_ENERGY, FLOW, PL, K } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { smooth01 } from "./format.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
+import { darkEnergyVisibleFractionKm } from "./cosmology.js";
 
 // Scene-unit river field: the medium falls at v = sqrt(2mu/r) toward every
 // body. This is the same absolute field used by the GPU river shader.
@@ -75,9 +76,11 @@ export function flowVel(x, y, z, mx, my, mz, out) {
     }
     let deX = 0, deY = 0, deZ = 0;
     if (G.darkEnergy) {
-        deX = edx * DARK_ENERGY.H_SIM;
-        deY = y * DARK_ENERGY.H_SIM;
-        deZ = edz * DARK_ENERGY.H_SIM;
+        const deFade = darkEnergyVisibleFractionKm(Math.hypot(edx, y, edz) / K);
+        const hVis = DARK_ENERGY.H_PHYS * deFade;
+        deX = edx * hVis;
+        deY = y * hVis;
+        deZ = edz * hVis;
         exVX += deX; exVY += deY; exVZ += deZ;
     }
     const vx = -edx * sE - dx * sM + exVX;

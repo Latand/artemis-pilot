@@ -34,6 +34,7 @@ const hudSrc = readFileSync(new URL("../src/hud.js", import.meta.url), "utf8");
 const mainSrc = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 const physicsSrc = readFileSync(new URL("../src/physics.js", import.meta.url), "utf8");
 const sceneSrc = readFileSync(new URL("../src/scene.js", import.meta.url), "utf8");
+const constantsSrc = readFileSync(new URL("../src/constants.js", import.meta.url), "utf8");
 assert(blackholesSrc.includes("sci(msun * SOLAR_MASS_KG"), "small black-hole mass labels should use kg");
 assert(blackholesSrc.includes("pwAccelMs2(mu, rs * 3, rs)"), "black-hole selector gravity should match the runtime Paczynski-Wiita field");
 assert(
@@ -85,8 +86,21 @@ assert(
 
 const trailsSrc = readFileSync(new URL("../src/trails.js", import.meta.url), "utf8");
 assert(
-  trailsSrc.includes("impactSpr.position.set(prPos[impactIdx], prPos[impactIdx + 1], prPos[impactIdx + 2])"),
-  "prediction impact marker should keep the 3D y coordinate",
+    trailsSrc.includes("impactSpr.position.set(prPos[impactIdx], prPos[impactIdx + 1], prPos[impactIdx + 2])"),
+    "prediction impact marker should keep the 3D y coordinate",
+);
+assert(
+    constantsSrc.includes("OMEGA_LAMBDA: 0.6889") &&
+    constantsSrc.includes("H0_KM_S_MPC: 67.66") &&
+    !constantsSrc.includes("H_SIM") &&
+    physicsSrc.includes("shipCosmologyJump") &&
+    physicsSrc.includes("smoothCosmologyAccelAt") &&
+    physicsSrc.includes("cosmologyJumpClear") &&
+    physicsSrc.includes("stellarJumpClear") &&
+    physicsSrc.includes("osculatingPeriapsis") &&
+    physicsSrc.includes("segmentSphereHit") &&
+    mainSrc.includes("darkMatterRelativeAccel"),
+    "cosmology should use physical Lambda, a differential NFW halo, and a contact-gated smooth-field jump path",
 );
 assert(segmentSphereHit(2, 0, 3, -2, 0, -3, 1), "3D segment-sphere helper should detect a crossing segment");
 assert(!segmentSphereHit(2, 0, 3, 2, 0, -3, 1), "3D segment-sphere helper should reject a parallel miss");

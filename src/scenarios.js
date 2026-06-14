@@ -2,7 +2,7 @@
 // Each scenario writes ship/world state directly after a clean restart and
 // shows a short physics card explaining what the player is about to watch.
 // Also owns the first-run title overlay (dismissal persisted in storage).
-import { SEC_YEAR, AU_KM, R_EARTH, MU_E, PL, STARS, K } from "./constants.js";
+import { SEC_YEAR, AU_KM, PC_KM, R_EARTH, MU_E, PL, STARS, K, COSMIC_ZOOMS } from "./constants.js";
 import { G } from "./state.js";
 import { cam } from "./scene.js";
 import { eph } from "./ephemeris.js";
@@ -135,27 +135,28 @@ const SCENARIOS = [
     },
     {
         id: "darkEnergy",
-        name: "DARK-ENERGY ESCAPE",
-        blurb: "Coast outward until expansion beats the Sun.",
+        name: "LOCAL-GROUP EXPANSION",
+        blurb: "Start where Lambda is finally visible against a galaxy halo.",
         physicsCard: [
-            "Dark energy pushes outward with a = H²r: feeble nearby, growing with every km of distance.",
-            "Solar gravity dies off as 1/r², so the two balance — near 76 AU with this sandbox's boosted H.",
-            "You are coasting out at 18.6 km/s, just under the local 18.8 km/s escape speed; gravity alone would haul you back.",
-            "Past the balance radius expansion wins and you accelerate away forever. O toggles it; watch the violet arrows.",
+            "Dark energy uses the physical ΛCDM term a = ΩΛH₀²r, so at 1 AU it is only about 5e-25 m/s².",
+            "A one-solar-mass star balances Λ near 111 pc; a Milky-Way-mass halo balances it around 1 Mpc.",
+            "This starts 1.3 Mpc out: violet points along Λ expansion, green points along the Milky Way dark-matter halo tide.",
+            "O toggles dark energy; Shift+O toggles the NFW halo. At Gyr/s warp, the Local Group finally moves.",
         ],
         setup() {
             const sd = Math.hypot(eph.sunX, eph.sunY) || 1;
             const ux = -eph.sunX / sd, uy = -eph.sunY / sd; // heliocentric outward through Earth
-            const rH = 5 * AU_KM;
+            const rH = 1.3e6 * PC_KM;
             G.x = ux * (rH - sd); G.y = uy * (rH - sd); G.z = 0;
-            G.vx = ux * 18.6 + eph.sunVx; G.vy = uy * 18.6 + eph.sunVy; G.vz = 0;
+            G.vx = ux * 72 + eph.sunVx; G.vy = uy * 72 + eph.sunVy; G.vz = 0;
             G.heading = Math.atan2(G.vy, G.vx);
             G.pitch = 0;
             G.darkEnergy = true;
+            G.darkMatter = true;
             G.gr = true;
-            G.warp = SEC_YEAR;
+            G.warp = 1000000000 * SEC_YEAR;
             G.focus = "ship";
-            cam.dist = 3e6;
+            cam.dist = COSMIC_ZOOMS.LOCAL_GROUP;
         },
     },
     {

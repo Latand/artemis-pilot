@@ -1,5 +1,6 @@
 import {
     MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, C_LIGHT, J2_E, OMEGA_EARTH,
+    A_MOON, AU_KM,
     PL, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME, EPH_CHUNK,
 } from "./constants.js";
 import { eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance, keplerAdvance3 } from "./ephemeris.js";
@@ -8,6 +9,9 @@ import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
 import { ACTIVE_STARS, refreshActiveStars } from "./universe/activeStars.js";
 import { strongestActiveStarWell } from "./universe/starDominance.js";
+import { darkEnergyAccel, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc } from "./cosmology.js";
+import { equatorialKmToGal } from "./universe/coords.js";
+import { segmentSphereHit } from "./geometry.js";
 
 // hooks into the presentation layer, wired once by main.js
 let H = { die: () => { }, award: () => { }, banner: () => { }, hideBanner: () => { } };
@@ -305,6 +309,113 @@ export function snapLanded() {
 const _gs = [0, 0, 0, 0, 0, 0];
 const _bhKick = [0, 0, 0];
 const _saveG = [0, 0, 0, 0, 0, 0, 0];
+const _cosA0 = [0, 0, 0], _cosA1 = [0, 0, 0], _cosTmp = [0, 0, 0];
+function cosmologyVisibilityAt(x, y, z) {
+    let vis = G.darkEnergy ? darkEnergyVisibleFractionKm(Math.hypot(x, y, z)) : 0;
+    if (G.darkMatter) {
+        const s = equatorialKmToGal(eph.earthX + x, eph.earthY + y, z);
+        const e = equatorialKmToGal(eph.earthX, eph.earthY, 0);
+        vis = Math.max(vis, darkMatterVisibleFractionPc(Math.hypot(s[0] - e[0], s[1] - e[1], s[2] - e[2])));
+    }
+    return vis;
+}
+function smoothCosmologyAccelAt(x, y, z, out) {
+    out[0] = 0; out[1] = 0; out[2] = 0;
+    if (G.darkEnergy) darkEnergyAccel(x, y, out, undefined, z);
+    if (G.darkMatter) {
+        darkMatterRelativeAccel(x, y, z, eph.earthX, eph.earthY, 0, _cosTmp);
+        out[0] += _cosTmp[0]; out[1] += _cosTmp[1]; out[2] += _cosTmp[2];
+    }
+    return out;
+}
+function cosmologyJumpLocalClear(x0, y0, z0, x1, y1, z1, dt) {
+    if (!WORLD.earthDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, Math.max(SOI_E, R_EARTH + ATM_TOP))) return false;
+    if (!WORLD.moonDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, A_MOON + SOI_M)) return false;
+    if (!WORLD.sunDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, AU_KM + 3 * R_SUN)) return false;
+    for (let i = 0; i < PL.length; i++) {
+        if (WORLD.plDestroyed[i]) continue;
+        const p = PL[i];
+        if (segmentSphereHit(x0, y0, z0, x1, y1, z1, AU_KM + p.a + p.soi)) return false;
+    }
+    for (let i = 0; i < BH.n; i++) {
+        const xBH1 = BH.x[i] + BH.vx[i] * dt, yBH1 = BH.y[i] + BH.vy[i] * dt;
+        const lim = Math.max(BH.rs[i] * 150, 5000);
+        if (segmentSphereHit(x0 - BH.x[i], y0 - BH.y[i], z0, x1 - xBH1, y1 - yBH1, z1, lim)) return false;
+    }
+    return true;
+}
+function cosmologyJumpClear(x0, y0, z0, x1, y1, z1, dt = 0) {
+    if (bodiesNeedFlush(x0, y0, z0, 0) || bodiesNeedFlush(x1, y1, z1, 0)) return false;
+    if (!cosmologyJumpLocalClear(x0, y0, z0, x1, y1, z1, dt)) return false;
+    for (const star of ACTIVE_STARS) {
+        const sx = star.x - eph.earthX, sy = star.y - eph.earthY, sz = star.z || 0;
+        const radius = star.bh ? Math.max(star.rs * 1.5, star.R) : star.R;
+        if (segmentSphereHit(x0 - sx, y0 - sy, z0 - sz, x1 - sx, y1 - sy, z1 - sz, radius)) return false;
+    }
+    return true;
+}
+function stellarContactRadius(star) {
+    return star?.bh ? Math.max(star.rs * 1.5, star.R) : star?.R || 0;
+}
+function osculatingPeriapsis(rx, ry, rz, rvx, rvy, rvz, mu) {
+    const r = Math.hypot(rx, ry, rz);
+    if (r <= 0 || mu <= 0) return 0;
+    const v2 = rvx * rvx + rvy * rvy + rvz * rvz;
+    const E = v2 / 2 - mu / r;
+    const hx = ry * rvz - rz * rvy;
+    const hy = rz * rvx - rx * rvz;
+    const hz = rx * rvy - ry * rvx;
+    const h2 = hx * hx + hy * hy + hz * hz;
+    if (h2 <= 0) return 0;
+    if (Math.abs(E) < 1e-18) return h2 / (2 * mu);
+    const e = Math.sqrt(Math.max(0, 1 + 2 * E * h2 / (mu * mu)));
+    const a = -mu / (2 * E);
+    return E < 0 ? a * (1 - e) : Math.abs(a) * (e - 1);
+}
+function stellarJumpClear(star, x0, y0, z0, x1, y1, z1, rp) {
+    if (!star) return false;
+    const radius = stellarContactRadius(star);
+    if (rp <= radius * 1.1) return false;
+    if (Math.hypot(x0, y0, z0) <= radius * 1.1 || Math.hypot(x1, y1, z1) <= radius * 1.1) return false;
+    return !segmentSphereHit(x0, y0, z0, x1, y1, z1, radius);
+}
+function cosmologyJumpStarClear(x1, y1, z1) {
+    const oi = orbitInfo();
+    if (oi.domStar && oi.star) {
+        const sx = oi.star.x - eph.earthX, sy = oi.star.y - eph.earthY, sz = oi.star.z || 0;
+        if (!stellarJumpClear(oi.star, oi.rx, oi.ry, oi.rz || 0, x1 - sx, y1 - sy, z1 - sz, oi.rp)) return false;
+    }
+    const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
+    const well = strongestActiveStarWell(ACTIVE_STARS, wx, wy, wz, 0, 2);
+    if (well?.star && well.star !== oi.star) {
+        const rvx = G.vx + eph.earthVx, rvy = G.vy + eph.earthVy, rvz = G.vz;
+        const rp = osculatingPeriapsis(well.rx, well.ry, well.rz, rvx, rvy, rvz, well.star.mu);
+        const sx = well.star.x - eph.earthX, sy = well.star.y - eph.earthY, sz = well.star.z || 0;
+        if (!stellarJumpClear(well.star, well.rx, well.ry, well.rz, x1 - sx, y1 - sy, z1 - sz, rp)) return false;
+    }
+    return true;
+}
+function shipCosmologyJump(dt) {
+    if (dt <= 1e-9 || cosmologyVisibilityAt(G.x, G.y, G.z) <= .01) return 0;
+    smoothCosmologyAccelAt(G.x, G.y, G.z, _cosA0);
+    const hvx = G.vx + _cosA0[0] * dt * .5;
+    const hvy = G.vy + _cosA0[1] * dt * .5;
+    const hvz = G.vz + _cosA0[2] * dt * .5;
+    const nx = G.x + hvx * dt;
+    const ny = G.y + hvy * dt;
+    const nz = G.z + hvz * dt;
+    if (!cosmologyJumpStarClear(nx, ny, nz)) return 0;
+    if (!cosmologyJumpClear(G.x, G.y, G.z, nx, ny, nz, dt)) return 0;
+    advanceEphem(dt);
+    bhAdvance(dt, G.t);
+    G.t += dt;
+    smoothCosmologyAccelAt(nx, ny, nz, _cosA1);
+    G.x = nx; G.y = ny; G.z = nz;
+    G.vx = hvx + _cosA1[0] * dt * .5;
+    G.vy = hvy + _cosA1[1] * dt * .5;
+    G.vz = hvz + _cosA1[2] * dt * .5;
+    return dt;
+}
 // Inside any of these zones the ephemeris must be exact (contact checks, SOI
 // dynamics, bullet time); outside, the ship integrates on extrapolated body
 // positions and the n-body system advances in EPH_CHUNK batches.
@@ -353,7 +464,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         const ds0 = Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2]);
         const dt0 = stepSize(rE0, dm0, ds0, rE0 - R_EARTH, Math.hypot(s[3], s[4], s[5]), s[0], s[1], s[2], s[3], s[4], s[5]);
         if (simAdv > MAX_STEPS_FRAME * dt0) {
-            if (BH.n === 0 && shipDeepJump(simAdv) > 0) return simAdv;
+            if (BH.n === 0 && (shipCosmologyJump(simAdv) > 0 || shipDeepJump(simAdv) > 0)) return simAdv;
             if (BH.n > 0) {
                 const jumped = tryBHBridgeJump(simAdv);
                 if (jumped > 0) return jumped;
@@ -437,7 +548,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     // scale.
     if (adv > 1e-9 && !G.dead && !G.landed && aMag === 0 &&
         GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
-        if (BH.n === 0) adv -= shipDeepJump(adv);
+        if (BH.n === 0) adv -= shipCosmologyJump(adv) || shipDeepJump(adv);
         else {
             let guard = 0;
             while (adv > 1e-9 && guard++ < 24 && !G.dead && !G.landed) {
@@ -550,8 +661,10 @@ export function shipDeepJump(dt) {
         const d = oi.r;
         if (st.bh && d < st.rs * 200) return 0;
         if (d <= st.R * 1.1) return 0;
+        if (oi.rp <= stellarContactRadius(st) * 1.1) return 0;
         keplerAdvance3(oi.rx, oi.ry, oi.rz || 0, oi.rvx, oi.rvy, oi.rvz || 0, st.mu, dt, _dj);
         if (!_dj.ok) return 0;
+        if (!stellarJumpClear(st, oi.rx, oi.ry, oi.rz || 0, _dj.x, _dj.y, _dj.z, oi.rp)) return 0;
         advanceEphem(dt);
         G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
         G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy; G.vz = _dj.vz;
@@ -565,8 +678,11 @@ export function shipDeepJump(dt) {
         const d = starWell.d;
         if (st.bh && d < st.rs * 200) return 0;
         if (d <= st.R * 1.1) return 0;
+        const rp = osculatingPeriapsis(starWell.rx, starWell.ry, starWell.rz, G.vx + eph.earthVx, G.vy + eph.earthVy, G.vz, st.mu);
+        if (rp <= stellarContactRadius(st) * 1.1) return 0;
         keplerAdvance3(starWell.rx, starWell.ry, starWell.rz, G.vx + eph.earthVx, G.vy + eph.earthVy, G.vz, st.mu, dt, _dj);
         if (!_dj.ok) return 0;
+        if (!stellarJumpClear(st, starWell.rx, starWell.ry, starWell.rz, _dj.x, _dj.y, _dj.z, rp)) return 0;
         advanceEphem(dt);
         G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
         G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy; G.vz = _dj.vz;

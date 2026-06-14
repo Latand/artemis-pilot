@@ -1,9 +1,10 @@
 import {
     AU_KM, SUN_TH0, E_EARTH, VARPI_EARTH, PL, A_MOON, E_MOON, OMEGA, MOON_ANG0,
-    MU_E, MU_M, MU_S, C_LIGHT, BH_MAX, darkEnergyAccel,
+    MU_E, MU_M, MU_S, C_LIGHT, BH_MAX,
 } from "./constants.js";
 import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
+import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -184,6 +185,7 @@ export function predBHY(i, t) { return PRED_BH.active ? PRED_BH.y[i] + PRED_BH.v
 // against one state compute it once and pass it as `ind`.
 const _gp = [0, 0, 0];
 const _de = [0, 0, 0];
+const _dm = [0, 0, 0];
 export function indirectAccel(st, out, tau = 0) {
     // with Earth gone the origin coasts inertially: no frame correction at all
     if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; if (out.length > 2) out[2] = 0; return out; }
@@ -349,6 +351,10 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
         darkEnergyAccel(x, y, _de, undefined, z);
         ax += _de[0]; ay += _de[1];
         az += _de[2] || 0;
+    }
+    if (G.darkMatter) {
+        darkMatterRelativeAccel(x, y, z, st ? st.earthX : earthX, st ? st.earthY : earthY, 0, _dm);
+        ax += _dm[0]; ay += _dm[1]; az += _dm[2];
     }
     if (ind !== null) { ax += ind[0]; ay += ind[1]; if (ind.length > 2) az += ind[2]; }
     out[0] = ax; out[1] = ay;

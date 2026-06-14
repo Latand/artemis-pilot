@@ -11,7 +11,7 @@ export const G = {
     dead: false, deadReason: "",
     deathT: 0, deathRt: 0, observerMode: false,
     leftHome: false, maxRE: 0,
-    gr: true, predict: true, darkEnergy: true, muted: false,
+    gr: true, predict: true, darkEnergy: true, darkMatter: true, muted: false,
     cabin: false,
     focus: "ship",
     thrustMain: 0, thrustLat: 0, boost: false,
@@ -107,7 +107,7 @@ export function resetShip() {
     G.fuel = FUEL_DV0; G.dvUsed = 0;
     G.landed = null; G.dead = false; G.deadReason = ""; G.deathT = 0; G.deathRt = 0; G.observerMode = false;
     G.leftHome = false; G.maxRE = r0;
-    G.hold = null; G.warp = 60; G.paused = false; G.throttle = 1; G.darkEnergy = true;
+    G.hold = null; G.warp = 60; G.paused = false; G.throttle = 1; G.darkEnergy = true; G.darkMatter = true;
     G.cabin = false;
 }
 

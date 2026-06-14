@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, STARS } from "./constants.js";
+import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, SEC_YEAR, STARS } from "./constants.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
 import { cam } from "./scene.js";
@@ -37,6 +37,8 @@ let catalogLoading = false;
 let catalogLoaded = false;
 const PC_SCENE = LY_SCENE * 3.261563777;
 const PC_LY = 3.261563777;
+const LOCAL_GALAXIES = [];
+let cosmicVisualBucket = "";
 
 function cosmicPointMap() {
     if (!pointMap) {
@@ -249,7 +251,7 @@ function points(data, size, opacity) {
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(data.pos, 3));
     geom.setAttribute("color", new THREE.BufferAttribute(data.col, 3));
-    const obj = new THREE.Points(geom, new THREE.PointsMaterial({
+    const mat = new THREE.PointsMaterial({
         vertexColors: true,
         size,
         sizeAttenuation: false,
@@ -260,7 +262,9 @@ function points(data, size, opacity) {
         depthWrite: false,
         depthTest: true,
         blending: THREE.AdditiveBlending,
-    }));
+    });
+    mat.userData.baseOpacity = opacity;
+    const obj = new THREE.Points(geom, mat);
     obj.frustumCulled = false;
     return obj;
 }
@@ -300,14 +304,16 @@ function galaxySpriteTexture(colorA, colorB, seed) {
 }
 
 function diskGalaxy(cx, cy, cz, radiusLy, tilt, colorA, colorB, seed, count = 9000) {
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    const mat = new THREE.SpriteMaterial({
         map: galaxySpriteTexture(colorA, colorB, seed),
         transparent: true,
         opacity: .34,
         depthWrite: false,
         depthTest: true,
         blending: THREE.NormalBlending,
-    }));
+    });
+    mat.userData.baseOpacity = .34;
+    const sprite = new THREE.Sprite(mat);
     sprite.position.set(cx, cy, cz);
     sprite.scale.set(radiusLy * LY_SCENE * 2.25, radiusLy * LY_SCENE * 1.05, 1);
     sprite.frustumCulled = false;
@@ -325,7 +331,9 @@ function ring(cx, cy, cz, rLy, color, opacity) {
     }
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    const line = new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+    mat.userData.baseOpacity = opacity;
+    const line = new THREE.LineLoop(geom, mat);
     line.frustumCulled = false;
     return line;
 }
@@ -335,18 +343,51 @@ function ring(cx, cy, cz, rLy, color, opacity) {
 function galacticPlaneRing(Rpc, color, opacity) {
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(galacticRingPositions(Rpc), 3));
-    const line = new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+    mat.userData.baseOpacity = opacity;
+    const line = new THREE.LineLoop(geom, mat);
     line.frustumCulled = false;
     return line;
 }
 
+function setTreeOpacity(obj, opacity) {
+    obj.traverse(child => {
+        if (!child.material) return;
+        const base = child.material.userData.baseOpacity ?? child.material.opacity ?? 1;
+        child.material.opacity = base * opacity;
+    });
+}
+
+function addMovingGalaxy(cfg) {
+    const group = new THREE.Group();
+    group.name = cfg.name;
+    const base = new THREE.Vector3(cfg.xLy * LY_SCENE, cfg.yLy * LY_SCENE, cfg.zLy * LY_SCENE);
+    group.position.copy(base);
+    group.add(diskGalaxy(0, 0, 0, cfg.radiusLy, cfg.tilt || 0, cfg.colorA, cfg.colorB, cfg.seed));
+    localRoot.add(group);
+    const velocity = new THREE.Vector3();
+    if (cfg.approachKmS) velocity.copy(base).normalize().multiplyScalar(-cfg.approachKmS * K);
+    if (cfg.velocityKmS) velocity.add(new THREE.Vector3(cfg.velocityKmS[0] * K, cfg.velocityKmS[2] * K, -cfg.velocityKmS[1] * K));
+    LOCAL_GALAXIES.push({ id: cfg.id, name: cfg.name, group, base, velocity });
+    return group;
+}
+
+function updateLocalGalaxyMotion() {
+    const t = Math.min(Math.max(G.t, -5e9 * SEC_YEAR), 5e9 * SEC_YEAR);
+    for (const g of LOCAL_GALAXIES) {
+        g.group.position.set(
+            g.base.x + g.velocity.x * t,
+            g.base.y + g.velocity.y * t,
+            g.base.z + g.velocity.z * t,
+        );
+    }
+}
+
 function buildLocalGroup() {
-    const andX = 2537000 * LY_SCENE;
-    const andZ = -420000 * LY_SCENE;
-    const triX = 1610000 * LY_SCENE;
-    const triZ = 980000 * LY_SCENE;
-    localRoot.add(diskGalaxy(andX, 18000 * LY_SCENE, andZ, 110000, .35, [.56, .65, .9], [1, .82, .55], 8102, 13000));
-    localRoot.add(diskGalaxy(triX, -24000 * LY_SCENE, triZ, 45000, -.25, [.54, .68, 1], [.9, .88, .74], 8117, 6200));
+    addMovingGalaxy({ id: "m31", name: "ANDROMEDA", xLy: 2537000, yLy: 18000, zLy: -420000, radiusLy: 110000, tilt: .35, colorA: [.56, .65, .9], colorB: [1, .82, .55], seed: 8102, approachKmS: 110 });
+    addMovingGalaxy({ id: "m33", name: "TRIANGULUM", xLy: 1610000, yLy: -24000, zLy: 980000, radiusLy: 45000, tilt: -.25, colorA: [.54, .68, 1], colorB: [.9, .88, .74], seed: 8117, approachKmS: 44 });
+    addMovingGalaxy({ id: "lmc", name: "LARGE MAGELLANIC CLOUD", xLy: -142000, yLy: -36000, zLy: 68000, radiusLy: 16000, colorA: [.62, .72, 1], colorB: [.95, .86, .7], seed: 8131, velocityKmS: [57, -226, 221] });
+    addMovingGalaxy({ id: "smc", name: "SMALL MAGELLANIC CLOUD", xLy: -184000, yLy: -62000, zLy: 104000, radiusLy: 9500, colorA: [.58, .68, .96], colorB: [.9, .82, .68], seed: 8149, velocityKmS: [19, -153, 174] });
     localRoot.add(ring(0, 0, 0, 1200000, 0x31405b, .2));
     localRoot.add(ring(0, 0, 0, 3200000, 0x26344b, .16));
     const rnd = mulberry32(8814);
@@ -420,6 +461,7 @@ export function cycleCosmicScale() {
 
 export function updateCosmicLayer() {
     if (!inited) return;
+    updateLocalGalaxyMotion();
     // LOD cross-fade tuned so a star field is ALWAYS visible while zooming:
     //  - near: 73 curated bright stars, accents up close
     //  - catalog: 119k real HYG stars — the dominant local field; kept bright and
@@ -431,11 +473,22 @@ export function updateCosmicLayer() {
     const near = 1 - smooth01(LY_SCENE * 500, LY_SCENE * 8000, cam.dist);
     const catalog = 1 - smooth01(LY_SCENE * 12000, LY_SCENE * 110000, cam.dist);
     const group = smooth01(LY_SCENE * 70000, LY_SCENE * 1200000, cam.dist);
+    const label = "COSMIC SCALE · " + cosmicScaleLabel() + catalogCoverageLabel();
+    const bucket = [
+        Math.round(gal * 100),
+        Math.round(near * 100),
+        Math.round(catalog * 100),
+        Math.round(group * 100),
+        catalogCount,
+        label,
+    ].join("|");
     root.visible = true;
     diskRoot.visible = true;
     catalogRoot.visible = catalog > .01;
     nearStarRoot.visible = near > .01;
     localRoot.visible = group > .01;
+    if (bucket === cosmicVisualBucket) return;
+    cosmicVisualBucket = bucket;
     for (const child of galaxyRoot.children) if (child.material) {
         child.visible = child.isPoints || gal > .01;
         child.material.opacity = child.isPoints ? .12 + .60 * gal * (1 - group * .6) : .05 + .20 * gal * (1 - group * .55);
@@ -448,10 +501,10 @@ export function updateCosmicLayer() {
         child.visible = catalog > .01;
         child.material.opacity = (.50 + .22 * gal) * catalog * (1 - group * .55);
     }
-    for (const child of localRoot.children) if (child.material) child.material.opacity = .03 + .2 * group;
+    setTreeOpacity(localRoot, .16 + .84 * group);
     if (scaleEl) {
         scaleEl.style.opacity = gal > .01 ? "1" : "0";
-        scaleEl.textContent = "COSMIC SCALE · " + cosmicScaleLabel() + catalogCoverageLabel();
+        scaleEl.textContent = label;
     }
 }
 

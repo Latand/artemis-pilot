@@ -43,6 +43,11 @@ try {
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => window.__G && window.__cam);
 
+  const stellarJumpGuard = await runStellarJumpGuardSmoke(page);
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => window.__G && window.__cam);
+
   const result = await page.evaluate(async () => {
     const { G } = await import("/src/state.js");
     const { STARS } = await import("/src/constants.js");
@@ -113,13 +118,114 @@ try {
     "ship drag should require a deliberate hold and release under the speed cap");
   assert(activeBrowseResult.rows > 0 && activeBrowseResult.procFocus && activeBrowseResult.resolved && activeBrowseResult.travelStarted,
     "active-neighborhood browser should focus a procedural star and start travel");
+  assert(stellarJumpGuard.crossingRejected && stellarJumpGuard.advanceBlocked && stellarJumpGuard.localAdvanceBlocked && stellarJumpGuard.curvedRejected && stellarJumpGuard.safeOrbitJumped,
+    "stellar and local-body guards should block long unsafe jumps while keeping safe stellar orbits fast");
   if (errors.length) throw new Error("console errors: " + errors.join(" | "));
 
   console.log("stellar live smoke passed");
-  console.log(JSON.stringify({ ...result, drag: dragResult, activeBrowse: activeBrowseResult }));
+  console.log(JSON.stringify({ ...result, drag: dragResult, activeBrowse: activeBrowseResult, stellarJumpGuard }));
 } finally {
   await browser.close();
   await viteServer?.close();
+}
+
+async function runStellarJumpGuardSmoke(page) {
+  return await page.evaluate(async () => {
+    const { G } = await import("/src/state.js");
+    const { DARK_ENERGY, STARS } = await import("/src/constants.js");
+    const { eph, updEphem } = await import("/src/ephemeris.js");
+    const { refreshActiveStars } = await import("/src/universe/activeStars.js");
+    const { advance, shipDeepJump } = await import("/src/physics.js");
+    const spicaIndex = STARS.findIndex(st => st.name === "SPICA");
+    const spica = STARS[spicaIndex];
+    G.t = 0;
+    G.focus = "star:" + spicaIndex;
+    G.landed = null;
+    G.dead = false;
+    G.paused = false;
+    G.darkEnergy = true;
+    G.darkMatter = true;
+    updEphem(G.t);
+    const startR = spica.R * 200;
+    G.x = spica.x - eph.earthX + startR;
+    G.y = spica.y - eph.earthY;
+    G.z = spica.z || 0;
+    G.vx = -startR / 31557600 - eph.earthVx;
+    G.vy = -eph.earthVy;
+    G.vz = 0;
+    refreshActiveStars(spica.x + startR, spica.y, spica.z || 0, G.focus);
+    const crossing = shipDeepJump(31557600);
+    G.t = 0;
+    G.dead = false;
+    G.x = spica.x - eph.earthX + startR;
+    G.y = spica.y - eph.earthY;
+    G.z = spica.z || 0;
+    G.vx = -startR / 31557600 - eph.earthVx;
+    G.vy = -eph.earthVy;
+    G.vz = 0;
+    refreshActiveStars(spica.x + startR, spica.y, spica.z || 0, G.focus);
+    const advanceCrossing = advance(31557600, 0, 0, 0, 0);
+    const advanceDead = G.dead;
+    G.t = 0;
+    G.dead = false;
+    updEphem(G.t);
+    const ra = spica.R * 2.2;
+    const rp = spica.R * .8;
+    const a = (ra + rp) * .5;
+    const period = Math.PI * 2 * Math.sqrt(a * a * a / spica.mu);
+    const vApo = Math.sqrt(spica.mu * (2 / ra - 1 / a));
+    G.x = spica.x - eph.earthX + ra;
+    G.y = spica.y - eph.earthY;
+    G.z = spica.z || 0;
+    G.vx = -eph.earthVx;
+    G.vy = -eph.earthVy + vApo;
+    G.vz = 0;
+    refreshActiveStars(spica.x + ra, spica.y, spica.z || 0, G.focus);
+    const curved = shipDeepJump(period);
+    G.t = 0;
+    G.dead = false;
+    updEphem(G.t);
+    G.x = spica.x - eph.earthX + startR;
+    G.y = spica.y - eph.earthY;
+    G.z = spica.z || 0;
+    const vc = Math.sqrt(spica.mu / startR);
+    G.vx = -eph.earthVx;
+    G.vy = -eph.earthVy + vc;
+    G.vz = 0;
+    refreshActiveStars(spica.x + startR, spica.y, spica.z || 0, G.focus);
+    const safe = shipDeepJump(86400);
+    G.t = 0;
+    G.dead = false;
+    G.landed = null;
+    G.focus = "free";
+    G.darkEnergy = true;
+    G.darkMatter = false;
+    updEphem(G.t);
+    const far = DARK_ENERGY.VISIBLE_FULL_KM * 2;
+    G.x = far;
+    G.y = 0;
+    G.z = 0;
+    G.vx = -2 * far / 31557600;
+    G.vy = 0;
+    G.vz = 0;
+    refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus);
+    const localAdvance = advance(31557600, 0, 0, 0, 0);
+    const localAdvanceDead = G.dead;
+    return {
+      crossing,
+      advanceCrossing,
+      advanceDead,
+      localAdvance,
+      localAdvanceDead,
+      curved,
+      safe,
+      crossingRejected: crossing === 0,
+      advanceBlocked: advanceDead || advanceCrossing < 31557600,
+      localAdvanceBlocked: localAdvanceDead || localAdvance < 31557600,
+      curvedRejected: curved === 0,
+      safeOrbitJumped: safe === 86400,
+    };
+  });
 }
 
 async function runActiveNeighborhoodSmoke(page) {

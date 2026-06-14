@@ -32,6 +32,7 @@ const STATS = {
     seed: getSeed(),
     radiusPc: ACTIVE_STAR_CONFIG.proceduralRadiusPc,
 };
+let ACTIVE_REFRESH_KEY = "";
 
 function focusStarIndex(focus) {
     if (typeof focus !== "string") return -1;
@@ -128,12 +129,14 @@ export function pinProceduralStarById(id) {
         PINNED_PROC.delete(id);
         PINNED_PROC.set(id, cached);
         trimPinnedProcedural(id);
+        ACTIVE_REFRESH_KEY = "";
         return cached;
     }
     const star = proceduralStarById(id);
     if (!star) return null;
     PINNED_PROC.set(id, star);
     trimPinnedProcedural(id);
+    ACTIVE_REFRESH_KEY = "";
     return star;
 }
 
@@ -243,6 +246,16 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1) {
     const forcedIndex = focusStarIndex(focus);
     const forcedProcId = proceduralFocusId(focus);
     const forcedCatalogId = hygCatalogFocusId(focus);
+    const gal = equatorialKmToGal(wx, wy, wz);
+    const hStats = hygCatalogStats();
+    const refreshKey = [
+        cacheKey(gal[0], gal[1], gal[2]),
+        String(focus),
+        PINNED_PROC.size,
+        hStats.loaded ? 1 : 0,
+        hStats.count || 0,
+    ].join("|");
+    if (refreshKey === ACTIVE_REFRESH_KEY && ACTIVE_STARS.length > 0) return activeStarStats();
     ACTIVE_STARS.length = 0;
     ACTIVE_IDS.clear();
     STATS.known = 0;
@@ -302,6 +315,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1) {
         pushActive(item.star, activeId(item.star), "procedural");
     }
     STATS.total = ACTIVE_STARS.length;
+    ACTIVE_REFRESH_KEY = refreshKey;
     return activeStarStats();
 }
 

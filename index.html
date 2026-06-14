@@ -81,14 +81,14 @@
     <div id="flowPanel">
       <div style="font-size:9px;letter-spacing:.22em;color:#7cc4f2">SPACETIME FLOW — RIVER MODEL</div>
       <div style="font-size:10px;color:#7cc4f2;margin-top:5px;letter-spacing:.08em">
-        LOCAL INFALL&nbsp;<span id="fFlow" style="color:#e8f4ff">—</span>&nbsp;·&nbsp;<span style="color:#bd72ff">EXPANSION</span>&nbsp;<span id="fDark" style="color:#eadcff">—</span>&nbsp;·&nbsp;<span style="color:#ff8a73">SHIP</span>&nbsp;<span id="fShip" style="color:#ffe2da">—</span>&nbsp;·&nbsp;<span style="color:#b8f7ff">CLOCK</span>&nbsp;<span id="fClock" style="color:#e8f4ff">—</span>
+        LOCAL INFALL&nbsp;<span id="fFlow" style="color:#e8f4ff">—</span>&nbsp;·&nbsp;<span style="color:#bd72ff">EXPANSION</span>&nbsp;<span id="fDark" style="color:#eadcff">—</span>&nbsp;·&nbsp;<span style="color:#62e0a8">HALO</span>&nbsp;<span id="fHalo" style="color:#d8ffee">—</span>&nbsp;·&nbsp;<span style="color:#ff8a73">SHIP</span>&nbsp;<span id="fShip" style="color:#ffe2da">—</span>&nbsp;·&nbsp;<span style="color:#b8f7ff">CLOCK</span>&nbsp;<span id="fClock" style="color:#e8f4ff">—</span>
       </div>
       <div style="font-size:9px;color:#8fb6c9;margin-top:4px;line-height:1.55">
         Earth v<sub>esc</sub> <span id="fEsc" style="color:#e8f4ff">—</span> · Moon v<sub>esc</sub> <span id="fEscM" style="color:#e8f4ff">—</span> · net g <span id="fAcc" style="color:#e8f4ff">—</span>
       </div>
       <div style="font-size:9px;color:#6d7a8a;margin-top:4px;line-height:1.5">
         <span style="color:#ff7a5e">red</span> = ship velocity · <span style="color:#8fd8ff">cyan</span> = space infall ·
-        <span style="color:#bd72ff">violet</span> = dark-energy expansion ·
+        <span style="color:#bd72ff">violet</span> = dark-energy expansion · <span style="color:#62e0a8">green</span> = Milky Way dark-matter halo ·
         <span style="color:#ffd34d">yellow</span> = the nose. When cyan rivals red, the river wins — that's the turn.
       </div>
     </div>
@@ -123,6 +123,7 @@
         <tr><td>P</td><td>trajectory prediction on/off</td></tr>
         <tr><td>G</td><td>spacetime river view on/off</td></tr>
         <tr><td>O</td><td>dark-energy expansion on/off</td></tr>
+        <tr><td>SHIFT+O</td><td>Milky Way dark-matter halo on/off</td></tr>
         <tr><td>B</td><td>black-hole placement mode; click the plane to place</td></tr>
         <tr><td>ESC</td><td>exit black-hole placement mode</td></tr>
         <tr><td>N / click BH label</td><td>focus next black hole and show its telemetry</td></tr>
@@ -143,8 +144,8 @@
         Exponential Earth atmosphere below 160 km.
         Black holes are real point masses (μ = r_s·c²/2) with the Paczyński–Wiita
         potential for ISCO and capture. The river view follows v = √(2μ/r) and
-        uses a small visual core for tiny holes so their local direction stays readable. Dark energy adds outward a = H²r expansion in the live field,
-        boosted for visible sandbox time. Cosmic scale adds HYG real-star catalog points with estimated mass/radius/luminosity/temperature,
+        uses a small visual core for tiny holes so their local direction stays readable. Dark energy adds the physical ΛCDM a = ΩΛH₀²r term,
+        visible from stellar-balance scale upward, and Shift+O adds the Milky Way dark-matter halo. Cosmic scale adds HYG real-star catalog points with estimated mass/radius/luminosity/temperature,
         generated world-space stars, nearby named stars,
         the Milky Way disk, Andromeda, Triangulum, and Local Group dwarf bodies.
         Nearby named stars and a capped HYG physical subset are destinations with true light-year 3D RA/declination positions,

@@ -1,4 +1,4 @@
-import { AU_KM, SEC_YEAR } from "./constants.js";
+import { AU_KM, LY_KM, SEC_YEAR } from "./constants.js";
 
 export function fmtKm(v) {
     const av = Math.abs(v);
@@ -6,7 +6,13 @@ export function fmtKm(v) {
     if (av < 10) return v.toFixed(2).replace(/\.?0+$/, "") + " km";
     return Math.round(v).toLocaleString("en-US") + " km";
 }
-export const fmtDist = v => v > 2e7 ? (v / AU_KM).toFixed(3) + " AU" : fmtKm(v);
+export function fmtDist(v) {
+    const av = Math.abs(v);
+    if (av >= LY_KM * 1e6) return (v / LY_KM / 1e6).toFixed(2) + " Mly";
+    if (av >= LY_KM * 1000) return (v / LY_KM / 1000).toFixed(1) + " kly";
+    if (av >= LY_KM * .1) return (v / LY_KM).toFixed(2) + " ly";
+    return av > 2e7 ? (v / AU_KM).toFixed(3) + " AU" : fmtKm(v);
+}
 export function fmtMET(s) {
     const d = Math.floor(s / 86400);
     if (d >= 10000) { // ~27 years: a raw day counter stops reading as time
@@ -33,7 +39,9 @@ export function accelMs2(mu, rKm) { return 1000 * mu / Math.max(1, rKm * rKm); }
 export function fmtAccel(v) {
     if (v >= .01) return v.toFixed(3) + " m/s²";
     if (v >= 1e-5) return (v * 1000).toFixed(2) + " mm/s²";
-    return (v * 1e6).toFixed(2) + " µm/s²";
+    if (v >= 1e-8) return (v * 1e6).toFixed(2) + " µm/s²";
+    if (v >= 1e-12) return (v * 1e9).toFixed(3) + " nm/s²";
+    return v.toExponential(2) + " m/s²";
 }
 export function gravityShare(muA, rA, muB, rB) {
     const a = muA / Math.max(1, rA * rA), b = muB / Math.max(1, rB * rB);

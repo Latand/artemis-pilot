@@ -367,6 +367,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const zoomFade = 1 - smooth01(LY_SCENE * 0.05, LY_SCENE * 0.9, cam.dist);
     const fEff = fB * zoomFade;
     lines.visible = fEff > .01;
+    if (!lines.visible) return;
     const planeBias = smooth01(6000, 420000, cam.dist);
     let localFocus = 0;
     const earthCamD = WORLD.earthDestroyed ? Infinity : camera.position.distanceTo(earthV);
@@ -403,7 +404,6 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     uniformsShared.uOpacity.value = .44 * fEff * (1 + planeBias * .62 + localFocus * 1.15) * (1 - loadShed * .12);
     const drawFrac = Math.max(.62, 1 - loadShed * .28, .78 + localFocus * .22);
     lines.geometry.setDrawRange(0, Math.floor(NPART * drawFrac) * 2);
-    if (!lines.visible) return;
 
     const cd = camera.position.distanceTo(cam.tgt);
     const localMinR = localFocus > .05 ? Math.max(10, Math.min(72, earthClear * 5.5 + 9)) : 16;
@@ -436,7 +436,8 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     uniformsShared.uRadius.value = smoothR;
     uniformsShared.uCam.value.copy(camera.position);
     uniformsShared.uRespawn.value = respawn;
-    uniformsShared.uDE.value = G.darkEnergy ? DARK_ENERGY.H_SIM : 0;
+    const deFade = G.darkEnergy ? smooth01(DARK_ENERGY.VISIBLE_START_KM * K, DARK_ENERGY.VISIBLE_FULL_KM * K, smoothR) : 0;
+    uniformsShared.uDE.value = DARK_ENERGY.H_PHYS * deFade;
     uniformsShared.uPlaneBias.value = planeBias;
     uniformsShared.uTimeRate.value = dtReal > 0 ? Math.max(1, dtSim / dtReal) : 1;
     uniformsShared.uTick.value = (uniformsShared.uTick.value + .618) % 64;
