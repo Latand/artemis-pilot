@@ -4,11 +4,15 @@ import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { G } from "./state.js";
-import { CAM_DIST_MAX, C_LIGHT, K } from "./constants.js";
+import { CAM_DIST_MAX, K } from "./constants.js";
 import { eph } from "./ephemeris.js";
 import { look, LOOK_YAW_MAX, LOOK_PITCH_MIN, LOOK_PITCH_MAX } from "./cockpit.js";
 import { lensingPass } from "./lensing.js";
 import { apOff } from "./autopilot.js";
+import {
+    SHIP_GRAB_FOLLOW_GAIN, SHIP_GRAB_HOLD_MS, SHIP_GRAB_MAX_SPEED,
+    SHIP_GRAB_THROW_SCALE, shipGrabPendingIntent,
+} from "./shipGrabPolicy.js";
 
 export const cvHost = document.getElementById("gl");
 export const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -56,7 +60,9 @@ const grabHit = new THREE.Vector3();
 const grabShip = new THREE.Vector3();
 const grabNormal = new THREE.Vector3();
 const shipGrab = {
-    active: false, id: -1,
+    active: false, pending: false, armed: false, id: -1, btn: 0,
+    startX: 0, startY: 0, startT: 0,
+    timer: 0,
     offset: new THREE.Vector3(),
     lastX: 0, lastY: 0, lastZ: 0, lastT: 0,
     vx: 0, vy: 0, vz: 0,
@@ -90,15 +96,25 @@ function pointerNearShip(e) {
     const sx = rect.left + (p.x * .5 + .5) * rect.width;
     const sy = rect.top + (-p.y * .5 + .5) * rect.height;
     const hitPx = Math.hypot(e.clientX - sx, e.clientY - sy);
-    const grabPx = Math.max(24, Math.min(58, 32 + Math.log10(Math.max(1, cam.dist)) * 4));
+    const grabPx = Math.max(18, Math.min(38, 24 + Math.log10(Math.max(1, cam.dist)) * 3));
     return hitPx <= grabPx;
 }
 function clampShipGrabVelocity() {
-    const vmax = C_LIGHT * .95;
+    const vmax = SHIP_GRAB_MAX_SPEED;
     const v = Math.hypot(shipGrab.vx, shipGrab.vy, shipGrab.vz);
     if (v <= vmax || v <= 0) return;
     const f = vmax / v;
     shipGrab.vx *= f; shipGrab.vy *= f; shipGrab.vz *= f;
+}
+function resetShipGrab() {
+    if (shipGrab.timer) {
+        clearTimeout(shipGrab.timer);
+        shipGrab.timer = 0;
+    }
+    shipGrab.active = false;
+    shipGrab.pending = false;
+    shipGrab.armed = false;
+    shipGrab.id = -1;
 }
 function startShipGrab(e) {
     if (G.cabin || G.dead || e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey || !pointerNearShip(e)) return false;
@@ -108,9 +124,38 @@ function startShipGrab(e) {
     const hit = pointerToPlane(e);
     if (!hit) return false;
     try { el.setPointerCapture(e.pointerId); } catch (err) { }
-    shipGrab.active = true;
+    shipGrab.pending = true;
+    shipGrab.active = false;
+    shipGrab.armed = false;
     shipGrab.id = e.pointerId;
+    shipGrab.btn = e.button;
+    shipGrab.startX = e.clientX;
+    shipGrab.startY = e.clientY;
+    shipGrab.startT = performance.now();
     shipGrab.offset.copy(grabShip).sub(hit);
+    shipGrab.lastX = G.x;
+    shipGrab.lastY = G.y;
+    shipGrab.lastZ = G.z;
+    shipGrab.lastT = performance.now() * .001;
+    shipGrab.vx = G.vx;
+    shipGrab.vy = G.vy;
+    shipGrab.vz = G.vz;
+    shipGrab.timer = window.setTimeout(() => {
+        if (shipGrab.pending && shipGrab.id === e.pointerId) {
+            shipGrab.armed = true;
+            shipGrab.timer = 0;
+        }
+    }, SHIP_GRAB_HOLD_MS);
+    e.preventDefault();
+    return true;
+}
+function activateShipGrab(e = null) {
+    if (shipGrab.timer) {
+        clearTimeout(shipGrab.timer);
+        shipGrab.timer = 0;
+    }
+    shipGrab.pending = false;
+    shipGrab.active = true;
     shipGrab.lastX = G.x;
     shipGrab.lastY = G.y;
     shipGrab.lastZ = G.z;
@@ -122,22 +167,53 @@ function startShipGrab(e) {
     G.hold = null;
     G.focus = "ship";
     apOff("mouse grab");
-    e.preventDefault();
+    e?.preventDefault?.();
     return true;
 }
+function cancelPendingShipGrabToCamera(e) {
+    const start = { x: shipGrab.startX, y: shipGrab.startY, btn: shipGrab.btn };
+    resetShipGrab();
+    ptrs.set(e.pointerId, start);
+}
 function updateShipGrab(e) {
-    if (!shipGrab.active || e.pointerId !== shipGrab.id) return false;
+    if ((!shipGrab.active && !shipGrab.pending) || e.pointerId !== shipGrab.id) return false;
+    if (shipGrab.pending) {
+        const movedPx = Math.hypot(e.clientX - shipGrab.startX, e.clientY - shipGrab.startY);
+        const heldMs = shipGrab.armed ? SHIP_GRAB_HOLD_MS : performance.now() - shipGrab.startT;
+        const intent = shipGrabPendingIntent(movedPx, heldMs);
+        if (intent === "camera") {
+            cancelPendingShipGrabToCamera(e);
+            return false;
+        }
+        if (intent === "pending") {
+            e.preventDefault();
+            return true;
+        }
+        activateShipGrab(e);
+    }
     const hit = pointerToPlane(e);
     if (!hit) return true;
     hit.add(shipGrab.offset);
-    const nx = hit.x / K - eph.earthX;
-    const ny = -hit.z / K - eph.earthY;
-    const nz = hit.y / K;
+    const tx = hit.x / K - eph.earthX;
+    const ty = -hit.z / K - eph.earthY;
+    const tz = hit.y / K;
     const now = performance.now() * .001;
     const dt = Math.max(1 / 240, now - shipGrab.lastT);
-    shipGrab.vx = (nx - shipGrab.lastX) / dt;
-    shipGrab.vy = (ny - shipGrab.lastY) / dt;
-    shipGrab.vz = (nz - shipGrab.lastZ) / dt;
+    let dx = (tx - shipGrab.lastX) * SHIP_GRAB_FOLLOW_GAIN;
+    let dy = (ty - shipGrab.lastY) * SHIP_GRAB_FOLLOW_GAIN;
+    let dz = (tz - shipGrab.lastZ) * SHIP_GRAB_FOLLOW_GAIN;
+    const step = Math.hypot(dx, dy, dz);
+    const maxStep = SHIP_GRAB_MAX_SPEED * dt;
+    if (step > maxStep && step > 0) {
+        const f = maxStep / step;
+        dx *= f; dy *= f; dz *= f;
+    }
+    const nx = shipGrab.lastX + dx;
+    const ny = shipGrab.lastY + dy;
+    const nz = shipGrab.lastZ + dz;
+    shipGrab.vx = (dx / dt) * SHIP_GRAB_THROW_SCALE;
+    shipGrab.vy = (dy / dt) * SHIP_GRAB_THROW_SCALE;
+    shipGrab.vz = (dz / dt) * SHIP_GRAB_THROW_SCALE;
     clampShipGrabVelocity();
     G.x = nx; G.y = ny; G.z = nz;
     G.vx = shipGrab.vx; G.vy = shipGrab.vy; G.vz = shipGrab.vz;
@@ -151,6 +227,11 @@ function updateShipGrab(e) {
     return true;
 }
 function finishShipGrab(e) {
+    if (shipGrab.pending && e.pointerId === shipGrab.id) {
+        resetShipGrab();
+        e.preventDefault();
+        return true;
+    }
     if (!shipGrab.active || e.pointerId !== shipGrab.id) return false;
     clampShipGrabVelocity();
     G.vx = shipGrab.vx;
@@ -158,8 +239,7 @@ function finishShipGrab(e) {
     G.vz = shipGrab.vz;
     const h = Math.hypot(G.vx, G.vy);
     if (Math.hypot(h, G.vz) > 1e-5) { G.heading = Math.atan2(G.vy, G.vx); G.pitch = Math.atan2(G.vz, h); }
-    shipGrab.active = false;
-    shipGrab.id = -1;
+    resetShipGrab();
     e.preventDefault();
     return true;
 }

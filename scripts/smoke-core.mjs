@@ -9,6 +9,10 @@ function assert(ok, message) {
 const { BH, GS, bhRegister, bhMuAt, addPhantom, gsPull } = await import("../src/state.js");
 const { C_LIGHT } = await import("../src/constants.js");
 const { segmentSphereHit } = await import("../src/geometry.js");
+const {
+  SHIP_GRAB_CANCEL_PX, SHIP_GRAB_HOLD_MS, SHIP_GRAB_MAX_SPEED,
+  SHIP_GRAB_THROW_SCALE, shipGrabPendingIntent,
+} = await import("../src/shipGrabPolicy.js");
 
 BH.n = 1;
 bhRegister(0, 0, 0, 1, 0, 0, [{ x: 0, y: 0, z: 0, t: 0, dmu: 123 }]);
@@ -29,6 +33,7 @@ const blackholesSrc = readFileSync(new URL("../src/blackholes.js", import.meta.u
 const hudSrc = readFileSync(new URL("../src/hud.js", import.meta.url), "utf8");
 const mainSrc = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 const physicsSrc = readFileSync(new URL("../src/physics.js", import.meta.url), "utf8");
+const sceneSrc = readFileSync(new URL("../src/scene.js", import.meta.url), "utf8");
 assert(blackholesSrc.includes("sci(msun * SOLAR_MASS_KG"), "small black-hole mass labels should use kg");
 assert(blackholesSrc.includes("pwAccelMs2(mu, rs * 3, rs)"), "black-hole selector gravity should match the runtime Paczynski-Wiita field");
 assert(
@@ -90,6 +95,21 @@ assert(
     trailsSrc.includes("segmentSphereHit(pex, pey, pez, _ps[0], _ps[1], _ps[2], R_EARTH)") &&
     !trailsSrc.includes("function segHit("),
   "prediction grazing impact checks should use 3D segment-sphere tests",
+);
+assert(
+    shipGrabPendingIntent(0, 0) === "pending" &&
+    shipGrabPendingIntent(SHIP_GRAB_CANCEL_PX + 1, SHIP_GRAB_HOLD_MS - 1) === "camera" &&
+    shipGrabPendingIntent(SHIP_GRAB_CANCEL_PX + 1, SHIP_GRAB_HOLD_MS + 80) === "camera" &&
+    shipGrabPendingIntent(SHIP_GRAB_CANCEL_PX - 1, SHIP_GRAB_HOLD_MS + 1) === "activate" &&
+    SHIP_GRAB_MAX_SPEED <= 100 &&
+    SHIP_GRAB_THROW_SCALE <= .5 &&
+    sceneSrc.includes("shipGrabPendingIntent") &&
+    sceneSrc.includes("window.setTimeout") &&
+    sceneSrc.includes("shipGrab.armed = true") &&
+    !sceneSrc.includes("setTimeout(() => activateShipGrab") &&
+    sceneSrc.includes("cancelPendingShipGrabToCamera") &&
+    indexSrc.includes("hold-drag ship"),
+  "ship mouse grab should require deliberate hold, send pre-hold movement to camera control, and keep a low velocity cap",
 );
 
 console.log("core smoke passed");
