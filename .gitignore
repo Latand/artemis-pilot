@@ -15,3 +15,9 @@ generated/
 !src/generated/**
 .playwright-mcp/
 .tmux-multi-agent/
+
+# local visual-verification harness (uses unsaved puppeteer-core)
+scripts/shoot*.mjs
+/shot-*.png
+/sweep-*.png
+/lod-*.png
