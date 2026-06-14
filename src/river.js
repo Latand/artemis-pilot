@@ -18,7 +18,15 @@ const NPART = TEXW * TEXW;
 const RIVER_STAR_SOURCE_MAX = 48;
 const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX;
 
-export const river = { enabled: false, radius: 22, count: NPART };
+export const river = {
+    enabled: false,
+    radius: 22,
+    count: NPART,
+    drawCount: NPART,
+    computeEvery: 1,
+    skippedCompute: false,
+    renderShed: 0,
+};
 
 let rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines;
 const bodyVals = [], sinkVals = new Array(MAXB).fill(0), rsVals = new Array(MAXB).fill(0), holeVals = new Array(MAXB).fill(0);
@@ -367,7 +375,11 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const zoomFade = 1 - smooth01(LY_SCENE * 0.05, LY_SCENE * 0.9, cam.dist);
     const fEff = fB * zoomFade;
     lines.visible = fEff > .01;
-    if (!lines.visible) return;
+    if (!lines.visible) {
+        river.computeEvery = 1;
+        river.skippedCompute = false;
+        return;
+    }
     const planeBias = smooth01(6000, 420000, cam.dist);
     let localFocus = 0;
     const earthCamD = WORLD.earthDestroyed ? Infinity : camera.position.distanceTo(earthV);
@@ -399,11 +411,19 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     }
     const nearEarthLoad = (1 - smooth01(38, 760, earthClear)) * (1 - smooth01(R_EARTH * K * 28, R_EARTH * K * 150, earthCamD));
     const loadShed = Math.max(0, Math.min(1, nearEarthLoad * (1 - localFocus * .78)));
+    const frameShed = dtReal > 0 ? Math.max(0, Math.min(1, (dtReal * 1000 - 16.7) / 33.4)) : 0;
+    const zoomShed = smooth01(2.0e7, LY_SCENE * .18, cam.dist) * (1 - localFocus * .72);
+    const renderShed = Math.max(loadShed, frameShed, zoomShed);
     uniformsShared.uLoadShed.value = loadShed;
     uniformsShared.uLocalFocus.value = localFocus;
     uniformsShared.uOpacity.value = .44 * fEff * (1 + planeBias * .62 + localFocus * 1.15) * (1 - loadShed * .12);
-    const drawFrac = Math.max(.62, 1 - loadShed * .28, .78 + localFocus * .22);
-    lines.geometry.setDrawRange(0, Math.floor(NPART * drawFrac) * 2);
+    river.renderShed = renderShed;
+    const drawFrac = Math.max(.52, .56 + localFocus * .38, 1 - renderShed * .44);
+    const drawCount = Math.max(256, Math.min(NPART, Math.floor(NPART * drawFrac)));
+    if (drawCount !== river.drawCount) {
+        lines.geometry.setDrawRange(0, drawCount * 2);
+        river.drawCount = drawCount;
+    }
 
     const cd = camera.position.distanceTo(cam.tgt);
     const localMinR = localFocus > .05 ? Math.max(10, Math.min(72, earthClear * 5.5 + 9)) : 16;
@@ -510,6 +530,9 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const dtVis = dtSim > 0 ? dtSim : 0;
     river.dtVis = dtVis;
     uniformsShared.uDtSim.value = dtVis;
+    uniformsShared.uRespawn.value = respawn;
+    river.computeEvery = 1;
+    river.skippedCompute = false;
 
     if (dtVis > 0 || respawn > .001) {
         const prevRT = renderer.getRenderTarget();

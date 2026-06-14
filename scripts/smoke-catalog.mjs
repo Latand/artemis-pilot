@@ -151,11 +151,14 @@ assert(
   "runtime catalog loader should fall back when module workers fail",
 );
 assert(
-  riverSrc.includes("const RIVER_STAR_SOURCE_MAX = 48") &&
+    riverSrc.includes("const RIVER_STAR_SOURCE_MAX = 48") &&
     riverSrc.includes("const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX") &&
     riverSrc.includes("insertRiverStarPick") &&
-    riverSrc.includes("ACTIVE_STARS"),
-  "river source cap should cover planets, max black holes, and a bounded stellar subset",
+    riverSrc.includes("ACTIVE_STARS") &&
+    riverSrc.includes("river.renderShed") &&
+    riverSrc.includes("if (drawCount !== river.drawCount)") &&
+    riverSrc.includes("river.computeEvery = 1"),
+  "river source cap and adaptive line density should keep bounded stellar sources with per-frame compute cadence",
 );
 assert(
   starsSrc.includes("function disposeStarVisual") &&
