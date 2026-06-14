@@ -11,7 +11,7 @@ import { lensingPass } from "./lensing.js";
 import { apOff } from "./autopilot.js";
 import {
     SHIP_GRAB_FOLLOW_GAIN, SHIP_GRAB_HOLD_MS, SHIP_GRAB_MAX_SPEED,
-    SHIP_GRAB_THROW_SCALE, shipGrabPendingIntent,
+    SHIP_GRAB_PICK_MAX_PX, SHIP_GRAB_PICK_MIN_PX, SHIP_GRAB_THROW_SCALE, shipGrabPendingIntent,
 } from "./shipGrabPolicy.js";
 
 export const cvHost = document.getElementById("gl");
@@ -96,7 +96,7 @@ function pointerNearShip(e) {
     const sx = rect.left + (p.x * .5 + .5) * rect.width;
     const sy = rect.top + (-p.y * .5 + .5) * rect.height;
     const hitPx = Math.hypot(e.clientX - sx, e.clientY - sy);
-    const grabPx = Math.max(18, Math.min(38, 24 + Math.log10(Math.max(1, cam.dist)) * 3));
+    const grabPx = Math.max(SHIP_GRAB_PICK_MIN_PX, Math.min(SHIP_GRAB_PICK_MAX_PX, 18 + Math.log10(Math.max(1, cam.dist)) * 2.2));
     return hitPx <= grabPx;
 }
 function clampShipGrabVelocity() {

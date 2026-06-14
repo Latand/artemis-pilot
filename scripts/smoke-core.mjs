@@ -11,7 +11,7 @@ const { C_LIGHT } = await import("../src/constants.js");
 const { segmentSphereHit } = await import("../src/geometry.js");
 const {
   SHIP_GRAB_CANCEL_PX, SHIP_GRAB_HOLD_MS, SHIP_GRAB_MAX_SPEED,
-  SHIP_GRAB_THROW_SCALE, shipGrabPendingIntent,
+  SHIP_GRAB_PICK_MAX_PX, SHIP_GRAB_PICK_MIN_PX, SHIP_GRAB_THROW_SCALE, shipGrabPendingIntent,
 } = await import("../src/shipGrabPolicy.js");
 
 BH.n = 1;
@@ -101,8 +101,12 @@ assert(
     shipGrabPendingIntent(SHIP_GRAB_CANCEL_PX + 1, SHIP_GRAB_HOLD_MS - 1) === "camera" &&
     shipGrabPendingIntent(SHIP_GRAB_CANCEL_PX + 1, SHIP_GRAB_HOLD_MS + 80) === "camera" &&
     shipGrabPendingIntent(SHIP_GRAB_CANCEL_PX - 1, SHIP_GRAB_HOLD_MS + 1) === "activate" &&
-    SHIP_GRAB_MAX_SPEED <= 100 &&
-    SHIP_GRAB_THROW_SCALE <= .5 &&
+    SHIP_GRAB_HOLD_MS >= 200 &&
+    SHIP_GRAB_CANCEL_PX <= 8 &&
+    SHIP_GRAB_MAX_SPEED <= 40 &&
+    SHIP_GRAB_THROW_SCALE <= .2 &&
+    SHIP_GRAB_PICK_MIN_PX >= 12 &&
+    SHIP_GRAB_PICK_MAX_PX <= 30 &&
     sceneSrc.includes("shipGrabPendingIntent") &&
     sceneSrc.includes("window.setTimeout") &&
     sceneSrc.includes("shipGrab.armed = true") &&

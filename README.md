@@ -17,7 +17,7 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 - **Real catalog sky layer**: the Solar System sky and cosmic view asynchronously load a compact HYG v4.1 point cloud of 119,625 Hipparcos/Yale/Gliese stars. The close sky uses apparent magnitude, B-V color, bright-star labels, and readable constellation/asterism guide linework; the binary catalog also carries absolute magnitude, luminosity, temperature, estimated mass, and estimated radius, with direct HYG search targets wired into the fast gravity/navigation loops.
 - **Streaming full-scale stellar field**: a bounded active-neighborhood layer keeps curated stars and indexed HYG v4.1 rows in priority, then fills the ship's local 8 pc sphere with deterministic seed-generated Milky Way stars. The active set feeds gravity, contact, dominant-well orbit/capture, clock-rate, river, prediction, and lensing paths while staying capped for browser frame budgets.
 - **Durable catalog travel**: HYG search focuses stable `hyg:<index>` targets directly, quicksave preserves those focus tokens, and older promoted HYG destinations still restore with their physical fields after a refresh.
-- **Mouse inertial control**: hold the ship marker, pull it through space, and release; the damped release velocity becomes the ship's new momentum.
+- **Mouse inertial control**: hold the ship marker deliberately, pull it through space, and release; the damped release velocity becomes the ship's new momentum.
 - **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, black holes, and boosted dark-energy expansion.
 - **Dynamic black holes** with configurable Schwarzschild radius, Paczynski-Wiita capture behavior, mergers, Hawking readouts, accretion visuals, and dark event-horizon cores.
 - **Earth that looks alive**: day/night terminator with real city-lights map, ocean sun glint, camera-aware atmosphere; limb-darkened granulated Sun with an animated corona; magnitude/color-varied starfield; ACES filmic tone mapping.
@@ -92,7 +92,7 @@ The static build is written to `dist/`.
 | `Shift+U` | Search HYG catalog and focus a physical star destination |
 | `J` | Toggle in-ship cabin view |
 | `0` or body label click | Focus a body and lock its trajectory prediction |
-| Hold-drag on ship | Grab and throw the ship; release preserves a damped drag velocity |
+| Hold-drag on ship | Deliberately grab and throw the ship; release preserves a damped drag velocity |
 | `P` | Toggle trajectory prediction |
 | `G` | Toggle spacetime river visualization |
 | `O` | Toggle dark-energy expansion |

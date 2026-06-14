@@ -33,6 +33,11 @@ try {
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => window.__G && window.__cam);
 
+  const dragResult = await runShipDragSmoke(page);
+
+  await page.reload({ waitUntil: "networkidle" });
+  await page.waitForFunction(() => window.__G && window.__cam);
+
   const result = await page.evaluate(async () => {
     const { G } = await import("/src/state.js");
     const { STARS } = await import("/src/constants.js");
@@ -99,11 +104,40 @@ try {
   assert(result.jumped === result.jumpDt, "shipDeepJump should advance a dominant stellar orbit");
   assert(result.postJumpDomStar && result.postJumpBody === "PROXIMA", "shipDeepJump should stay bound to Proxima");
   assert(Math.abs(result.postJumpR - result.orbitR) / result.orbitR < 1e-6, "shipDeepJump should preserve circular stellar radius");
+  assert(dragResult.cameraMoved && dragResult.shipStill && dragResult.releaseSpeed > 0 && dragResult.releaseSpeed <= 32.000001,
+    "ship drag should require a deliberate hold and release under the speed cap");
   if (errors.length) throw new Error("console errors: " + errors.join(" | "));
 
   console.log("stellar live smoke passed");
-  console.log(JSON.stringify(result));
+  console.log(JSON.stringify({ ...result, drag: dragResult }));
 } finally {
   await browser.close();
   await viteServer?.close();
+}
+
+async function runShipDragSmoke(page) {
+  await page.evaluate(() => { window.__G.paused = true; });
+  const rect = await page.locator("#gl canvas").boundingBox();
+  if (!rect) throw new Error("main canvas missing");
+  const cx = rect.x + rect.width / 2;
+  const cy = rect.y + rect.height / 2;
+  const before = await page.evaluate(() => ({ x: window.__G.x, y: window.__G.y, z: window.__G.z, yaw: window.__cam.yaw }));
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.mouse.move(cx + 36, cy, { steps: 4 });
+  await page.mouse.up({ button: "left" });
+  await page.waitForTimeout(80);
+  const afterCamera = await page.evaluate(() => ({ x: window.__G.x, y: window.__G.y, z: window.__G.z, yaw: window.__cam.yaw }));
+  await page.mouse.move(cx, cy);
+  await page.mouse.down({ button: "left" });
+  await page.waitForTimeout(260);
+  await page.mouse.move(cx + 24, cy + 12, { steps: 8 });
+  await page.mouse.up({ button: "left" });
+  await page.waitForTimeout(80);
+  const afterDrag = await page.evaluate(() => ({ vx: window.__G.vx, vy: window.__G.vy, vz: window.__G.vz }));
+  return {
+    cameraMoved: Math.abs(afterCamera.yaw - before.yaw) > .01,
+    shipStill: Math.hypot(afterCamera.x - before.x, afterCamera.y - before.y, afterCamera.z - before.z) < 1e-6,
+    releaseSpeed: Math.hypot(afterDrag.vx, afterDrag.vy, afterDrag.vz),
+  };
 }
