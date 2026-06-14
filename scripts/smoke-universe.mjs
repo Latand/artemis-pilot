@@ -8,6 +8,8 @@
 //
 // Run: node scripts/smoke-universe.mjs   (or: bun scripts/smoke-universe.mjs)
 
+globalThis.window = {};
+
 const {
     starsInCell, sampleLocalStarsNear, localStarById, densityAt, clearCache, setSeed, getSeed,
     CELL_PC, LOCAL_CELL_PC, N_SUN_PC3,
@@ -19,6 +21,9 @@ const {
     ACTIVE_STAR_CONFIG, ACTIVE_STARS, activeStarForFocus, activeStarStats, proceduralFocusValue, refreshActiveStars,
     restorePinnedProceduralStars, serializePinnedProceduralStars,
 } = await import("../src/universe/activeStars.js");
+const { STARS, MU_E } = await import("../src/constants.js");
+const { STAR_DOMINANCE_MARGIN, strongestActiveStarWell } = await import("../src/universe/starDominance.js");
+const { circularVelocityVector, orbitInfoMatchesTarget } = await import("../src/autopilot.js");
 
 let pass = 0, fail = 0;
 const ok = (cond, label, detail = "") => {
@@ -176,6 +181,42 @@ hr("Active stellar attractor set");
     ok(activeStarForFocus(overflowFocus)?.id === overflowIds[0] &&
         ACTIVE_STARS.filter(st => st.id === overflowIds[0]).length === 1,
         "focused procedural star survives pin trimming once", overflowIds[0]);
+}
+
+// ── 9. Stellar dominant-well orbit info and 3D circularization ─────────────
+hr("Stellar orbit/capture helpers");
+{
+    const proxima = STARS.find(st => st.name === "PROXIMA");
+    const orbitR = proxima.R * 45;
+    refreshActiveStars(proxima.x + orbitR, proxima.y, proxima.z, "star:0");
+    const well = strongestActiveStarWell(ACTIVE_STARS, proxima.x + orbitR, proxima.y, proxima.z, 0);
+    ok(well?.dominant && well?.star === proxima && Math.abs(Math.hypot(well.rx, well.ry, well.rz) - orbitR) / orbitR < 1e-9,
+        "active stellar dominance helper chooses Proxima when nearby", `r=${Math.round(Math.hypot(well.rx, well.ry, well.rz))}`);
+    ok(!strongestActiveStarWell(ACTIVE_STARS, proxima.x + orbitR, proxima.y, proxima.z, well.acc / STAR_DOMINANCE_MARGIN * 1.01)?.dominant,
+        "stellar dominance helper respects contested local wells");
+    const binaryA = { id: "test-a", x: 0, y: 0, z: 0, mu: 100, R: 1 };
+    const binaryB = { id: "test-b", x: 8, y: 0, z: 0, mu: 100, R: 1 };
+    const binaryWell = strongestActiveStarWell([binaryA, binaryB], 3.9, 0, 0, 0);
+    ok(binaryWell?.secondStar && !binaryWell.dominant,
+        "stellar dominance helper rejects comparable binary wells",
+        `ratio=${(binaryWell.acc / binaryWell.secondAcc).toFixed(2)}`);
+    const procFocus = ACTIVE_STARS.find(st => st.procedural);
+    const procR = procFocus.R * 80;
+    const procWell = strongestActiveStarWell([procFocus], procFocus.x + procR, procFocus.y, procFocus.z || 0, 0);
+    ok(procWell?.dominant && procWell.star.id === procFocus.id,
+        "procedural active star can own the local well", procFocus.id);
+
+    const want = circularVelocityVector(3, 4, 5, -1, 2, .5, MU_E);
+    const rMag = Math.hypot(3, 4, 5);
+    const vMag = Math.hypot(want.x, want.y, want.z);
+    const tangentErr = Math.abs((want.x * 3 + want.y * 4 + want.z * 5) / Math.max(1e-12, rMag * vMag));
+    ok(tangentErr < 1e-12, "circular velocity is tangent in full 3D", `dot=${tangentErr.toExponential(2)}`);
+    ok(Math.abs(vMag - Math.sqrt(MU_E / rMag)) < 1e-9,
+        "circular velocity magnitude matches sqrt(mu/r)", `v=${vMag.toFixed(6)}`);
+    ok(!orbitInfoMatchesTarget({ domStar: false, star: proxima, starId: proxima.name }, { star: true, ref: proxima, id: proxima.name }),
+        "autopilot star target matching waits for a dominant stellar well");
+    ok(orbitInfoMatchesTarget({ domStar: true, star: proxima, starId: proxima.name }, { star: true, ref: proxima, id: proxima.name }),
+        "autopilot star target matching accepts the dominant stellar well");
 }
 
 console.log("\n" + "=".repeat(60));

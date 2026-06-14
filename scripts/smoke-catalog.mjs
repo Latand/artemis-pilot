@@ -23,6 +23,7 @@ import {
   registerHygCatalog,
   sampleHygStarsNear,
 } from "../src/universe/hygActiveCatalog.js";
+import { strongestActiveStarWell } from "../src/universe/starDominance.js";
 
 function assert(ok, message) {
   if (!ok) throw new Error(message);
@@ -99,6 +100,11 @@ assert(activeWithHyg.catalog === ACTIVE_STAR_CONFIG.catalogLimit, "active set sh
 assert(activeWithHyg.total === ACTIVE_STARS.length && activeWithHyg.total <= ACTIVE_STAR_CONFIG.totalLimit,
   "HYG active stars should respect the global active-star cap");
 assert(activeStarForFocus(hygFocus)?.id === hygFocus, "hyg focus should resolve through the active-star layer");
+const activeHyg = ACTIVE_STARS.find(star => star.id === hygFocus);
+assert(activeHyg, "forced HYG focus should appear as an active catalog star");
+const hygOrbitR = activeHyg.R * 80;
+assert(strongestActiveStarWell([activeHyg], activeHyg.x + hygOrbitR, activeHyg.y, activeHyg.z || 0, 0)?.star === activeHyg,
+  "HYG active star should be eligible to own its local orbit well");
 assert(ACTIVE_STARS.filter(star => star.activeCatalog).every(star => star.radiusSolar >= 0.01 &&
   !(star.mass > 4 && star.radiusSolar < 1 && star.lumSolar < 100)),
   "HYG active stars should avoid grossly inconsistent mass-radius-luminosity rows");

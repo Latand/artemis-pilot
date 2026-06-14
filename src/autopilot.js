@@ -29,13 +29,18 @@ function targetState(t) {
     if (m) {
         const st = STARS[+m[1]];
         if (!st) return null;
-        return { x: st.x - eph.earthX, y: st.y - eph.earthY, z: st.z || 0, vx: -eph.earthVx, vy: -eph.earthVy, vz: 0, R: st.R, mu: st.mu, name: st.name, star: true, bh: !!st.bh };
+        return { x: st.x - eph.earthX, y: st.y - eph.earthY, z: st.z || 0, vx: -eph.earthVx, vy: -eph.earthVy, vz: 0, R: st.R, mu: st.mu, name: st.name, star: true, ref: st, id: st.id || "", bh: !!st.bh };
     }
     const proc = activeStarForFocus(t);
     if (proc) {
-        return { x: proc.x - eph.earthX, y: proc.y - eph.earthY, z: proc.z || 0, vx: -eph.earthVx, vy: -eph.earthVy, vz: 0, R: proc.R, mu: proc.mu, name: proc.name, star: true, procedural: true };
+        return { x: proc.x - eph.earthX, y: proc.y - eph.earthY, z: proc.z || 0, vx: -eph.earthVx, vy: -eph.earthVy, vz: 0, R: proc.R, mu: proc.mu, name: proc.name, star: true, ref: proc, id: proc.id || "", bh: !!proc.bh, procedural: true, activeCatalog: !!proc.activeCatalog };
     }
     return null;
+}
+
+export function orbitInfoMatchesTarget(oi, ts) {
+    if (ts.star) return !!oi.domStar && (oi.star === ts.ref || (!!ts.id && oi.starId === ts.id));
+    return ts.name === oi.body;
 }
 
 export function apTravelToFocus(toast) {
@@ -86,6 +91,26 @@ function thrustVector(a) {
     };
 }
 
+export function circularVelocityVector(rx, ry, rz, rvx, rvy, rvz, mu, out = { x: 0, y: 0, z: 0 }) {
+    const r = Math.hypot(rx, ry, rz) || 1;
+    const vc = Math.sqrt(mu / r);
+    let hx = ry * rvz - rz * rvy;
+    let hy = rz * rvx - rx * rvz;
+    let hz = rx * rvy - ry * rvx;
+    let h = Math.hypot(hx, hy, hz);
+    if (h < 1e-12) {
+        hx = -ry;
+        hy = rx;
+        hz = 0;
+        h = Math.hypot(hx, hy, hz);
+        if (h < 1e-12) { hx = 0; hy = -rz; hz = ry; h = Math.hypot(hx, hy, hz) || 1; }
+    }
+    out.x = vc * (hy * rz - hz * ry) / (h * r);
+    out.y = vc * (hz * rx - hx * rz) / (h * r);
+    out.z = vc * (hx * ry - hy * rx) / (h * r);
+    return out;
+}
+
 // arrival orbit radius per target class
 function arrivalRadius(ts) {
     if (ts.bh) return ts.R * 14;             // stand well off the photon sphere
@@ -101,13 +126,9 @@ export function apStep(dtR, dtSim, oi, hooks) {
     G.hold = null;
     if (AP.mode === "circ") {
         // burn toward the circular velocity vector at the current radius
-        const { rx, ry, rvx, rvy, mu } = oi;
-        const r = Math.hypot(rx, ry, oi.rz || 0) || 1;
-        // keep the current orbit direction (sign of angular momentum)
-        const hSign = Math.sign(rx * rvy - ry * rvx) || 1;
-        const vc = Math.sqrt(mu / r);
-        const wantVx = -hSign * vc * ry / r, wantVy = hSign * vc * rx / r;
-        const dvx = wantVx - rvx, dvy = wantVy - rvy, dvz = -(oi.rvz || 0);
+        const { rx, ry, rz = 0, rvx, rvy, rvz = 0, mu } = oi;
+        const want = circularVelocityVector(rx, ry, rz, rvx, rvy, rvz, mu);
+        const dvx = want.x - rvx, dvy = want.y - rvy, dvz = want.z - rvz;
         const dv = Math.hypot(dvx, dvy, dvz);
         AP.msg = "CIRC Δv " + (dv * 1000).toFixed(0) + " m/s";
         if (dv < .004) { apOff("orbit circularized", hooks.toast); return null; }
@@ -124,7 +145,7 @@ export function apStep(dtR, dtSim, oi, hooks) {
     const dist = Math.hypot(dx, dy, dz);
     // bound to a different body: climb out prograde first —
     // pointing at the target from low orbit just flies you into the ground
-    const domIsTarget = ts.name === oi.body;
+    const domIsTarget = orbitInfoMatchesTarget(oi, ts);
     if (!domIsTarget && oi.E < 0 && oi.mu > 1e4 && dist > oi.r * 1.5) {
         AP.phase = "climb";
         AP.msg = "CLIMBING OUT OF " + oi.body + " ORBIT";

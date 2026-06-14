@@ -7,6 +7,7 @@ import { G, BH, WORLD, GS, EPHT, bhMuAt } from "./state.js";
 import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
 import { ACTIVE_STARS, refreshActiveStars } from "./universe/activeStars.js";
+import { strongestActiveStarWell } from "./universe/starDominance.js";
 
 // hooks into the presentation layer, wired once by main.js
 let H = { die: () => { }, award: () => { }, banner: () => { }, hideBanner: () => { } };
@@ -171,9 +172,10 @@ export function orbitInfo() {
         const d = Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i], G.z);
         if (d < pNearD) { pNearD = d; pNear = i; }
     }
-    const domMoon = !WORLD.moonDestroyed && rM < SOI_M;
-    const domPl = !domMoon && pNear >= 0 && pNearD < PL[pNear].soi;
-    const domSun = !WORLD.sunDestroyed && !domMoon && !domPl && (WORLD.earthDestroyed || rE > SOI_E);
+    let domMoon = !WORLD.moonDestroyed && rM < SOI_M;
+    let domPl = !domMoon && pNear >= 0 && pNearD < PL[pNear].soi;
+    let domSun = !WORLD.sunDestroyed && !domMoon && !domPl && (WORLD.earthDestroyed || rE > SOI_E);
+    let domStar = false, star = null, bh = false, rs = 0;
     let mu, rx, ry, rz, rvx, rvy, rvz, R, body;
     if (domMoon) { mu = MU_M; rx = dxm; ry = dym; rz = dzm; rvx = G.vx - _m.vmx; rvy = G.vy - _m.vmy; rvz = G.vz; R = R_MOON; body = "MOON"; }
     else if (domPl) {
@@ -185,6 +187,25 @@ export function orbitInfo() {
     else if (domSun) { mu = MU_S; rx = sdx; ry = sdy; rz = sdz; rvx = G.vx - eph.sunVx; rvy = G.vy - eph.sunVy; rvz = G.vz; R = R_SUN; body = "SUN"; }
     else if (!WORLD.earthDestroyed) { mu = MU_E; rx = G.x; ry = G.y; rz = G.z; rvx = G.vx; rvy = G.vy; rvz = G.vz; R = R_EARTH; body = "EARTH"; }
     else { mu = 1; rx = G.x; ry = G.y; rz = G.z; rvx = G.vx; rvy = G.vy; rvz = G.vz; R = 0; body = "DRIFT"; }
+    const baseAcc = mu / Math.max(1, rx * rx + ry * ry + rz * rz);
+    const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
+    const starWell = strongestActiveStarWell(ACTIVE_STARS, wx, wy, wz, baseAcc);
+    if (starWell?.dominant) {
+        domMoon = false;
+        domPl = false;
+        domSun = false;
+        domStar = true;
+        star = starWell.star;
+        mu = starWell.star.mu;
+        rx = starWell.rx; ry = starWell.ry; rz = starWell.rz;
+        rvx = G.vx + eph.earthVx;
+        rvy = G.vy + eph.earthVy;
+        rvz = G.vz;
+        R = starWell.star.R;
+        body = starWell.star.name;
+        bh = !!starWell.star.bh;
+        rs = starWell.star.rs || 0;
+    }
     const r = Math.hypot(rx, ry, rz), v2 = rvx * rvx + rvy * rvy + rvz * rvz;
     const E = v2 / 2 - mu / r;
     const hx = ry * rvz - rz * rvy;
@@ -196,7 +217,12 @@ export function orbitInfo() {
     let rp, ra;
     if (E < 0) { rp = a * (1 - e); ra = a * (1 + e); }
     else { rp = Math.abs(a) * (e - 1); ra = Infinity; }
-    return { domMoon, domSun, domPl, pNear, pNearD, body, mu, r, rp, ra, e, E, R, rE, rM, rS, relV: Math.sqrt(v2), rx, ry, rz, rvx, rvy, rvz };
+    return {
+        domMoon, domSun, domPl, domStar, star, starNear: starWell?.star || null,
+        starNearD: starWell?.d ?? Infinity, starNearAcc: starWell?.acc || 0,
+        starId: starWell?.star?.id || starWell?.star?.name || "", bh, rs, pNear, pNearD, body, mu, r, rp, ra, e, E, R, rE, rM, rS,
+        relV: Math.sqrt(v2), rx, ry, rz, rvx, rvy, rvz,
+    };
 }
 
 // ============================ CONTACT / LANDING ============================
@@ -512,24 +538,34 @@ const _dj = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
 // when honest integration must continue: thrustless coast only, clear of
 // atmospheres, periapsis above the surface, no contested three-body zone,
 // and never against a hole's Paczyński–Wiita field.
-function shipDeepJump(dt) {
+export function shipDeepJump(dt) {
     const oi = orbitInfo();
     const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
-    let starI = -1, starAcc = 0;
-    for (let i = 0; i < ACTIVE_STARS.length; i++) {
-        const dx = wx - ACTIVE_STARS[i].x, dy = wy - ACTIVE_STARS[i].y, dz = wz - (ACTIVE_STARS[i].z || 0);
-        const a = ACTIVE_STARS[i].mu / (dx * dx + dy * dy + dz * dz);
-        if (a > starAcc) { starAcc = a; starI = i; }
-    }
     const domAcc = oi.mu / (oi.r * oi.r);
-    if (starAcc > domAcc) {
+    const starWell = strongestActiveStarWell(ACTIVE_STARS, wx, wy, wz, oi.domStar ? 0 : domAcc);
+    const starAcc = starWell?.acc || 0;
+    if (oi.domStar) {
+        const st = oi.star;
+        if (!st || starWell?.star !== st || !starWell.dominant) return 0;
+        const d = oi.r;
+        if (st.bh && d < st.rs * 200) return 0;
+        if (d <= st.R * 1.1) return 0;
+        keplerAdvance3(oi.rx, oi.ry, oi.rz || 0, oi.rvx, oi.rvy, oi.rvz || 0, st.mu, dt, _dj);
+        if (!_dj.ok) return 0;
+        advanceEphem(dt);
+        G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
+        G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy; G.vz = _dj.vz;
+        G.t += dt;
+        return dt;
+    }
+    if (starWell?.dominant && starAcc > domAcc) {
         // a named star owns the well; they are static, so recomposition only
         // has to undo the Earth-frame offset
-        const st = ACTIVE_STARS[starI];
-        const d = Math.hypot(wx - st.x, wy - st.y, wz - (st.z || 0));
+        const st = starWell.star;
+        const d = starWell.d;
         if (st.bh && d < st.rs * 200) return 0;
-        if (d <= st.R * 1.1 || domAcc > starAcc * .02) return 0;
-        keplerAdvance3(wx - st.x, wy - st.y, wz - (st.z || 0), G.vx + eph.earthVx, G.vy + eph.earthVy, G.vz, st.mu, dt, _dj);
+        if (d <= st.R * 1.1) return 0;
+        keplerAdvance3(starWell.rx, starWell.ry, starWell.rz, G.vx + eph.earthVx, G.vy + eph.earthVy, G.vz, st.mu, dt, _dj);
         if (!_dj.ok) return 0;
         advanceEphem(dt);
         G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
