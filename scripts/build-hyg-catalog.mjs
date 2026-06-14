@@ -77,25 +77,106 @@ function clamp(v, lo, hi) {
     return Math.max(lo, Math.min(hi, v));
 }
 
-function massFromLum(lum) {
+// ---------------------------------------------------------------------------
+// Bolometric correction by leading spectral class letter.
+// Simple single-value BC per class; enough for lum estimation from Mv.
+// ---------------------------------------------------------------------------
+const BC_BY_CLASS = { O: -4.0, B: -2.0, A: -0.3, F: -0.1, G: -0.07, K: -0.2, M: -1.2 };
+
+function bolomCorr(spectClass) {
+    return BC_BY_CLASS[spectClass] ?? -0.1;
+}
+
+// ---------------------------------------------------------------------------
+// Parse the leading spectral class letter (O B A F G K M W etc.) from the
+// HYG spect string, which may look like "G2V", "M1-2 Ia", "K5III", "DA", "".
+// ---------------------------------------------------------------------------
+function parseSpectClass(spect) {
+    if (!spect) return null;
+    const m = spect.match(/^([OBAFGKMLTWCS])/i);
+    return m ? m[1].toUpperCase() : null;
+}
+
+// ---------------------------------------------------------------------------
+// Parse luminosity class from the spect string.
+// Returns "Ia" | "Ib" | "II" | "III" | "IV" | "V" | null (null => treat as V).
+// We look for roman-numeral sequences after the spectral-type letters/digits.
+// ---------------------------------------------------------------------------
+function parseLumClass(spect) {
+    if (!spect) return null;
+    // Strip only the temperature subclass (letter + digits/decimal/range-dash),
+    // NOT the luminosity class roman numerals.  e.g. "K5III" -> "III", "M1-2 Ia" -> "Ia".
+    const tail = spect.replace(/^[A-Z][0-9]*(?:\.[0-9]+)?(?:[-–][0-9]+)?\s*/i, "").trim();
+    // Match roman-numeral luminosity class at start of remainder.
+    if (/^Ia/i.test(tail))                               return "Ia";
+    if (/^Ib/i.test(tail))                               return "Ib";
+    if (/^III/i.test(tail))                              return "III";
+    if (/^II([^I]|$)/i.test(tail))                      return "II";
+    if (/^IV/i.test(tail))                               return "IV";
+    if (/^V([^I]|$)/i.test(tail))                       return "V";
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+// Eker et al. (2018, MNRAS 479, 5491) mass-luminosity relation (main sequence).
+// Segments defined as [massLo, massHi, a, b]: log10(L) = a*log10(M) + b
+// ---------------------------------------------------------------------------
+const EKER_MLR = [
+    [0.00,  0.45,  2.028, -0.976],
+    [0.45,  0.72,  4.572, -0.102],
+    [0.72,  1.05,  5.743, -0.007],
+    [1.05,  2.40,  4.329,  0.010],
+    [2.40,  7.00,  3.967,  0.093],
+    [7.00, 31.0,   2.865,  1.105],
+];
+
+// Forward: mass -> log10(L) using Eker MLR.
+function ekerLumFromMass(mass) {
+    const logM = Math.log10(mass);
+    for (const [lo, hi, a, b] of EKER_MLR) {
+        if (mass >= lo && mass < hi) return a * logM + b;
+    }
+    // Beyond 31 Msun: extrapolate last segment
+    const [, , a, b] = EKER_MLR[EKER_MLR.length - 1];
+    return a * logM + b;
+}
+
+// Inverse: log10(L) -> mass, picking self-consistent Eker segment.
+// Iterates segments and returns the mass whose forward prediction matches.
+function ekerMassFromLum(lum) {
     if (!(lum > 0)) return null;
-    let mass;
-    if (lum < .033) mass = Math.pow(lum / .23, 1 / 2.3);
-    else if (lum < 16) mass = Math.pow(lum, .25);
-    else mass = Math.pow(lum / 1.5, 1 / 3.5);
-    return clamp(mass, .01, 150);
+    const logL = Math.log10(lum);
+    for (const [lo, hi, a, b] of EKER_MLR) {
+        // log10(L) = a*log10(M)+b => log10(M) = (logL-b)/a
+        const logM = (logL - b) / a;
+        const mass = Math.pow(10, logM);
+        if (mass >= lo && mass < hi) return clamp(mass, 0.08, 120);
+    }
+    // Fallback to last segment
+    const [lo, , a, b] = EKER_MLR[EKER_MLR.length - 1];
+    const logM = (logL - b) / a;
+    return clamp(Math.pow(10, logM), 0.08, 120);
 }
 
-function radiusFromLumTemp(lum, tempK) {
+// ---------------------------------------------------------------------------
+// Eker mass-radius relation for 0.179 <= M <= 1.5 Msun (main sequence).
+// R = 0.438*M^2 + 0.479*M + 0.075
+// ---------------------------------------------------------------------------
+function ekerRadiusFromMass(mass) {
+    return 0.438 * mass * mass + 0.479 * mass + 0.075;
+}
+
+// Stefan-Boltzmann radius: R/Rsun = sqrt(L) * (Tsun/Teff)^2
+function sbRadius(lum, tempK) {
     if (!(lum > 0) || !(tempK > 0)) return null;
-    return Math.sqrt(lum) * Math.pow(tempK / SOLAR_TEMP_K, -2);
+    return Math.sqrt(lum) * Math.pow(SOLAR_TEMP_K / tempK, 2);
 }
 
-function radiusFromMass(mass) {
-    if (!(mass > 0)) return null;
-    if (mass < 1) return Math.pow(mass, .8);
-    return Math.pow(mass, .57);
-}
+// ---------------------------------------------------------------------------
+// Coarse evolved-star mass priors (low-confidence, used for giants/supergiants).
+// Eker 2018 MLR is strictly for main-sequence; evolved stars have left it.
+// ---------------------------------------------------------------------------
+const EVOLVED_MASS_PRIOR = { Ia: 12, Ib: 10, II: 6, III: 2.5, IV: 1.5 };
 
 function finiteOrNull(v) {
     return Number.isFinite(v) ? v : null;
@@ -109,15 +190,65 @@ function cleanName(v) {
         .toUpperCase();
 }
 
+// ---------------------------------------------------------------------------
+// Compute physical properties for one HYG star row.
+// Uses Eker et al. (2018) MLR/MRR for main-sequence stars.
+// Giants/supergiants get Stefan-Boltzmann radius and an evolved-star mass prior.
+// ---------------------------------------------------------------------------
 function physicalRow(row) {
-    const ci = num(row[IDX.ci]);
-    const mag = num(row[IDX.mag]);
-    const absMag = num(row[IDX.absmag]);
-    const lumRaw = num(row[IDX.lum]);
-    const lum = lumRaw && lumRaw > 0 ? lumRaw : luminosityFromAbsMag(absMag);
+    const ci      = num(row[IDX.ci]);
+    const mag     = num(row[IDX.mag]);
+    const absMag  = num(row[IDX.absmag]);
+    const spect   = row[IDX.spect] || "";
+    const spectClass = parseSpectClass(spect);
+    const lumClass   = parseLumClass(spect);
+
+    // 1) Temperature: Ballesteros (2012) B-V -> T formula (best available here).
     const tempK = colorTempFromBV(ci);
-    const mass = massFromLum(lum);
-    const radius = radiusFromLumTemp(lum, tempK) ?? radiusFromMass(mass);
+
+    // 2) Luminosity: prefer catalog lum; fall back to Mv with bolometric correction.
+    const lumRaw = num(row[IDX.lum]);
+    let lum;
+    if (lumRaw && lumRaw > 0) {
+        lum = lumRaw;
+    } else if (Number.isFinite(absMag)) {
+        const bc  = bolomCorr(spectClass);
+        const mBol = absMag + bc;
+        lum = Math.pow(10, (SOLAR_ABS_MAG - mBol) / 2.5);
+    } else {
+        lum = null;
+    }
+
+    // 3) Mass and radius depend on luminosity class.
+    let mass, radius;
+    const isGiant = lumClass === "Ia" || lumClass === "Ib" ||
+                    lumClass === "II" || lumClass === "III";
+    const isSubgiant = lumClass === "IV";
+
+    if (isGiant) {
+        // Evolved star: radius from Stefan-Boltzmann (correct for large R),
+        // mass from coarse prior (low-confidence).
+        radius = sbRadius(lum, tempK);
+        mass   = clamp(EVOLVED_MASS_PRIOR[lumClass] ?? 2.5, 0.5, 200);
+    } else {
+        // Main sequence (V, IV, or unknown): invert Eker MLR for mass.
+        mass = lum ? ekerMassFromLum(lum) : null;
+        if (mass !== null) {
+            // Eker MRR valid for 0.179 <= M <= 1.5; S-B beyond that.
+            if (mass >= 0.179 && mass <= 1.5) {
+                radius = ekerRadiusFromMass(mass);
+            } else {
+                radius = sbRadius(lum, tempK);
+            }
+        } else {
+            radius = null;
+        }
+    }
+
+    // Safety clamps.
+    if (mass   !== null) mass   = clamp(mass,   0.01, 300);
+    if (radius !== null) radius = clamp(radius, 0.001, 2000);
+
     return { ci, mag, absMag, lum, tempK, mass, radius };
 }
 
@@ -223,10 +354,10 @@ await writeFile(OUT, JSON.stringify({
     stride: 10,
     count: values.length / 10,
     physicalModel: {
-        luminosity: "HYG lum when present, otherwise inferred from absolute magnitude and solar Mv=4.83",
-        temperature: "Ballesteros B-V color-temperature approximation, clamped to the useful HYG color-index range",
-        mass: "piecewise main-sequence mass-luminosity estimate in solar masses",
-        radius: "Stefan-Boltzmann estimate from luminosity and temperature, with a mass-radius fallback",
+        luminosity: "HYG lum when present; otherwise from absMag with per-class bolometric correction (Eker 2018 / Mv_sun=4.83)",
+        temperature: "Ballesteros (2012) B-V color-temperature formula, clamped to HYG ci range",
+        mass: "Eker et al. (2018, MNRAS 479, 5491) mass-luminosity relation (main seq); coarse prior for giants/supergiants",
+        radius: "Eker (2018) mass-radius polynomial (0.179-1.5 Msun); Stefan-Boltzmann otherwise; S-B for all giants (correct large R)",
     },
     stats: {
         ...stats,
