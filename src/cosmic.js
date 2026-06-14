@@ -1,15 +1,20 @@
 import * as THREE from "three";
-import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, SEC_YEAR, STARS, STAR_CATALOG_META } from "./constants.js";
+import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, STARS, STAR_CATALOG_META } from "./constants.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
 import { cam } from "./scene.js";
 import { toast } from "./achievements.js";
+import { makeGalaxyCloud, galacticCenterScene, galacticRingPositions } from "./universe/starfield.js";
 
+// Galactic-centre position in scene units (toward Sgr A*, ~26,000 ly). The
+// procedural galaxy cloud and the real HYG catalog share this equatorial frame.
+const GC_SCENE = galacticCenterScene();
 export const GALAXY = {
     sunX: 0,
     sunZ: 0,
-    centerX: -26000 * LY_SCENE,
-    centerZ: 0,
+    centerX: GC_SCENE[0],
+    centerY: GC_SCENE[1],
+    centerZ: GC_SCENE[2],
 };
 
 let scaleEl = null;
@@ -199,47 +204,6 @@ function destinationSuppressPc() {
     return out;
 }
 
-function makeMilkyWayStars() {
-    const rnd = mulberry32(240612);
-    const count = 52000;
-    const pos = new Float32Array(count * 3);
-    const col = new Float32Array(count * 3);
-    const arms = 4;
-    const radius = 54000 * LY_SCENE;
-    const thick = 980 * LY_SCENE;
-    for (let i = 0; i < count; i++) {
-        const halo = rnd() < .12;
-        let gx, gy, gz, warmth;
-        if (halo) {
-            const r = Math.pow(rnd(), .32) * radius * 1.18;
-            const th = rnd() * Math.PI * 2;
-            const ph = Math.acos(2 * rnd() - 1);
-            gx = Math.sin(ph) * Math.cos(th) * r * .82;
-            gy = Math.cos(ph) * r * .18;
-            gz = Math.sin(ph) * Math.sin(th) * r * .58;
-            warmth = .25 + rnd() * .25;
-        } else {
-            const arm = Math.floor(rnd() * arms);
-            const r = Math.pow(rnd(), .68) * radius;
-            const spin = r / radius * 7.4;
-            const th = arm / arms * Math.PI * 2 + spin + (rnd() - .5) * .42;
-            const rr = r * (.86 + rnd() * .22);
-            gx = Math.cos(th) * rr;
-            gy = (rnd() - .5) * thick * (1 + Math.pow(rnd(), 3) * 5);
-            gz = Math.sin(th) * rr * .72;
-            warmth = Math.max(0, 1 - r / radius);
-        }
-        pos[i * 3] = gx;
-        pos[i * 3 + 1] = gy;
-        pos[i * 3 + 2] = gz;
-        const c = colorMix([.52, .64, .95], [1.0, .78, .48], warmth, (rnd() - .5) * .06);
-        col[i * 3] = c[0];
-        col[i * 3 + 1] = c[1];
-        col[i * 3 + 2] = c[2];
-    }
-    return { pos, col };
-}
-
 function makeLocalStars() {
     const rnd = mulberry32(33177);
     const count = STARS.length;
@@ -343,6 +307,16 @@ function ring(cx, cy, cz, rLy, color, opacity) {
     return line;
 }
 
+// A ring in the real Galactic plane at galactocentric radius Rpc (parsecs),
+// transformed into the equatorial scene frame so it tilts correctly.
+function galacticPlaneRing(Rpc, color, opacity) {
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(galacticRingPositions(Rpc), 3));
+    const line = new THREE.LineLoop(geom, new THREE.LineBasicMaterial({ color, transparent: true, opacity, depthWrite: false }));
+    line.frustumCulled = false;
+    return line;
+}
+
 function buildLocalGroup() {
     const andX = 2537000 * LY_SCENE;
     const andZ = -420000 * LY_SCENE;
@@ -372,10 +346,13 @@ function buildLocalGroup() {
 export function initCosmicLayer(scene) {
     if (inited) return;
     inited = true;
-    galaxyRoot.position.set(GALAXY.centerX, 0, GALAXY.centerZ);
-    galaxyRoot.add(points(makeMilkyWayStars(), 1.05, .45));
-    galaxyRoot.add(ring(0, 0, 0, 26000, 0x53617a, .34));
-    galaxyRoot.add(ring(0, 0, 0, 54000, 0x344058, .28));
+    // galaxyRoot stays at the scene origin: makeGalaxyCloud returns absolute
+    // Sol-centred equatorial coordinates with the Galactic centre toward Sgr A*,
+    // so the band lines up with the real HYG catalog rather than the old ~87°
+    // misaligned decorative spiral.
+    galaxyRoot.add(points(makeGalaxyCloud(170000), 1.05, .5));
+    galaxyRoot.add(galacticPlaneRing(8200, 0x53617a, .30));
+    galaxyRoot.add(galacticPlaneRing(16000, 0x344058, .24));
     catalogRoot.frustumCulled = false;
     nearStarRoot.add(points(makeLocalStars(), 2.4, .78));
     buildLocalGroup();
@@ -404,7 +381,7 @@ export function cycleCosmicScale() {
     if (cam.dist < LY_SCENE * 1000) {
         cam.dist = COSMIC_ZOOMS.MILKY_WAY;
         G.focus = "free";
-        cam.tgt.set(GALAXY.centerX, 0, GALAXY.centerZ);
+        cam.tgt.set(GALAXY.centerX, GALAXY.centerY, GALAXY.centerZ);
         toast("Scale: Milky Way · " + cosmicScaleLabel());
     } else if (cam.dist < LY_SCENE * 800000) {
         cam.dist = COSMIC_ZOOMS.LOCAL_GROUP;
@@ -428,7 +405,6 @@ export function updateCosmicLayer() {
     diskRoot.visible = true;
     catalogRoot.visible = catalog > .01;
     nearStarRoot.visible = near > .01;
-    galaxyRoot.rotation.y = G.t / (SEC_YEAR * 230000000) * Math.PI * 2;
     localRoot.visible = group > .01;
     for (const child of galaxyRoot.children) if (child.material) {
         child.visible = child.isPoints || gal > .01;

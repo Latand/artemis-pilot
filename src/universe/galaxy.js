@@ -34,6 +34,16 @@ const N_ARMS = 4, ARM_PITCH = 12.8 * Math.PI / 180;
 const ARM_R0 = 3000, ARM_SIGMA = 350, ARM_AMP = 1.6;
 const TAN_PITCH = Math.tan(ARM_PITCH);
 
+// Structural parameters, exported so the visual galaxy-cloud sampler
+// (starfield.js) draws from the same Milky Way model the per-star generator uses.
+export const GALAXY_STRUCT = {
+    R0_PC, Z_SUN_PC,
+    HR_THIN, HZ_THIN, HR_THICK, HZ_THICK, F_THICK,
+    Q_HALO, N_HALO, F_HALO, R_BULGE, A_BULGE,
+    R_DISC_MAX, Z_DISC_MAX,
+    N_ARMS, ARM_PITCH, ARM_R0, ARM_SIGMA, ARM_AMP,
+};
+
 let SEED = 0x9e3779b9 >>> 0;
 export function setSeed(seed) { SEED = seed >>> 0; }
 export function getSeed() { return SEED; }
