@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, SEC_YEAR, STARS } from "./constants.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
-import { cam } from "./scene.js";
+import { cam, camera } from "./scene.js";
 import { toast } from "./achievements.js";
 import { loadHygCatalogData } from "./universe/catalogData.js";
 import { makeGalaxyCloud, galacticCenterScene, galacticRingPositions } from "./universe/starfield.js";
@@ -27,9 +27,10 @@ const galaxyRoot = new THREE.Group();
 const catalogRoot = new THREE.Group();
 const nearStarRoot = new THREE.Group();
 const localRoot = new THREE.Group();
+const deepRoot = new THREE.Group();
 const labelRoot = new THREE.Group();
 diskRoot.add(galaxyRoot, catalogRoot, nearStarRoot);
-root.add(diskRoot, localRoot, labelRoot);
+root.add(diskRoot, localRoot, deepRoot, labelRoot);
 let pointMap = null;
 let catalogCount = 0;
 let catalogStats = null;
@@ -269,6 +270,59 @@ function points(data, size, opacity) {
     return obj;
 }
 
+function sphericalCloud(count, radiusLy, seed, colorA, colorB, coreBias = 1.9, flatness = 1) {
+    const rnd = mulberry32(seed);
+    const radius = radiusLy * LY_SCENE;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+        const u = rnd() * 2 - 1;
+        const th = rnd() * Math.PI * 2;
+        const r = radius * Math.pow(rnd(), coreBias);
+        const side = Math.sqrt(Math.max(0, 1 - u * u));
+        pos[i * 3] = Math.cos(th) * side * r;
+        pos[i * 3 + 1] = u * r * flatness;
+        pos[i * 3 + 2] = Math.sin(th) * side * r;
+        const mix = Math.pow(rnd(), .7);
+        const c = colorMix(colorA, colorB, mix, (rnd() - .5) * .045);
+        col[i * 3] = Math.max(0, Math.min(1, c[0]));
+        col[i * 3 + 1] = Math.max(0, Math.min(1, c[1]));
+        col[i * 3 + 2] = Math.max(0, Math.min(1, c[2]));
+    }
+    return { pos, col };
+}
+
+function globularCloud(count, radiusLy, seed, colorA, colorB) {
+    const rnd = mulberry32(seed);
+    const radius = radiusLy * LY_SCENE;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+        const u = rnd() * 2 - 1;
+        const th = rnd() * Math.PI * 2;
+        const r = radius * (.12 + Math.pow(rnd(), .72) * .88);
+        const side = Math.sqrt(Math.max(0, 1 - u * u));
+        pos[i * 3] = Math.cos(th) * side * r;
+        pos[i * 3 + 1] = u * r * .88;
+        pos[i * 3 + 2] = Math.sin(th) * side * r;
+        const c = colorMix(colorA, colorB, rnd(), .04 + rnd() * .05);
+        col[i * 3] = Math.min(1, c[0]);
+        col[i * 3 + 1] = Math.min(1, c[1]);
+        col[i * 3 + 2] = Math.min(1, c[2]);
+    }
+    return { pos, col };
+}
+
+function offsetCloud(data, x, y, z) {
+    const pos = data.pos;
+    for (let i = 0; i < pos.length; i += 3) {
+        pos[i] += x;
+        pos[i + 1] += y;
+        pos[i + 2] += z;
+    }
+    return data;
+}
+
 function galaxyCoreTexture(colorA, colorB) {
     const W = 128;
     const cv = document.createElement("canvas");
@@ -350,6 +404,62 @@ function diskGalaxy(cx, cy, cz, radiusLy, tilt, colorA, colorB, seed, count = 90
     return group;
 }
 
+function galaxyHalo(radiusLy, seed, colorA, colorB, richness = 1) {
+    const group = new THREE.Group();
+    const haloCount = Math.max(240, Math.round(900 * richness));
+    const clusterCount = Math.max(60, Math.round(160 * richness));
+    const halo = points(sphericalCloud(haloCount, radiusLy * 2.6, seed ^ 0x51ed, colorA, colorB, 1.35, .82), .72, .22);
+    const clusters = points(globularCloud(clusterCount, radiusLy * 2.05, seed ^ 0xa71, [.72, .82, 1], [1, .9, .66]), 1.75, .58);
+    group.add(halo, clusters);
+    group.frustumCulled = false;
+    return group;
+}
+
+function milkyWayHalo() {
+    const group = new THREE.Group();
+    group.add(points(
+        offsetCloud(sphericalCloud(4600, 210000, 48879, [.42, .52, .82], [.95, .82, .58], 1.08, .72), GALAXY.centerX, GALAXY.centerY, GALAXY.centerZ),
+        .66,
+        .18,
+    ));
+    group.add(points(
+        offsetCloud(globularCloud(520, 165000, 48881, [.70, .82, 1], [1, .88, .62]), GALAXY.centerX, GALAXY.centerY, GALAXY.centerZ),
+        1.65,
+        .48,
+    ));
+    group.frustumCulled = false;
+    return group;
+}
+
+function deepFieldLayer(count = 16000) {
+    const rnd = mulberry32(0x9e3779);
+    const radius = CAM_DIST_MAX * .78;
+    const pos = new Float32Array(count * 3);
+    const col = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+        const u = rnd() * 2 - 1;
+        const th = rnd() * Math.PI * 2;
+        const side = Math.sqrt(Math.max(0, 1 - u * u));
+        const r = radius * (.94 + rnd() * .04);
+        pos[i * 3] = Math.cos(th) * side * r;
+        pos[i * 3 + 1] = u * r;
+        pos[i * 3 + 2] = Math.sin(th) * side * r;
+        const warm = rnd() < .34;
+        const base = warm ? [.92, .73, .52] : [.48, .60, .92];
+        const hi = warm ? [1, .88, .67] : [.72, .82, 1];
+        const c = colorMix(base, hi, Math.pow(rnd(), .55), (rnd() - .5) * .035);
+        const gain = .45 + Math.pow(rnd(), 5.0) * .55;
+        col[i * 3] = Math.max(0, Math.min(1, c[0] * gain));
+        col[i * 3 + 1] = Math.max(0, Math.min(1, c[1] * gain));
+        col[i * 3 + 2] = Math.max(0, Math.min(1, c[2] * gain));
+    }
+    const obj = points({ pos, col }, 1.25, .62);
+    obj.material.depthTest = false;
+    obj.material.userData.baseOpacity = .62;
+    obj.renderOrder = -1;
+    return obj;
+}
+
 function ring(cx, cy, cz, rLy, color, opacity) {
     const segs = 420;
     const pos = new Float32Array(segs * 3);
@@ -394,6 +504,7 @@ function addMovingGalaxy(cfg) {
     const base = new THREE.Vector3(cfg.xLy * LY_SCENE, cfg.yLy * LY_SCENE, cfg.zLy * LY_SCENE);
     group.position.copy(base);
     group.add(diskGalaxy(0, 0, 0, cfg.radiusLy, cfg.tilt || 0, cfg.colorA, cfg.colorB, cfg.seed, cfg.count || 9000));
+    group.add(galaxyHalo(cfg.radiusLy, cfg.seed, cfg.colorA, cfg.colorB, cfg.richness || 1));
     localRoot.add(group);
     const velocity = new THREE.Vector3();
     if (cfg.approachKmS) velocity.copy(base).normalize().multiplyScalar(-cfg.approachKmS * K);
@@ -414,14 +525,14 @@ function updateLocalGalaxyMotion() {
 }
 
 function buildLocalGroup() {
-    addMovingGalaxy({ id: "m31", name: "ANDROMEDA", xLy: 2537000, yLy: 18000, zLy: -420000, radiusLy: 110000, tilt: .35, colorA: [.56, .65, .9], colorB: [1, .82, .55], seed: 8102, approachKmS: 110 });
-    addMovingGalaxy({ id: "m33", name: "TRIANGULUM", xLy: 1610000, yLy: -24000, zLy: 980000, radiusLy: 45000, tilt: -.25, colorA: [.54, .68, 1], colorB: [.9, .88, .74], seed: 8117, approachKmS: 44 });
-    addMovingGalaxy({ id: "lmc", name: "LARGE MAGELLANIC CLOUD", xLy: -142000, yLy: -36000, zLy: 68000, radiusLy: 16000, colorA: [.62, .72, 1], colorB: [.95, .86, .7], seed: 8131, velocityKmS: [57, -226, 221] });
-    addMovingGalaxy({ id: "smc", name: "SMALL MAGELLANIC CLOUD", xLy: -184000, yLy: -62000, zLy: 104000, radiusLy: 9500, colorA: [.58, .68, .96], colorB: [.9, .82, .68], seed: 8149, velocityKmS: [19, -153, 174] });
+    addMovingGalaxy({ id: "m31", name: "ANDROMEDA", xLy: 2537000, yLy: 18000, zLy: -420000, radiusLy: 110000, tilt: .35, colorA: [.56, .65, .9], colorB: [1, .82, .55], seed: 8102, approachKmS: 110, richness: 1.35 });
+    addMovingGalaxy({ id: "m33", name: "TRIANGULUM", xLy: 1610000, yLy: -24000, zLy: 980000, radiusLy: 45000, tilt: -.25, colorA: [.54, .68, 1], colorB: [.9, .88, .74], seed: 8117, approachKmS: 44, richness: .85 });
+    addMovingGalaxy({ id: "lmc", name: "LARGE MAGELLANIC CLOUD", xLy: -142000, yLy: -36000, zLy: 68000, radiusLy: 16000, colorA: [.62, .72, 1], colorB: [.95, .86, .7], seed: 8131, velocityKmS: [57, -226, 221], richness: .45 });
+    addMovingGalaxy({ id: "smc", name: "SMALL MAGELLANIC CLOUD", xLy: -184000, yLy: -62000, zLy: 104000, radiusLy: 9500, colorA: [.58, .68, .96], colorB: [.9, .82, .68], seed: 8149, velocityKmS: [19, -153, 174], richness: .32 });
     localRoot.add(ring(0, 0, 0, 1200000, 0x31405b, .2));
     localRoot.add(ring(0, 0, 0, 3200000, 0x26344b, .16));
     const rnd = mulberry32(8814);
-    const count = 120;
+    const count = 1800;
     const pos = new Float32Array(count * 3);
     const col = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
@@ -430,11 +541,11 @@ function buildLocalGroup() {
         pos[i * 3] = Math.cos(th) * r;
         pos[i * 3 + 1] = (rnd() - .5) * 360000 * LY_SCENE;
         pos[i * 3 + 2] = Math.sin(th) * r * .68;
-        col[i * 3] = .55 + rnd() * .24;
-        col[i * 3 + 1] = .62 + rnd() * .2;
-        col[i * 3 + 2] = .78 + rnd() * .2;
+        col[i * 3] = .62 + rnd() * .28;
+        col[i * 3 + 1] = .68 + rnd() * .24;
+        col[i * 3 + 2] = .82 + rnd() * .18;
     }
-    localRoot.add(points({ pos, col }, .85, .18));
+    localRoot.add(points({ pos, col }, 1.2, .42));
 }
 
 export function initCosmicLayer(scene) {
@@ -445,11 +556,14 @@ export function initCosmicLayer(scene) {
     // so the band lines up with the real HYG catalog rather than the old ~87°
     // misaligned decorative spiral.
     galaxyRoot.add(points(makeGalaxyCloud(170000), 1.20, .5));
+    galaxyRoot.add(milkyWayHalo());
     galaxyRoot.add(galacticPlaneRing(8200, 0x53617a, .30));
     galaxyRoot.add(galacticPlaneRing(16000, 0x344058, .24));
     catalogRoot.frustumCulled = false;
     nearStarRoot.add(points(makeLocalStars(), 2.4, .78));
     buildLocalGroup();
+    deepRoot.add(deepFieldLayer());
+    deepRoot.frustumCulled = false;
     root.frustumCulled = false;
     scene.add(root);
     scaleEl = document.getElementById("cosmicScale");
@@ -503,12 +617,14 @@ export function updateCosmicLayer() {
     const near = 1 - smooth01(LY_SCENE * 500, LY_SCENE * 8000, cam.dist);
     const catalog = 1 - smooth01(LY_SCENE * 12000, LY_SCENE * 110000, cam.dist);
     const group = smooth01(LY_SCENE * 70000, LY_SCENE * 1200000, cam.dist);
+    const deep = smooth01(LY_SCENE * 220000, LY_SCENE * 1600000, cam.dist);
     const label = "COSMIC SCALE · " + cosmicScaleLabel() + catalogCoverageLabel();
     const bucket = [
         Math.round(gal * 100),
         Math.round(near * 100),
         Math.round(catalog * 100),
         Math.round(group * 100),
+        Math.round(deep * 100),
         catalogCount,
         label,
     ].join("|");
@@ -517,11 +633,18 @@ export function updateCosmicLayer() {
     catalogRoot.visible = catalog > .01;
     nearStarRoot.visible = near > .01;
     localRoot.visible = group > .01;
+    deepRoot.visible = deep > .01;
+    if (deepRoot.visible) deepRoot.position.copy(camera.position);
     if (bucket === cosmicVisualBucket) return;
     cosmicVisualBucket = bucket;
-    for (const child of galaxyRoot.children) if (child.material) {
-        child.visible = child.isPoints || gal > .01;
-        child.material.opacity = child.isPoints ? .12 + .60 * gal * (1 - group * .6) : .05 + .20 * gal * (1 - group * .55);
+    for (const child of galaxyRoot.children) {
+        if (child.material) {
+            child.visible = child.isPoints || gal > .01;
+            child.material.opacity = child.isPoints ? .12 + .60 * gal * (1 - group * .6) : .05 + .20 * gal * (1 - group * .55);
+        } else {
+            child.visible = gal > .01;
+            setTreeOpacity(child, (.15 + .58 * gal) * (1 - group * .35));
+        }
     }
     for (const child of nearStarRoot.children) if (child.material) {
         child.visible = near > .01;
@@ -532,6 +655,7 @@ export function updateCosmicLayer() {
         child.material.opacity = (.50 + .22 * gal) * catalog * (1 - group * .55);
     }
     setTreeOpacity(localRoot, .16 + .84 * group);
+    setTreeOpacity(deepRoot, deep);
     if (scaleEl) {
         scaleEl.style.opacity = gal > .01 ? "1" : "0";
         scaleEl.textContent = label;
