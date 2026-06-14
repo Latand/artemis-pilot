@@ -21,14 +21,20 @@ function bvColor(ci, mag, out) {
 
 self.onmessage = async e => {
     try {
-        const { url, pcScene, suppress = [] } = e.data;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        const data = await res.json();
-        const binUrl = new URL(data.binary, new URL(url, self.location.href));
-        const binRes = await fetch(binUrl);
-        if (!binRes.ok) throw new Error("catalog binary HTTP " + binRes.status);
-        const vals = new Float32Array(await binRes.arrayBuffer());
+        const { url, meta, vals: inputVals, pcScene, suppress = [] } = e.data;
+        let data = meta || null;
+        let vals = inputVals ? new Float32Array(inputVals) : null;
+        let fetched = false;
+        if (!data || !vals) {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            data = await res.json();
+            const binUrl = new URL(data.binary, new URL(url, self.location.href));
+            const binRes = await fetch(binUrl);
+            if (!binRes.ok) throw new Error("catalog binary HTTP " + binRes.status);
+            vals = new Float32Array(await binRes.arrayBuffer());
+            fetched = true;
+        }
         const fields = data.fields || [];
         const field = name => {
             const i = fields.indexOf(name);
@@ -87,17 +93,22 @@ self.onmessage = async e => {
             if (temp > 0) stats.tempEstimated++;
             out++;
         }
-        self.postMessage({
+        const msg = {
             ok: true,
             count: kept,
             sourceCount: count,
             stats,
             schema: data.schema || 1,
             meta: data,
-            vals: vals.buffer,
             pos: pos.buffer,
             col: col.buffer,
-        }, [pos.buffer, col.buffer, vals.buffer]);
+        };
+        const transfer = [pos.buffer, col.buffer];
+        if (fetched) {
+            msg.vals = vals.buffer;
+            transfer.push(vals.buffer);
+        }
+        self.postMessage(msg, transfer);
     } catch (err) {
         self.postMessage({ ok: false, error: err?.message || String(err) });
     }

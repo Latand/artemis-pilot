@@ -11,6 +11,7 @@ export const ACTIVE_STAR_CONFIG = {
     knownLimit: 256,
     catalogRadiusPc: 20,
     catalogLimit: 96,
+    catalogOversampleLimit: 640,
     proceduralLimit: 420,
     pinnedProceduralLimit: 384,
     totalLimit: 640,
@@ -232,6 +233,12 @@ function catalogStarById(id) {
     return knownDuplicateFor(star) || star;
 }
 
+function starInfluence(star, wx, wy, wz) {
+    const dx = wx - star.x, dy = wy - star.y, dz = wz - (star.z || 0);
+    const d2 = Math.max(1, dx * dx + dy * dy + dz * dz);
+    return { star, score: star.mu / d2, d2 };
+}
+
 export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1) {
     const forcedIndex = focusStarIndex(focus);
     const forcedProcId = proceduralFocusId(focus);
@@ -262,14 +269,19 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1) {
         pushActive(star, id, "procedural");
     }
 
+    const catalogSlotsLeft = Math.max(0, ACTIVE_STAR_CONFIG.catalogLimit - STATS.catalog);
     const catalog = sampleHygStarsNear(
         wx,
         wy,
         wz,
         ACTIVE_STAR_CONFIG.catalogRadiusPc,
-        ACTIVE_STAR_CONFIG.catalogLimit,
+        Math.min(ACTIVE_STAR_CONFIG.catalogOversampleLimit, ACTIVE_STAR_CONFIG.totalLimit),
     )
-        .filter(st => !maskedByKnown(st, ACTIVE_STARS));
+        .filter(st => !maskedByKnown(st, ACTIVE_STARS))
+        .map(star => starInfluence(star, wx, wy, wz))
+        .sort((a, b) => b.score - a.score || a.d2 - b.d2 || activeId(a.star).localeCompare(activeId(b.star)))
+        .slice(0, catalogSlotsLeft)
+        .map(item => item.star);
     for (const star of catalog) {
         if (ACTIVE_STARS.length >= ACTIVE_STAR_CONFIG.totalLimit) break;
         pushActive(star, activeId(star), "catalog");

@@ -1,9 +1,10 @@
 import * as THREE from "three";
-import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, STARS, STAR_CATALOG_META } from "./constants.js";
+import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, STARS } from "./constants.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
 import { cam } from "./scene.js";
 import { toast } from "./achievements.js";
+import { loadHygCatalogData } from "./universe/catalogData.js";
 import { makeGalaxyCloud, galacticCenterScene, galacticRingPositions } from "./universe/starfield.js";
 import { registerHygCatalog } from "./universe/hygActiveCatalog.js";
 
@@ -89,12 +90,7 @@ function installCatalogObject(pos, col, count, stats) {
 async function loadCatalogStarsFallback(reason) {
     if (reason) console.warn("HYG catalog worker unavailable, using main thread", reason);
     try {
-        const res = await fetch(STAR_CATALOG_META.hygUrl);
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        const data = await res.json();
-        const binRes = await fetch(new URL(data.binary, new URL(STAR_CATALOG_META.hygUrl, location.href)));
-        if (!binRes.ok) throw new Error("catalog binary HTTP " + binRes.status);
-        const vals = new Float32Array(await binRes.arrayBuffer());
+        const { meta: data, vals } = await loadHygCatalogData();
         registerHygCatalog(data, vals, { deferIndex: true });
         const fields = data.fields || [];
         const field = name => {
@@ -112,8 +108,20 @@ async function loadCatalogStarsFallback(reason) {
         const iLum = field("lumSolar");
         const iTemp = field("tempK");
         const count = Math.floor(vals.length / stride);
-        const pos = new Float32Array(count * 3);
-        const col = new Float32Array(count * 3);
+        const keep = new Uint8Array(count);
+        let kept = 0;
+        const suppress = destinationSuppressPc();
+        const suppressR2 = 0.18 * 0.18;
+        for (let i = 0, j = 0; i < count; i++, j += stride) {
+            let suppressed = false;
+            for (let k = 0; k < suppress.length; k += 3) {
+                const dx = vals[j + iX] - suppress[k], dy = vals[j + iY] - suppress[k + 1], dz = vals[j + iZ] - suppress[k + 2];
+                if (dx * dx + dy * dy + dz * dz <= suppressR2) { suppressed = true; break; }
+            }
+            if (!suppressed) { keep[i] = 1; kept++; }
+        }
+        const pos = new Float32Array(kept * 3);
+        const col = new Float32Array(kept * 3);
         const c = [1, 1, 1];
         const stats = {
             sourceCount: count,
@@ -123,15 +131,17 @@ async function loadCatalogStarsFallback(reason) {
             tempEstimated: 0,
             massSolarSum: 0,
         };
+        let out = 0;
         for (let i = 0, j = 0; i < count; i++, j += stride) {
+            if (!keep[i]) continue;
             const xPc = vals[j + iX], yPc = vals[j + iY], zPc = vals[j + iZ];
-            pos[i * 3] = xPc * PC_SCENE;
-            pos[i * 3 + 1] = zPc * PC_SCENE;
-            pos[i * 3 + 2] = -yPc * PC_SCENE;
+            pos[out * 3] = xPc * PC_SCENE;
+            pos[out * 3 + 1] = zPc * PC_SCENE;
+            pos[out * 3 + 2] = -yPc * PC_SCENE;
             bvColor(vals[j + iBv], vals[j + iMag], c);
-            col[i * 3] = c[0];
-            col[i * 3 + 1] = c[1];
-            col[i * 3 + 2] = c[2];
+            col[out * 3] = c[0];
+            col[out * 3 + 1] = c[1];
+            col[out * 3 + 2] = c[2];
             const mass = iMass === null ? NaN : vals[j + iMass];
             const radius = iRadius === null ? NaN : vals[j + iRadius];
             const lum = iLum === null ? NaN : vals[j + iLum];
@@ -140,8 +150,9 @@ async function loadCatalogStarsFallback(reason) {
             if (radius > 0) stats.radiusEstimated++;
             if (lum > 0) stats.lumEstimated++;
             if (temp > 0) stats.tempEstimated++;
+            out++;
         }
-        installCatalogObject(pos, col, count, stats);
+        installCatalogObject(pos, col, kept, stats);
     } catch (err) {
         console.warn("HYG catalog layer unavailable", err);
         catalogLoading = false;
@@ -161,6 +172,8 @@ async function loadCatalogStars() {
             loadCatalogStarsFallback(reason);
         };
         try {
+            const data = await loadHygCatalogData();
+            registerHygCatalog(data.meta, data.vals, { deferIndex: true });
             worker = new Worker(new URL("./catalogWorker.js", import.meta.url), { type: "module" });
             worker.onerror = e => fallback(e?.message || "worker error");
             worker.onmessage = e => {
@@ -171,7 +184,7 @@ async function loadCatalogStars() {
                     return;
                 }
                 settled = true;
-                registerHygCatalog(msg.meta, new Float32Array(msg.vals), { deferIndex: true });
+                if (msg.vals) registerHygCatalog(msg.meta, new Float32Array(msg.vals), { deferIndex: true });
                 installCatalogObject(
                     new Float32Array(msg.pos),
                     new Float32Array(msg.col),
@@ -180,7 +193,14 @@ async function loadCatalogStars() {
                 );
                 worker.terminate();
             };
-            worker.postMessage({ url: STAR_CATALOG_META.hygUrl, pcScene: PC_SCENE, suppress: destinationSuppressPc() });
+            const workerVals = data.vals.slice();
+            worker.postMessage({
+                meta: data.meta,
+                metaUrl: data.metaUrl,
+                vals: workerVals.buffer,
+                pcScene: PC_SCENE,
+                suppress: destinationSuppressPc(),
+            }, [workerVals.buffer]);
             return;
         } catch (err) {
             fallback(err?.message || String(err));

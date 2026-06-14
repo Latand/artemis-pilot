@@ -1,5 +1,8 @@
-import { addRuntimeStar, CATALOG_PROMOTION_MAX, INITIAL_STAR_COUNT, LY_KM, R_SUN, STAR_CATALOG_META, STARS } from "./constants.js";
-import { hygCatalogFocusValue, hygStarByIndex, registerHygCatalog } from "./universe/hygActiveCatalog.js";
+import { addRuntimeStar, CATALOG_PROMOTION_MAX, INITIAL_STAR_COUNT, LY_KM, R_SUN, STARS } from "./constants.js";
+import { loadHygCatalogData, loadHygCatalogMeta } from "./universe/catalogData.js";
+import {
+    catalogPhysicsUsable, catalogRuntimeRadiusSolar, hygCatalogFocusValue, hygStarByIndex, registerHygCatalog,
+} from "./universe/hygActiveCatalog.js";
 
 const PC_LY = 3.261563777;
 const PC_KM = LY_KM * PC_LY;
@@ -7,8 +10,6 @@ const SOLAR_TEMP_K = 5772;
 
 let hooks = { onPromote: () => { }, onFocusCatalog: () => { }, toast: () => { } };
 let ui = null;
-let metaPromise = null;
-let binPromise = null;
 let labelMap = null;
 let searchTimer = 0;
 
@@ -131,9 +132,12 @@ export function starFromCatalogRecord(meta, vals, index, row = null) {
     const xPc = vals[base + iX], yPc = vals[base + iY], zPc = vals[base + iZ];
     const dPc = Math.hypot(xPc, yPc, zPc);
     const mass = vals[base + iMass];
-    const radiusSolar = vals[base + iRadius];
-    if (!(dPc > 0) || !(mass > 0) || !(radiusSolar > 0)) throw new Error("catalog row lacks physical fields");
+    const rawRadiusSolar = vals[base + iRadius];
+    const lumSolar = vals[base + iLum];
+    const spect = row?.[5] || "";
+    if (!(dPc > 0) || !catalogPhysicsUsable(mass, rawRadiusSolar, lumSolar, spect)) throw new Error("catalog row lacks usable physical fields");
     const bv = vals[base + iBv];
+    const radiusSolar = catalogRuntimeRadiusSolar(mass, rawRadiusSolar, spect);
     return {
         name: displayName(row, index).toUpperCase(),
         dLy: dPc * PC_LY,
@@ -148,48 +152,25 @@ export function starFromCatalogRecord(meta, vals, index, row = null) {
         hip: row?.[2] || "",
         hd: row?.[3] || "",
         hr: row?.[4] || "",
-        spect: row?.[5] || "",
+        spect,
         mag: vals[base + iMag],
         absMag: vals[base + iAbsMag],
-        lumSolar: vals[base + iLum],
+        lumSolar,
         tempK: vals[base + iTemp] || SOLAR_TEMP_K,
         estimated: true,
     };
 }
 
 async function loadMeta() {
-    if (!metaPromise) {
-        metaPromise = fetch(STAR_CATALOG_META.hygUrl)
-            .then(res => {
-                if (!res.ok) throw new Error("catalog metadata HTTP " + res.status);
-                return res.json();
-            })
-            .then(meta => {
-                labelMap = new Map((meta.labels || []).map(row => [row[0], row]));
-                return meta;
-            });
-    }
-    return metaPromise;
-}
-
-async function loadBinary(meta) {
-    if (!binPromise) {
-        const binUrl = new URL(meta.binary, new URL(STAR_CATALOG_META.hygUrl, location.href));
-        binPromise = fetch(binUrl)
-            .then(res => {
-                if (!res.ok) throw new Error("catalog binary HTTP " + res.status);
-                return res.arrayBuffer();
-            })
-            .then(buf => new Float32Array(buf));
-    }
-    const vals = await binPromise;
-    registerHygCatalog(meta, vals, { deferIndex: true });
-    return vals;
+    const meta = await loadHygCatalogMeta();
+    labelMap = new Map((meta.labels || []).map(row => [row[0], row]));
+    return meta;
 }
 
 async function loadCatalog() {
-    const meta = await loadMeta();
-    const vals = await loadBinary(meta);
+    const { meta, vals } = await loadHygCatalogData();
+    labelMap = new Map((meta.labels || []).map(row => [row[0], row]));
+    registerHygCatalog(meta, vals, { deferIndex: true });
     return { meta, vals };
 }
 
@@ -229,6 +210,7 @@ function storedStar(raw) {
     if (!(star.dLy > 0) || !(star.mass > 0) || !(star.R > 0)) return null;
     if (!Number.isFinite(star.x) || !Number.isFinite(star.y) || !Number.isFinite(star.z)) return null;
     if (!Number.isFinite(star.color)) return null;
+    if (!catalogPhysicsUsable(star.mass, star.R / R_SUN, star.lumSolar, star.spect)) return null;
     return star;
 }
 

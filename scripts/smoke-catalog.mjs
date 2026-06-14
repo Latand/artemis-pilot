@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { HYG_PHYSICAL_STARS } from "../src/generated/hygPhysicalStars.js";
+import { cachedHygCatalogData, loadHygCatalogData, rememberHygCatalogData } from "../src/universe/catalogData.js";
 import {
   findExistingCatalogStar,
   restorePromotedCatalogStars,
@@ -31,6 +32,7 @@ const meta = JSON.parse(readFileSync(new URL("../public/data/hyg-stars-v41.json"
 const binPath = new URL("../public/data/hyg-stars-v41.bin", import.meta.url);
 const bodiesSrc = readFileSync(new URL("../src/bodies.js", import.meta.url), "utf8");
 const cosmicSrc = readFileSync(new URL("../src/cosmic.js", import.meta.url), "utf8");
+const catalogDataSrc = readFileSync(new URL("../src/universe/catalogData.js", import.meta.url), "utf8");
 const catalogSearchSrc = readFileSync(new URL("../src/catalogSearch.js", import.meta.url), "utf8");
 const catalogWorkerSrc = readFileSync(new URL("../src/catalogWorker.js", import.meta.url), "utf8");
 const activeStarsSrc = readFileSync(new URL("../src/universe/activeStars.js", import.meta.url), "utf8");
@@ -62,6 +64,11 @@ for (let i = 0, j = 0; i < meta.count; i += 97, j = i * meta.stride) {
   if (vals[j + iMass] > 0 && vals[j + iRadius] > 0) sampledMasses++;
 }
 assert(sampledMasses > 1000, "HYG binary physical fields should be populated across the file");
+rememberHygCatalogData(meta, vals, new URL("../public/data/hyg-stars-v41.json", import.meta.url));
+const cachedData = cachedHygCatalogData();
+assert(cachedData?.meta === meta && cachedData?.vals === vals, "shared HYG catalog loader should retain cached metadata and values");
+const loadedData = await loadHygCatalogData();
+assert(loadedData.meta === meta && loadedData.vals === vals, "shared HYG catalog loader should reuse remembered catalog data");
 assert(registerHygCatalog(meta, vals), "HYG active catalog should register the local binary");
 const activeCatalogStats = hygCatalogStats();
 assert(activeCatalogStats.loaded && activeCatalogStats.count === meta.count && activeCatalogStats.indexReady,
@@ -69,6 +76,11 @@ assert(activeCatalogStats.loaded && activeCatalogStats.count === meta.count && a
 assert(activeCatalogStats.indexedCells > 1000, "HYG active catalog should build a spatial index");
 const nearbyHyg = sampleHygStarsNear(0, 0, 0, 20, 64);
 assert(nearbyHyg.length > 20 && nearbyHyg.length <= 64, "HYG active sampler should return a bounded nearby real-star set");
+assert(!hygStarById("hyg:58733"), "physically inconsistent HYG rows should stay out of active gravity sources");
+assert(!sampleHygStarsNear(0, 0, 0, 20, 256).some(star => star.id === "hyg:58733"),
+  "HYG active sampler should skip inconsistent evolved-star physics");
+const gl65b = hygStarById("hyg:118076");
+assert(gl65b?.radiusSolar >= 0.08 && gl65b?.mass > 0, "low-mass HYG M dwarfs with tiny source radii should receive runtime radius repair");
 assert(registerHygCatalog(meta, vals, { deferIndex: true }), "re-registering the same HYG catalog should be accepted");
 assert(hygCatalogStats().indexReady && sampleHygStarsNear(0, 0, 0, 20, 64).length === nearbyHyg.length,
   "re-registering the same HYG catalog should keep the ready spatial index live");
@@ -83,10 +95,13 @@ assert(uniqueHyg, "HYG active sampler should include at least one non-duplicate 
 const hygFocus = hygCatalogFocusValue(uniqueHyg);
 assert(hygStarById(hygFocus)?.hygIndex === uniqueHyg.hygIndex, "HYG active focus ID should restore the same catalog row");
 const activeWithHyg = refreshActiveStars(0, 0, 0, hygFocus);
-assert(activeWithHyg.catalog > 0, "active set should include bounded HYG catalog stars after registration");
+assert(activeWithHyg.catalog === ACTIVE_STAR_CONFIG.catalogLimit, "active set should include a full bounded HYG catalog subset after registration");
 assert(activeWithHyg.total === ACTIVE_STARS.length && activeWithHyg.total <= ACTIVE_STAR_CONFIG.totalLimit,
   "HYG active stars should respect the global active-star cap");
 assert(activeStarForFocus(hygFocus)?.id === hygFocus, "hyg focus should resolve through the active-star layer");
+assert(ACTIVE_STARS.filter(star => star.activeCatalog).every(star => star.radiusSolar >= 0.01 &&
+  !(star.mass > 4 && star.radiusSolar < 1 && star.lumSolar < 100)),
+  "HYG active stars should avoid grossly inconsistent mass-radius-luminosity rows");
 const proximaHyg = searchCatalogLabels(meta, "proxima centauri", 1)[0];
 assert(proximaHyg, "HYG labels should expose Proxima for duplicate-focus checks");
 const proximaFocus = hygCatalogFocusValue(proximaHyg.index);
@@ -192,6 +207,10 @@ assert(
 const canopusMatch = searchCatalogLabels(meta, "canopus", 1)[0];
 const canopus = starFromCatalogRecord(meta, vals, canopusMatch.index, canopusMatch.row);
 assert(findExistingCatalogStar(canopusMatch.index, canopusMatch.row, canopus) === -1, "CANOPUS should exercise new promoted-star restoration");
+assert(!restorePromotedCatalogStars([{
+  name: "HIP 58910", dLy: 17.99, x: 1, y: 1, z: 1, color: 0xffffff, mass: 10, R: 0.153 * 695700,
+  catalog: "hyg-v41-promoted", hygIndex: 58733, spect: "F0Ib-II", lumSolar: 0.02484, tempK: 7200,
+}]).length, "restored promoted HYG stars should share the active physics gate");
 const baseStars = STARS.length;
 const restored = restorePromotedCatalogStars([canopus]);
 assert(restored.length === 1 && STARS.length === baseStars + 1, "saved promoted HYG stars should restore into runtime destinations");
@@ -222,10 +241,19 @@ assert(
 assert(
   hygActiveCatalogSrc.includes("INDEX_CELL_PC") &&
     hygActiveCatalogSrc.includes("rebuildSpatialIndex") &&
+    catalogDataSrc.includes("rememberHygCatalogData") &&
+    catalogDataSrc.includes("loadHygCatalogData") &&
     activeStarsSrc.includes("sampleHygStarsNear") &&
     activeStarsSrc.includes("catalogLimit") &&
+    activeStarsSrc.includes("catalogOversampleLimit") &&
     activeStarsSrc.includes("hygCatalogFocusId(focus)") &&
-    catalogWorkerSrc.includes("vals: vals.buffer") &&
+    hygActiveCatalogSrc.includes("catalogPhysicsUsable") &&
+    catalogSearchSrc.includes("catalogPhysicsUsable") &&
+    catalogWorkerSrc.includes("inputVals") &&
+    cosmicSrc.includes("loadHygCatalogData()") &&
+    cosmicSrc.includes("workerVals.buffer") &&
+    catalogSearchSrc.includes("loadHygCatalogData") &&
+    hygActiveCatalogSrc.includes("loadHygCatalogData") &&
     cosmicSrc.includes("{ deferIndex: true }") &&
     cosmicSrc.includes("registerHygCatalog(msg.meta") &&
     catalogSearchSrc.includes("registerHygCatalog(meta, vals, { deferIndex: true })") &&

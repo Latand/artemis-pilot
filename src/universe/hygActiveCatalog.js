@@ -1,10 +1,12 @@
-import { K, LY_KM, MU_S, R_SUN, STAR_CATALOG_META } from "../constants.js";
+import { K, LY_KM, MU_S, R_SUN } from "../constants.js";
+import { loadHygCatalogData } from "./catalogData.js";
 
 const PC_LY = 3.261563777;
 const PC_KM = LY_KM * PC_LY;
 const SOLAR_TEMP_K = 5772;
 const CACHE_GRID_PC = 2;
 const INDEX_CELL_PC = 8;
+const MIN_ACTIVE_RADIUS_SOLAR = 0.01;
 
 let META = null;
 let VALS = null;
@@ -48,6 +50,41 @@ function displayName(row, index) {
     return String(row?.[1] || (row?.[2] ? "HIP " + row[2] : row?.[3] ? "HD " + row[3] : "HYG " + index)).toUpperCase();
 }
 
+function isEvolvedSpectralClass(spect) {
+    const s = String(spect || "").toUpperCase().replace(/IV/g, "");
+    return /(^|[^A-Z])(I|II|III)(A|B|AB)?([^A-Z]|$)/.test(s);
+}
+
+function isLowMassMDwarf(mass, spect) {
+    return mass > 0 && mass <= .25 && /(^|[^A-Z])D?M|^M|\bM\d/i.test(String(spect || ""));
+}
+
+export function catalogRuntimeRadiusSolar(mass, radius, spect = "") {
+    const m = Number(mass), r = Number(radius);
+    if (r >= MIN_ACTIVE_RADIUS_SOLAR) return r;
+    if (isLowMassMDwarf(m, spect)) return clamp(m * 1.05, .08, .28);
+    return r;
+}
+
+export function catalogPhysicsUsable(mass, radius, lum, spect = "") {
+    const m = Number(mass), r = Number(radius), l = Number.isFinite(Number(lum)) ? Number(lum) : 0;
+    const activeRadius = catalogRuntimeRadiusSolar(m, r, spect);
+    if (!(m > 0) || !(activeRadius >= MIN_ACTIVE_RADIUS_SOLAR)) return false;
+    if (m > 4 && r < 1 && l < 100) return false;
+    if (m > 8 && l < 100) return false;
+    if (isEvolvedSpectralClass(spect) && r < 1 && l < 1) return false;
+    return true;
+}
+
+function physicalRowUsable(index, base) {
+    return catalogPhysicsUsable(
+        VALS[base + FIELD.mass],
+        VALS[base + FIELD.radius],
+        VALS[base + FIELD.lum],
+        LABELS.get(index)?.[5],
+    );
+}
+
 function field(name, fallback) {
     const i = META?.fields?.indexOf(name) ?? -1;
     return i >= 0 ? i : fallback;
@@ -79,8 +116,7 @@ function rebuildSpatialIndex() {
     if (!META || !VALS) return;
     const stride = META.stride || 10;
     for (let i = 0, base = 0; i < META.count; i++, base += stride) {
-        const mass = VALS[base + FIELD.mass], radius = VALS[base + FIELD.radius];
-        if (!(mass > 0) || !(radius > 0)) continue;
+        if (!physicalRowUsable(i, base)) continue;
         const ci = Math.floor(VALS[base + FIELD.x] / INDEX_CELL_PC);
         const cj = Math.floor(VALS[base + FIELD.y] / INDEX_CELL_PC);
         const ck = Math.floor(VALS[base + FIELD.z] / INDEX_CELL_PC);
@@ -133,8 +169,10 @@ function startSpatialIndexBuild() {
     const step = () => {
         let processed = 0;
         while (i < meta.count && processed++ < 4096) {
-            const mass = vals[base + fieldMap.mass], radius = vals[base + fieldMap.radius];
-            if (mass > 0 && radius > 0) {
+            const mass = vals[base + fieldMap.mass];
+            const radius = vals[base + fieldMap.radius];
+            const lum = vals[base + fieldMap.lum];
+            if (catalogPhysicsUsable(mass, radius, lum, LABELS.get(i)?.[5])) {
                 const ci = Math.floor(vals[base + fieldMap.x] / INDEX_CELL_PC);
                 const cj = Math.floor(vals[base + fieldMap.y] / INDEX_CELL_PC);
                 const ck = Math.floor(vals[base + fieldMap.z] / INDEX_CELL_PC);
@@ -224,10 +262,11 @@ export function hygStarByIndex(index) {
     const base = index * stride;
     if (base + stride > VALS.length) return null;
     const xPc = VALS[base + FIELD.x], yPc = VALS[base + FIELD.y], zPc = VALS[base + FIELD.z];
-    const mass = VALS[base + FIELD.mass], radiusSolar = VALS[base + FIELD.radius];
+    const mass = VALS[base + FIELD.mass], rawRadiusSolar = VALS[base + FIELD.radius];
     const dPc = Math.hypot(xPc, yPc, zPc);
-    if (!(dPc > 0) || !(mass > 0) || !(radiusSolar > 0)) return null;
+    if (!(dPc > 0) || !physicalRowUsable(index, base)) return null;
     const row = LABELS.get(index);
+    const radiusSolar = catalogRuntimeRadiusSolar(mass, rawRadiusSolar, row?.[5]);
     const radiusKm = radiusSolar * R_SUN;
     return {
         id: "hyg:" + index,
@@ -287,10 +326,13 @@ export function sampleHygStarsNear(wx, wy, wz, radiusPc = 20, limit = 96) {
                     const dy = VALS[base + FIELD.y] - gy;
                     const dz = VALS[base + FIELD.z] - gz;
                     const d2 = dx * dx + dy * dy + dz * dz;
-                    if (d2 <= r2) found.push({ index: i, d2 });
+                    if (d2 <= r2) {
+                        const mass = VALS[base + FIELD.mass];
+                        found.push({ index: i, d2, score: mass / Math.max(d2, .0001) });
+                    }
                 }
             }
-    found.sort((a, b) => a.d2 - b.d2 || a.index - b.index);
+    found.sort((a, b) => b.score - a.score || a.d2 - b.d2 || a.index - b.index);
     if (found.length > limit) found.length = limit;
     SAMPLE_CACHE.key = key;
     SAMPLE_CACHE.stars = found.map(item => hygStarByIndex(item.index)).filter(Boolean);
@@ -301,15 +343,8 @@ export async function ensureHygCatalogLoaded() {
     if (META && VALS) return waitForHygCatalogIndex();
     if (!loadPromise) {
         loadPromise = (async () => {
-            const baseUrl = typeof location !== "undefined" ? location.href : undefined;
-            const metaUrl = baseUrl ? new URL(STAR_CATALOG_META.hygUrl, baseUrl) : STAR_CATALOG_META.hygUrl;
-            const res = await fetch(metaUrl);
-            if (!res.ok) throw new Error("HYG active catalog metadata HTTP " + res.status);
-            const meta = await res.json();
-            const binUrl = new URL(meta.binary, metaUrl);
-            const binRes = await fetch(binUrl);
-            if (!binRes.ok) throw new Error("HYG active catalog binary HTTP " + binRes.status);
-            registerHygCatalog(meta, new Float32Array(await binRes.arrayBuffer()), { deferIndex: typeof window !== "undefined" });
+            const { meta, vals } = await loadHygCatalogData();
+            registerHygCatalog(meta, vals, { deferIndex: typeof window !== "undefined" });
             return waitForHygCatalogIndex();
         })();
     }
