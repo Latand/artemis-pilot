@@ -39,7 +39,10 @@
 }
 
 html, body { margin: 0; width: 100%; height: 100%; background: var(--bg); overflow: hidden;
-  user-select: none; -webkit-user-select: none; }
+  user-select: none; -webkit-user-select: none;
+  /* kill browser double-tap / pinch zoom of the page itself (the canvas + buttons
+     handle their own gestures); double-tapping a control no longer zooms the UI */
+  touch-action: manipulation; -ms-touch-action: manipulation; }
 body { font-family: var(--font-ui); color: var(--ink-2); -webkit-font-smoothing: antialiased; }
 #root { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; overflow: hidden;
   user-select: none; -webkit-user-select: none; }
