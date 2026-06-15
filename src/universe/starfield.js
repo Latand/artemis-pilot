@@ -12,9 +12,9 @@
 // reads warm — the physically-correct appearance.
 
 import { K } from "../constants.js";
-import { galToEquatorialKm } from "./coords.js";
+import { galToSceneUnitsInto } from "./coords.js";
 import { GALAXY_STRUCT } from "./galaxy.js";
-import { sampleKroupaMass, deriveStar } from "./stellar.js";
+import { sampleKroupaMass, deriveStarVisualInto } from "./stellar.js";
 import { makeRNG, hashInts, randNormal } from "./prng.js";
 
 const TAU = Math.PI * 2;
@@ -32,10 +32,7 @@ function laplace(rng, h) {
 // Map a galactocentric position (pc) into absolute scene units, using the same
 // (eqX, eqZ, -eqY)·K axis convention as constants.js STARS and the HYG cloud.
 function galPcToScene(gx, gy, gz, out, o) {
-    const eq = galToEquatorialKm(gx, gy, gz); // km, Sol-centred equatorial
-    out[o] = eq[0] * K;
-    out[o + 1] = eq[2] * K;
-    out[o + 2] = -eq[1] * K;
+    galToSceneUnitsInto(gx, gy, gz, out, o, K);
 }
 
 // Galactocentric scene position of the Galactic centre (for camera focus).
@@ -53,42 +50,66 @@ export function makeGalaxyCloud(n = 160000, seed = 0x6d57) {
     const rng = makeRNG(hashInts(seed, 0xa17));
     const pos = new Float32Array(n * 3);
     const col = new Float32Array(n * 3);
+    const d = [0, 0, 0];
+    const visual = { L: 1, color: 0xffffff };
 
     for (let i = 0; i < n; i++) {
-        const u = rng();
-        let gx, gy, gz, kind;
-        if (u < 0.70) {            // thin disc
-            const R = expTrunc(rng, S.HR_THIN, S.R_DISC_MAX);
-            const z = laplace(rng, S.HZ_THIN);
-            [gx, gy, gz] = discPos(rng, R, z, S, TAN, true);
-            kind = "arm-disc";
-        } else if (u < 0.82) {     // thick disc
-            const R = expTrunc(rng, S.HR_THICK, S.R_DISC_MAX);
-            const z = laplace(rng, S.HZ_THICK);
-            [gx, gy, gz] = discPos(rng, R, z, S, TAN, false);
-            kind = "disc";
-        } else if (u < 0.95) {     // bulge (flattened spheroid)
-            const r = expTrunc(rng, S.R_BULGE, 3500);
-            const ct = 2 * rng() - 1, st = Math.sqrt(1 - ct * ct), ph = rng() * TAU;
-            gx = r * st * Math.cos(ph); gy = r * st * Math.sin(ph); gz = r * ct * 0.6;
-            kind = "bulge";
-        } else {                   // stellar halo (extended, near-spherical)
-            const r = S.R0_PC * Math.pow(rng(), -1 / (S.N_HALO - 1)); // power-law tail
-            const rr = Math.min(r, 60000);
-            const ct = 2 * rng() - 1, st = Math.sqrt(1 - ct * ct), ph = rng() * TAU;
-            gx = rr * st * Math.cos(ph); gy = rr * st * Math.sin(ph); gz = rr * ct * S.Q_HALO;
-            kind = "halo";
-        }
-
-        galPcToScene(gx, gy, gz, pos, i * 3);
-        starColor(rng, kind, col, i * 3);
+        writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual);
     }
     return { pos, col };
 }
 
+export async function makeGalaxyCloudAsync(n = 160000, seed = 0x6d57, chunk = 8192, yieldFn = null) {
+    const S = GALAXY_STRUCT;
+    const TAN = Math.tan(S.ARM_PITCH);
+    const rng = makeRNG(hashInts(seed, 0xa17));
+    const pos = new Float32Array(n * 3);
+    const col = new Float32Array(n * 3);
+    const d = [0, 0, 0];
+    const visual = { L: 1, color: 0xffffff };
+
+    for (let i = 0; i < n; i++) {
+        writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual);
+        if (yieldFn && chunk > 0 && (i + 1) % chunk === 0) await yieldFn();
+    }
+    return { pos, col };
+}
+
+function writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual) {
+    const u = rng();
+    let gx, gy, gz, kind;
+    if (u < 0.70) {            // thin disc
+        const R = expTrunc(rng, S.HR_THIN, S.R_DISC_MAX);
+        const z = laplace(rng, S.HZ_THIN);
+        discPosInto(rng, R, z, S, TAN, true, d);
+        gx = d[0]; gy = d[1]; gz = d[2];
+        kind = "arm-disc";
+    } else if (u < 0.82) {     // thick disc
+        const R = expTrunc(rng, S.HR_THICK, S.R_DISC_MAX);
+        const z = laplace(rng, S.HZ_THICK);
+        discPosInto(rng, R, z, S, TAN, false, d);
+        gx = d[0]; gy = d[1]; gz = d[2];
+        kind = "disc";
+    } else if (u < 0.95) {     // bulge (flattened spheroid)
+        const r = expTrunc(rng, S.R_BULGE, 3500);
+        const ct = 2 * rng() - 1, st = Math.sqrt(1 - ct * ct), ph = rng() * TAU;
+        gx = r * st * Math.cos(ph); gy = r * st * Math.sin(ph); gz = r * ct * 0.6;
+        kind = "bulge";
+    } else {                   // stellar halo (extended, near-spherical)
+        const r = S.R0_PC * Math.pow(rng(), -1 / (S.N_HALO - 1)); // power-law tail
+        const rr = Math.min(r, 60000);
+        const ct = 2 * rng() - 1, st = Math.sqrt(1 - ct * ct), ph = rng() * TAU;
+        gx = rr * st * Math.cos(ph); gy = rr * st * Math.sin(ph); gz = rr * ct * S.Q_HALO;
+        kind = "halo";
+    }
+
+    galPcToScene(gx, gy, gz, pos, i * 3);
+    starColor(rng, kind, col, i * 3, visual);
+}
+
 // Disc position: optionally snap a fraction of stars onto a spiral arm so the
-// arms are visible. Returns [gx, gy, gz] in pc.
-function discPos(rng, R, z, S, TAN, allowArm) {
+// arms are visible. Writes [gx, gy, gz] in pc to avoid per-point allocations.
+function discPosInto(rng, R, z, S, TAN, allowArm, out) {
     let theta = rng() * TAU;
     if (allowArm && R > 800 && rng() < 0.6) {
         const arm = Math.floor(rng() * S.N_ARMS);
@@ -96,11 +117,14 @@ function discPos(rng, R, z, S, TAN, allowArm) {
         const sigAng = Math.min(0.7, S.ARM_SIGMA / Math.max(R, 500));
         theta = thetaArm + randNormal(rng) * sigAng;
     }
-    return [R * Math.cos(theta), R * Math.sin(theta), z];
+    out[0] = R * Math.cos(theta);
+    out[1] = R * Math.sin(theta);
+    out[2] = z;
+    return out;
 }
 
 // Assign a luminosity-weighted colour for a galaxy point of a given population.
-function starColor(rng, kind, col, o) {
+function starColor(rng, kind, col, o, visual) {
     let mass;
     if (kind === "arm-disc" && rng() < 0.12) {
         mass = 3 + rng() * 12;               // young hot tracer in spiral arms
@@ -109,12 +133,12 @@ function starColor(rng, kind, col, o) {
     } else {
         mass = sampleKroupaMass(rng);        // field IMF
     }
-    const sp = deriveStar(mass);
+    deriveStarVisualInto(mass, visual);
     // Brightness gain ∝ log luminosity (clamped): hot luminous stars dominate.
-    const gain = Math.max(0.32, Math.min(1.5, 0.55 + 0.2 * Math.log10(Math.max(sp.L, 1e-3))));
-    col[o] = Math.min(1, ((sp.color >> 16) & 255) / 255 * gain);
-    col[o + 1] = Math.min(1, ((sp.color >> 8) & 255) / 255 * gain);
-    col[o + 2] = Math.min(1, (sp.color & 255) / 255 * gain);
+    const gain = Math.max(0.32, Math.min(1.5, 0.55 + 0.2 * Math.log10(Math.max(visual.L, 1e-3))));
+    col[o] = Math.min(1, ((visual.color >> 16) & 255) / 255 * gain);
+    col[o + 1] = Math.min(1, ((visual.color >> 8) & 255) / 255 * gain);
+    col[o + 2] = Math.min(1, (visual.color & 255) / 255 * gain);
 }
 
 // A ring in the Galactic plane at galactocentric radius Rpc, returned as scene

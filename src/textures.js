@@ -170,26 +170,54 @@ export function ringTexture(color, size = 128, lineWidth = Math.max(5, size * .0
 
 // ---------- NASA maps (solarsystemscope.com renditions, CC BY 4.0) ----------
 const loader = new THREE.TextureLoader();
+function highQualityMipmaps() {
+    return typeof location !== "undefined" && new URLSearchParams(location.search).get("mips") === "1";
+}
 function tryLoad(file, srgb = true) {
     return loader.loadAsync("textures/" + file).then(t => {
+        t.name = file;
         if (srgb) t.colorSpace = THREE.SRGBColorSpace;
-        t.anisotropy = 4;
+        if (highQualityMipmaps()) {
+            t.anisotropy = 4;
+        } else {
+            t.generateMipmaps = false;
+            t.minFilter = THREE.LinearFilter;
+            t.magFilter = THREE.LinearFilter;
+            t.anisotropy = 1;
+        }
         return t;
     }).catch(() => null);
 }
+const planetMapPromises = new Map();
+let earthNightMapPromise = null;
+export function loadEarthNightMap() {
+    if (!earthNightMapPromise) earthNightMapPromise = tryLoad("2k_earth_nightmap.jpg");
+    return earthNightMapPromise;
+}
+export function loadPlanetMap(i) {
+    if (!Number.isInteger(i) || i < 0 || i >= PL.length) return Promise.resolve(null);
+    if (!planetMapPromises.has(i)) planetMapPromises.set(i, tryLoad(PL[i].tex));
+    return planetMapPromises.get(i);
+}
 export async function loadAllMaps() {
+    const q = typeof location !== "undefined" ? new URLSearchParams(location.search) : new URLSearchParams();
+    const forceSunMap = q.get("sunmap") === "1";
+    const forceClouds = q.get("clouds") === "1";
+    const forceMoonMap = q.get("moonmap") === "1" || q.get("moonbump") === "1";
+    const forceMilky = q.get("milky") === "1" || q.get("sky") === "1";
+    const forceEarthNight = q.get("earthnight") === "1";
     const names = {
         earth: tryLoad("2k_earth_daymap.jpg"),
-        earthNight: tryLoad("2k_earth_nightmap.jpg"),
-        clouds: tryLoad("2k_earth_clouds.jpg", false),
-        moon: tryLoad("2k_moon.jpg"),
-        sun: tryLoad("2k_sun.jpg"),
+        earthNight: forceEarthNight ? loadEarthNightMap() : Promise.resolve(null),
+        clouds: forceClouds ? tryLoad("2k_earth_clouds.jpg", false) : Promise.resolve(null),
+        moon: forceMoonMap ? tryLoad("2k_moon.jpg") : Promise.resolve(null),
+        sun: forceSunMap ? tryLoad("2k_sun.jpg") : Promise.resolve(null),
         ring: tryLoad("2k_saturn_ring_alpha.png"),
-        milky: tryLoad("2k_stars_milky_way.jpg"),
+        milky: forceMilky ? tryLoad("2k_stars_milky_way.jpg") : Promise.resolve(null),
     };
-    const plMaps = PL.map(p => tryLoad(p.tex));
     const out = {};
     for (const k of Object.keys(names)) out[k] = await names[k];
-    out.planets = await Promise.all(plMaps);
+    const forcePlanetMaps = q.get("planetmaps") === "1";
+    out.planets = forcePlanetMaps ? await Promise.all(PL.map((_, i) => loadPlanetMap(i))) : new Array(PL.length).fill(null);
     return out;
 }

@@ -11,11 +11,13 @@ import { cycleCosmicScale } from "./cosmic.js";
 import { look } from "./cockpit.js";
 import { apTravelToFocus, apCircularize, apOff } from "./autopilot.js";
 import { toggleScenarioMenu } from "./scenarios.js";
-import { openCatalogSearch } from "./catalogSearch.js";
 import { ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, proceduralFocusId } from "./universe/activeStars.js";
+import { setConstellationsVisible } from "./realSky.js";
+import { requestPlanetTexture, requestRealSkyLoad } from "./bodies.js";
 
 export function setFocus(f) {
     G.focus = f;
+    if (typeof f === "number") requestPlanetTexture(f);
     const bi = blackHoleFocusIndex(f);
     const si = starFocusIndex(f);
     const ps = activeStarForFocus(f);
@@ -55,7 +57,7 @@ function focusNextStar() {
     toast("Destination " + next.star.name + " · " + next.star.dLy.toFixed(2) + " ly");
 }
 
-let H = { restart: () => { } };
+let H = { restart: () => { }, openCatalogSearch: () => { } };
 export function initInput(hooks) {
     H = hooks;
     window.addEventListener("keydown", onKeyDown);
@@ -96,7 +98,14 @@ function onKeyDown(e) {
             break;
         case "Digit0": setFocus("ship"); break;
         case "KeyP": G.predict = !G.predict; computePrediction(); break;
-        case "KeyG": G.gr = !G.gr; break;
+        case "KeyG":
+            if (e.shiftKey) {
+                G.constellations = !G.constellations;
+                if (G.constellations) requestRealSkyLoad(0);
+                setConstellationsVisible(G.constellations);
+                toast(G.constellations ? "Constellation guides ON" : "Constellation guides OFF");
+            } else G.gr = !G.gr;
+            break;
         case "KeyO":
             if (e.shiftKey) {
                 G.darkMatter = !G.darkMatter;
@@ -121,12 +130,12 @@ function onKeyDown(e) {
         case "KeyM": G.muted = !G.muted; if (thrustGain) thrustGain.gain.value = 0; break;
         case "KeyR": H.restart(); break;
         case "KeyK": saveState(); break;
-        case "KeyL": loadState(); break;
+        case "KeyL": loadState().catch(err => toast(err?.message || String(err))); break;
         case "KeyN": focusNextBlackHole(); break;
         case "KeyU":
             if (e.shiftKey) {
                 e.preventDefault();
-                openCatalogSearch();
+                H.openCatalogSearch();
             }
             else focusNextStar();
             break;

@@ -86,8 +86,14 @@ assert(
 
 const trailsSrc = readFileSync(new URL("../src/trails.js", import.meta.url), "utf8");
 assert(
-    trailsSrc.includes("impactSpr.position.set(prPos[impactIdx], prPos[impactIdx + 1], prPos[impactIdx + 2])"),
-    "prediction impact marker should keep the 3D y coordinate",
+  trailsSrc.includes("impactSpr.position.set(prPos[impactIdx], prPos[impactIdx + 1], prPos[impactIdx + 2])"),
+  "prediction impact marker should keep the 3D y coordinate",
+);
+assert(
+  mainSrc.includes('perfEnd("frame.total"') &&
+    mainSrc.includes("function finishFramePerf") &&
+    mainSrc.includes("loadShed: renderQuality.loadShed"),
+  "frame loop should expose total-frame perf samples for browser bottleneck tracing",
 );
 assert(
     constantsSrc.includes("OMEGA_LAMBDA: 0.6889") &&

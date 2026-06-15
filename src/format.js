@@ -1,10 +1,23 @@
 import { AU_KM, LY_KM, SEC_YEAR } from "./constants.js";
 
+const INT_FMT_CACHE = new Map();
+function fmtInt(n) {
+    const key = Math.round(n);
+    const cached = INT_FMT_CACHE.get(key);
+    if (cached) return cached;
+    const neg = key < 0 ? "-" : "";
+    const raw = String(Math.abs(key));
+    const out = neg + raw.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    if (INT_FMT_CACHE.size > 2048) INT_FMT_CACHE.clear();
+    INT_FMT_CACHE.set(key, out);
+    return out;
+}
+
 export function fmtKm(v) {
     const av = Math.abs(v);
-    if (av < 1) return Math.round(v * 1000).toLocaleString("en-US") + " m";
+    if (av < 1) return fmtInt(v * 1000) + " m";
     if (av < 10) return v.toFixed(2).replace(/\.?0+$/, "") + " km";
-    return Math.round(v).toLocaleString("en-US") + " km";
+    return fmtInt(v) + " km";
 }
 export function fmtDist(v) {
     const av = Math.abs(v);
@@ -20,7 +33,7 @@ export function fmtMET(s) {
         if (yr >= 1e9) return (yr / 1e9).toFixed(2) + " Gyr";
         if (yr >= 1e6) return (yr / 1e6).toFixed(2) + " Myr";
         if (yr >= 1e4) return (yr / 1e3).toFixed(1) + " kyr";
-        return Math.floor(yr).toLocaleString("en-US") + " y " + String(Math.floor((s % SEC_YEAR) / 86400)).padStart(3, "0") + " d";
+        return fmtInt(Math.floor(yr)) + " y " + String(Math.floor((s % SEC_YEAR) / 86400)).padStart(3, "0") + " d";
     }
     const h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), ss = Math.floor(s % 60);
     const p = n => String(n).padStart(2, "0");

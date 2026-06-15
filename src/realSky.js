@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { STAR_CATALOG_META } from "./constants.js";
+import { G } from "./state.js";
 import { dotTexture } from "./textures.js";
+import { PERF, markPerf } from "./perf.js";
 
 const SKY_R = 5.92e6;
 const MAG_LIMIT = 6.5;
@@ -8,12 +10,12 @@ const LABEL_R = SKY_R * 0.985;
 const LINE_R = SKY_R * 0.992;
 
 const MAG_BANDS = [
-    { max: 0.5, size: 5.8, opacity: 1.0 },
-    { max: 1.5, size: 4.6, opacity: 1.0 },
-    { max: 2.5, size: 3.5, opacity: .98 },
-    { max: 3.5, size: 2.55, opacity: .94 },
-    { max: 5.0, size: 1.75, opacity: .86 },
-    { max: MAG_LIMIT, size: 1.12, opacity: .74 },
+    { max: 0.5, size: 6.25, opacity: 1.0 },
+    { max: 1.5, size: 5.05, opacity: 1.0 },
+    { max: 2.5, size: 3.9, opacity: 1.0 },
+    { max: 3.5, size: 2.95, opacity: .98 },
+    { max: 5.0, size: 2.15, opacity: .94 },
+    { max: MAG_LIMIT, size: 1.52, opacity: .86 },
 ];
 
 const ASTERISMS = [
@@ -146,10 +148,40 @@ const BRIGHT_LABELS = [
     "ALTAIR", "ALDEBARAN", "SPICA", "ANTARES", "POLLUX", "REGULUS", "DENEB", "POLARIS",
     "FOMALHAUT", "ACHERNAR", "RIGIL KENTAURUS", "HADAR",
 ];
+const SKY_NAME_KEYS = (() => {
+    const keys = new Set(BRIGHT_LABELS.map(normName));
+    for (const ast of ASTERISMS) for (const name of ast.stars) keys.add(normName(name));
+    return keys;
+})();
+const SKY_LABEL_ROWS = [
+    [7573, "Achernar"], [60528, "Acrux"], [33491, "Adhara"], [20836, "Ain"], [95646, "Albireo"],
+    [21367, "Aldebaran"], [1064, "Algenib"], [50439, "Algieba"], [14539, "Algol"], [31600, "Alhena"],
+    [62755, "Alioth"], [67086, "Alkaid"], [9617, "Almach"], [26245, "Alnilam"], [26661, "Alnitak"],
+    [675, "Alpheratz"], [97723, "Alshain"], [97336, "Altair"], [35805, "Aludra"], [80517, "Antares"],
+    [69449, "Arcturus"], [25272, "Bellatrix"], [27918, "Betelgeuse"], [30364, "Canopus"], [24548, "Capella"],
+    [743, "Caph"], [36743, "Castor"], [54716, "Chertan"], [101765, "Deneb"], [57457, "Denebola"],
+    [53904, "Dubhe"], [25363, "Elnath"], [87559, "Eltanin"], [113006, "Fomalhaut"], [60891, "Gacrux"],
+    [68481, "Hadar"], [9860, "Hamal"], [22960, "Hassaleh"], [71877, "Izar"], [28308, "Mahasim"],
+    [113601, "Markab"], [59590, "Megrez"], [28287, "Menkalinan"], [68712, "Menkent"], [18566, "Menkib"],
+    [53753, "Merak"], [8812, "Mesarthim"], [62237, "Mimosa"], [25864, "Mintaka"], [5435, "Mirach"],
+    [15823, "Mirfak"], [30250, "Mirzam"], [65171, "Mizar"], [57826, "Phecda"], [11733, "Polaris"],
+    [37717, "Pollux"], [61746, "Porrima"], [37172, "Procyon"], [85408, "Rastaban"], [49527, "Regulus"],
+    [24377, "Rigel"], [71454, "Rigil Kentaurus"], [6671, "Ruchbah"], [100126, "Sadr"], [27297, "Saiph"],
+    [85963, "Sargas"], [113519, "Scheat"], [3171, "Schedar"], [85663, "Shaula"], [8883, "Sheratan"],
+    [32262, "Sirius"], [65267, "Spica"], [96968, "Tarazed"], [68535, "Thuban"], [90977, "Vega"],
+    [63403, "Vindemiatrix"], [35452, "Wasat"], [34353, "Wezen"], [54710, "Zosma"],
+];
+const HYG_FIELDS = ["xPc", "yPc", "zPc", "bv", "mag", "absMag", "lumSolar", "tempK", "massSolar", "radiusSolar"];
+const HYG_BIN_URL = STAR_CATALOG_META.hygUrl.replace(/\.json(?:[?#].*)?$/, ".bin");
 
 let root = null;
+let constellationRoot = null;
 let loadPromise = null;
-const status = { loaded: false, stars: 0, constellations: 0, labels: 0, error: "" };
+const status = { loaded: false, stars: 0, constellations: 0, labels: 0, constellationsVisible: true, error: "" };
+
+function publishStatus() {
+    if (typeof window !== "undefined") window.__REAL_SKY = { ...status, promise: loadPromise };
+}
 
 function normName(v) {
     return String(v || "").trim().toUpperCase().replace(/[^A-Z0-9]+/g, " ");
@@ -167,9 +199,8 @@ function dirFromRecord(vals, j, ix, iy, iz, out = new THREE.Vector3()) {
     return out.normalize();
 }
 
-function colorFromBV(bv) {
+function colorFromBV(bv, c = new THREE.Color()) {
     const t = THREE.MathUtils.clamp((bv + .4) / 2.4, 0, 1);
-    const c = new THREE.Color();
     if (t < .32) c.setRGB(.58 + t * 1.05, .72 + t * .75, 1.0);
     else if (t < .58) c.setRGB(.90 + (t - .32) * .38, .94 + (t - .32) * .18, 1.0 - (t - .32) * .38);
     else c.setRGB(1.0, .98 - (t - .58) * .72, .82 - (t - .58) * .78);
@@ -177,16 +208,16 @@ function colorFromBV(bv) {
 }
 
 function magGain(mag) {
-    return THREE.MathUtils.clamp(Math.pow(10, -0.4 * (mag - 1.0)), .10, 5.8);
+    return THREE.MathUtils.clamp(Math.pow(10, -0.4 * (mag - 1.0)), .16, 6.4);
 }
 
 function makeLabelTexture(text, color = "#d9e7ff") {
     const canvas = document.createElement("canvas");
-    canvas.width = 512;
-    canvas.height = 128;
+    canvas.width = 256;
+    canvas.height = 64;
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.font = "700 34px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+    ctx.font = "700 18px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.shadowColor = "rgba(0,0,0,.9)";
@@ -195,6 +226,9 @@ function makeLabelTexture(text, color = "#d9e7ff") {
     ctx.fillText(text, canvas.width / 2, canvas.height / 2);
     const tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
+    tex.generateMipmaps = false;
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
     tex.needsUpdate = true;
     return tex;
 }
@@ -214,11 +248,27 @@ function addSkyLabel(parent, text, dir, scaleX, scaleY, color) {
     return sprite;
 }
 
-function buildNameMap(meta) {
+function idleSlice() {
+    return new Promise(resolve => {
+        if (typeof requestIdleCallback === "function") requestIdleCallback(resolve, { timeout: 80 });
+        else setTimeout(resolve, 0);
+    });
+}
+async function yieldIfNeeded(slice, budget = 6) {
+    if (performance.now() - slice.t <= budget) return;
+    await idleSlice();
+    slice.t = performance.now();
+}
+function magBandIndex(mag) {
+    for (let i = 0; i < MAG_BANDS.length; i++) if (mag <= MAG_BANDS[i].max) return i;
+    return -1;
+}
+
+function buildNameMap(meta, wanted = null) {
     const map = new Map();
     for (const row of meta.labels || []) {
         const key = normName(row[1]);
-        if (key && !map.has(key)) map.set(key, row);
+        if (key && (!wanted || wanted.has(key)) && !map.has(key)) map.set(key, row);
     }
     return map;
 }
@@ -228,14 +278,21 @@ function rowDir(row, vals, meta, indexes, out) {
     return dirFromRecord(vals, j, indexes.xPc, indexes.yPc, indexes.zPc, out);
 }
 
-function addConstellations(parent, meta, vals, indexes) {
-    const byName = buildNameMap(meta);
+async function addConstellations(parent, meta, vals, indexes) {
+    const t0 = performance.now();
+    constellationRoot = new THREE.Group();
+    constellationRoot.name = "Constellation guides";
+    constellationRoot.frustumCulled = false;
+    parent.add(constellationRoot);
+    setConstellationsVisible(G.constellations);
+    const byName = buildNameMap(meta, SKY_NAME_KEYS);
     const linePos = [];
     const tmpA = new THREE.Vector3();
     const tmpB = new THREE.Vector3();
     const tmpC = new THREE.Vector3();
     let lineCount = 0;
     let labelCount = 0;
+    const slice = { t: performance.now() };
 
     for (const ast of ASTERISMS) {
         tmpC.set(0, 0, 0);
@@ -248,7 +305,7 @@ function addConstellations(parent, meta, vals, indexes) {
         }
         if (anchorCount > 0) {
             tmpC.normalize();
-            addSkyLabel(parent, ast.name, tmpC, 340000, 82000, "#9fbfff");
+            addSkyLabel(constellationRoot, ast.name, tmpC, 340000, 82000, "#9fbfff");
             labelCount++;
         }
         for (const [a, b] of ast.edges) {
@@ -261,6 +318,7 @@ function addConstellations(parent, meta, vals, indexes) {
             linePos.push(tmpB.x * LINE_R, tmpB.y * LINE_R, tmpB.z * LINE_R);
             lineCount++;
         }
+        await yieldIfNeeded(slice);
     }
 
     if (linePos.length) {
@@ -277,7 +335,7 @@ function addConstellations(parent, meta, vals, indexes) {
         const lines = new THREE.LineSegments(g, m);
         lines.frustumCulled = false;
         lines.renderOrder = -1;
-        parent.add(lines);
+        constellationRoot.add(lines);
     }
 
     for (const starName of BRIGHT_LABELS) {
@@ -286,34 +344,41 @@ function addConstellations(parent, meta, vals, indexes) {
         rowDir(row, vals, meta, indexes, tmpA);
         addSkyLabel(parent, starName, tmpA, 170000, 42000, "#f8d08a");
         labelCount++;
+        await yieldIfNeeded(slice);
     }
 
     status.constellations = lineCount;
     status.labels = labelCount;
+    publishStatus();
+    if (PERF.enabled) markPerf("realSky.constellations", performance.now() - t0, { lineCount, labelCount });
 }
 
-function addRealStars(parent, meta, vals, indexes) {
+async function addRealStars(parent, meta, vals, indexes) {
+    const t0 = performance.now();
     const bands = MAG_BANDS.map(() => ({ pos: [], col: [] }));
     const dir = new THREE.Vector3();
+    const color = new THREE.Color();
     let visible = 0;
+    const slice = { t: performance.now() };
     for (let i = 0; i < meta.count; i++) {
         const j = i * meta.stride;
         const mag = vals[j + indexes.mag];
         if (!Number.isFinite(mag) || mag > MAG_LIMIT) continue;
         dirFromRecord(vals, j, indexes.xPc, indexes.yPc, indexes.zPc, dir);
-        const bandIndex = MAG_BANDS.findIndex(band => mag <= band.max);
+        const bandIndex = magBandIndex(mag);
         if (bandIndex < 0) continue;
         const band = bands[bandIndex];
         band.pos.push(dir.x * SKY_R, dir.y * SKY_R, dir.z * SKY_R);
         const bv = vals[j + indexes.bv];
-        const c = colorFromBV(Number.isFinite(bv) ? bv : .65);
+        const c = colorFromBV(Number.isFinite(bv) ? bv : .65, color);
         const gain = magGain(mag);
         band.col.push(
-            Math.min(2.6, c.r * (.40 + gain * .55)),
-            Math.min(2.6, c.g * (.40 + gain * .55)),
-            Math.min(2.6, c.b * (.40 + gain * .55)),
+            Math.min(3.0, c.r * (.48 + gain * .62)),
+            Math.min(3.0, c.g * (.48 + gain * .62)),
+            Math.min(3.0, c.b * (.48 + gain * .62)),
         );
         visible++;
+        if ((i & 2047) === 0) await yieldIfNeeded(slice);
     }
 
     const sprite = dotTexture("rgba(255,255,255,1)", "rgba(190,210,255,0.48)");
@@ -337,18 +402,26 @@ function addRealStars(parent, meta, vals, indexes) {
         pts.frustumCulled = false;
         pts.renderOrder = -2;
         parent.add(pts);
+        await yieldIfNeeded(slice);
     }
     status.stars = visible;
+    publishStatus();
+    if (PERF.enabled) markPerf("realSky.stars", performance.now() - t0, { visible });
 }
 
 async function loadRealSky() {
-    const res = await fetch(STAR_CATALOG_META.hygUrl);
-    if (!res.ok) throw new Error("HYG metadata fetch failed");
-    const meta = await res.json();
-    const binUrl = new URL(meta.binary, new URL(STAR_CATALOG_META.hygUrl, location.href));
+    const t0 = performance.now();
+    const binUrl = new URL(HYG_BIN_URL, location.href);
     const binRes = await fetch(binUrl);
     if (!binRes.ok) throw new Error("HYG binary fetch failed");
     const vals = new Float32Array(await binRes.arrayBuffer());
+    const meta = {
+        binary: HYG_BIN_URL,
+        fields: HYG_FIELDS,
+        stride: HYG_FIELDS.length,
+        count: Math.floor(vals.length / HYG_FIELDS.length),
+        labels: SKY_LABEL_ROWS,
+    };
     const indexes = {
         xPc: fieldIndex(meta, "xPc"),
         yPc: fieldIndex(meta, "yPc"),
@@ -356,10 +429,13 @@ async function loadRealSky() {
         bv: fieldIndex(meta, "bv"),
         mag: fieldIndex(meta, "mag"),
     };
-    addRealStars(root, meta, vals, indexes);
-    addConstellations(root, meta, vals, indexes);
+    await idleSlice();
+    await addRealStars(root, meta, vals, indexes);
+    await idleSlice();
+    await addConstellations(root, meta, vals, indexes);
     status.loaded = true;
     status.error = "";
+    if (PERF.enabled) markPerf("realSky.load", performance.now() - t0, { stars: status.stars, constellations: status.constellations, labels: status.labels });
 }
 
 export function initRealSky(parent) {
@@ -372,10 +448,20 @@ export function initRealSky(parent) {
         status.error = err?.message || String(err);
         console.warn("real sky:", status.error);
     }).finally(() => {
-        if (typeof window !== "undefined") window.__REAL_SKY = { ...status };
+        publishStatus();
     });
-    if (typeof window !== "undefined") window.__REAL_SKY = { ...status, promise: loadPromise };
+    publishStatus();
     return root;
+}
+
+export function realSkyReady() {
+    return loadPromise;
+}
+
+export function setConstellationsVisible(visible) {
+    status.constellationsVisible = !!visible;
+    if (constellationRoot) constellationRoot.visible = status.constellationsVisible;
+    publishStatus();
 }
 
 export function realSkyStatus() {

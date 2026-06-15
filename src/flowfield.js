@@ -1,7 +1,6 @@
 import { DARK_ENERGY, FLOW, PL, K } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { smooth01 } from "./format.js";
-import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { darkEnergyVisibleFractionKm } from "./cosmology.js";
 
 // Scene-unit river field: the medium falls at v = sqrt(2mu/r) toward every
@@ -12,15 +11,13 @@ export const flowCtx = {
     plScX: new Float64Array(PL.length), plScZ: new Float64Array(PL.length),
     plC: PL.map(p => .001 * Math.sqrt(2 * p.mu / 1000)),
     plSink: PL.map(p => p.R * K),
+    starCount: 0,
+    starX: [],
+    starY: [],
+    starZ: [],
     starC: [],
     starSink: [],
 };
-function starFlowC(star) {
-    return star.flowC ?? .001 * Math.sqrt(2 * star.mu / 1000);
-}
-function starFlowSink(star) {
-    return star.flowSink ?? (star.bh ? star.rs : star.R) * K;
-}
 export function flowVel(x, y, z, mx, my, mz, out) {
     const edx = x - flowCtx.earthScX, edz = z - flowCtx.earthScZ;
     const rE = Math.max(0.6, Math.hypot(edx, y, edz));
@@ -55,10 +52,10 @@ export function flowVel(x, y, z, mx, my, mz, out) {
         const pPull = flowCtx.plC[i] * flowCtx.plC[i] / (rP * rP * rP);
         pullX -= pdx * pPull; pullY -= y * pPull; pullZ -= pdz * pPull;
     }
-    for (const star of ACTIVE_STARS) {
-        const sdx0 = x - star.x * K, sdy0 = y - (star.z || 0) * K, sdz0 = z + star.y * K;
-        const cStar = starFlowC(star);
-        const rStar = Math.max(starFlowSink(star) * .9, Math.hypot(sdx0, sdy0, sdz0));
+    for (let i = 0; i < flowCtx.starCount; i++) {
+        const sdx0 = x - flowCtx.starX[i], sdy0 = y - flowCtx.starY[i], sdz0 = z - flowCtx.starZ[i];
+        const cStar = flowCtx.starC[i];
+        const rStar = Math.max(flowCtx.starSink[i] * .9, Math.hypot(sdx0, sdy0, sdz0));
         const sStar = cStar / Math.sqrt(rStar) / rStar;
         exVX -= sdx0 * sStar; exVY -= sdy0 * sStar; exVZ -= sdz0 * sStar;
         const starPull = cStar * cStar / (rStar * rStar * rStar);

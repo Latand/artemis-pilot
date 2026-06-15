@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "vite",
     "catalog:hyg": "node scripts/build-hyg-catalog.mjs",
-    "smoke:catalog": "bun scripts/smoke-catalog.mjs",
-    "smoke:core": "bun scripts/smoke-core.mjs",
+    "smoke:catalog": "node scripts/smoke-catalog.mjs",
+    "smoke:core": "node scripts/smoke-core.mjs",
     "smoke:stellar-live": "node scripts/smoke-stellar-live.mjs",
     "smoke:universe": "node scripts/smoke-universe.mjs",
     "build": "vite build",

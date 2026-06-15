@@ -54,14 +54,42 @@ export function galacticToEquatorial(g) {
     ];
 }
 
+export function galToEquatorialPcInto(gx, gy, gz, out, o = 0) {
+    const hx = R0_PC - gx, hy = gy, hz = gz - Z_SUN_PC;
+    out[o] = EQ2GAL[0][0] * hx + EQ2GAL[1][0] * hy + EQ2GAL[2][0] * hz;
+    out[o + 1] = EQ2GAL[0][1] * hx + EQ2GAL[1][1] * hy + EQ2GAL[2][1] * hz;
+    out[o + 2] = EQ2GAL[0][2] * hx + EQ2GAL[1][2] * hy + EQ2GAL[2][2] * hz;
+    return out;
+}
+
+export function galToEquatorialKmInto(gx, gy, gz, out, o = 0) {
+    galToEquatorialPcInto(gx, gy, gz, out, o);
+    out[o] *= PC_KM;
+    out[o + 1] *= PC_KM;
+    out[o + 2] *= PC_KM;
+    return out;
+}
+
+export function galToSceneUnitsInto(gx, gy, gz, out, o = 0, sceneScale = .001) {
+    const hx = R0_PC - gx, hy = gy, hz = gz - Z_SUN_PC;
+    const sx = PC_KM * sceneScale;
+    const ex = EQ2GAL[0][0] * hx + EQ2GAL[1][0] * hy + EQ2GAL[2][0] * hz;
+    const ey = EQ2GAL[0][1] * hx + EQ2GAL[1][1] * hy + EQ2GAL[2][1] * hz;
+    const ez = EQ2GAL[0][2] * hx + EQ2GAL[1][2] * hy + EQ2GAL[2][2] * hz;
+    out[o] = ex * sx;
+    out[o + 1] = ez * sx;
+    out[o + 2] = -ey * sx;
+    return out;
+}
+
 // Galactocentric parsecs → Sol-centred equatorial km (the constants.js STARS
 // frame). Translate to heliocentric, express in the galactic (l,b) basis, rotate
 // into equatorial, scale to km. The 20 pc solar offset tilts the basis by only
 // ~0.14°, so we keep the basis axis-aligned and carry Z_SUN in the translation.
 export function galToEquatorialKm(gx, gy, gz) {
-    const gHelio = [R0_PC - gx, gy, gz - Z_SUN_PC]; // [toward GC, toward rot, NGP]
-    const eq = galacticToEquatorial(gHelio);
-    return [eq[0] * PC_KM, eq[1] * PC_KM, eq[2] * PC_KM];
+    const eq = [0, 0, 0];
+    galToEquatorialKmInto(gx, gy, gz, eq);
+    return eq;
 }
 
 // Inverse: Sol-centred equatorial km → galactocentric parsecs. Used to find which

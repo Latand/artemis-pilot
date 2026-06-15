@@ -18,6 +18,56 @@ export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVel = $("cVel"), cApPe = $("
 export const fFlow = $("fFlow"), fDark = $("fDark"), fHalo = $("fHalo"), fShip = $("fShip"), fClock = $("fClock"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
 export const flowPanelEl = $("flowPanel"), bannerEl = $("banner"), helpEl = $("help");
 export const lblE = $("lblE"), lblM = $("lblM"), lblO = $("lblO"), lblS = $("lblS");
+const bhLineEl = $("bhLine");
+const textCache = new WeakMap(), htmlCache = new WeakMap(), classCache = new WeakMap(), styleCache = new WeakMap();
+export function setText(el, value) {
+    if (!el || textCache.get(el) === value) return;
+    el.textContent = value;
+    textCache.set(el, value);
+}
+function setHTML(el, value) {
+    if (!el || htmlCache.get(el) === value) return;
+    el.innerHTML = value;
+    htmlCache.set(el, value);
+}
+function setClass(el, value) {
+    if (!el || classCache.get(el) === value) return;
+    el.className = value;
+    classCache.set(el, value);
+}
+function setStyle(el, prop, value) {
+    if (!el) return;
+    let s = styleCache.get(el);
+    if (!s) {
+        s = Object.create(null);
+        styleCache.set(el, s);
+    }
+    if (s[prop] === value) return;
+    el.style[prop] = value;
+    s[prop] = value;
+}
+const hudDM = [0, 0, 0];
+const gravRank = { aLabel: "", a: -Infinity, bLabel: "", b: -Infinity };
+function resetGravRank() {
+    gravRank.aLabel = "";
+    gravRank.a = -Infinity;
+    gravRank.bLabel = "";
+    gravRank.b = -Infinity;
+}
+function addGravRank(label, value) {
+    if (value > gravRank.a) {
+        gravRank.bLabel = gravRank.aLabel;
+        gravRank.b = gravRank.a;
+        gravRank.aLabel = label;
+        gravRank.a = value;
+    } else if (value > gravRank.b) {
+        gravRank.bLabel = label;
+        gravRank.b = value;
+    }
+}
+function gravDisplayLabel(label) {
+    return /[^\x00-\x7F]/.test(label) ? "BH" : label;
+}
 
 export function showBanner(title, sub, hint) {
     bannerEl.style.display = "block";
@@ -27,8 +77,12 @@ export function showBanner(title, sub, hint) {
 }
 export function hideBanner() { bannerEl.style.display = "none"; }
 
-// help shows on the very first visit only; any dismissal is remembered
-export const help = { shown: true };
+// Help shows on the first desktop visit only; mobile needs the glass clear for play.
+const mobileHelpDefault = window.matchMedia?.("(max-width: 760px), (hover: none) and (pointer: coarse)")?.matches || false;
+let helpSeen = false;
+try { helpSeen = localStorage.getItem("ap_helpSeen") === "1"; } catch (e) { }
+export const help = { shown: !helpSeen && !mobileHelpDefault };
+helpEl.style.display = help.shown ? "block" : "none";
 export function hideHelp() {
     helpEl.style.display = "none";
     help.shown = false;
@@ -38,7 +92,6 @@ export function toggleHelp() {
     if (help.shown) hideHelp();
     else { helpEl.style.display = "block"; help.shown = true; }
 }
-try { if (localStorage.getItem("ap_helpSeen")) { helpEl.style.display = "none"; help.shown = false; } } catch (e) { }
 
 // ---- escape tracker: speed milestones vs Earth / Sun / nearest black hole ----
 // collapsed behind a small toggle header; the open state survives a refresh
@@ -48,7 +101,7 @@ let escOpen = false;
 try { escOpen = localStorage.getItem("ap_escOpen") === "1"; } catch (e) { }
 function applyEscOpen() {
     vRowsEl.style.display = escOpen ? "block" : "none";
-    escToggleEl.textContent = escOpen ? "ESC ▾ ESCAPE TRACKER" : "ESC ▸";
+    setText(escToggleEl, escOpen ? "ESC ▾ ESCAPE TRACKER" : "ESC ▸");
 }
 escToggleEl.onclick = () => {
     escOpen = !escOpen;
@@ -83,32 +136,32 @@ export function updateEscapeTracker(oi) {
             '</span><span class="' + (ok ? "ok" : "") + '">' + fmtV(r.v) + " / " + fmtV(r.need) + ' km/s</span></div>' +
             '<div class="vBar"><div class="vFill ' + (ok ? "ok" : "") + '" style="width:' + frac.toFixed(1) + '%"></div></div></div>';
     }
-    vRowsEl.innerHTML = html;
+    setHTML(vRowsEl, html);
 }
 
 export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
-    metEl.textContent = "T+ " + fmtMET(G.t);
-    warpEl.textContent = "⏩ " + warpLabel(G.warp) +
-        (aMag > 0 && G.warp > 600 ? " · ⚠ THRUST AT HIGH WARP" : "") + (G.paused ? " · ❚❚ PAUSED" : "");
-    warpEl.className = G.paused ? "warn" : "";
-    if (G.dead) engineEl.textContent = "VEHICLE LOST — " + G.deadReason;
-    else if (G.landed) engineEl.textContent = G.landed.body === "earth" ? "ON THE SURFACE — SHIFT+W TO LIFT OFF" :
-        G.landed.body === "planet" ? "ON " + PL[G.landed.i].name + " — W TO LIFT OFF (SHIFT HELPS)" : "ON THE LUNAR SURFACE — W TO LIFT OFF";
-    else if (aMag > 0) engineEl.textContent = (mainIn ? "MAIN ENGINE " + Math.round(G.throttle * 100) + "%" : "RCS") + (G.boost ? " · BOOST ×4" : "") + " · Δv flowing";
-    else engineEl.textContent = "ENGINE OFF — gravity shapes the path";
-    throttleEl.textContent = "THROTTLE " + Math.round(G.throttle * 100) + "% · " +
-        (G.hold === "pro" ? "HOLD PROGRADE" : G.hold === "retro" ? "HOLD RETROGRADE" : "MANUAL ATTITUDE");
-    fuelTxtEl.textContent = G.infinite ? "∞" : Math.round(G.fuel) + " m/s Δv";
+    setText(metEl, "T+ " + fmtMET(G.t));
+    setText(warpEl, "⏩ " + warpLabel(G.warp) +
+        (aMag > 0 && G.warp > 600 ? " · ⚠ THRUST AT HIGH WARP" : "") + (G.paused ? " · ❚❚ PAUSED" : ""));
+    setClass(warpEl, G.paused ? "warn" : "");
+    if (G.dead) setText(engineEl, "VEHICLE LOST — " + G.deadReason);
+    else if (G.landed) setText(engineEl, G.landed.body === "earth" ? "ON THE SURFACE — SHIFT+W TO LIFT OFF" :
+        G.landed.body === "planet" ? "ON " + PL[G.landed.i].name + " — W TO LIFT OFF (SHIFT HELPS)" : "ON THE LUNAR SURFACE — W TO LIFT OFF");
+    else if (aMag > 0) setText(engineEl, (mainIn ? "MAIN ENGINE " + Math.round(G.throttle * 100) + "%" : "RCS") + (G.boost ? " · BOOST ×4" : "") + " · Δv flowing");
+    else setText(engineEl, "ENGINE OFF — gravity shapes the path");
+    setText(throttleEl, "THROTTLE " + Math.round(G.throttle * 100) + "% · " +
+        (G.hold === "pro" ? "HOLD PROGRADE" : G.hold === "retro" ? "HOLD RETROGRADE" : "MANUAL ATTITUDE"));
+    setText(fuelTxtEl, G.infinite ? "∞" : Math.round(G.fuel) + " m/s Δv");
     const frFuel = G.infinite ? 1 : G.fuel / FUEL_DV0;
-    fuelFillEl.style.width = (frFuel * 100).toFixed(1) + "%";
-    fuelFillEl.style.background = frFuel < .15 ? "linear-gradient(90deg,#7d2e2e,#c85858)" : "linear-gradient(90deg,#2e7d4f,#58c87f)";
-    cAltL.textContent = "ALT · " + oi.body;
-    cAlt.textContent = fmtDist(Math.max(0, oi.r - oi.R));
-    cVel.textContent = sp.toFixed(3) + " km/s";
-    cApPe.textContent = (oi.ra === Infinity ? "ESC" : fmtDist(Math.max(0, oi.ra - oi.R))) + " / " + fmtDist(Math.max(0, oi.rp - oi.R));
-    cMoon.textContent = fmtDist(oi.rM);
-    cSun.textContent = fmtDist(oi.rS);
-    cDv.textContent = Math.round(G.dvUsed) + " m/s";
+    setStyle(fuelFillEl, "width", (frFuel * 100).toFixed(1) + "%");
+    setStyle(fuelFillEl, "background", frFuel < .15 ? "linear-gradient(90deg,#7d2e2e,#c85858)" : "linear-gradient(90deg,#2e7d4f,#58c87f)");
+    setText(cAltL, "ALT · " + oi.body);
+    setText(cAlt, fmtDist(Math.max(0, oi.r - oi.R)));
+    setText(cVel, sp.toFixed(3) + " km/s");
+    setText(cApPe, (oi.ra === Infinity ? "ESC" : fmtDist(Math.max(0, oi.ra - oi.R))) + " / " + fmtDist(Math.max(0, oi.rp - oi.R)));
+    setText(cMoon, fmtDist(oi.rM));
+    setText(cSun, fmtDist(oi.rS));
+    setText(cDv, Math.round(G.dvUsed) + " m/s");
     const aShE = WORLD.earthDestroyed ? 0 : MU_E / Math.pow(Math.max(R_EARTH, oi.rE), 2);
     const aShM = WORLD.moonDestroyed ? 0 : MU_M / Math.pow(Math.max(R_MOON, oi.rM), 2);
     const aShS = WORLD.sunDestroyed ? 0 : MU_S / Math.pow(Math.max(R_SUN, oi.rS), 2);
@@ -120,12 +173,22 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     }
     const aShP = oi.pNear >= 0 && !WORLD.plDestroyed[oi.pNear] ? PL[oi.pNear].mu / Math.pow(Math.max(PL[oi.pNear].R, oi.pNearD), 2) : 0;
     const aDE = G.darkEnergy ? darkEnergyAccelerationKmS2(Math.hypot(G.x, G.y, G.z)) : 0;
-    const dm = [0, 0, 0];
-    if (G.darkMatter) darkMatterRelativeAccel(G.x, G.y, G.z, eph.earthX, eph.earthY, 0, dm);
-    const aDM = Math.hypot(dm[0], dm[1], dm[2]);
+    hudDM[0] = 0; hudDM[1] = 0; hudDM[2] = 0;
+    if (G.darkMatter) darkMatterRelativeAccel(G.x, G.y, G.z, eph.earthX, eph.earthY, 0, hudDM);
+    const aDM = Math.hypot(hudDM[0], hudDM[1], hudDM[2]);
     const gTot = aShE + aShM + aShS + aShB + aShP + aDE + aDM;
-    const shares = [["E", aShE], ["M", aShM], ["S", aShS], ["⚫", aShB], [oi.pNear >= 0 ? PL[oi.pNear].tag : "P", aShP], ["DE", aDE], ["DM", aDM]].sort((p, q) => q[1] - p[1]);
-    cGrav.textContent = gTot > 0 ? shares[0][0] + " " + Math.round(shares[0][1] / gTot * 100) + "% · " + shares[1][0] + " " + Math.round(shares[1][1] / gTot * 100) + "%" : "—";
+    if (gTot > 0) {
+        resetGravRank();
+        addGravRank("E", aShE);
+        addGravRank("M", aShM);
+        addGravRank("S", aShS);
+        addGravRank("BH", aShB);
+        addGravRank(oi.pNear >= 0 ? PL[oi.pNear].tag : "P", aShP);
+        addGravRank("DE", aDE);
+        addGravRank("DM", aDM);
+        setText(cGrav, gravDisplayLabel(gravRank.aLabel) + " " + Math.round(gravRank.a / gTot * 100) + "% / " +
+            gravDisplayLabel(gravRank.bLabel) + " " + Math.round(gravRank.b / gTot * 100) + "%");
+    } else setText(cGrav, "-");
     const focusBH = bhFocusIndex(G.focus);
     let bhReadoutRs = BH_SIZES[BH.sizeIdx], bhNearestD = Infinity;
     for (let bi = 0; bi < BH.n; bi++) {
@@ -136,18 +199,18 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
         const dShip = Math.hypot(G.x - BH.x[focusBH], G.y - BH.y[focusBH], G.z);
         const vFrame = Math.hypot(BH.vx[focusBH], BH.vy[focusBH]);
         const vSun = Math.hypot(BH.vx[focusBH] + eph.earthVx, BH.vy[focusBH] + eph.earthVy);
-        document.getElementById("bhLine").textContent = "⚫ BH " + (focusBH + 1) + "/" + BH.n +
+        setText(bhLineEl, "⚫ BH " + (focusBH + 1) + "/" + BH.n +
             " · v " + vFrame.toFixed(2) + " km/s · helio " + vSun.toFixed(2) + " km/s · ship " + fmtDist(dShip) +
-            " · g " + fmtAccel(pwAccelMs2(BH.mu[focusBH], dShip, BH.rs[focusBH])) + " · r_s " + fmtKm(BH.rs[focusBH]);
-    } else document.getElementById("bhLine").textContent = "⚫ r_s " + fmtKm(bhReadoutRs) + " · " + bhMassLabel(bhReadoutRs) + " · " + bhHawkingLabel(bhReadoutRs) + " · B PLACE · N FOCUS · [ ] SIZE" + (BH.n ? " · ACTIVE " + BH.n + "/6" : "");
+            " · g " + fmtAccel(pwAccelMs2(BH.mu[focusBH], dShip, BH.rs[focusBH])) + " · r_s " + fmtKm(BH.rs[focusBH]));
+    } else setText(bhLineEl, "⚫ r_s " + fmtKm(bhReadoutRs) + " · " + bhMassLabel(bhReadoutRs) + " · " + bhHawkingLabel(bhReadoutRs) + " · B PLACE · N FOCUS · [ ] SIZE" + (BH.n ? " · ACTIVE " + BH.n + "/6" : ""));
     if (fB > .25) {
         const clock = clockRateAtShip();
-        fShip.textContent = kVLoc.toFixed(2) + " km/s";
-        fClock.textContent = clockRateLabel(clock.rate);
-        fEsc.textContent = escapeKmS(MU_E, Math.max(R_EARTH, oi.rE)).toFixed(2) + " km/s";
-        fEscM.textContent = escapeKmS(MU_M, Math.max(R_MOON, oi.rM)).toFixed(2) + " km/s";
-        if (fHalo) fHalo.textContent = G.darkMatter ? fmtAccel(aDM * 1000) : "OFF";
-        fAcc.textContent = fmtAccel(accelMs2(MU_E, Math.max(R_EARTH, oi.rE)) + accelMs2(MU_M, Math.max(R_MOON, oi.rM)) + accelMs2(MU_S, Math.max(R_SUN, oi.rS)) + (aShB + aShP + aDE + aDM) * 1000);
+        setText(fShip, kVLoc.toFixed(2) + " km/s");
+        setText(fClock, clockRateLabel(clock.rate));
+        setText(fEsc, escapeKmS(MU_E, Math.max(R_EARTH, oi.rE)).toFixed(2) + " km/s");
+        setText(fEscM, escapeKmS(MU_M, Math.max(R_MOON, oi.rM)).toFixed(2) + " km/s");
+        if (fHalo) setText(fHalo, G.darkMatter ? fmtAccel(aDM * 1000) : "OFF");
+        setText(fAcc, fmtAccel(accelMs2(MU_E, Math.max(R_EARTH, oi.rE)) + accelMs2(MU_M, Math.max(R_MOON, oi.rM)) + accelMs2(MU_S, Math.max(R_SUN, oi.rS)) + (aShB + aShP + aDE + aDM) * 1000));
     }
-    flowPanelEl.style.display = fB > .25 ? "block" : "none";
+    setStyle(flowPanelEl, "display", fB > .25 ? "block" : "none");
 }

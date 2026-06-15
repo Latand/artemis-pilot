@@ -4,9 +4,10 @@ import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
 import { cam, camera } from "./scene.js";
 import { toast } from "./achievements.js";
-import { loadHygCatalogData } from "./universe/catalogData.js";
-import { makeGalaxyCloud, galacticCenterScene, galacticRingPositions } from "./universe/starfield.js";
+import { hygCatalogMetaUrl, loadHygCatalogData, rememberHygCatalogData } from "./universe/catalogData.js";
+import { makeGalaxyCloudAsync, galacticCenterScene, galacticRingPositions } from "./universe/starfield.js";
 import { registerHygCatalog } from "./universe/hygActiveCatalog.js";
+import { PERF, markPerf } from "./perf.js";
 
 // Galactic-centre position in scene units (toward Sgr A*, ~26,000 ly). The
 // procedural galaxy cloud and the real HYG catalog share this equatorial frame.
@@ -21,6 +22,11 @@ export const GALAXY = {
 
 let scaleEl = null;
 let inited = false;
+let sceneRef = null;
+let layerBuilt = false;
+let layerBuilding = false;
+let layerBuildScheduled = false;
+let layerBuildPromise = null;
 const root = new THREE.Group();
 const diskRoot = new THREE.Group();
 const galaxyRoot = new THREE.Group();
@@ -31,15 +37,25 @@ const deepRoot = new THREE.Group();
 const labelRoot = new THREE.Group();
 diskRoot.add(galaxyRoot, catalogRoot, nearStarRoot);
 root.add(diskRoot, localRoot, deepRoot, labelRoot);
+root.visible = false;
 let pointMap = null;
 let catalogCount = 0;
 let catalogStats = null;
 let catalogLoading = false;
 let catalogLoaded = false;
+let catalogLoadScheduled = false;
 const PC_SCENE = LY_SCENE * 3.261563777;
 const PC_LY = 3.261563777;
+const COSMIC_CATALOG_MIN_DIST = LY_SCENE * .002;
 const LOCAL_GALAXIES = [];
 let cosmicVisualBucket = "";
+
+function idleSlice(timeout = 120) {
+    return new Promise(resolve => {
+        if (typeof requestIdleCallback === "function") requestIdleCallback(() => resolve(), { timeout });
+        else setTimeout(resolve, 0);
+    });
+}
 
 function cosmicPointMap() {
     if (!pointMap) {
@@ -175,8 +191,6 @@ async function loadCatalogStars() {
             loadCatalogStarsFallback(reason);
         };
         try {
-            const data = await loadHygCatalogData();
-            registerHygCatalog(data.meta, data.vals, { deferIndex: true });
             worker = new Worker(new URL("./catalogWorker.js", import.meta.url), { type: "module" });
             worker.onerror = e => fallback(e?.message || "worker error");
             worker.onmessage = e => {
@@ -187,7 +201,11 @@ async function loadCatalogStars() {
                     return;
                 }
                 settled = true;
-                if (msg.vals) registerHygCatalog(msg.meta, new Float32Array(msg.vals), { deferIndex: true });
+                if (msg.vals) {
+                    const vals = new Float32Array(msg.vals);
+                    rememberHygCatalogData(msg.meta, vals, hygCatalogMetaUrl());
+                    registerHygCatalog(msg.meta, vals, { deferIndex: true });
+                }
                 installCatalogObject(
                     new Float32Array(msg.pos),
                     new Float32Array(msg.col),
@@ -196,14 +214,11 @@ async function loadCatalogStars() {
                 );
                 worker.terminate();
             };
-            const workerVals = data.vals.slice();
             worker.postMessage({
-                meta: data.meta,
-                metaUrl: data.metaUrl,
-                vals: workerVals.buffer,
+                url: hygCatalogMetaUrl(),
                 pcScene: PC_SCENE,
                 suppress: destinationSuppressPc(),
-            }, [workerVals.buffer]);
+            });
             return;
         } catch (err) {
             fallback(err?.message || String(err));
@@ -214,6 +229,8 @@ async function loadCatalogStars() {
 }
 
 function scheduleCatalogLoad() {
+    if (catalogLoadScheduled || catalogLoading || catalogLoaded) return;
+    catalogLoadScheduled = true;
     const start = () => loadCatalogStars();
     if (window.requestIdleCallback) window.requestIdleCallback(start, { timeout: 2400 });
     else setTimeout(start, 0);
@@ -548,26 +565,61 @@ function buildLocalGroup() {
     localRoot.add(points({ pos, col }, 1.2, .42));
 }
 
+async function buildCosmicLayer() {
+    if (!sceneRef || layerBuilt) return layerBuildPromise;
+    if (layerBuilding) return layerBuildPromise;
+    layerBuilding = true;
+    const t0 = PERF.enabled ? performance.now() : 0;
+    layerBuildPromise = (async () => {
+        // The 170k Milky Way cloud is visually important but not needed for the
+        // first solar-system frame. Generate it in slices so startup and play
+        // remain responsive while the far-scale layer warms up.
+        galaxyRoot.add(points(await makeGalaxyCloudAsync(170000, 0x6d57, 4096, idleSlice), 1.20, .5));
+        await idleSlice();
+        galaxyRoot.add(milkyWayHalo());
+        galaxyRoot.add(galacticPlaneRing(8200, 0x53617a, .30));
+        galaxyRoot.add(galacticPlaneRing(16000, 0x344058, .24));
+        catalogRoot.frustumCulled = false;
+        await idleSlice();
+        nearStarRoot.add(points(makeLocalStars(), 2.4, .78));
+        await idleSlice();
+        buildLocalGroup();
+        await idleSlice();
+        deepRoot.add(deepFieldLayer());
+        deepRoot.frustumCulled = false;
+        layerBuilt = true;
+        cosmicVisualBucket = "";
+        if (PERF.enabled) markPerf("cosmic.buildLayer", performance.now() - t0, {
+            galaxyPoints: 170000,
+            localGalaxies: LOCAL_GALAXIES.length,
+        });
+    })().catch(err => {
+        console.warn("cosmic layer unavailable", err);
+    }).finally(() => {
+        layerBuilding = false;
+    });
+    return layerBuildPromise;
+}
+
+export function scheduleCosmicLayerBuild() {
+    if (layerBuilt || layerBuilding || layerBuildScheduled || !sceneRef) return layerBuildPromise;
+    layerBuildScheduled = true;
+    const start = () => {
+        layerBuildScheduled = false;
+        buildCosmicLayer();
+    };
+    if (typeof requestIdleCallback === "function") requestIdleCallback(start, { timeout: 2400 });
+    else setTimeout(start, 800);
+    return layerBuildPromise;
+}
+
 export function initCosmicLayer(scene) {
     if (inited) return;
     inited = true;
-    // galaxyRoot stays at the scene origin: makeGalaxyCloud returns absolute
-    // Sol-centred equatorial coordinates with the Galactic centre toward Sgr A*,
-    // so the band lines up with the real HYG catalog rather than the old ~87°
-    // misaligned decorative spiral.
-    galaxyRoot.add(points(makeGalaxyCloud(170000), 1.20, .5));
-    galaxyRoot.add(milkyWayHalo());
-    galaxyRoot.add(galacticPlaneRing(8200, 0x53617a, .30));
-    galaxyRoot.add(galacticPlaneRing(16000, 0x344058, .24));
-    catalogRoot.frustumCulled = false;
-    nearStarRoot.add(points(makeLocalStars(), 2.4, .78));
-    buildLocalGroup();
-    deepRoot.add(deepFieldLayer());
-    deepRoot.frustumCulled = false;
+    sceneRef = scene;
     root.frustumCulled = false;
     scene.add(root);
     scaleEl = document.getElementById("cosmicScale");
-    scheduleCatalogLoad();
 }
 
 export function cosmicScaleLabel(dist = cam.dist) {
@@ -586,6 +638,7 @@ function catalogCoverageLabel() {
 }
 
 export function cycleCosmicScale() {
+    scheduleCosmicLayerBuild();
     if (cam.dist < LY_SCENE * 1000) {
         cam.dist = COSMIC_ZOOMS.MILKY_WAY;
         G.focus = "free";
@@ -605,7 +658,17 @@ export function cycleCosmicScale() {
 
 export function updateCosmicLayer() {
     if (!inited) return;
-    updateLocalGalaxyMotion();
+    if (!layerBuilt) {
+        if (cam.dist > LY_SCENE * .2) {
+            scheduleCosmicLayerBuild();
+            if (scaleEl) {
+                scaleEl.style.opacity = "1";
+                scaleEl.textContent = "COSMIC SCALE - warming";
+            }
+        }
+        root.visible = false;
+        return;
+    }
     // LOD cross-fade tuned so a star field is ALWAYS visible while zooming:
     //  - near: 73 curated bright stars, accents up close
     //  - catalog: 119k real HYG stars — the dominant local field; kept bright and
@@ -618,6 +681,14 @@ export function updateCosmicLayer() {
     const catalog = 1 - smooth01(LY_SCENE * 12000, LY_SCENE * 110000, cam.dist);
     const group = smooth01(LY_SCENE * 70000, LY_SCENE * 1200000, cam.dist);
     const deep = smooth01(LY_SCENE * 220000, LY_SCENE * 1600000, cam.dist);
+    const catalogLoadShed = G.warp > 600 && cam.dist < LY_SCENE * .2;
+    const galaxyVisible = gal > .01;
+    const catalogVisible = !catalogLoadShed && catalog > .01 && cam.dist > COSMIC_CATALOG_MIN_DIST;
+    const nearVisible = near > .01 && cam.dist > COSMIC_CATALOG_MIN_DIST;
+    const groupVisible = group > .01;
+    const deepVisible = deep > .01;
+    if (catalogVisible) scheduleCatalogLoad();
+    if (groupVisible) updateLocalGalaxyMotion();
     const label = "COSMIC SCALE · " + cosmicScaleLabel() + catalogCoverageLabel();
     const bucket = [
         Math.round(gal * 100),
@@ -625,34 +696,39 @@ export function updateCosmicLayer() {
         Math.round(catalog * 100),
         Math.round(group * 100),
         Math.round(deep * 100),
+        galaxyVisible ? 1 : 0,
+        catalogVisible ? 1 : 0,
+        nearVisible ? 1 : 0,
+        catalogLoadShed ? 1 : 0,
         catalogCount,
         label,
     ].join("|");
-    root.visible = true;
-    diskRoot.visible = true;
-    catalogRoot.visible = catalog > .01;
-    nearStarRoot.visible = near > .01;
-    localRoot.visible = group > .01;
-    deepRoot.visible = deep > .01;
+    root.visible = galaxyVisible || catalogVisible || nearVisible || groupVisible || deepVisible;
+    diskRoot.visible = galaxyVisible || catalogVisible || nearVisible;
+    catalogRoot.visible = catalogVisible;
+    nearStarRoot.visible = nearVisible;
+    galaxyRoot.visible = galaxyVisible;
+    localRoot.visible = groupVisible;
+    deepRoot.visible = deepVisible;
     if (deepRoot.visible) deepRoot.position.copy(camera.position);
     if (bucket === cosmicVisualBucket) return;
     cosmicVisualBucket = bucket;
     for (const child of galaxyRoot.children) {
         if (child.material) {
-            child.visible = child.isPoints || gal > .01;
-            child.material.opacity = child.isPoints ? .12 + .60 * gal * (1 - group * .6) : .05 + .20 * gal * (1 - group * .55);
+            child.visible = galaxyVisible;
+            child.material.opacity = child.isPoints ? .18 + .72 * gal * (1 - group * .55) : .07 + .24 * gal * (1 - group * .55);
         } else {
-            child.visible = gal > .01;
-            setTreeOpacity(child, (.15 + .58 * gal) * (1 - group * .35));
+            child.visible = galaxyVisible;
+            setTreeOpacity(child, (.22 + .68 * gal) * (1 - group * .35));
         }
     }
     for (const child of nearStarRoot.children) if (child.material) {
-        child.visible = near > .01;
-        child.material.opacity = (.55 + .25 * gal) * near;
+        child.visible = nearVisible;
+        child.material.opacity = Math.min(1, (.74 + .26 * gal) * near);
     }
     for (const child of catalogRoot.children) if (child.material) {
-        child.visible = catalog > .01;
-        child.material.opacity = (.50 + .22 * gal) * catalog * (1 - group * .55);
+        child.visible = catalogVisible;
+        child.material.opacity = Math.min(1, (.68 + .30 * gal) * catalog * (1 - group * .48));
     }
     setTreeOpacity(localRoot, .16 + .84 * group);
     setTreeOpacity(deepRoot, deep);

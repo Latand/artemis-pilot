@@ -1,4 +1,5 @@
 import { createServer } from "vite";
+import { existsSync } from "node:fs";
 
 let url = process.env.ARTEMIS_URL;
 let viteServer = null;
@@ -21,7 +22,14 @@ try {
   throw err;
 }
 const pw = pwModule.default ?? pwModule;
-const browser = await pw.chromium.launch({ headless: true });
+const executableCandidates = [
+  process.env.PLAYWRIGHT_EXECUTABLE_PATH,
+  process.env.CHROME_EXECUTABLE_PATH,
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+].filter(Boolean);
+const executablePath = executableCandidates.find(p => existsSync(p));
+const browser = await pw.chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
 const errors = [];
 page.on("console", msg => { if (msg.type() === "error") errors.push(msg.text()); });

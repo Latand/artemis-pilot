@@ -6,15 +6,7 @@ import { eph } from "./ephemeris.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 
 // Gravitational lensing as a screen-space post pass, applied to the world
-// render before bloom (so the warped accretion light still glows). Each
-// hole is a thin point-mass lens with the source field at infinity:
-// Einstein angle θE = √(2·r_s/D), deflection β = θ − θE²/θ. Pixels inside
-// θE sample the far side of the hole — the background flips through the
-// Einstein ring, and the black mesh magnifies into the shadow. Up to four
-// strongest lenses per frame: every player hole plus the bh entries in
-// STARS (SGR A*). Desktop composer only — the VR path renders without
-// post-processing.
-
+// render before bloom. Up to four strongest lenses per frame.
 const MAXL = 4;
 
 export const lensingPass = new ShaderPass(new THREE.ShaderMaterial({
@@ -48,8 +40,6 @@ export const lensingPass = new ShaderPass(new THREE.ShaderMaterial({
             return c;
         }
         void main(){
-            // tangent-plane coordinates: NDC with x stretched by aspect, so
-            // angles are isotropic and θE is one number per lens
             vec2 p = vUv * 2.0 - 1.0;
             p.x *= uAspect;
             vec2 q = p;
@@ -69,20 +59,16 @@ const _v = new THREE.Vector3();
 const _cand = [];
 function consider(cands, wx, wy, wz, rsU, camera, f) {
     _v.set(wx, wy, wz).applyMatrix4(camera.matrixWorldInverse);
-    if (_v.z > -1e-9) return;                  // behind the eye
+    if (_v.z > -1e-9) return;
     const d = _v.length();
-    if (d < rsU * 1.5) return;                 // at/inside the horizon: the mesh owns the view
-    // cap the ring at ~half the frame height: past that the whole view sits
-    // inside the Einstein radius and loses readable lens structure.
+    if (d < rsU * 1.5) return;
     const t = Math.min(f * Math.tan(Math.min(Math.sqrt(2 * rsU / d), .6)), .55);
-    if (t < .004) return;                      // sub-pixel ring
+    if (t < .004) return;
     const cx = f * (_v.x / -_v.z), cy = f * (_v.y / -_v.z);
-    if (Math.hypot(cx, cy) > 4) return;        // far off-screen
+    if (Math.hypot(cx, cy) > 4) return;
     cands.push({ cx, cy, t2: t * t });
 }
 
-// call once per frame with the final world camera; enables/disables the
-// pass and loads the strongest lenses into the shader
 export function updateLensing(camera, aspect) {
     _cand.length = 0;
     const f = 1 / Math.tan(camera.fov * Math.PI / 360);
@@ -95,7 +81,7 @@ export function updateLensing(camera, aspect) {
     _cand.sort((a, b) => b.t2 - a.t2);
     const n = Math.min(MAXL, _cand.length);
     lensingPass.enabled = n > 0;
-    if (!n) return;
+    if (!n) return false;
     const u = lensingPass.uniforms;
     u.uN.value = n;
     u.uAspect.value = aspect;
@@ -103,4 +89,5 @@ export function updateLensing(camera, aspect) {
         u.uC.value[i].set(_cand[i].cx, _cand[i].cy);
         u.uT2.value[i] = _cand[i].t2;
     }
+    return true;
 }

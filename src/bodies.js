@@ -2,22 +2,149 @@ import * as THREE from "three";
 import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K } from "./constants.js";
 import { mulberry32 } from "./format.js";
 import {
-    dotTexture, earthTextureProc, cloudTextureProc, moonColorProc, moonBumpProc,
-    planetTextureProc, ringTextureProc,
+    dotTexture, earthTextureProc,
+    planetTextureProc, ringTextureProc, loadEarthNightMap, loadPlanetMap,
 } from "./textures.js";
-import { scene } from "./scene.js";
-import { initRealSky } from "./realSky.js";
+import { renderQuality, scene } from "./scene.js";
+import { initRealSky, realSkyReady, realSkyStatus } from "./realSky.js";
 
 export const sunPos = new THREE.Vector3();
 export let sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, galaxyBackdrop;
-export let earthG, earth, clouds, moon, moonOrbitRing, moonSoiRing;
+export let earthG, earth, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing;
 export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], plLabels = [];
+let deferredRealSky = false;
+let proceduralSkyObjects = [];
 
 function rgbaFromHex(hex, alpha) {
     const c = new THREE.Color(hex);
     return "rgba(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255) + "," + alpha + ")";
 }
-function orbitEllipseGeometry(aKm, e, varpi = 0, segs = 720) {
+const seg = (desktop, mobile) => renderQuality.mobile ? mobile : desktop;
+const sphere = (r, desktopW, desktopH, mobileW, mobileH) =>
+    new THREE.SphereGeometry(r, seg(desktopW, mobileW), seg(desktopH, mobileH));
+
+function shouldUseRealSky() {
+    const flag = new URLSearchParams(location.search).get("realsky");
+    if (flag === "1") return true;
+    if (flag === "0") return false;
+    return false;
+}
+
+function shouldLoadRealSkyImmediately() {
+    return new URLSearchParams(location.search).get("realsky") === "1";
+}
+
+function shouldUseGalaxyBackdrop() {
+    return new URLSearchParams(location.search).get("galaxy") === "1";
+}
+
+function disposeProceduralSky() {
+    for (const obj of proceduralSkyObjects) {
+        if (obj.parent) obj.parent.remove(obj);
+        obj.geometry?.dispose?.();
+        obj.material?.dispose?.();
+    }
+    proceduralSkyObjects = [];
+}
+
+function buildProceduralSky(starSprite, starColor, scratchColor) {
+    for (const conf of [[2400, 1.75, .96, null, 1.08], [780, 3.15, 1, starSprite, 1.16], [190, 5.45, 1, starSprite, 1.24]]) {
+        const count = conf[0], pos = new Float32Array(count * 3), col = new Float32Array(count * 3), rnd = mulberry32(count * 7 + 13);
+        const gain = conf[4];
+        for (let i = 0; i < count; i++) {
+            const th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1), r = 6.0e6;
+            pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
+            pos[i * 3 + 1] = r * Math.cos(ph);
+            pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
+            starColor(rnd, scratchColor);
+            const b = (.58 + .50 * Math.pow(rnd(), 1.45)) * gain; // magnitude spread inside each band
+            col[i * 3] = Math.min(1.45, scratchColor[0] * b);
+            col[i * 3 + 1] = Math.min(1.45, scratchColor[1] * b);
+            col[i * 3 + 2] = Math.min(1.45, scratchColor[2] * b);
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+        const pts = new THREE.Points(g, new THREE.PointsMaterial({
+            vertexColors: true, size: conf[1], sizeAttenuation: false, transparent: true,
+            opacity: conf[2], depthWrite: false, map: conf[3], blending: THREE.AdditiveBlending,
+        }));
+        pts.frustumCulled = false;
+        pts.renderOrder = -2;
+        skyStars.add(pts);
+        proceduralSkyObjects.push(pts);
+    }
+}
+
+export function scheduleDeferredRealSkyLoad(delayMs = 4800) {
+    if (!deferredRealSky || !skyStars) return;
+    deferredRealSky = false;
+    const start = () => {
+        initRealSky(skyStars);
+        const ready = realSkyReady();
+        if (ready?.finally) ready.finally(() => {
+            if (realSkyStatus().loaded) disposeProceduralSky();
+        });
+    };
+    const queueIdle = () => {
+        if (typeof requestIdleCallback === "function") requestIdleCallback(start, { timeout: 1200 });
+        else setTimeout(start, 250);
+    };
+    if (delayMs > 0) setTimeout(queueIdle, delayMs);
+    else queueIdle();
+}
+
+export function requestRealSkyLoad(delayMs = 0) {
+    if (!skyStars || realSkyStatus().loaded || realSkyReady() || location.search.includes("realsky=0")) return;
+    deferredRealSky = true;
+    scheduleDeferredRealSkyLoad(delayMs);
+}
+
+export function requestPlanetTexture(i) {
+    const surface = plSurfaces[i];
+    if (!surface || surface.userData.mapRequested) return;
+    surface.userData.mapRequested = true;
+    loadPlanetMap(i).then(tex => {
+        if (!surface.material) return;
+        if (!tex) {
+            if (!surface.material.map) {
+                const p = PL[i];
+                tex = planetTextureProc(p.color, p.gas, 1000 + i * 31);
+                tex.userData.procedural = true;
+            } else return;
+        }
+        const old = surface.material.map;
+        surface.material.map = tex;
+        surface.material.color.set(0xffffff);
+        surface.material.needsUpdate = true;
+        if (old?.userData?.procedural) old.dispose?.();
+    }).catch(err => console.warn("planet map:", err?.message || String(err)));
+}
+
+let earthNightRequested = false;
+export function requestEarthNightTexture(delayMs = 2200) {
+    if (earthNightRequested || !shaderTick.earthUniforms || location.search.includes("earthnight=0")) return;
+    if (shaderTick.earthUniforms.uHasNight.value > .5) {
+        earthNightRequested = true;
+        return;
+    }
+    earthNightRequested = true;
+    const start = () => {
+        loadEarthNightMap().then(tex => {
+            if (!tex || !shaderTick.earthUniforms) return;
+            shaderTick.earthUniforms.nightMap.value = tex;
+            shaderTick.earthUniforms.uHasNight.value = 1;
+        }).catch(err => console.warn("earth night map:", err?.message || String(err)));
+    };
+    const queueIdle = () => {
+        if (typeof requestIdleCallback === "function") requestIdleCallback(start, { timeout: 1600 });
+        else setTimeout(start, 250);
+    };
+    if (delayMs > 0) setTimeout(queueIdle, delayMs);
+    else queueIdle();
+}
+
+function orbitEllipseGeometry(aKm, e, varpi = 0, segs = seg(720, 240)) {
     const pos = new Float32Array(segs * 3);
     const p = aKm * (1 - e * e);
     for (let i = 0; i < segs; i++) {
@@ -109,12 +236,12 @@ export function buildBodies(maps) {
                 gl_FragColor = vec4(col, 1.0);
             }`,
     });
-    sunCore = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS, 96, 72), sunMat);
+    sunCore = new THREE.Mesh(sphere(SUN_RADIUS, 96, 72, 48, 32), sunMat);
     scene.add(sunCore);
     // animated corona: fresnel rim shell with streamer noise
     const coronaUniforms = { uT: { value: 0 } };
     shaderTick.coronaUniforms = coronaUniforms;
-    sunCorona = new THREE.Mesh(new THREE.SphereGeometry(SUN_RADIUS * 1.28, 96, 64), new THREE.ShaderMaterial({
+    sunCorona = new THREE.Mesh(sphere(SUN_RADIUS * 1.28, 96, 64, 48, 32), new THREE.ShaderMaterial({
         uniforms: coronaUniforms,
         transparent: true, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false,
         vertexShader: /* glsl */`
@@ -160,44 +287,24 @@ export function buildBodies(maps) {
     skyStars = new THREE.Group();
     skyStars.frustumCulled = false;
     scene.add(skyStars);
-    if (location.search.includes("realsky=0")) {
-        for (const conf of [[2400, 1.55, .9, null], [780, 2.75, .98, starSprite], [190, 4.9, 1, starSprite]]) {
-            const count = conf[0], pos = new Float32Array(count * 3), col = new Float32Array(count * 3), rnd = mulberry32(count * 7 + 13);
-            for (let i = 0; i < count; i++) {
-                const th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1), r = 6.0e6;
-                pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
-                pos[i * 3 + 1] = r * Math.cos(ph);
-                pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
-                starColor(rnd, _sc);
-                const b = .45 + .55 * Math.pow(rnd(), 1.6); // magnitude spread inside each band
-                col[i * 3] = _sc[0] * b; col[i * 3 + 1] = _sc[1] * b; col[i * 3 + 2] = _sc[2] * b;
-            }
-            const g = new THREE.BufferGeometry();
-            g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-            g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-            const pts = new THREE.Points(g, new THREE.PointsMaterial({
-                vertexColors: true, size: conf[1], sizeAttenuation: false, transparent: true,
-                opacity: conf[2], depthWrite: false, map: conf[3], blending: THREE.AdditiveBlending,
-            }));
-            pts.frustumCulled = false;
-            pts.renderOrder = -2;
-            skyStars.add(pts);
-        }
-    }
-    initRealSky(skyStars);
+    const useRealSky = shouldUseRealSky();
+    const immediateRealSky = useRealSky && shouldLoadRealSkyImmediately();
+    if (!immediateRealSky) buildProceduralSky(starSprite, starColor, _sc);
+    if (immediateRealSky) initRealSky(skyStars);
+    else if (useRealSky) deferredRealSky = true;
     if (maps.milky && !location.search.includes("sky=0")) {
         // the sky sphere rides with the camera: keeps its geometry identical at
         // any camera position (a 5.85e6-unit sphere at a far-away camera fed
         // degenerate values into the bloom pass and blacked out the frame)
         sky = new THREE.Mesh(
-            new THREE.SphereGeometry(4.0e6, 48, 32),
+            sphere(4.0e6, 48, 32, 32, 20),
             new THREE.MeshBasicMaterial({ map: maps.milky, side: THREE.BackSide, depthWrite: false, depthTest: false, color: 0x55596a }));
         sky.rotation.z = .5;
         sky.renderOrder = -2;
         sky.frustumCulled = false;
         scene.add(sky);
     }
-    if (!location.search.includes("galaxy=0")) {
+    if (shouldUseGalaxyBackdrop()) {
         const count = 9000;
         const pos = new Float32Array(count * 3);
         const col = new Float32Array(count * 3);
@@ -249,7 +356,7 @@ export function buildBodies(maps) {
     };
     shaderTick.earthUniforms = earthUniforms;
     earth = new THREE.Mesh(
-        new THREE.SphereGeometry(R_EARTH * K, 96, 72),
+        sphere(R_EARTH * K, 96, 72, 48, 32),
         new THREE.ShaderMaterial({
             uniforms: earthUniforms,
             vertexShader: /* glsl */`
@@ -289,16 +396,18 @@ export function buildBodies(maps) {
                     gl_FragColor = vec4(col, 1.0);
                 }`,
         }));
-    clouds = new THREE.Mesh(
-        new THREE.SphereGeometry(R_EARTH * K * 1.014, 80, 56),
-        new THREE.MeshLambertMaterial({ color: 0xffffff, alphaMap: maps.clouds || cloudTextureProc(), transparent: true, opacity: .92, depthWrite: false }));
+    clouds = maps.clouds
+        ? new THREE.Mesh(
+            sphere(R_EARTH * K * 1.014, 80, 56, 40, 28),
+            new THREE.MeshLambertMaterial({ color: 0xffffff, alphaMap: maps.clouds, transparent: true, opacity: .92, depthWrite: false }))
+        : new THREE.Group();
     const atmoUniforms = {
         c: { value: new THREE.Color(0x4d9fff) },
         sunDir: { value: new THREE.Vector3(1, 0, 0) },
         uFade: { value: 1 },
     };
     shaderTick.atmoUniforms = atmoUniforms;
-    const atmo = new THREE.Mesh(new THREE.SphereGeometry(R_EARTH * K * 1.07, 80, 56), new THREE.ShaderMaterial({
+    earthAtmo = new THREE.Mesh(sphere(R_EARTH * K * 1.07, 80, 56, 40, 28), new THREE.ShaderMaterial({
         transparent: true, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false,
         uniforms: atmoUniforms,
         vertexShader: /* glsl */`
@@ -319,12 +428,14 @@ export function buildBodies(maps) {
                 gl_FragColor = vec4(c, vF * 0.5 * lit * uFade);
             }`,
     }));
-    earthG.add(earth, clouds, atmo);
+    earthG.add(earth, clouds, earthAtmo);
     scene.add(earthG);
     // ---- moon ----
+    const moonMap = maps.moon;
+    const useMoonBump = !!moonMap && new URLSearchParams(location.search).get("moonbump") === "1";
     moon = new THREE.Mesh(
-        new THREE.SphereGeometry(R_MOON * K, 112, 80),
-        new THREE.MeshPhongMaterial({ map: maps.moon || moonColorProc(), bumpMap: moonBumpProc(), bumpScale: .065, shininess: 2.2, specular: 0x20242b }));
+        sphere(R_MOON * K, 112, 80, 48, 32),
+        new THREE.MeshPhongMaterial({ color: moonMap ? 0xffffff : 0xb9bcc2, map: moonMap || null, bumpMap: useMoonBump ? moonMap : null, bumpScale: .045, shininess: 2.2, specular: 0x20242b }));
     scene.add(moon);
     // moon orbit ring
     {
@@ -334,7 +445,7 @@ export function buildBodies(maps) {
     }
     // SOI ring around the Moon
     {
-        const segs = 320, pos = new Float32Array(segs * 3);
+        const segs = seg(320, 160), pos = new Float32Array(segs * 3);
         for (let i = 0; i < segs; i++) {
             const a = i / segs * Math.PI * 2;
             pos[i * 3] = SOI_M * K * Math.cos(a);
@@ -351,13 +462,14 @@ export function buildBodies(maps) {
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];
         const g = new THREE.Group();
-        const map = maps.planets[i] || planetTextureProc(p.color, p.gas, 1000 + i * 31);
-        const surface = new THREE.Mesh(new THREE.SphereGeometry(p.R * K, 48, 32), new THREE.MeshPhongMaterial({ map, shininess: p.gas ? 8 : 4 }));
+        const materialConfig = { color: p.color, shininess: p.gas ? 8 : 4 };
+        if (maps.planets[i]) materialConfig.map = maps.planets[i];
+        const surface = new THREE.Mesh(sphere(p.R * K, 48, 32, 32, 20), new THREE.MeshPhongMaterial(materialConfig));
         g.rotation.z = p.visualTilt || 0;
         g.add(surface);
         if (p.ring) {
             const ringMap = maps.ring || ringTextureProc();
-            const rg = new THREE.RingGeometry(p.ring[0] * K, p.ring[1] * K, 128, 1);
+            const rg = new THREE.RingGeometry(p.ring[0] * K, p.ring[1] * K, seg(128, 64), 1);
             // remap UVs radially so the ring strip texture reads inner→outer
             const posA = rg.attributes.position, uvA = rg.attributes.uv;
             for (let vi = 0; vi < posA.count; vi++) {
@@ -374,7 +486,7 @@ export function buildBodies(maps) {
             transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .28,
         }));
         scene.add(glow);
-        const og = orbitEllipseGeometry(p.a, p.e, p.varpi, 720);
+        const og = orbitEllipseGeometry(p.a, p.e, p.varpi);
         const orbit = new THREE.LineLoop(og, new THREE.LineBasicMaterial({ color: 0x2c3a4a, transparent: true, opacity: .5 }));
         scene.add(orbit);
         const sp = document.createElement("span");

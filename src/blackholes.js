@@ -221,6 +221,11 @@ const BH_PLACE = {
     yKm: 0,
     uiReady: false,
     uiKey: "",
+    bodyMode: null,
+    hintKey: "",
+    hintText: "",
+    previewKey: "",
+    previewT: 0,
     preview: null,
     ctx: null,
     canvas: null,
@@ -339,14 +344,21 @@ function ensureBHPanel() {
         }
     }
 }
-function drawBHPanelPreview(rs, active) {
+function drawBHPanelPreview(rs, active, force = false) {
     ensureBHPanel();
     const cv = BH_PLACE.canvas, ctx = BH_PLACE.ctx;
     if (!cv || !ctx) return;
+    const now = performance.now();
+    const key = rs + ":" + (active ? 1 : 0) + ":" + cv.width + ":" + cv.height;
+    if (!force && key === BH_PLACE.previewKey) {
+        if (!active || now - BH_PLACE.previewT < 90) return;
+    }
+    BH_PLACE.previewKey = key;
+    BH_PLACE.previewT = now;
     const w = cv.width, h = cv.height, cx = w * .5, cy = h * .52;
     const massVis = smooth01(.5, 5000, rs);
     const diskVis = smooth01(50, 100000, rs);
-    const spin = performance.now() * .00055;
+    const spin = active ? now * .00055 : 0;
     ctx.clearRect(0, 0, w, h);
     const bg = ctx.createRadialGradient(cx, cy, 2, cx, cy, w * .55);
     bg.addColorStop(0, "rgba(78,61,132,.42)");
@@ -392,16 +404,38 @@ function drawBHPanelPreview(rs, active) {
 }
 function updateBHPlacementUI(force = false) {
     ensureBHPanel();
-    document.body.classList.toggle("bh-place-mode", BH_PLACE.active);
+    if (BH_PLACE.bodyMode !== BH_PLACE.active) {
+        document.body.classList.toggle("bh-place-mode", BH_PLACE.active);
+        BH_PLACE.bodyMode = BH_PLACE.active;
+    }
     const rs = BH_SIZES[BH.sizeIdx];
     const mu = rs * C_LIGHT * C_LIGHT / 2;
     const hint = document.getElementById("bhPlaceHint");
     const updateHint = () => {
         if (!hint) return;
-        if (BH.n >= BH_MAX) hint.textContent = "Maximum " + BH_MAX + " active holes · V removes the last one";
-        else if (BH_PLACE.active && BH_PLACE.valid) hint.textContent = "CLICK TO PLACE · ship distance " + fmtDist(Math.hypot(G.x - BH_PLACE.xKm, G.y - BH_PLACE.yKm, G.z));
-        else if (BH_PLACE.active) hint.textContent = "AIM AT THE ORBITAL PLANE";
-        else hint.textContent = "B arms placement · size buttons arm it too";
+        let hintKey = "", text = "";
+        if (BH.n >= BH_MAX) {
+            hintKey = "max:" + BH.n;
+            text = "Maximum " + BH_MAX + " active holes - V removes the last one";
+        } else if (BH_PLACE.active && BH_PLACE.valid) {
+            const dist = Math.hypot(G.x - BH_PLACE.xKm, G.y - BH_PLACE.yKm, G.z);
+            const bucket = dist > 1e7 ? Math.round(dist / 10000) * 10000 :
+                dist > 1e5 ? Math.round(dist / 100) * 100 :
+                Math.round(dist);
+            hintKey = "valid:" + bucket;
+            text = "CLICK TO PLACE - ship distance " + fmtDist(bucket);
+        } else if (BH_PLACE.active) {
+            hintKey = "aim";
+            text = "AIM AT THE ORBITAL PLANE";
+        } else {
+            hintKey = "idle";
+            text = "B arms placement - size buttons arm it too";
+        }
+        if (hintKey !== BH_PLACE.hintKey) {
+            hint.textContent = text;
+            BH_PLACE.hintText = text;
+            BH_PLACE.hintKey = hintKey;
+        }
     };
     const key = [
         BH_PLACE.active ? 1 : 0,
@@ -448,7 +482,7 @@ function updateBHPlacementUI(force = false) {
             list.appendChild(row);
         }
     }
-    drawBHPanelPreview(rs, BH_PLACE.active);
+    drawBHPanelPreview(rs, BH_PLACE.active, true);
 }
 export function isBHPlacementMode() { return BH_PLACE.active; }
 export function setBHPlacementMode(active) {

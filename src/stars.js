@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { STARS, K, LY_SCENE } from "./constants.js";
 import { dotTexture } from "./textures.js";
-import { scene } from "./scene.js";
+import { renderQuality, scene } from "./scene.js";
 import { smooth01 } from "./format.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 
@@ -19,6 +19,13 @@ const ACTIVE_VISUAL_MAX = 48;
 const ACTIVE_VISUAL_RADIUS = LY_SCENE * .24;
 const ACTIVE_VISUAL_SYNC_S = .12;
 const ACTIVE_VISUAL_MOVE_SYNC = ACTIVE_VISUAL_RADIUS * .04;
+const LOCAL_VISUAL_SKIP_R = LY_SCENE * .015;
+let localVisualsHidden = false;
+let namedStarsBuilt = false;
+const forceNamedStarVisuals = new URLSearchParams(location.search).get("starvisuals") === "1";
+const seg = (desktop, mobile) => renderQuality.mobile ? mobile : desktop;
+const sphere = (r, desktopW, desktopH, mobileW, mobileH) =>
+    new THREE.SphereGeometry(r, seg(desktopW, mobileW), seg(desktopH, mobileH));
 
 function starVisualId(star) {
     if (star.id) return star.id;
@@ -27,7 +34,7 @@ function starVisualId(star) {
 }
 
 function fresnelShell(radius, color, power, gain) {
-    return new THREE.Mesh(new THREE.SphereGeometry(radius, 48, 32), new THREE.ShaderMaterial({
+    return new THREE.Mesh(sphere(radius, 48, 32, 24, 16), new THREE.ShaderMaterial({
         transparent: true, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false,
         uniforms: { c: { value: new THREE.Color(color) }, uP: { value: power }, uG: { value: gain } },
         vertexShader: /* glsl */`
@@ -63,7 +70,7 @@ function accretionTexture(hex) {
 }
 
 function radialRing(rIn, rOut, map) {
-    const rg = new THREE.RingGeometry(rIn, rOut, 96, 1);
+    const rg = new THREE.RingGeometry(rIn, rOut, seg(96, 48), 1);
     const posA = rg.attributes.position, uvA = rg.attributes.uv;
     for (let vi = 0; vi < posA.count; vi++) {
         const r = Math.hypot(posA.getX(vi), posA.getY(vi));
@@ -118,7 +125,7 @@ export function addStarVisual(star) {
     let disk = null;
     if (star.bh) {
         const rsU = star.rs * K;
-        g.add(new THREE.Mesh(new THREE.SphereGeometry(rsU, 48, 32), new THREE.MeshBasicMaterial({ color: 0x000000 })));
+        g.add(new THREE.Mesh(sphere(rsU, 48, 32, 24, 16), new THREE.MeshBasicMaterial({ color: 0x000000 })));
         // thin photon-ring halo hugging the horizon
         g.add(fresnelShell(rsU * 1.06, 0xfff2d8, 5.0, .9));
         disk = radialRing(rsU * 1.9, rsU * 7.5, accretionTexture(0xffb46a));
@@ -134,7 +141,7 @@ export function addStarVisual(star) {
         }
     } else {
         const col = new THREE.Color(star.color);
-        g.add(new THREE.Mesh(new THREE.SphereGeometry(star.R * K, 48, 32), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(1.15) })));
+        g.add(new THREE.Mesh(sphere(star.R * K, 48, 32, 24, 16), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(1.15) })));
         g.add(fresnelShell(star.R * K * 1.3, star.color, 2.2, .5));
     }
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -150,8 +157,14 @@ export function addStarVisual(star) {
     return entry;
 }
 
-export function buildStars() {
+function buildNamedStarVisuals() {
+    if (namedStarsBuilt) return;
     for (const star of STARS) addStarVisual(star);
+    namedStarsBuilt = true;
+}
+
+export function buildStars() {
+    if (forceNamedStarVisuals) buildNamedStarVisuals();
 }
 
 const _procPos = new THREE.Vector3();
@@ -191,16 +204,32 @@ function syncActiveStarVisuals(camera, dtR = 0) {
 }
 
 export function updateStars(camera, dtR) {
+    const cameraSolarDistance = camera.position.length();
+    if (cameraSolarDistance < LOCAL_VISUAL_SKIP_R) {
+        if (!localVisualsHidden) {
+            for (const e of entries) e.g.visible = false;
+            localVisualsHidden = true;
+        }
+        activeVisualSyncAge = Infinity;
+        return;
+    }
+    buildNamedStarVisuals();
+    localVisualsHidden = false;
     syncActiveStarVisuals(camera, dtR);
     for (const e of entries) {
         e.g.position.set(e.star.x * K, (e.star.z || 0) * K, -e.star.y * K);
         const d = camera.position.distanceTo(e.g.position);
         const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
-        e.g.visible = local > .01;
-        e.glow.material.opacity = .78 * local;
-        e.glow.scale.setScalar(e.star.bh
+        const skyBeacon = smooth01(LY_SCENE * .015, LY_SCENE * .20, cameraSolarDistance);
+        const farAlpha = (e.star.bh ? .55 : .22) * skyBeacon;
+        const alpha = Math.max(.78 * local, farAlpha);
+        e.g.visible = alpha > .012;
+        e.glow.material.opacity = alpha;
+        const localScale = e.star.bh
             ? Math.min(e.star.rs * K * 14, Math.max(e.star.rs * K * 2.2, d * .002))
-            : Math.min(e.star.R * K * 48, Math.max(e.star.R * K * 4.5, d * .0022)));
+            : Math.min(e.star.R * K * 48, Math.max(e.star.R * K * 4.5, d * .0022));
+        const skyScale = d * (e.star.bh ? .0048 : .0028) * skyBeacon;
+        e.glow.scale.setScalar(Math.max(localScale, skyScale));
         if (e.disk) e.disk.rotation.z += dtR * .05;
     }
 }

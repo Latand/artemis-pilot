@@ -1,5 +1,5 @@
 import { K, LY_KM, MU_S, R_SUN } from "../constants.js";
-import { loadHygCatalogData } from "./catalogData.js";
+import { hygCatalogMetaUrl, loadHygCatalogData } from "./catalogData.js";
 
 const PC_LY = 3.261563777;
 const PC_KM = LY_KM * PC_LY;
@@ -7,6 +7,10 @@ const SOLAR_TEMP_K = 5772;
 const CACHE_GRID_PC = 2;
 const INDEX_CELL_PC = 8;
 const MIN_ACTIVE_RADIUS_SOLAR = 0.01;
+const INDEX_STEP_MAX = 1024;
+const INDEX_STEP_MIN_BUDGET_MS = 1.25;
+const INDEX_STEP_MAX_BUDGET_MS = 3.5;
+const INDEX_APPLY_STEP_MAX = 4096;
 
 let META = null;
 let VALS = null;
@@ -16,6 +20,8 @@ let INDEX = new Map();
 let INDEX_READY = false;
 let INDEXING = false;
 let INDEX_WAITERS = [];
+let INDEX_WORKER = null;
+let INDEX_WORKER_SIG = "";
 let VERSION = 0;
 let SIGNATURE = "";
 let loadPromise = null;
@@ -131,7 +137,7 @@ function rebuildSpatialIndex() {
 
 function scheduleIndexStep(fn) {
     if (typeof requestIdleCallback === "function") requestIdleCallback(fn, { timeout: 80 });
-    else setTimeout(fn, 0);
+    else setTimeout(() => fn(null), 16);
 }
 
 function resolveIndexWaiters() {
@@ -157,18 +163,97 @@ function catalogSignature(meta, vals) {
     ].join(":");
 }
 
-function startSpatialIndexBuild() {
+function finishSpatialIndex(next) {
+    INDEX = next;
+    INDEX_READY = true;
+    INDEXING = false;
+    INDEX_WORKER_SIG = "";
+    VERSION++;
+    SAMPLE_CACHE.key = "";
+    SAMPLE_CACHE.stars = [];
+    resolveIndexWaiters();
+}
+
+function applyWorkerIndex(msg) {
+    if (!msg || msg.signature !== SIGNATURE) return false;
+    const coords = new Int32Array(msg.coords);
+    const offsets = new Uint32Array(msg.offsets);
+    const indices = new Int32Array(msg.indices);
+    const cells = Math.min(msg.cells || 0, Math.floor(coords.length / 3), Math.max(0, offsets.length - 1));
+    const next = new Map();
+    INDEX = next;
+    INDEX_READY = false;
+    INDEXING = true;
+    let cell = 0;
+    const step = deadline => {
+        const t0 = performance.now();
+        const idleLeft = deadline && typeof deadline.timeRemaining === "function" ? deadline.timeRemaining() : 0;
+        const budgetMs = deadline?.didTimeout ? INDEX_STEP_MIN_BUDGET_MS :
+            Math.max(INDEX_STEP_MIN_BUDGET_MS, Math.min(INDEX_STEP_MAX_BUDGET_MS, idleLeft - .35));
+        let processed = 0;
+        while (cell < cells && processed++ < INDEX_APPLY_STEP_MAX) {
+            const p = cell * 3;
+            next.set(indexKey(coords[p], coords[p + 1], coords[p + 2]), indices.subarray(offsets[cell], offsets[cell + 1]));
+            cell++;
+            if ((processed & 255) === 0 && performance.now() - t0 >= budgetMs) break;
+        }
+        if (cell < cells) {
+            scheduleIndexStep(step);
+            return;
+        }
+        finishSpatialIndex(next);
+    };
+    scheduleIndexStep(step);
+    return true;
+}
+
+function startSpatialIndexWorker() {
+    if (typeof Worker === "undefined") return false;
+    try {
+        if (INDEX_WORKER) INDEX_WORKER.terminate();
+        const worker = new Worker(new URL("./hygIndexWorker.js", import.meta.url), { type: "module" });
+        INDEX_WORKER = worker;
+        INDEX_WORKER_SIG = SIGNATURE;
+        worker.onmessage = e => {
+            if (worker !== INDEX_WORKER) return;
+            INDEX_WORKER = null;
+            if (e.data?.ok && applyWorkerIndex(e.data)) {
+                worker.terminate();
+                return;
+            }
+            worker.terminate();
+            if (INDEXING && INDEX_WORKER_SIG === SIGNATURE) startSpatialIndexBuildMain();
+        };
+        worker.onerror = () => {
+            if (worker !== INDEX_WORKER) return;
+            INDEX_WORKER = null;
+            worker.terminate();
+            if (INDEXING && INDEX_WORKER_SIG === SIGNATURE) startSpatialIndexBuildMain();
+        };
+        worker.postMessage({ url: hygCatalogMetaUrl(), signature: SIGNATURE });
+        return true;
+    } catch (e) {
+        INDEX_WORKER = null;
+        return false;
+    }
+}
+
+function startSpatialIndexBuildMain() {
     const meta = META, vals = VALS, fieldMap = FIELD;
-    if (!meta || !vals || INDEXING) return;
+    if (!meta || !vals) return;
     const next = new Map();
     const stride = meta.stride || 10;
     let i = 0, base = 0;
     INDEX = new Map();
     INDEX_READY = false;
     INDEXING = true;
-    const step = () => {
+    const step = deadline => {
+        const t0 = performance.now();
+        const idleLeft = deadline && typeof deadline.timeRemaining === "function" ? deadline.timeRemaining() : 0;
+        const budgetMs = deadline?.didTimeout ? INDEX_STEP_MIN_BUDGET_MS :
+            Math.max(INDEX_STEP_MIN_BUDGET_MS, Math.min(INDEX_STEP_MAX_BUDGET_MS, idleLeft - .35));
         let processed = 0;
-        while (i < meta.count && processed++ < 4096) {
+        while (i < meta.count && processed++ < INDEX_STEP_MAX) {
             const mass = vals[base + fieldMap.mass];
             const radius = vals[base + fieldMap.radius];
             const lum = vals[base + fieldMap.lum];
@@ -183,20 +268,29 @@ function startSpatialIndexBuild() {
             }
             i++;
             base += stride;
+            if ((processed & 127) === 0 && performance.now() - t0 >= budgetMs) break;
         }
         if (i < meta.count) {
             scheduleIndexStep(step);
             return;
         }
-        INDEX = next;
-        INDEX_READY = true;
-        INDEXING = false;
-        VERSION++;
-        SAMPLE_CACHE.key = "";
-        SAMPLE_CACHE.stars = [];
-        resolveIndexWaiters();
+        finishSpatialIndex(next);
     };
     scheduleIndexStep(step);
+}
+
+function startSpatialIndexBuild() {
+    if (!META || !VALS || INDEXING) return;
+    if (INDEX_WORKER) {
+        INDEX_WORKER.terminate();
+        INDEX_WORKER = null;
+    }
+    INDEX = new Map();
+    INDEX_READY = false;
+    INDEXING = true;
+    if (typeof window !== "undefined" && startSpatialIndexWorker()) return;
+    INDEXING = false;
+    startSpatialIndexBuildMain();
 }
 
 export function registerHygCatalog(meta, values, options = {}) {
@@ -234,6 +328,7 @@ export function hygCatalogStats() {
         indexedCells: INDEX.size,
         indexReady: INDEX_READY,
         indexing: INDEXING,
+        worker: !!INDEX_WORKER,
         source: META?.source || "HYG v4.1",
     };
 }
@@ -349,4 +444,11 @@ export async function ensureHygCatalogLoaded() {
         })();
     }
     return loadPromise;
+}
+
+if (typeof window !== "undefined") {
+    window.__HYG_CATALOG = {
+        stats: hygCatalogStats,
+        waitForIndex: waitForHygCatalogIndex,
+    };
 }

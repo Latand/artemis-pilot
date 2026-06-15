@@ -27,6 +27,26 @@ body.bh-place-mode #gl canvas { cursor: crosshair; }
 #hudBot { position: absolute; left: 0; right: 0; bottom: 0; padding: 0 10px 10px; display: flex; justify-content: center; pointer-events: none; z-index: 5; }
 #cells { width: 100%; max-width: 860px; display: flex; gap: 6px; }
 .cell { flex: 1; padding: 7px 9px; min-width: 0; overflow: hidden; }
+#mobileDeck { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 12; display: none; pointer-events: auto;
+  background: rgba(6,9,14,.82); border: 1px solid rgba(78,110,138,.55); border-radius: 8px; backdrop-filter: blur(8px); padding: 8px; touch-action: none; }
+#mobileReadout { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 5px; }
+#mobileReadout div { min-width: 0; border: 1px solid rgba(54,72,92,.72); border-radius: 6px; padding: 5px 6px; background: rgba(12,17,24,.72); overflow: hidden; }
+#mobileReadout span { display: block; font-size: 8px; letter-spacing: .12em; color: #6f7e90; white-space: nowrap; }
+#mobileReadout strong { display: block; margin-top: 2px; color: #eaf3fb; font-size: 10px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#mMode.burn { color: #ffb18e; }
+#mMode.warn { color: #ff8a73; }
+#mobileControls { display: grid; grid-template-columns: 1fr 1.5fr 1fr; gap: 8px; margin-top: 8px; align-items: start; }
+.mCluster { display: grid; grid-template-columns: repeat(2, minmax(42px, 1fr)); gap: 6px; align-content: start; }
+.mClusterMid { grid-template-columns: repeat(4, minmax(42px, 1fr)); }
+.mThrust { grid-template-columns: 1fr; }
+.mBtn { min-height: 42px; min-width: 0; border-radius: 7px; border: 1px solid rgba(72,96,122,.82);
+  background: rgba(12,18,26,.9); color: #d8e9f6; font: 700 11px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .08em; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.mBtn.active, .mBtn:active { border-color: #8fdcff; background: rgba(24,55,72,.95); color: #ffffff; box-shadow: 0 0 0 1px rgba(143,220,255,.24) inset; }
+.mHold.active { border-color: #ff9a7f; background: rgba(84,34,24,.92); }
+.mBurn { min-height: 92px; color: #ffe1d8; border-color: rgba(255,130,92,.7); }
+.mBoost { color: #ffe8a8; border-color: rgba(255,211,77,.55); }
+.mWide { grid-column: span 2; }
 #fuelBar { width: 190px; height: 7px; border-radius: 4px; background: rgba(255,255,255,.07); border: 1px solid #232e3c; overflow: hidden; margin-top: 4px; }
 #fuelFill { height: 100%; width: 100%; background: linear-gradient(90deg, #2e7d4f, #58c87f); }
 #bhLine { width: min(360px, calc(100vw - 28px)); line-height: 1.45; }
@@ -48,7 +68,7 @@ body.bh-place-mode #gl canvas { cursor: crosshair; }
 body.mode-cabin #cabinHud { display: block; }
 body.mode-cabin #hudTL, body.mode-cabin #hudTR, body.mode-cabin #hudBot,
 body.mode-cabin #flowPanel, body.mode-cabin #hint, body.mode-cabin #hygSearch, body.mode-cabin .lbl { display: none !important; }
-.starLbl { font-size: 10px; text-shadow: 0 0 12px rgba(255,220,160,.55), 0 1px 3px #000; }
+.starLbl { font-size: 10px; filter: brightness(1.22); text-shadow: 0 0 16px rgba(255,232,190,.72), 0 0 5px currentColor, 0 1px 3px #000; }
 #toasts { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .toast { background: rgba(20,30,22,.92); border: 1px solid #2e5a3a; color: #9fe8b8; border-radius: 8px; padding: 7px 11px;
   font-size: 11px; letter-spacing: .06em; animation: tIn .3s ease-out; }
@@ -160,10 +180,32 @@ body.mode-cabin #simsBtn { display: none !important; }
 #warpLine { font-size: 11px; color: #ffd9d1; margin-top: 6px; letter-spacing: .08em; }
 .warn { color: #ff8a73 !important; animation: pulse 1s infinite; }
 @media (max-width: 760px) {
-  .dash { left: 0; right: 0; grid-template-columns: 1fr; height: 32vh; overflow: hidden; }
-  .mfd { padding: 7px 9px; }
-  .strutL { left: 12vw; }
-  .strutR { right: 12vw; }
+  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn { display: none !important; }
+  #hintCard { display: none !important; }
+  #cosmicScale { bottom: 184px; max-width: calc(100vw - 20px); text-align: center; white-space: normal; }
+  #mobileDeck { display: block; background: rgba(6,9,14,.94); backdrop-filter: none; }
+  #mobileReadout { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #mobileControls { grid-template-columns: .82fr 1.18fr .82fr; gap: 6px; }
+  .mCluster { gap: 5px; grid-template-columns: repeat(2, minmax(38px, 1fr)); }
+  .mClusterMid { grid-template-columns: repeat(3, minmax(38px, 1fr)); }
+  .mThrust { grid-template-columns: 1fr; }
+  .mBtn { min-height: 38px; font-size: 10px; }
+  .mBurn { min-height: 82px; }
+  .mWide { grid-column: auto; }
+  #help { width: calc(100vw - 28px); max-height: calc(100dvh - 34px); overflow: auto; padding: 12px 14px; box-sizing: border-box; }
+  #help td { font-size: 10px; }
+  #help td:first-child { width: 92px; }
+  #banner { width: calc(100vw - 48px); box-sizing: border-box; padding: 14px 16px; }
+  #introCard { max-width: calc(100vw - 28px); padding: 22px 20px; box-sizing: border-box; }
+  #introTitle { font-size: 20px; letter-spacing: .24em; text-indent: .24em; }
+  #introBtns { flex-direction: column; }
+}
+@media (max-width: 520px) {
+  #mobileDeck { left: 8px; right: 8px; bottom: 8px; }
+}
+@media (hover: none) and (pointer: coarse) and (min-width: 761px) {
+  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn { display: none !important; }
+  #mobileDeck { display: block; left: 14px; right: 14px; max-width: 920px; margin: 0 auto; background: rgba(6,9,14,.94); backdrop-filter: none; }
 }
 /* ---- WebXR entry (only appended when a headset runtime is available) ---- */
 #vrBtn { position: absolute; right: 14px; bottom: 36px; z-index: 9; pointer-events: auto;

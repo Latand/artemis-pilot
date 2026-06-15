@@ -42,6 +42,10 @@ const hygActiveCatalogSrc = readFileSync(new URL("../src/universe/hygActiveCatal
 const mainSrc = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
 const riverSrc = readFileSync(new URL("../src/river.js", import.meta.url), "utf8");
 const realSkySrc = readFileSync(new URL("../src/realSky.js", import.meta.url), "utf8");
+const sceneSrc = readFileSync(new URL("../src/scene.js", import.meta.url), "utf8");
+const inputSrc = readFileSync(new URL("../src/input.js", import.meta.url), "utf8");
+const mobileControlsSrc = readFileSync(new URL("../src/mobileControls.js", import.meta.url), "utf8");
+const texturesSrc = readFileSync(new URL("../src/textures.js", import.meta.url), "utf8");
 const savesSrc = readFileSync(new URL("../src/saves.js", import.meta.url), "utf8");
 const starsSrc = readFileSync(new URL("../src/stars.js", import.meta.url), "utf8");
 const bin = readFileSync(binPath);
@@ -151,20 +155,123 @@ assert(
   "runtime catalog loader should fall back when module workers fail",
 );
 assert(
-    riverSrc.includes("const RIVER_STAR_SOURCE_MAX = 48") &&
+    riverSrc.includes("const RIVER_STAR_SOURCE_MAX = 24") &&
+    riverSrc.includes("const RIVER_STAR_SOURCE_START_R = LY_SCENE * 0.01") &&
     riverSrc.includes("const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX") &&
+    riverSrc.includes("clearRiverStarPick") &&
+    riverSrc.includes("starFieldRelevant") &&
     riverSrc.includes("insertRiverStarPick") &&
     riverSrc.includes("ACTIVE_STARS") &&
+    riverSrc.includes("renderQuality.mobile ? 136 : 176") &&
+    riverSrc.includes("const RIVER_DENSITY_GAIN") &&
     riverSrc.includes("river.renderShed") &&
     riverSrc.includes("if (drawCount !== river.drawCount)") &&
     riverSrc.includes("river.computeEvery = 1"),
-  "river source cap and adaptive line density should keep bounded stellar sources with per-frame compute cadence",
+  "river source cap and full-density default should keep spacetime visible while bounding stellar sources",
 );
 assert(
   starsSrc.includes("function disposeStarVisual") &&
     starsSrc.includes("disposeStarVisual(e)") &&
     starsSrc.includes("texture.dispose()"),
   "dynamic active-star visuals should release GPU resources when removed",
+);
+assert(
+  starsSrc.includes("const forceNamedStarVisuals") &&
+    starsSrc.includes('get("starvisuals") === "1"') &&
+    starsSrc.includes("function buildNamedStarVisuals()") &&
+    starsSrc.includes("if (forceNamedStarVisuals) buildNamedStarVisuals()") &&
+    starsSrc.includes("buildNamedStarVisuals();"),
+  "named stellar destination meshes should lazy-build outside local flight while keeping an opt-in eager mode",
+);
+assert(
+  bodiesSrc.includes("function shouldUseGalaxyBackdrop()") &&
+    bodiesSrc.includes('new URLSearchParams(location.search).get("galaxy") === "1"') &&
+    bodiesSrc.includes("if (shouldUseGalaxyBackdrop())") &&
+    !bodiesSrc.includes('includes("galaxy=0")'),
+  "decorative galaxy backdrop should be opt-in so default rendering avoids its constant point-cloud cost",
+);
+assert(
+  texturesSrc.includes('const forceMoonMap = q.get("moonmap") === "1" || q.get("moonbump") === "1"') &&
+    texturesSrc.includes('moon: forceMoonMap ? tryLoad("2k_moon.jpg") : Promise.resolve(null)') &&
+    bodiesSrc.includes("const moonMap = maps.moon") &&
+    bodiesSrc.includes("map: moonMap || null") &&
+    !bodiesSrc.includes("moonColorProc"),
+  "Moon photo texture and procedural color fallback should stay opt-in so default startup avoids extra image transfer and canvas generation",
+);
+assert(
+  bodiesSrc.includes('get("moonbump") === "1"') &&
+    bodiesSrc.includes("bumpMap: useMoonBump ? moonMap : null") &&
+    !inputSrc.includes("requestMoonBump") &&
+    !bodiesSrc.includes("moonBumpProc"),
+  "Moon bump mapping should stay opt-in so startup and focus changes avoid procedural bump generation and bump shader hitches",
+);
+assert(
+  texturesSrc.includes("export function loadPlanetMap") &&
+    texturesSrc.includes('const forcePlanetMaps = q.get("planetmaps") === "1"') &&
+    texturesSrc.includes("new Array(PL.length).fill(null)") &&
+    bodiesSrc.includes("export function requestPlanetTexture") &&
+    bodiesSrc.includes("surface.material.map = tex") &&
+    bodiesSrc.includes("old?.userData?.procedural") &&
+    inputSrc.includes("requestPlanetTexture(f)"),
+  "planet NASA maps should lazy-load on planet focus while default startup keeps procedural fallbacks",
+);
+assert(
+  texturesSrc.includes("export function loadEarthNightMap()") &&
+    texturesSrc.includes('const forceEarthNight = q.get("earthnight") === "1"') &&
+    texturesSrc.includes("earthNight: forceEarthNight ? loadEarthNightMap() : Promise.resolve(null)") &&
+    bodiesSrc.includes("export function requestEarthNightTexture") &&
+    bodiesSrc.includes('location.search.includes("earthnight=0")') &&
+    mainSrc.includes("requestEarthNightTexture(renderQuality.mobile ? 3600 : 2400)"),
+  "Earth night city texture should defer until after first usable frames while keeping force-load and disable URL controls",
+);
+assert(
+  texturesSrc.includes('const forceSunMap = q.get("sunmap") === "1"') &&
+    texturesSrc.includes('sun: forceSunMap ? tryLoad("2k_sun.jpg") : Promise.resolve(null)') &&
+    bodiesSrc.includes("uHasMap: { value: maps.sun ? 1 : 0 }"),
+  "Sun texture should stay opt-in because the shader has a procedural plasma fallback",
+);
+assert(
+  texturesSrc.includes('const forceClouds = q.get("clouds") === "1"') &&
+    texturesSrc.includes('clouds: forceClouds ? tryLoad("2k_earth_clouds.jpg", false) : Promise.resolve(null)') &&
+    bodiesSrc.includes(": new THREE.Group()") &&
+    !bodiesSrc.includes("cloudTextureProc"),
+  "Earth cloud layer should stay opt-in so default startup avoids cloud texture transfer and procedural canvas generation",
+);
+assert(
+  texturesSrc.includes('const forceMilky = q.get("milky") === "1" || q.get("sky") === "1"') &&
+    texturesSrc.includes('milky: forceMilky ? tryLoad("2k_stars_milky_way.jpg") : Promise.resolve(null)') &&
+    bodiesSrc.includes("if (maps.milky && !location.search.includes(\"sky=0\"))") &&
+    bodiesSrc.includes("buildProceduralSky(starSprite, starColor, _sc)"),
+  "decorative Milky Way sky texture should stay opt-in while procedural sky remains the default backdrop",
+);
+assert(
+  sceneSrc.includes("const bloomRequested = bloomParam !== \"0\"") &&
+    sceneSrc.includes("bloomPass.enabled = bloomRequested") &&
+    sceneSrc.includes("export async function ensurePostProcessing") &&
+    sceneSrc.includes('import("three/addons/postprocessing/EffectComposer.js")') &&
+    sceneSrc.includes('import("./fastBloomPass.js")') &&
+    !sceneSrc.includes('import { EffectComposer }') &&
+    !sceneSrc.includes('import { FastBloomPass }') &&
+    mainSrc.includes('import("./lensing.js")') &&
+    mainSrc.includes("function lensCandidateCouldBeVisible") &&
+    mainSrc.includes("const bloomRequested = bloomParam !== \"0\"") &&
+    mainSrc.includes("const bloomDisabled = !bloomRequested"),
+  "bloom and lensing should remain lazy so default startup avoids post-processing module load and warmup",
+);
+assert(
+  mainSrc.includes("function applyStartupCameraState()") &&
+    mainSrc.includes("function installCameraPersistence()") &&
+    mainSrc.indexOf("applyStartupCameraState();") >= 0 &&
+    mainSrc.indexOf("await warmRendererStartup();") > mainSrc.indexOf("applyStartupCameraState();") &&
+    mainSrc.indexOf("installCameraPersistence();") < mainSrc.indexOf("await warmRendererStartup();"),
+  "restored camera and URL harness state should be applied before renderer warmup",
+);
+assert(
+  mainSrc.includes("startup.primeBodyLod") &&
+    mainSrc.includes("function primeStartupBodyLod()") &&
+    mainSrc.includes("const warmLod = primeStartupBodyLod()") &&
+    mainSrc.indexOf("startup.primeBodyLod") < mainSrc.indexOf("startup.compileScene"),
+  "startup warmup should apply body surface LOD before compiling the scene",
 );
 assert(
   realSkySrc.includes("const MAG_LIMIT = 6.5") &&
@@ -177,12 +284,23 @@ assert(
     realSkySrc.includes("PEGASUS") &&
     realSkySrc.includes("LineSegments") &&
     realSkySrc.includes("PointsMaterial") &&
+    bodiesSrc.includes("function shouldUseRealSky()") &&
+    bodiesSrc.includes('flag === "1"') &&
+    bodiesSrc.includes('flag === "0"') &&
+    bodiesSrc.includes("return false") &&
+    bodiesSrc.includes("function shouldLoadRealSkyImmediately()") &&
+    bodiesSrc.includes("scheduleDeferredRealSkyLoad") &&
+    bodiesSrc.includes("requestRealSkyLoad") &&
+    inputSrc.includes("requestRealSkyLoad(0)") &&
+    mobileControlsSrc.includes("requestRealSkyLoad(0)") &&
+    bodiesSrc.includes("buildProceduralSky") &&
+    bodiesSrc.includes("disposeProceduralSky") &&
     bodiesSrc.includes("initRealSky(skyStars)") &&
-    bodiesSrc.includes('location.search.includes("realsky=0")') &&
+    mainSrc.includes("scheduleDeferredRealSkyLoad()") &&
     mainSrc.includes("smooth01(2.0e7, 7.0e7, cam.dist)") &&
     riverSrc.includes("mix(0.46, 1.0, visibleTime)") &&
     riverSrc.includes("depthTest: false"),
-  "real solar sky and wider river visibility should stay wired",
+  "real solar sky should stay wired as lazy/forced fidelity mode and wider river visibility should stay wired",
 );
 for (const starName of ["BETELGEUSE", "RIGEL", "MINTAKA", "VEGA", "DENEB", "ALTAIR", "DUBHE", "MERAK", "POLARIS", "SIRIUS", "REGULUS", "ALPHERATZ", "FOMALHAUT"]) {
   assert(meta.labels.some(row => String(row[1]).toUpperCase() === starName), "HYG labels should include constellation anchor " + starName);
@@ -275,8 +393,9 @@ assert(
     hygActiveCatalogSrc.includes("catalogPhysicsUsable") &&
     catalogSearchSrc.includes("catalogPhysicsUsable") &&
     catalogWorkerSrc.includes("inputVals") &&
-    cosmicSrc.includes("loadHygCatalogData()") &&
-    cosmicSrc.includes("workerVals.buffer") &&
+    cosmicSrc.includes("hygCatalogMetaUrl()") &&
+    cosmicSrc.includes("rememberHygCatalogData(msg.meta") &&
+    cosmicSrc.includes("url: hygCatalogMetaUrl()") &&
     catalogSearchSrc.includes("loadHygCatalogData") &&
     hygActiveCatalogSrc.includes("loadHygCatalogData") &&
     cosmicSrc.includes("{ deferIndex: true }") &&

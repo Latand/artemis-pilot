@@ -11,7 +11,7 @@ export const G = {
     dead: false, deadReason: "",
     deathT: 0, deathRt: 0, observerMode: false,
     leftHome: false, maxRE: 0,
-    gr: true, predict: true, darkEnergy: true, darkMatter: true, muted: false,
+    gr: true, predict: false, constellations: false, darkEnergy: true, darkMatter: true, muted: false,
     cabin: false,
     focus: "ship",
     thrustMain: 0, thrustLat: 0, boost: false,

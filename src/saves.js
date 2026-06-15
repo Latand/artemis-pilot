@@ -1,6 +1,6 @@
 // Quicksave / quickload: one browser-storage slot holding the full simulation
 // state — ship, world flags, the live n-body ephemeris, and every black hole.
-import { C_LIGHT, STARS } from "./constants.js";
+import { C_LIGHT, INITIAL_STAR_COUNT, STARS } from "./constants.js";
 import { G, WORLD, BH, GS } from "./state.js";
 import { snapshotEphem, loadEphemSnapshot } from "./ephemeris.js";
 import { addBlackHole, clearBlackHoles } from "./blackholes.js";
@@ -8,7 +8,6 @@ import { clearTrail, pushTrail, computePrediction } from "./trails.js";
 import { hideBanner, showBanner } from "./hud.js";
 import { fmtMET } from "./format.js";
 import { toast } from "./achievements.js";
-import { restorePromotedCatalogStars, serializePromotedCatalogStars } from "./catalogSearch.js";
 import {
     hygCatalogFocusId, hygCatalogFocusValue, proceduralFocusId, proceduralFocusValue,
     restorePinnedProceduralStars, serializePinnedProceduralStars,
@@ -18,9 +17,27 @@ const SLOT = "artemis.quicksave.v1";
 const G_FIELDS = [
     "t", "x", "y", "z", "vx", "vy", "vz", "heading", "pitch", "throttle", "warp", "paused",
     "fuel", "infinite", "dvUsed", "hold", "landed", "dead", "deadReason",
-    "deathT", "leftHome", "maxRE", "gr", "predict", "darkEnergy", "darkMatter", "muted", "focus",
+    "deathT", "leftHome", "maxRE", "gr", "predict", "constellations", "darkEnergy", "darkMatter", "muted", "focus",
     "cabin",
 ];
+const SERIAL_STAR_FIELDS = [
+    "name", "dLy", "x", "y", "z", "color", "mass", "R", "catalog", "hygIndex",
+    "hip", "hd", "hr", "spect", "mag", "absMag", "lumSolar", "tempK", "estimated",
+];
+
+function serializePromotedCatalogStars() {
+    return STARS.slice(INITIAL_STAR_COUNT)
+        .filter(star => star.catalog === "hyg-v41-promoted" && Number.isFinite(star.hygIndex))
+        .map(star => Object.fromEntries(SERIAL_STAR_FIELDS
+            .filter(field => star[field] !== undefined)
+            .map(field => [field, star[field]])));
+}
+
+async function restorePromotedCatalogStars(rows = []) {
+    if (!rows?.length) return [];
+    const mod = await import("./catalogSearch.js");
+    return mod.restorePromotedCatalogStars(rows);
+}
 
 export function saveState() {
     const ephSt = snapshotEphem();
@@ -66,11 +83,11 @@ export function saveState() {
     }
 }
 
-export function loadState() {
+export async function loadState() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
     if (!data || (data.v < 1 || data.v > 8)) { toast("No saved state · K to save one"); return false; }
-    const restoredStars = data.v >= 5 ? restorePromotedCatalogStars(data.hygStars) : [];
+    const restoredStars = data.v >= 5 ? await restorePromotedCatalogStars(data.hygStars) : [];
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     Object.assign(G, data.g);
     if (data.focusCatalog && Number.isFinite(Number(data.focusCatalog.hygIndex))) {
@@ -91,6 +108,8 @@ export function loadState() {
         if (!Number.isFinite(G[k])) G[k] = 0;
     if (typeof G.darkEnergy !== "boolean") G.darkEnergy = true;
     if (typeof G.darkMatter !== "boolean") G.darkMatter = true;
+    if (typeof G.predict !== "boolean") G.predict = false;
+    if (typeof G.constellations !== "boolean") G.constellations = true;
     if (typeof G.cabin !== "boolean") G.cabin = false;
     G.observerMode = false;
     G.deathRt = G.dead ? performance.now() : 0;

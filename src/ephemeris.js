@@ -1,9 +1,9 @@
 import {
     AU_KM, SUN_TH0, E_EARTH, VARPI_EARTH, PL, A_MOON, E_MOON, OMEGA, MOON_ANG0,
-    MU_E, MU_M, MU_S, C_LIGHT, BH_MAX,
+    MU_E, MU_M, MU_S, C_LIGHT, BH_MAX, LY_KM, PC_KM, DARK_ENERGY, DARK_MATTER,
 } from "./constants.js";
 import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
-import { ACTIVE_STARS } from "./universe/activeStars.js";
+import { GRAVITY_STARS } from "./universe/activeStars.js";
 import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
 
 export const IDX_MOON = 0;
@@ -166,6 +166,24 @@ const PRED_BH = {
     x: new Float64Array(BH_MAX), y: new Float64Array(BH_MAX),
     vx: new Float64Array(BH_MAX), vy: new Float64Array(BH_MAX),
 };
+
+let PRED_STARS = null;
+export const STELLAR_GRAVITY_MIN_R = LY_KM * .02;
+const DARK_ENERGY_GRAVITY_MIN_R2 = DARK_ENERGY.VISIBLE_START_KM * DARK_ENERGY.VISIBLE_START_KM;
+const DARK_MATTER_GRAVITY_MIN_R2 = Math.pow(DARK_MATTER.VISIBLE_START_PC * PC_KM, 2);
+export function beginPredictionStars(stars) {
+    PRED_STARS = Array.isArray(stars) ? stars : null;
+}
+export function endPredictionStars() {
+    PRED_STARS = null;
+}
+export function currentGravityStars() {
+    return PRED_STARS || GRAVITY_STARS;
+}
+export function gravityStarsFor(wx, wy, wz) {
+    if (PRED_STARS) return PRED_STARS;
+    return Math.hypot(wx, wy, wz) < STELLAR_GRAVITY_MIN_R ? [] : GRAVITY_STARS;
+}
 export function beginPredictionBH() {
     PRED_BH.t0 = EPHT.t;
     for (let i = 0; i < BH.n; i++) {
@@ -218,8 +236,9 @@ export function indirectAccel(st, out, tau = 0) {
             ay -= by * am0;
         }
     }
-    for (const star of ACTIVE_STARS) {
-        const bx = star.x - (st ? st.earthX : earthX), by = star.y - (st ? st.earthY : earthY), bz = star.z || 0;
+    const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
+    for (const star of gravityStarsFor(ex, ey, 0)) {
+        const bx = star.x - ex, by = star.y - ey, bz = star.z || 0;
         const r0 = Math.sqrt(bx * bx + by * by + bz * bz);
         if (r0 > 1e-9) {
             const w0 = star.mu / (r0 * r0 * r0);
@@ -316,8 +335,9 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
             }
         }
     }
-    for (const star of ACTIVE_STARS) {
-        const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
+    const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
+    const gravityStars = gravityStarsFor(ex + x, ey + y, z);
+    for (const star of gravityStars) {
         const bx = star.x - ex, by = star.y - ey, bz = star.z || 0;
         const dx = x - bx, dy = y - by, dz = z - bz;
         const r2 = dx * dx + dy * dy + dz * dz;
@@ -347,12 +367,13 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
             ax -= _gp[0]; ay -= _gp[1]; az -= _gp[2];
         }
     }
-    if (includeDarkEnergy && G.darkEnergy) {
+    const rRel2 = x * x + y * y + z * z;
+    if (includeDarkEnergy && G.darkEnergy && rRel2 >= DARK_ENERGY_GRAVITY_MIN_R2) {
         darkEnergyAccel(x, y, _de, undefined, z);
         ax += _de[0]; ay += _de[1];
         az += _de[2] || 0;
     }
-    if (G.darkMatter) {
+    if (G.darkMatter && rRel2 >= DARK_MATTER_GRAVITY_MIN_R2) {
         darkMatterRelativeAccel(x, y, z, st ? st.earthX : earthX, st ? st.earthY : earthY, 0, _dm);
         ax += _dm[0]; ay += _dm[1]; az += _dm[2];
     }
@@ -393,6 +414,12 @@ function makeState() {
         earthVy,
         t: EPHT.t,
     };
+}
+function copyLiveToState(st) {
+    st.x.set(bodyX); st.y.set(bodyY); st.vx.set(bodyVx); st.vy.set(bodyVy);
+    st.earthX = earthX; st.earthY = earthY; st.earthVx = earthVx; st.earthVy = earthVy;
+    st.t = EPHT.t;
+    return st;
 }
 function copyStateToLive(st) {
     bodyX.set(st.x); bodyY.set(st.y); bodyVx.set(st.vx); bodyVy.set(st.vy);
@@ -695,21 +722,26 @@ function advanceState(st, dtTotal, maxStep = 3600, live = false) {
 const _adv = makeState(); // persistent scratch: advanceEphem runs every flush, allocation-free
 export function advanceEphem(dtTotal) {
     if (dtTotal <= 0) return;
-    _adv.x.set(bodyX); _adv.y.set(bodyY); _adv.vx.set(bodyVx); _adv.vy.set(bodyVy);
-    _adv.earthX = earthX; _adv.earthY = earthY; _adv.earthVx = earthVx; _adv.earthVy = earthVy;
-    _adv.t = EPHT.t;
+    copyLiveToState(_adv);
     advanceState(_adv, dtTotal, 3600, true);
     copyStateToLive(_adv);
     // a ghost whose front has swept past Neptune influences nothing anymore
     for (let k = GS.length - 1; k >= 0; k--)
         if ((EPHT.t - GS[k].t) * C_LIGHT > 1e10) GS.splice(k, 1);
 }
-export function snapshotEphem() { return makeState(); }
+export function snapshotEphem(out = null) { return out ? copyLiveToState(out) : makeState(); }
 export function applyEphemSnapshot(st) { syncFromState(st); }
 export function loadEphemSnapshot(st) { copyStateToLive(st); }
 export function advanceEphemSnapshot(st, dtTotal, maxStep = 3600) {
     if (dtTotal > 0) advanceState(st, dtTotal, maxStep);
     copyStateToLive(st);
+}
+export function advanceEphemSnapshotKepler(st, dtTotal, syncLive = true) {
+    if (dtTotal > 0 && BH.n === 0 && GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
+        keplerJumpState(st, dtTotal);
+        st.t += dtTotal;
+    } else if (dtTotal > 0) advanceState(st, dtTotal, dtTotal);
+    if (syncLive) copyStateToLive(st);
 }
 
 resetEphem();

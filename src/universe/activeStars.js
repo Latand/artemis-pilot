@@ -15,24 +15,56 @@ export const ACTIVE_STAR_CONFIG = {
     proceduralLimit: 420,
     pinnedProceduralLimit: 384,
     totalLimit: 640,
+    gravityLimit: 64,
+    gravityRefreshGridPc: 0.25,
     realMaskPc: 0.35,
 };
 
 export const ACTIVE_STARS = [];
+export const GRAVITY_STARS = [];
 const ACTIVE_IDS = new Set();
+const GRAVITY_IDS = new Set();
 const PINNED_PROC = new Map();
 const PROC_CACHE = { key: "", stars: [] };
 const PROC_NEAREST = [];
 const PROC_POOL = [];
+const GRAVITY_RANK = [];
 const STATS = {
     known: 0,
     catalog: 0,
     procedural: 0,
     total: 0,
+    gravity: 0,
     seed: getSeed(),
     radiusPc: ACTIVE_STAR_CONFIG.proceduralRadiusPc,
 };
 let ACTIVE_REFRESH_KEY = "";
+let GRAVITY_REFRESH_KEY = "";
+const FAST_REFRESH = {
+    wx: Infinity, wy: Infinity, wz: Infinity, focus: undefined,
+    pins: -1, seed: undefined, hLoaded: false, hReady: false, hVersion: -1, hCount: -1,
+};
+
+function sameFastRefresh(wx, wy, wz, focus, hStats) {
+    if (ACTIVE_STARS.length === 0 || GRAVITY_STARS.length === 0) return false;
+    if (!Object.is(focus, FAST_REFRESH.focus) || PINNED_PROC.size !== FAST_REFRESH.pins) return false;
+    if (getSeed() !== FAST_REFRESH.seed) return false;
+    if (!!hStats.loaded !== FAST_REFRESH.hLoaded || !!hStats.indexReady !== FAST_REFRESH.hReady) return false;
+    if ((hStats.version || 0) !== FAST_REFRESH.hVersion || (hStats.count || 0) !== FAST_REFRESH.hCount) return false;
+    const drift = Math.max(Math.abs(wx - FAST_REFRESH.wx), Math.abs(wy - FAST_REFRESH.wy), Math.abs(wz - FAST_REFRESH.wz));
+    return drift < ACTIVE_STAR_CONFIG.gravityRefreshGridPc * PC_KM * .18;
+}
+
+function rememberFastRefresh(wx, wy, wz, focus, hStats) {
+    FAST_REFRESH.wx = wx; FAST_REFRESH.wy = wy; FAST_REFRESH.wz = wz;
+    FAST_REFRESH.focus = focus;
+    FAST_REFRESH.pins = PINNED_PROC.size;
+    FAST_REFRESH.seed = getSeed();
+    FAST_REFRESH.hLoaded = !!hStats.loaded;
+    FAST_REFRESH.hReady = !!hStats.indexReady;
+    FAST_REFRESH.hVersion = hStats.version || 0;
+    FAST_REFRESH.hCount = hStats.count || 0;
+}
 
 function focusStarIndex(focus) {
     if (typeof focus !== "string") return -1;
@@ -174,6 +206,17 @@ function cacheKey(gx, gy, gz) {
     ].join(":");
 }
 
+function gravityCacheKey(gx, gy, gz, focus, activeKey) {
+    const g = ACTIVE_STAR_CONFIG.gravityRefreshGridPc;
+    return [
+        activeKey,
+        String(focus),
+        Math.floor(gx / g),
+        Math.floor(gy / g),
+        Math.floor(gz / g),
+    ].join(":");
+}
+
 function proceduralStarsFor(wx, wy, wz) {
     const [gx, gy, gz] = equatorialKmToGal(wx, wy, wz);
     const key = cacheKey(gx, gy, gz);
@@ -242,25 +285,78 @@ function starInfluence(star, wx, wy, wz) {
     return { star, score: star.mu / d2, d2 };
 }
 
+function priorityGravityStar(star, id, d2, forcedIndex, forcedProcId, forcedCatalogId) {
+    if (star.bh) return true;
+    if (forcedIndex >= 0 && id === "known:" + forcedIndex) return true;
+    if (forcedProcId && id === forcedProcId) return true;
+    if (forcedCatalogId && id === forcedCatalogId) return true;
+    const contactR = Math.max(star.bh ? (star.rs || star.R) : star.R, star.R || 0);
+    return contactR > 0 && d2 <= contactR * contactR * 1600;
+}
+
+function pushGravity(star, id) {
+    if (!star || GRAVITY_IDS.has(id)) return false;
+    GRAVITY_IDS.add(id);
+    GRAVITY_STARS.push(star);
+    return true;
+}
+
+function rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalogId, key) {
+    GRAVITY_STARS.length = 0;
+    GRAVITY_IDS.clear();
+    GRAVITY_RANK.length = 0;
+    const limit = Math.max(1, Math.min(ACTIVE_STAR_CONFIG.gravityLimit, ACTIVE_STAR_CONFIG.totalLimit));
+    for (const star of ACTIVE_STARS) {
+        const id = activeId(star);
+        const dx = wx - star.x, dy = wy - star.y, dz = wz - (star.z || 0);
+        const d2 = Math.max(1, dx * dx + dy * dy + dz * dz);
+        let score = star.mu / d2;
+        if (star.bh) score *= 1e6;
+        if (priorityGravityStar(star, id, d2, forcedIndex, forcedProcId, forcedCatalogId)) {
+            pushGravity(star, id);
+            score = Infinity;
+        }
+        GRAVITY_RANK.push({ star, id, score, d2 });
+    }
+    GRAVITY_RANK.sort((a, b) => b.score - a.score || a.d2 - b.d2 || a.id.localeCompare(b.id));
+    for (const item of GRAVITY_RANK) {
+        if (GRAVITY_STARS.length >= limit) break;
+        pushGravity(item.star, item.id);
+    }
+    STATS.gravity = GRAVITY_STARS.length;
+    GRAVITY_REFRESH_KEY = key;
+}
+
 export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1) {
+    const hStats = hygCatalogStats();
+    if (sameFastRefresh(wx, wy, wz, focus, hStats)) return activeStarStats();
     const forcedIndex = focusStarIndex(focus);
     const forcedProcId = proceduralFocusId(focus);
     const forcedCatalogId = hygCatalogFocusId(focus);
     const gal = equatorialKmToGal(wx, wy, wz);
-    const hStats = hygCatalogStats();
     const refreshKey = [
         cacheKey(gal[0], gal[1], gal[2]),
         String(focus),
         PINNED_PROC.size,
         hStats.loaded ? 1 : 0,
+        hStats.indexReady ? 1 : 0,
+        hStats.version || 0,
         hStats.count || 0,
     ].join("|");
-    if (refreshKey === ACTIVE_REFRESH_KEY && ACTIVE_STARS.length > 0) return activeStarStats();
+    const gravKey = gravityCacheKey(gal[0], gal[1], gal[2], focus, refreshKey);
+    if (refreshKey === ACTIVE_REFRESH_KEY && ACTIVE_STARS.length > 0) {
+        if (gravKey !== GRAVITY_REFRESH_KEY || GRAVITY_STARS.length === 0) {
+            rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalogId, gravKey);
+        }
+        rememberFastRefresh(wx, wy, wz, focus, hStats);
+        return activeStarStats();
+    }
     ACTIVE_STARS.length = 0;
     ACTIVE_IDS.clear();
     STATS.known = 0;
     STATS.catalog = 0;
     STATS.procedural = 0;
+    STATS.gravity = 0;
     STATS.seed = getSeed();
     const known = [];
     for (let i = 0; i < STARS.length; i++) known.push(scoreKnownStar(STARS[i], wx, wy, wz, i, forcedIndex));
@@ -316,6 +412,8 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1) {
     }
     STATS.total = ACTIVE_STARS.length;
     ACTIVE_REFRESH_KEY = refreshKey;
+    rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalogId, gravKey);
+    rememberFastRefresh(wx, wy, wz, focus, hStats);
     return activeStarStats();
 }
 
@@ -354,3 +452,4 @@ export function restorePinnedProceduralStars(ids = []) {
 
 refreshActiveStars(0, 0, 0);
 if (typeof window !== "undefined") window.__ACTIVE_STARS = ACTIVE_STARS;
+if (typeof window !== "undefined") window.__GRAVITY_STARS = GRAVITY_STARS;

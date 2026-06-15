@@ -71,6 +71,22 @@ bun run dev
 
 Open the local URL printed by Vite, usually `http://localhost:5173`.
 
+## Performance Knobs
+
+Bloom is off by default so the first usable frame does not pay a post-processing warmup hitch. URL overrides:
+
+- `?dpr=2` or `?pixelRatio=2` forces a render pixel ratio for screenshots or high-end displays.
+- `?bloom=1` enables the fast bloom pass; `?bloom=legacy` uses the original heavier bloom pass; `?bloom=0` keeps bloom off.
+- `?galaxy=1` enables the decorative galaxy point backdrop. It is off by default to avoid a constant 9000-point render cost.
+- `?np=160` on desktop or `?np=128` on mobile uses a lighter spacetime river texture; default play uses the full-density river.
+- `?moonmap=1` enables the photo Moon texture; default play uses a simple shaded Moon material.
+- `?moonbump=1` enables Moon bump mapping for high-fidelity close-ups and implies `?moonmap=1`; default play keeps the bump shader off.
+- `?sunmap=1` enables the photo Sun texture; default play uses the procedural plasma shader and skips the 2k Sun image.
+- `?clouds=1` enables the Earth cloud layer; default play skips its 2k alpha texture and cloud mesh.
+- `?earthnight=1` loads Earth city lights during startup; default play defers them until after the first usable frames, and `?earthnight=0` disables the deferred load.
+- `?milky=1` enables the photo Milky Way sky dome; default play uses the procedural sky and skips the photo sky texture.
+- `?perf=1` enables `window.__PERF` timing samples; default play keeps profiling timers off.
+
 ## Build
 
 ```bash
@@ -101,10 +117,11 @@ The static build is written to `dist/`.
 | `U` | Cycle nearby physical stellar destinations |
 | `Shift+U` | Browse active nearby stars or search HYG catalog |
 | `J` | Toggle in-ship cabin view |
-| `0` or body label click | Focus a body and lock its trajectory prediction |
+| `0` or body label click | Focus the ship or a body |
 | Hold-drag on ship | Deliberately grab and throw the ship; release preserves a damped drag velocity |
 | `P` | Toggle trajectory prediction |
 | `G` | Toggle spacetime river visualization |
+| `Shift+G` | Toggle constellation guide lines |
 | `O` | Toggle dark-energy expansion |
 | `Shift+O` | Toggle Milky Way dark-matter halo |
 | `B` | Place a black hole on the cursor plane |

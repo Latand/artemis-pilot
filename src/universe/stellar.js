@@ -50,8 +50,7 @@ function ekerLogL(M) {
     return 2.865 * x + 1.105; // 7–31 M⊙; extrapolated above 31 (rare)
 }
 
-// Derive full main-sequence properties from a mass (solar units, K, hex colour).
-export function deriveStar(M) {
+function deriveMainSequence(M, out) {
     const logM = Math.log10(M);
     const L = Math.pow(10, ekerLogL(M));
     let R, Teff;
@@ -65,7 +64,34 @@ export function deriveStar(M) {
         R = 0.438 * M * M + 0.479 * M + 0.075;
         Teff = TSUN_K * Math.pow(L / (R * R), 0.25);
     }
-    return { mass: M, L, R, Teff, color: tempToColor(Teff), cls: spectralClass(Teff) };
+    out.mass = M;
+    out.L = L;
+    out.R = R;
+    out.Teff = Teff;
+    out.color = tempToColor(Teff);
+    out.cls = spectralClass(Teff);
+    return out;
+}
+
+export function deriveStarVisualInto(M, out) {
+    const logM = Math.log10(M);
+    const L = Math.pow(10, ekerLogL(M));
+    let R, Teff;
+    if (M > 1.5) {
+        const logT = -0.170 * logM * logM + 0.888 * logM + 3.671;
+        Teff = Math.pow(10, logT);
+    } else {
+        R = 0.438 * M * M + 0.479 * M + 0.075;
+        Teff = TSUN_K * Math.pow(L / (R * R), 0.25);
+    }
+    out.L = L;
+    out.color = tempToColor(Teff);
+    return out;
+}
+
+// Derive full main-sequence properties from a mass (solar units, K, hex colour).
+export function deriveStar(M) {
+    return deriveMainSequence(M, {});
 }
 
 // Present-day main-sequence weighting. The IMF is a *birth* distribution; in an

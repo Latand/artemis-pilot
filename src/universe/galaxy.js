@@ -13,7 +13,7 @@
 
 import { hashInts, makeRNG, samplePoisson } from "./prng.js";
 import { sampleKroupaMass, deriveStar, msLifetimeWeight } from "./stellar.js";
-import { R0_PC, Z_SUN_PC, galToEquatorialKm } from "./coords.js";
+import { R0_PC, Z_SUN_PC, galToEquatorialKmInto } from "./coords.js";
 
 export const CELL_PC = 100;                 // cell edge, parsecs
 const CELL_VOL = CELL_PC * CELL_PC * CELL_PC; // pc³
@@ -124,6 +124,7 @@ export function starsInCell(ci, cj, ck) {
         out = new Array(n);
         let w = 0;
         const densCenter = Math.max(dens, 1e-9);
+        const eq = [0, 0, 0];
         for (let k = 0; k < n; k++) {
             const gx = ox + rng() * CELL_PC;
             const gy = oy + rng() * CELL_PC;
@@ -136,7 +137,7 @@ export function starsInCell(ci, cj, ck) {
             // massive stars have mostly evolved off the main sequence.
             if (mass > 1 && rng() > msLifetimeWeight(mass)) continue;
             const props = deriveStar(mass);
-            const eq = galToEquatorialKm(gx, gy, gz);
+            galToEquatorialKmInto(gx, gy, gz, eq);
             out[w++] = {
                 gx, gy, gz,
                 x: eq[0], y: eq[1], z: eq[2],
@@ -213,6 +214,7 @@ export function localStarsInCell(ci, cj, ck, seed = SEED) {
             const rng = makeRNG(hashInts(seed, LEVEL_LOCAL_STAR, ci, cj, ck));
             const n = samplePoisson(rng, expected);
             const densCenter = Math.max(dens, 1e-9);
+            const eq = [0, 0, 0];
             out = [];
             for (let k = 0; k < n; k++) {
                 const sx = ox + rng() * LOCAL_CELL_PC;
@@ -222,7 +224,7 @@ export function localStarsInCell(ci, cj, ck, seed = SEED) {
                 const mass = sampleKroupaMass(rng);
                 if (mass > 1 && rng() > msLifetimeWeight(mass)) continue;
                 const props = deriveStar(mass);
-                const eq = galToEquatorialKm(sx, sy, sz);
+                galToEquatorialKmInto(sx, sy, sz, eq);
                 out.push({
                     gx: sx, gy: sy, gz: sz,
                     x: eq[0], y: eq[1], z: eq[2],

@@ -3,7 +3,10 @@ import {
     A_MOON, AU_KM,
     PL, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME, EPH_CHUNK,
 } from "./constants.js";
-import { eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance, keplerAdvance3 } from "./ephemeris.js";
+import {
+    eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance, keplerAdvance3,
+    gravityStarsFor, currentGravityStars, STELLAR_GRAVITY_MIN_R,
+} from "./ephemeris.js";
 import { G, BH, WORLD, GS, EPHT, bhMuAt } from "./state.js";
 import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
@@ -12,6 +15,7 @@ import { strongestActiveStarWell } from "./universe/starDominance.js";
 import { darkEnergyAccel, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc } from "./cosmology.js";
 import { equatorialKmToGal } from "./universe/coords.js";
 import { segmentSphereHit } from "./geometry.js";
+import { PERF, markPerf } from "./perf.js";
 
 // hooks into the presentation layer, wired once by main.js
 let H = { die: () => { }, award: () => { }, banner: () => { }, hideBanner: () => { } };
@@ -130,7 +134,7 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 
             }
         }
     }
-    for (const star of ACTIVE_STARS) {
+    for (const star of gravityStarsFor(eph.earthX + x, eph.earthY + y, z)) {
         const sx = star.x - eph.earthX, sy = star.y - eph.earthY;
         const sz = star.z || 0;
         const dx = x - sx, dy = y - sy, dz = z - sz;
@@ -193,7 +197,7 @@ export function orbitInfo() {
     else { mu = 1; rx = G.x; ry = G.y; rz = G.z; rvx = G.vx; rvy = G.vy; rvz = G.vz; R = 0; body = "DRIFT"; }
     const baseAcc = mu / Math.max(1, rx * rx + ry * ry + rz * rz);
     const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
-    const starWell = strongestActiveStarWell(ACTIVE_STARS, wx, wy, wz, baseAcc);
+    const starWell = stellarGravityActiveAt(wx, wy, wz) ? strongestActiveStarWell(currentGravityStars(), wx, wy, wz, baseAcc) : null;
     if (starWell?.dominant) {
         domMoon = false;
         domPl = false;
@@ -310,6 +314,10 @@ const _gs = [0, 0, 0, 0, 0, 0];
 const _bhKick = [0, 0, 0];
 const _saveG = [0, 0, 0, 0, 0, 0, 0];
 const _cosA0 = [0, 0, 0], _cosA1 = [0, 0, 0], _cosTmp = [0, 0, 0];
+const STELLAR_GRAVITY_MIN_R2 = STELLAR_GRAVITY_MIN_R * STELLAR_GRAVITY_MIN_R;
+function stellarGravityActiveAt(wx, wy, wz) {
+    return wx * wx + wy * wy + wz * wz >= STELLAR_GRAVITY_MIN_R2;
+}
 function cosmologyVisibilityAt(x, y, z) {
     let vis = G.darkEnergy ? darkEnergyVisibleFractionKm(Math.hypot(x, y, z)) : 0;
     if (G.darkMatter) {
@@ -386,7 +394,7 @@ function cosmologyJumpStarClear(x1, y1, z1) {
         if (!stellarJumpClear(oi.star, oi.rx, oi.ry, oi.rz || 0, x1 - sx, y1 - sy, z1 - sz, oi.rp)) return false;
     }
     const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
-    const well = strongestActiveStarWell(ACTIVE_STARS, wx, wy, wz, 0, 2);
+    const well = stellarGravityActiveAt(wx, wy, wz) ? strongestActiveStarWell(currentGravityStars(), wx, wy, wz, 0, 2) : null;
     if (well?.star && well.star !== oi.star) {
         const rvx = G.vx + eph.earthVx, rvy = G.vy + eph.earthVy, rvz = G.vz;
         const rp = osculatingPeriapsis(well.rx, well.ry, well.rz, rvx, rvy, rvz, well.star.mu);
@@ -438,7 +446,7 @@ function bodiesNeedFlush(x, y, z, lag) {
         const lim = Math.max(BH.rs[i] * 150, 5000);
         if (dx * dx + dy * dy + dz * dz < lim * lim) return true;
     }
-    for (const star of ACTIVE_STARS) {
+    for (const star of gravityStarsFor(eph.earthX + x, eph.earthY + y, z)) {
         const sx = star.x - (eph.earthX + eph.earthVx * lag);
         const sy = star.y - (eph.earthY + eph.earthVy * lag);
         const sz = star.z || 0;
@@ -448,26 +456,54 @@ function bodiesNeedFlush(x, y, z, lag) {
     }
     return false;
 }
+function markAdvancePerf(t0, simAdv, advanced, stats) {
+    if (stats && stats.dtMin === Infinity) stats.dtMin = 0;
+    if (PERF.enabled) markPerf("physics.advance", performance.now() - t0, { simAdv, advanced, ...stats });
+    return advanced;
+}
 export function advance(simAdv, atx, aty, atz, aMag) {
+    const perfOn = PERF.enabled;
+    const perfT0 = perfOn ? performance.now() : 0;
+    const perfStats = perfOn ? {
+        steps: 0,
+        flushes: 0,
+        flushChecks: 0,
+        starContactChecks: 0,
+        dtMin: Infinity,
+        dtMax: 0,
+        jump: "none",
+    } : null;
     let adv = simAdv, steps = 0, lag = 0;
     const s = _gs;
     s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
     updEphem(G.t);
     refreshActiveStars(eph.earthX + s[0], eph.earthY + s[1], s[2], G.focus);
-    // a frame budget far beyond the step cap: integrating the cap first is
-    // wasted work (the jump leaps it anyway), and at low fps it starves the
-    // clock — jump the whole frame in O(1) and keep 60 fps at any warp
+    // Hour/s+ warp can ask for dozens of local RK4 substeps in one browser
+    // frame. If the coast is safely conic, bridge it in O(1) so rendering
+    // and HUD cadence stay smooth while the clock keeps its requested rate.
     if (!G.dead && !G.landed && aMag === 0 && GS.length === 0 &&
         !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
         const rE0 = Math.hypot(s[0], s[1], s[2]);
         const dm0 = Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY, s[2]);
         const ds0 = Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2]);
         const dt0 = stepSize(rE0, dm0, ds0, rE0 - R_EARTH, Math.hypot(s[3], s[4], s[5]), s[0], s[1], s[2], s[3], s[4], s[5]);
-        if (simAdv > MAX_STEPS_FRAME * dt0) {
-            if (BH.n === 0 && (shipCosmologyJump(simAdv) > 0 || shipDeepJump(simAdv) > 0)) return simAdv;
+        if (perfStats) perfStats.dtMax = Math.max(perfStats.dtMax, dt0);
+        const frameBridge = G.warp > 600 && simAdv > Math.max(18, dt0 * 8);
+        if (frameBridge || simAdv > MAX_STEPS_FRAME * dt0) {
+            if (BH.n === 0 && shipCosmologyJump(simAdv) > 0) {
+                if (perfStats) perfStats.jump = frameBridge ? "cosmology-frame" : "cosmology-full";
+                return markAdvancePerf(perfT0, simAdv, simAdv, perfStats || {});
+            }
+            if (BH.n === 0 && shipDeepJump(simAdv) > 0) {
+                if (perfStats) perfStats.jump = frameBridge ? "kepler-frame" : "deep-full";
+                return markAdvancePerf(perfT0, simAdv, simAdv, perfStats || {});
+            }
             if (BH.n > 0) {
                 const jumped = tryBHBridgeJump(simAdv);
-                if (jumped > 0) return jumped;
+                if (jumped > 0) {
+                    if (perfStats) perfStats.jump = frameBridge ? "bh-bridge-frame" : "bh-bridge-full";
+                    return markAdvancePerf(perfT0, simAdv, jumped, perfStats || {});
+                }
             }
         }
     }
@@ -479,6 +515,10 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         const rS = Math.sqrt(dsx * dsx + dsy * dsy + dsz * dsz);
         const vTot = Math.sqrt(s[3] * s[3] + s[4] * s[4] + s[5] * s[5]);
         const dt = Math.min(stepSize(rE, rM, rS, rE - R_EARTH, vTot, s[0], s[1], s[2], s[3], s[4], s[5]), adv);
+        if (perfStats) {
+            perfStats.dtMin = Math.min(perfStats.dtMin, dt);
+            perfStats.dtMax = Math.max(perfStats.dtMax, dt);
+        }
         rk4Step(s, lag, dt, atx, aty, atz);
         G.t += dt; adv -= dt; lag += dt; steps++;
         if (aMag > 0) {
@@ -489,26 +529,36 @@ export function advance(simAdv, atx, aty, atz, aMag) {
                 if (G.fuel <= 0) { G.fuel = 0; atx = 0; aty = 0; atz = 0; aMag = 0; }
             }
         }
-        if (lag >= EPH_CHUNK || adv <= 1e-9 || steps >= MAX_STEPS_FRAME || bodiesNeedFlush(s[0], s[1], s[2], lag)) {
+        let shouldFlush = lag >= EPH_CHUNK || adv <= 1e-9 || steps >= MAX_STEPS_FRAME;
+        if (!shouldFlush) {
+            if (perfStats) perfStats.flushChecks++;
+            shouldFlush = bodiesNeedFlush(s[0], s[1], s[2], lag);
+        }
+        if (shouldFlush) {
+            if (perfStats) perfStats.flushes++;
             advanceEphem(lag);
             bhAdvance(lag, G.t); // holes free-fall in sync with the ship
             lag = 0;
         }
         // Earth sits at the frame origin: its contact check is always exact
         if (!WORLD.earthDestroyed && Math.sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]) <= R_EARTH) { handleEarthContact(s); break; }
-        let hitStar = null;
-        for (const star of ACTIVE_STARS) {
-            const sx = star.x - (eph.earthX + eph.earthVx * lag);
-            const sy = star.y - (eph.earthY + eph.earthVy * lag);
-            const sz = star.z || 0;
-            if (Math.hypot(s[0] - sx, s[1] - sy, s[2] - sz) <= star.R) { hitStar = star; break; }
-        }
-        if (hitStar) {
-            G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
-            H.die(hitStar.bh
-                ? "Crossed " + hitStar.name + "'s photon sphere; captured into the boundary flow"
-                : "Entered " + hitStar.name + "'s photosphere", hitStar.bh);
-            break;
+        const contactStars = gravityStarsFor(eph.earthX + s[0], eph.earthY + s[1], s[2]);
+        if (contactStars.length) {
+            let hitStar = null;
+            for (const star of contactStars) {
+                if (perfStats) perfStats.starContactChecks++;
+                const sx = star.x - (eph.earthX + eph.earthVx * lag);
+                const sy = star.y - (eph.earthY + eph.earthVy * lag);
+                const sz = star.z || 0;
+                if (Math.hypot(s[0] - sx, s[1] - sy, s[2] - sz) <= star.R) { hitStar = star; break; }
+            }
+            if (hitStar) {
+                G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
+                H.die(hitStar.bh
+                    ? "Crossed " + hitStar.name + "'s photon sphere; captured into the boundary flow"
+                    : "Entered " + hitStar.name + "'s photosphere", hitStar.bh);
+                break;
+            }
         }
         // every other surface lies deep inside a flush zone, so these checks
         // only need to run when the ephemeris is fresh
@@ -540,6 +590,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         }
         if (G.dead) break;
     }
+    if (perfStats) perfStats.steps = steps;
     if (lag > 0) { advanceEphem(lag); bhAdvance(lag, G.t); }
     G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
     // deep-time remainder: at warps the per-frame RK4 budget cannot cover,
@@ -548,20 +599,34 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     // scale.
     if (adv > 1e-9 && !G.dead && !G.landed && aMag === 0 &&
         GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
-        if (BH.n === 0) adv -= shipCosmologyJump(adv) || shipDeepJump(adv);
+        if (BH.n === 0) {
+            const cosJump = shipCosmologyJump(adv);
+            if (cosJump > 0) {
+                adv -= cosJump;
+                if (perfStats) perfStats.jump = "cosmology-tail";
+            } else {
+                const deepJump = shipDeepJump(adv);
+                if (deepJump > 0) {
+                    adv -= deepJump;
+                    if (perfStats) perfStats.jump = "deep-tail";
+                }
+            }
+        }
         else {
             let guard = 0;
             while (adv > 1e-9 && guard++ < 24 && !G.dead && !G.landed) {
                 const jumped = tryBHBridgeJump(adv);
                 if (jumped <= 1e-9) break;
                 adv -= jumped;
+                if (perfStats) perfStats.jump = "bh-bridge-tail";
             }
         }
     }
     const rE = Math.sqrt(G.x * G.x + G.y * G.y + G.z * G.z);
     G.maxRE = Math.max(G.maxRE, rE);
     if (rE > 100000) G.leftHome = true;
-    return simAdv - adv;
+    if (perfStats && perfStats.dtMin === Infinity) perfStats.dtMin = 0;
+    return markAdvancePerf(perfT0, simAdv, simAdv - adv, perfStats || {});
 }
 
 function bhAccelAtShip(tau, out) {
@@ -653,7 +718,7 @@ export function shipDeepJump(dt) {
     const oi = orbitInfo();
     const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
     const domAcc = oi.mu / (oi.r * oi.r);
-    const starWell = strongestActiveStarWell(ACTIVE_STARS, wx, wy, wz, oi.domStar ? 0 : domAcc);
+    const starWell = stellarGravityActiveAt(wx, wy, wz) ? strongestActiveStarWell(currentGravityStars(), wx, wy, wz, oi.domStar ? 0 : domAcc) : null;
     const starAcc = starWell?.acc || 0;
     if (oi.domStar) {
         const st = oi.star;

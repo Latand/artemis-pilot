@@ -9,16 +9,26 @@ import { activeStarForFocus } from "./universe/activeStars.js";
 // prograde/retrograde), NAV (osculating-orbit minimap around the dominant
 // body), SYS (drive gauges + autopilot + target). Redrawn every other frame.
 const W = 512, H = 384;
+const TEX_W = 384, TEX_H = 288;
+const SX = TEX_W / W, SY = TEX_H / H;
 const canvases = [0, 1, 2].map(() => {
     const cv = document.createElement("canvas");
-    cv.width = W; cv.height = H;
+    cv.width = TEX_W; cv.height = TEX_H;
     return cv;
 });
 export const mfdTextures = canvases.map(cv => {
     const t = new THREE.CanvasTexture(cv);
     t.colorSpace = THREE.SRGBColorSpace;
+    t.generateMipmaps = false;
+    t.minFilter = THREE.LinearFilter;
+    t.magFilter = THREE.LinearFilter;
     return t;
 });
+function ctxFor(i) {
+    const ctx = canvases[i].getContext("2d");
+    ctx.setTransform(SX, 0, 0, SY, 0, 0);
+    return ctx;
+}
 
 const BG = "#06090d", GRID = "#13202b", TXT = "#cfe8f6", DIM = "#5d7587";
 const ACC = "#7cc4f2", OK = "#58c87f", WARN = "#ff8a73", GOLD = "#ffd34d";
@@ -249,9 +259,12 @@ function drawSys(ctx, oi, eph) {
 
 let tick = 0;
 export function updateInstruments(oi, eph) {
-    if (tick++ % 2) return; // 30 Hz is plenty for canvas MFDs
-    drawAttitude(canvases[0].getContext("2d"), oi);
-    drawNav(canvases[1].getContext("2d"), oi);
-    drawSys(canvases[2].getContext("2d"), oi, eph);
-    for (const t of mfdTextures) t.needsUpdate = true;
+    // Spread canvas work and texture uploads across frames. The old path drew
+    // all three MFDs together every other frame, which made cabin entry pay a
+    // visible one-frame upload burst.
+    const phase = tick++ % 3;
+    if (phase === 0) drawAttitude(ctxFor(0), oi);
+    else if (phase === 1) drawNav(ctxFor(1), oi);
+    else drawSys(ctxFor(2), oi, eph);
+    mfdTextures[phase].needsUpdate = true;
 }

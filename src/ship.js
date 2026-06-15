@@ -95,12 +95,14 @@ export const exColAttr = new THREE.BufferAttribute(exCol, 3); exColAttr.setUsage
 exGeom.setAttribute("position", exPosAttr);
 exGeom.setAttribute("color", exColAttr);
 export const exMat = new THREE.PointsMaterial({ size: .03, vertexColors: true, sizeAttenuation: true, map: dotTexture("rgba(255,220,170,1)", "rgba(255,120,50,0.6)"), transparent: true, opacity: .9, blending: THREE.AdditiveBlending, depthWrite: false });
-const exhaust = new THREE.Points(exGeom, exMat);
+export const exhaust = new THREE.Points(exGeom, exMat);
+exhaust.visible = false;
 exhaust.frustumCulled = false;
 scene.add(exhaust);
 let exHead = 0;
 const exRnd = mulberry32(777111);
 export function spawnExhaust(px, py, pz, dx, dy, dz, cs, hot) {
+    exhaust.visible = true;
     const i = exHead; exHead = (exHead + 1) % EXN;
     const sp = cs * (1.8 + exRnd() * 1.4);
     exPos[i * 3] = px + (exRnd() - .5) * cs * .14;
