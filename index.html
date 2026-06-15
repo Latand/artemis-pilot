@@ -44,14 +44,17 @@
         </span>
         <span class="brand__word">ARTEMIS<i>PILOT</i></span>
       </div>
-      <div class="brand__sub">GRAVITY SANDBOX · LIVE PHYSICS</div>
 
       <div class="met" id="met">T+ 00:00:00:00</div>
-      <div class="met__cap">MISSION ELAPSED · DD:HH:MM:SS</div>
 
       <div class="chips">
         <div id="warpLine" class="chip chip--warp">⏩ —</div>
         <div id="engineLine" class="chip chip--engine">ENGINE OFF</div>
+      </div>
+
+      <div id="quickCtl">
+        <div class="qcRow"><span class="qcLab">ZOOM</span><button id="dZoomIn" class="qcBtn" type="button" aria-label="Zoom in">＋</button><button id="dZoomOut" class="qcBtn" type="button" aria-label="Zoom out">−</button></div>
+        <div class="qcRow"><span class="qcLab">WARP</span><button id="dWarpDown" class="qcBtn" type="button" aria-label="Slow time">≪</button><button id="dWarpUp" class="qcBtn" type="button" aria-label="Speed time">≫</button></div>
       </div>
 
       <div class="gauge">
@@ -69,6 +72,13 @@
 
     <div id="hoverTip"></div>
     <div id="cosmicScale">COSMIC SCALE</div>
+
+    <!-- attitude / heading dial: nose vs prograde/retrograde (the navball this sim was missing) -->
+    <div id="navBall" class="panel panel--cyan">
+      <div class="navBall__cap">ATTITUDE</div>
+      <canvas id="attCanvas" width="128" height="128" aria-label="Attitude indicator"></canvas>
+      <div id="navRead">HDG — · PRO —</div>
+    </div>
 
     <!-- ============ TOP-RIGHT · MISSION + INSTRUMENTS ============ -->
     <div id="hudTR">
@@ -90,13 +100,22 @@
         <div id="bhActiveList"></div>
       </div>
 
-      <div id="hygSearch" class="panel panel--cyan" aria-live="polite">
-        <div id="hygHead" class="panel__head"><span>STAR CATALOG</span><button id="hygClose" type="button">×</button></div>
-        <input id="hygQuery" autocomplete="off" spellcheck="false" placeholder="ACTIVE NEARBY / NAME / HIP / HD / HR / INDEX" />
-        <div id="hygResults"></div>
-      </div>
-
       <div id="toasts"></div>
+    </div>
+
+    <!-- go-to navigator: direct destination picker (ship / planets+moons / stars / holes) -->
+    <button id="navBtn" class="uiBtn" type="button">◎ GO TO</button>
+    <div id="navPanel" class="panel panel--cyan" aria-live="polite">
+      <div id="navHead" class="panel__head"><span>GO TO · NAVIGATOR</span><button id="navClose" type="button">×</button></div>
+      <input id="navQuery" autocomplete="off" spellcheck="false" placeholder="FILTER PLANETS / MOONS / STARS" />
+      <div id="navList"></div>
+    </div>
+
+    <!-- star catalog: sibling of the rails so it can also surface as a mobile overlay -->
+    <div id="hygSearch" class="panel panel--cyan" aria-live="polite">
+      <div id="hygHead" class="panel__head"><span>STAR CATALOG</span><button id="hygClose" type="button">×</button></div>
+      <input id="hygQuery" autocomplete="off" spellcheck="false" placeholder="ACTIVE NEARBY / NAME / HIP / HD / HR / INDEX" />
+      <div id="hygResults"></div>
     </div>
 
     <!-- ============ TOP-CENTER · SPACETIME RIVER ============ -->
@@ -218,56 +237,78 @@
       </div>
     </div>
 
-    <!-- ============ MOBILE FLIGHT CONTROLLER ============ -->
-    <div id="mobileDeck" aria-label="Flight control center">
-      <div id="mobileReadout">
-        <div><span>MET</span><strong id="mMet">T+ 00:00:00:00</strong></div>
-        <div><span>VEL</span><strong id="mVel">—</strong></div>
-        <div><span>ALT</span><strong id="mAlt">—</strong></div>
-        <div><span>FOCUS</span><strong id="mFocus">SHIP</strong></div>
-        <div><span>WARP</span><strong id="mWarp">—</strong></div>
-        <div><span>MODE</span><strong id="mMode">COAST</strong></div>
-      </div>
-      <div id="mobileControls">
-        <div class="mCol mCol--attitude">
-          <div class="mColCap">ATTITUDE</div>
-          <div class="mGrid mGrid--2">
-            <button id="mYawL" class="mBtn mHold" type="button" aria-label="Yaw left"><b>↶</b><i>YAW L</i></button>
-            <button id="mYawR" class="mBtn mHold" type="button" aria-label="Yaw right"><b>↷</b><i>YAW R</i></button>
-            <button id="mRcsL" class="mBtn mHold" type="button" aria-label="RCS left"><b>←</b><i>RCS L</i></button>
-            <button id="mRcsR" class="mBtn mHold" type="button" aria-label="RCS right"><b>→</b><i>RCS R</i></button>
-          </div>
-        </div>
-
-        <div class="mCol mCol--systems">
-          <div class="mColCap">SYSTEMS</div>
-          <div class="mGrid mGrid--3">
-            <button id="mWarpDown" class="mBtn" type="button" aria-label="Warp down"><b>−</b><i>WARP</i></button>
-            <button id="mPause" class="mBtn" type="button" aria-label="Pause"><b>Ⅱ</b><i>PAUSE</i></button>
-            <button id="mWarpUp" class="mBtn" type="button" aria-label="Warp up"><b>＋</b><i>WARP</i></button>
-            <button id="mFocusBtn" class="mBtn" type="button" aria-label="Cycle focus"><b>⌾</b><i>FOCUS</i></button>
-            <button id="mScaleBtn" class="mBtn" type="button" aria-label="Cycle scale"><b>◎</b><i>SCALE</i></button>
-            <button id="mHelpBtn" class="mBtn" type="button" aria-label="Help"><b>?</b><i>HELP</i></button>
-          </div>
-        </div>
-
-        <div class="mCol mCol--thrust">
-          <div class="mColCap">THRUST</div>
-          <div class="mGrid mThrust">
-            <button id="mMain" class="mBtn mHold mBurn" type="button" aria-label="Main thrust"><b>▲</b><i>MAIN</i></button>
-            <button id="mReverse" class="mBtn mHold" type="button" aria-label="Reverse thrust"><b>▼</b><i>RETRO</i></button>
-            <button id="mBoost" class="mBtn mHold mBoost" type="button" aria-label="Boost">BOOST ×4</button>
-          </div>
-        </div>
+    <!-- ============ MOBILE FLIGHT UI · portrait, gesture-first ============ -->
+    <div id="mobileUI" aria-label="Flight controls">
+      <!-- slim top telemetry -->
+      <div id="mTopBar">
+        <div class="mTel"><span>MET</span><b id="mMet">00:00:00</b></div>
+        <div class="mTel"><span>VEL</span><b id="mVel">—</b></div>
+        <div class="mTel"><span>ALT</span><b id="mAlt">—</b></div>
+        <div class="mTel mTel--mode"><span>MODE</span><b id="mMode">COAST</b></div>
+        <button id="mMenuBtn" type="button" aria-label="Open flight systems menu">☰</button>
       </div>
 
-      <div id="mobileExtra">
-        <button id="mPredict" class="mBtn mTgl" type="button" aria-label="Trajectory prediction"><b>P</b><i>PREDICT</i></button>
-        <button id="mRiver" class="mBtn mTgl" type="button" aria-label="Spacetime river"><b>G</b><i>RIVER</i></button>
-        <button id="mConst" class="mBtn mTgl" type="button" aria-label="Constellation guides"><b>✦</b><i>GUIDES</i></button>
-        <button id="mAuto" class="mBtn" type="button" aria-label="Autopilot travel">AUTO</button>
-        <button id="mApOff" class="mBtn" type="button" aria-label="Autopilot off">AP OFF</button>
-        <button id="mReset" class="mBtn" type="button" aria-label="Reset"><b>⟳</b><i>RESET</i></button>
+      <!-- on-screen warp (left) + zoom (right) so the core controls aren't buried -->
+      <div id="mWarpCtl">
+        <button id="mWarpDown2" class="mQc" type="button" aria-label="Slow time">≪</button>
+        <b id="mWarpVal">—</b>
+        <button id="mWarpUp2" class="mQc" type="button" aria-label="Speed time">≫</button>
+      </div>
+      <div id="mZoomCtl">
+        <button id="mZoomIn" class="mQc mQcRound" type="button" aria-label="Zoom in">＋</button>
+        <button id="mZoomOut" class="mQc mQcRound" type="button" aria-label="Zoom out">−</button>
+      </div>
+
+      <!-- bottom-left: attitude + boost -->
+      <div id="mLeft">
+        <div class="mAttRow">
+          <button id="mYawL" class="mTouch mHold" type="button" aria-label="Rotate left"><b>↺</b></button>
+          <button id="mYawR" class="mTouch mHold" type="button" aria-label="Rotate right"><b>↻</b></button>
+        </div>
+        <div class="mAttRow mAttRow--rcs">
+          <button id="mRcsL" class="mTouch mHold mTiny" type="button" aria-label="RCS strafe left"><b>◂</b><i>RCS</i></button>
+          <button id="mRcsR" class="mTouch mHold mTiny" type="button" aria-label="RCS strafe right"><b>▸</b><i>RCS</i></button>
+        </div>
+        <button id="mBoost" class="mTouch mHold mBoost" type="button" aria-label="Boost ×4">BOOST ×4</button>
+      </div>
+
+      <!-- bottom-right: vertical throttle (drag up = thrust, down = retro) -->
+      <div id="mThrottle" aria-label="Throttle">
+        <div id="mThrTrack">
+          <div id="mThrFill"></div>
+          <div id="mThrZero"></div>
+          <div id="mThrKnob"><b>⇕</b></div>
+        </div>
+        <div id="mThrCap">THROTTLE</div>
+      </div>
+
+      <!-- slide-up flight systems sheet -->
+      <div id="mMenu">
+        <div id="mMenuCard" class="panel">
+          <div id="mMenuHead"><span>FLIGHT SYSTEMS</span><button id="mMenuClose" type="button">✕ CLOSE</button></div>
+          <div id="mMenuStat">
+            <div><span>FOCUS</span><b id="mFocus">SHIP</b></div>
+            <div><span>WARP</span><b id="mWarp">—</b></div>
+          </div>
+          <div id="mMenuGrid">
+            <button id="mNav" class="mMItem mMItem--wide" type="button"><b>◎</b><i>GO TO · NAVIGATOR</i></button>
+            <button id="mWarpDown" class="mMItem" type="button"><b>≪</b><i>WARP −</i></button>
+            <button id="mWarpUp" class="mMItem" type="button"><b>≫</b><i>WARP +</i></button>
+            <button id="mPause" class="mMItem mTgl" type="button"><b>Ⅱ</b><i>PAUSE</i></button>
+            <button id="mFocusBtn" class="mMItem" type="button"><b>⌾</b><i>CYCLE</i></button>
+            <button id="mScaleBtn" class="mMItem" type="button"><b>⊙</b><i>SCALE</i></button>
+            <button id="mBH" class="mMItem" type="button"><b>⚫</b><i>BLACK HOLE</i></button>
+            <button id="mCatalog" class="mMItem" type="button"><b>★</b><i>STAR CATALOG</i></button>
+            <button id="mPredict" class="mMItem mTgl" type="button"><b>P</b><i>PREDICT</i></button>
+            <button id="mRiver" class="mMItem mTgl" type="button"><b>G</b><i>RIVER</i></button>
+            <button id="mConst" class="mMItem mTgl" type="button"><b>✦</b><i>GUIDES</i></button>
+            <button id="mAuto" class="mMItem" type="button"><b>➤</b><i>AUTOPILOT</i></button>
+            <button id="mApOff" class="mMItem" type="button"><b>⊘</b><i>AP OFF</i></button>
+            <button id="mSims" class="mMItem" type="button"><b>▦</b><i>SIMS</i></button>
+            <button id="mReset" class="mMItem" type="button"><b>⟳</b><i>RESET</i></button>
+            <button id="mHelpBtn" class="mMItem" type="button"><b>?</b><i>HELP</i></button>
+          </div>
+        </div>
       </div>
     </div>
 

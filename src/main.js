@@ -16,7 +16,9 @@ import {
 import {
     buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
     plGroups, plSurfaces, plGlows, plOrbitRings, plLabels, galaxyBackdrop, sunDirW, updateBodyShaders, scheduleDeferredRealSkyLoad, requestEarthNightTexture,
+    moonGroups, moonSurfaces, moonGlows, moonLabels,
 } from "./bodies.js";
+import { MOONS, moonOffset, moonFocusValue, moonFocusIndex, MOON_LABEL_DIST } from "./moons.js";
 import { addStarVisual, buildStars, updateStars } from "./stars.js";
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
@@ -44,6 +46,8 @@ import {
     setText as setHudText,
 } from "./hud.js";
 import { initInput, setFocus, blackHoleFocusIndex, starFocusIndex } from "./input.js";
+import { initNavigator, openNavigator } from "./navigator.js";
+import { initQuickControls } from "./quickControls.js";
 import { initScenarios } from "./scenarios.js";
 import { initHints, hintTick } from "./hints.js";
 import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
@@ -57,6 +61,7 @@ import {
 import { equatorialKmToGal } from "./universe/coords.js";
 import { PERF, markPerf } from "./perf.js";
 import { initMobileControls, updateMobileControls } from "./mobileControls.js";
+import { initAttitude, drawAttitude } from "./attitude.js";
 
 // ============================ WIRING ============================
 const query = new URLSearchParams(location.search);
@@ -198,7 +203,11 @@ initMobileControls({
         unlockBodyPrediction();
     },
     cycleScale: cycleCosmicScale,
+    openCatalogSearch: openCatalogSearchLazy,
+    openNavigator,
 });
+initNavigator({ flyTo: flyFocus });
+initQuickControls();
 
 // Camera/share-state must be applied before renderer warmup; otherwise startup
 // compiles the default low-orbit view, then immediately renders a different
@@ -496,6 +505,7 @@ function markBodyDestroyed(target, reason, refocus = true, ghost = true) {
 const _focusOrigin = new THREE.Vector3(), _focusPos = new THREE.Vector3();
 const _bhFocusPos = new THREE.Vector3(), _bhLabelPos = new THREE.Vector3();
 const _starFocusPos = new THREE.Vector3(), _starLabelPos = new THREE.Vector3();
+const _moonOff = { x: 0, y: 0 };
 const bhFocusValue = i => "bh:" + i;
 const starFocusValue = i => "star:" + i;
 function bhScenePos(i, out = _bhFocusPos) {
@@ -534,10 +544,26 @@ function velocityForTarget(target, out) {
     } else hoverVelocity(target, out);
     return out;
 }
-function focusTarget(target) {
+// smooth fly-in: keep the focus glide, but animate the zoom distance toward the
+// framing distance setFocus() chose, so picking a body approaches it instead of
+// snapping. Used by taps and the navigator.
+function flyFocus(fv) {
+    const from = cam.dist;
+    setFocus(fv);
+    unlockBodyPrediction();
+    const to = cam.dist;
+    cam.dist = from;
+    cam.distTarget = to;
+}
+function focusTarget(target, approach = false) {
+    const from = cam.dist;
     if (isBHTarget(target)) focusBlackHole(targetBHIndex(target));
+    else if (moonFocusIndex(target) >= 0) { setFocus(target); unlockBodyPrediction(); }
     else if (stellarTarget(target)) { setFocus(target); unlockBodyPrediction(); }
+    else if (approach) { setFocus(target === BODY_EARTH ? "earth" : target === BODY_MOON ? "moon" : target === BODY_SUN ? "sun" : target); unlockBodyPrediction(); }
     else focusAndLockBody(target, target === BODY_EARTH ? "earth" : target === BODY_MOON ? "moon" : target === BODY_SUN ? "sun" : target);
+    const to = cam.dist;
+    if (to !== from) { cam.dist = from; cam.distTarget = to; }
 }
 function focusNearestSurvivor() {
     const sx = (eph.earthX + G.x) * K, sy = G.z * K, sz = -(eph.earthY + G.y) * K;
@@ -598,6 +624,7 @@ bindBodyLabel(lblM, BODY_MOON, () => focusAndLockBody(BODY_MOON, "moon"));
 bindBodyLabel(lblS, BODY_SUN, () => focusAndLockBody(BODY_SUN, "sun"));
 lblO.onclick = () => { setFocus("ship"); unlockBodyPrediction(); };
 plLabels.forEach((sp, i) => { bindBodyLabel(sp, i, () => focusAndLockBody(i, i)); });
+moonLabels.forEach((sp, i) => { sp.onclick = () => flyFocus(moonFocusValue(i)); });
 const bhLabels = Array.from({ length: BH_MAX }, (_, i) => {
     const el = document.createElement("span");
     el.className = "lbl bhLbl";
@@ -711,6 +738,13 @@ function pickSceneTarget(clientX, clientY) {
         d = screenDistance(pos, x, y, w, h, pickProject);
         if (d < targetPickRadius(i, pos) && d < bestD) { best = i; bestD = d; }
     }
+    for (let i = 0; i < MOONS.length; i++) {
+        if (WORLD.plDestroyed[MOONS[i].p] || !moonGroups[i].visible) continue;
+        const pos = moonGroups[i].position;
+        d = screenDistance(pos, x, y, w, h, pickProject);
+        const rad = Math.max(renderQuality.mobile ? 22 : 14, Math.min(46, MOONS[i].R * K / Math.max(1e-9, camera.position.distanceTo(pos)) * 1500 + 12));
+        if (d < rad && d < bestD) { best = moonFocusValue(i); bestD = d; }
+    }
     for (let i = 0; i < BH.n; i++) {
         const pos = bhScenePos(i, _pickProbePos);
         const target = bhFocusValue(i);
@@ -739,7 +773,7 @@ renderer.domElement.addEventListener("pointerup", e => {
     pickDown = null;
     if (!shortClick) return;
     const target = pickSceneTarget(e.clientX, e.clientY);
-    if (target !== BODY_NONE) focusTarget(target);
+    if (target !== BODY_NONE) focusTarget(target, renderQuality.mobile);
 });
 
 function contactBody(target, name, R, mu) {
@@ -803,6 +837,8 @@ function checkBodyContacts() {
 // ---- hover: body velocity readout + direction arrow ----
 const hoverTipEl = document.getElementById("hoverTip");
 const flModeEl = document.getElementById("flMode");
+const navReadEl = document.getElementById("navRead");
+initAttitude(document.getElementById("attCanvas"));
 const cabinHudEl = document.getElementById("cabinHud");
 const hovLinePos = new Float32Array(6);
 const hovLineGeom = new THREE.BufferGeometry();
@@ -1077,6 +1113,7 @@ function hideNearFieldLabels() {
     nearLabelsReady = false;
     hideLabel(lblE); hideLabel(lblM); hideLabel(lblS); hideLabel(lblO);
     for (let i = 0; i < PL.length; i++) hideLabel(plLabels[i]);
+    for (let i = 0; i < MOONS.length; i++) hideLabel(moonLabels[i]);
     for (let i = 0; i < BH_MAX; i++) { setLabelDisplay(bhLabels[i], "none"); hideLabel(bhLabels[i]); }
 }
 function nearestStarInfo() {
@@ -1390,6 +1427,22 @@ function frame() {
                 plGlows[i].material.opacity = Math.min(.34, (.055 + .16 * farGlow + .055 * tinyGlow) * glowGain);
             }
         }
+        for (let i = 0; i < MOONS.length; i++) {
+            const m = MOONS[i];
+            moonOffset(m, G.t, _moonOff);
+            const mx = (eph.earthX + eph.plX[m.p] + _moonOff.x) * K;
+            const mz = -(eph.earthY + eph.plY[m.p] + _moonOff.y) * K;
+            moonGroups[i].position.set(mx, 0, mz);
+            if (nearVisualDue) {
+                moonGlows[i].position.set(mx, 0, mz);
+                const dCam = camera.position.distanceTo(moonGroups[i].position);
+                // hold the beacon at a near-constant on-screen size so even tiny
+                // moons (Phobos, Mimas) stay visible as dots; the true sphere
+                // takes over once you close in
+                moonGlows[i].scale.setScalar(Math.max(m.R * K * 1.4, dCam * .006));
+                moonSurfaces[i].rotation.y = (G.t * 6e-6 * (m.retro ? -1 : 1)) % (Math.PI * 2);
+            }
+        }
         const bhVisualDue = BH.n > 0 || isBHPlacementMode() || !nearVisualReady || frameNo % 12 === 0;
         if (bhVisualDue) updateBHVisuals(dtR, earthX, earthZ);
     }
@@ -1400,6 +1453,14 @@ function frame() {
         plGroups[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
         plGlows[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
         plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed && !cosmicView;
+    }
+    const focusMoon = moonFocusIndex(G.focus);
+    for (let i = 0; i < MOONS.length; i++) {
+        const m = MOONS[i];
+        const show = !WORLD.plDestroyed[m.p] && !cosmicView &&
+            (focusMoon === i || camera.position.distanceTo(moonGroups[i].position) < m.a * K * 90);
+        moonGroups[i].visible = show;
+        moonGlows[i].visible = show;
     }
     const focusBH = blackHoleFocusIndex(G.focus);
     if (focusBH >= BH.n) setFocus("ship");
@@ -1420,12 +1481,14 @@ function frame() {
     // "free" focus: the target stays wherever panning put it
     const activeBHFocus = focusBH >= 0 && focusBH < BH.n;
     const activeStarFocus = focusStar >= 0 && focusStar < STARS.length;
+    const activeMoonFocus = focusMoon >= 0;
     const activeDynamicFocus = activeStarForFocus(G.focus);
     {
         const cp = Math.cos(G.pitch || 0);
         dirV.set(cp * Math.cos(G.heading), Math.sin(G.pitch || 0), -cp * Math.sin(G.heading));
     }
     const tgt = activeBHFocus ? bhScenePos(focusBH) : activeStarFocus ? starScenePos(focusStar) :
+        activeMoonFocus ? moonGroups[focusMoon].position :
         activeDynamicFocus ? activeStarScenePos(activeDynamicFocus) :
         G.focus === "free" ? cam.tgt : typeof G.focus === "number" ? plGroups[G.focus].position :
         G.focus === "moon" ? moon.position : G.focus === "earth" ? earthG.position : G.focus === "sun" ? sunCore.position : shipG.position;
@@ -1442,9 +1505,16 @@ function frame() {
     } else camPrevFocus = null;
     const minD = activeBHFocus ? Math.max(.05, BH.rs[focusBH] * K * 1.3) :
         activeStarFocus ? STARS[focusStar].R * K * 1.8 :
+        activeMoonFocus ? Math.max(.05, MOONS[focusMoon].R * K * 1.3) :
         activeDynamicFocus ? activeDynamicFocus.R * K * 1.8 :
         G.focus === "free" ? .03 : typeof G.focus === "number" ? PL[G.focus].R * K * 1.3 :
         G.focus === "earth" ? R_EARTH * K * 1.3 : G.focus === "moon" ? R_MOON * K * 1.3 : G.focus === "sun" ? SUN_RADIUS * 1.25 : .05;
+    // smooth fly-in toward the distance a focus pick requested (manual zoom clears it)
+    if (cam.distTarget != null) {
+        const goal = cam.distTarget;
+        cam.dist += (goal - cam.dist) * Math.min(1, dtR * 4);
+        if (Math.abs(goal - cam.dist) <= goal * .02) { cam.dist = goal; cam.distTarget = null; }
+    }
     cam.dist = Math.max(minD, cam.dist);
     const cabinActive = updateCabinHUD(cosmicView, oi);
     const hudEvery = hudCadence(cabinActive, aMag);
@@ -1765,7 +1835,19 @@ function frame() {
     const hudT0 = perfStart();
     const hudUpdateT0 = perfStart();
     if (hudDue) {
-        if (!renderQuality.mobile) updateHUD(oi, aMag, mainIn, sp, kVLoc, fRiver);
+        if (!renderQuality.mobile) {
+            updateHUD(oi, aMag, mainIn, sp, kVLoc, fRiver);
+            const va = Math.atan2(G.vy, G.vx);
+            const moving = Math.hypot(G.vx, G.vy) > 1e-4;
+            drawAttitude(G.heading, va, moving);
+            if (navReadEl) {
+                const hdg = Math.round(((G.heading * 180 / Math.PI) % 360 + 360) % 360);
+                let d = va - G.heading; d = Math.atan2(Math.sin(d), Math.cos(d));
+                setHudText(navReadEl, moving
+                    ? "HDG " + hdg + "° · PRO Δ" + Math.round(Math.abs(d) * 180 / Math.PI) + "°"
+                    : "HDG " + hdg + "° · PRO —");
+            }
+        }
         updateMobileControls(oi, sp, aMag);
         if (!renderQuality.mobile) hintTick(oi);
     }
@@ -1785,8 +1867,8 @@ function frame() {
     }
     if (!renderQuality.mobile && frameNo % 5 === 0) updateEscapeTracker(oi);
     const w = viewportSize.w, h = viewportSize.h;
-    const labelsSuppressed = cabinActive || VR.active || renderQuality.mobile;
-    const showStarLabels = !labelsSuppressed && ((cam.dist > LY_SCENE * .001 && cam.dist < LY_SCENE * 180) || activeStarFocus);
+    const labelsSuppressed = cabinActive || VR.active;
+    const showStarLabels = !labelsSuppressed && !renderQuality.mobile && ((cam.dist > LY_SCENE * .001 && cam.dist < LY_SCENE * 180) || activeStarFocus);
     const starLabelsDue = showStarLabels && (!starLabelsVisible || frameNo % starLabelCadence() === 0);
     let starLabelBatch = 0;
     const starLabelsT0 = perfStart();
@@ -1825,6 +1907,7 @@ function frame() {
         nearLabelsReady = false;
         hideLabel(lblE); hideLabel(lblM); hideLabel(lblS); hideLabel(lblO);
         for (let i = 0; i < PL.length; i++) hideLabel(plLabels[i]);
+        for (let i = 0; i < MOONS.length; i++) hideLabel(moonLabels[i]);
         for (let i = 0; i < BH_MAX; i++) { setLabelDisplay(bhLabels[i], "none"); hideLabel(bhLabels[i]); }
         clearBodyPrediction();
         renderFrame(false);
@@ -1866,12 +1949,18 @@ function frame() {
         if (WORLD.sunDestroyed || camera.position.distanceTo(sunCore.position) < SUN_RADIUS * 18) hideLabel(lblS);
         else put(lblS, sunCore.position, -8, w, h);
         for (let i = 0; i < PL.length; i++) {
-            const showPlanetLabel = !renderQuality.mobile || G.focus === i;
-            if (WORLD.plDestroyed[i] || !showPlanetLabel) hideLabel(plLabels[i]);
+            if (WORLD.plDestroyed[i]) hideLabel(plLabels[i]);
             else { put(plLabels[i], plGroups[i].position, -8, w, h); planetLabelCount++; }
         }
+        for (let i = 0; i < MOONS.length; i++) {
+            const m = MOONS[i];
+            const showMoon = !WORLD.plDestroyed[m.p] && moonGroups[i].visible &&
+                (focusMoon === i || camera.position.distanceTo(moonGroups[i].position) < MOON_LABEL_DIST(i));
+            if (showMoon) put(moonLabels[i], moonGroups[i].position, -7, w, h);
+            else hideLabel(moonLabels[i]);
+        }
         for (let i = 0; i < BH_MAX; i++) {
-            const showBHLabel = i < BH.n && (!renderQuality.mobile || G.focus === bhFocusValue(i));
+            const showBHLabel = i < BH.n;
             if (!showBHLabel) {
                 setLabelDisplay(bhLabels[i], "none");
                 hideLabel(bhLabels[i]);

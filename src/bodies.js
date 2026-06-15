@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K } from "./constants.js";
+import { MOONS } from "./moons.js";
 import { mulberry32 } from "./format.js";
 import {
     dotTexture, earthTextureProc,
@@ -12,6 +13,8 @@ export const sunPos = new THREE.Vector3();
 export let sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, galaxyBackdrop;
 export let earthG, earth, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing;
 export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], plLabels = [];
+// planetary moons: small textured-free spheres + always-on glow dot + label
+export const moonGroups = [], moonSurfaces = [], moonGlows = [], moonLabels = [];
 let deferredRealSky = false;
 let proceduralSkyObjects = [];
 
@@ -494,5 +497,25 @@ export function buildBodies(maps) {
         sp.textContent = p.name;
         rootEl.appendChild(sp);
         plGroups.push(g); plSurfaces.push(surface); plGlows.push(glow); plOrbitRings.push(orbit); plLabels.push(sp);
+    }
+    // ---- planetary moons ----
+    for (let i = 0; i < MOONS.length; i++) {
+        const m = MOONS[i];
+        const g = new THREE.Group();
+        const surface = new THREE.Mesh(
+            sphere(Math.max(m.R, 30) * K, 28, 20, 16, 12),
+            new THREE.MeshPhongMaterial({ color: m.color, shininess: 3, specular: 0x1a1d22 }));
+        g.add(surface);
+        scene.add(g);
+        const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: dotTexture(rgbaFromHex(m.color, .95), rgbaFromHex(m.color, .18)),
+            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .8,
+        }));
+        scene.add(glow);
+        const sp = document.createElement("span");
+        sp.className = "lbl moonLbl";
+        sp.textContent = m.name;
+        rootEl.appendChild(sp);
+        moonGroups.push(g); moonSurfaces.push(surface); moonGlows.push(glow); moonLabels.push(sp);
     }
 }

@@ -19,7 +19,9 @@ const ACTIVE_VISUAL_MAX = 48;
 const ACTIVE_VISUAL_RADIUS = LY_SCENE * .24;
 const ACTIVE_VISUAL_SYNC_S = .12;
 const ACTIVE_VISUAL_MOVE_SYNC = ACTIVE_VISUAL_RADIUS * .04;
-const LOCAL_VISUAL_SKIP_R = LY_SCENE * .015;
+// build/show the named-star visuals as soon as their labels appear (so you never
+// see a label with no star under it); only the true LEO/solar near-field skips them
+const LOCAL_VISUAL_SKIP_R = LY_SCENE * .0008;
 let localVisualsHidden = false;
 let namedStarsBuilt = false;
 const forceNamedStarVisuals = new URLSearchParams(location.search).get("starvisuals") === "1";
@@ -220,15 +222,25 @@ export function updateStars(camera, dtR) {
         e.g.position.set(e.star.x * K, (e.star.z || 0) * K, -e.star.y * K);
         const d = camera.position.distanceTo(e.g.position);
         const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
-        const skyBeacon = smooth01(LY_SCENE * .015, LY_SCENE * .20, cameraSolarDistance);
-        const farAlpha = (e.star.bh ? .55 : .22) * skyBeacon;
-        const alpha = Math.max(.78 * local, farAlpha);
+        // beacon brightness must ramp in at the SAME zoom the labels do, otherwise
+        // you see a name floating over empty space. Reach full brightness early.
+        const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, cameraSolarDistance);
+        // sky-beacon stars read as crisp bright balls, not just their labels:
+        // hold the glow at full opacity so Proxima / Sirius / Vega show as small
+        // luminous points the way the eye expects real stars to look.
+        const farAlpha = (e.star.bh ? .85 : 1) * skyBeacon;
+        const alpha = Math.max(.82 * local, farAlpha);
         e.g.visible = alpha > .012;
         e.glow.material.opacity = alpha;
         const localScale = e.star.bh
             ? Math.min(e.star.rs * K * 14, Math.max(e.star.rs * K * 2.2, d * .002))
             : Math.min(e.star.R * K * 48, Math.max(e.star.R * K * 4.5, d * .0022));
-        const skyScale = d * (e.star.bh ? .0048 : .0028) * skyBeacon;
+        // brighter / more luminous stars get a fatter dot so the sky has a hierarchy;
+        // the beacon tracks distance so its on-screen size stays roughly constant
+        // every named star should read as a clear bright ball; brighter/larger
+        // stars get a fatter dot on top of a solid floor so none of them vanish
+        const beaconGain = e.star.bh ? 1 : 1.2 + Math.min(1.1, (e.star.lumSolar ? Math.log10(e.star.lumSolar + 1) * .14 : (e.star.R || 1) > 3 ? .4 : 0));
+        const skyScale = d * (e.star.bh ? .0075 : .0048) * skyBeacon * beaconGain;
         e.glow.scale.setScalar(Math.max(localScale, skyScale));
         if (e.disk) e.disk.rotation.z += dtR * .05;
     }

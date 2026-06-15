@@ -1,4 +1,5 @@
 import { WARPS, WARP_MAX, PL, STARS, BH_SIZES, K, LY_SCENE } from "./constants.js";
+import { MOONS, moonFocusIndex } from "./moons.js";
 import { G, keys, BH } from "./state.js";
 import { cam } from "./scene.js";
 import { initAudio, thrustGain } from "./audio.js";
@@ -20,9 +21,11 @@ export function setFocus(f) {
     if (typeof f === "number") requestPlanetTexture(f);
     const bi = blackHoleFocusIndex(f);
     const si = starFocusIndex(f);
+    const mi = moonFocusIndex(f);
     const ps = activeStarForFocus(f);
     cam.dist = bi >= 0 && bi < BH.n ? Math.max(80, BH.rs[bi] * K * 12) :
         si >= 0 && si < STARS.length ? Math.max(STARS[si].R * K * (STARS[si].bh ? 30 : 12), 1) :
+        mi >= 0 ? Math.max(MOONS[mi].R * K * 7, .25) :
         ps ? Math.max(ps.R * K * 12, 1) :
         typeof f === "number" ? Math.max(PL[f].R * K * 7, 2) :
         f === "earth" ? 34 : f === "moon" ? 10 : f === "sun" ? 2600 : 2.6;

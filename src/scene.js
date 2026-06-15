@@ -112,7 +112,7 @@ export async function ensurePostProcessing(lensingPass = null) {
 }
 
 // ---- orbit-style camera ----
-export const cam = { yaw: -.95, pitch: .46, dist: 2.6, tgt: new THREE.Vector3() };
+export const cam = { yaw: -.95, pitch: .46, dist: 2.6, tgt: new THREE.Vector3(), distTarget: null };
 window.__cam = cam; // debug/testing handle
 window.__gl = {
     renderer, scene, camera,
@@ -357,7 +357,7 @@ function onMove(e) {
         const it = ptrs.values();
         const a = it.next().value, b = it.next().value;
         const d = Math.hypot(a.x - b.x, a.y - b.y);
-        if (pinchD > 0) cam.dist = Math.min(CAM_DIST_MAX, Math.max(.03, cam.dist * pinchD / d));
+        if (pinchD > 0) { cam.dist = Math.min(CAM_DIST_MAX, Math.max(.03, cam.dist * pinchD / d)); cam.distTarget = null; }
         pinchD = d;
         panBy(dx * .5, dy * .5); // two-finger drag pans too
     }
@@ -370,6 +370,7 @@ function onWheel(e) {
     e.preventDefault();
     if (G.cabin) return; // zoom is meaningless inside the cabin and would silently trip cosmic scale
     cam.dist = Math.min(CAM_DIST_MAX, Math.max(.03, cam.dist * Math.exp(e.deltaY * .0011)));
+    cam.distTarget = null; // manual zoom cancels any in-progress fly-in
 }
 el.addEventListener("pointermove", e => {
     lastPtrPos[0] = e.clientX;
