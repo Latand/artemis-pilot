@@ -121,8 +121,12 @@ function scoreKnownStar(star, wx, wy, wz, index, forcedIndex) {
 }
 
 function proceduralName(src) {
-    const parts = String(src.id || "").split(":").slice(1, 5).join(".");
-    return "MW " + (parts || "STAR");
+    // deterministic short designation so it reads like a survey catalog ID
+    // (e.g. "MW-7K3FQ") rather than raw coordinate seeds
+    const id = String(src.id || "");
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+    return "MW-" + h.toString(36).toUpperCase().padStart(5, "0").slice(-5);
 }
 
 function runtimeProceduralStar(src) {

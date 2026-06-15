@@ -202,12 +202,13 @@ function describeActiveStar(star, dKm, source, focus) {
     const temp = Number.isFinite(star.tempK) ? Math.round(star.tempK).toLocaleString("en-US") + " K" : "";
     const lum = Number.isFinite(star.lumSolar) ? star.lumSolar.toFixed(star.lumSolar < 1 ? 4 : 2) + " L☉" : "";
     const kind = star.spect || star.cls || "";
-    return [source, formatActiveDistance(dKm), mass, radius, temp, lum, kind, focus].filter(Boolean).join(" · ");
+    // focus is an internal key (e.g. "proc:…") — never show it in the row detail
+    return [source, formatActiveDistance(dKm), mass, radius, temp, lum, kind].filter(Boolean).join(" · ");
 }
 
 function activeSource(star) {
-    if (star.activeCatalog) return { label: "HYG V4.1 CATALOG ROW", key: "hyg" };
-    if (star.procedural) return { label: "SEEDED MILKY WAY MODEL ROW", key: "procedural" };
+    if (star.activeCatalog) return { label: "HYG V4.1", key: "hyg" };
+    if (star.procedural) return { label: "MILKY WAY MODEL", key: "procedural" };
     return { label: "CURATED", key: "known" };
 }
 
@@ -326,8 +327,8 @@ function renderActiveNeighborhood() {
     const stats = activeStarStats();
     const head = document.createElement("div");
     head.className = "hygEmpty hygActiveIntro";
-    head.textContent = "ACTIVE NEIGHBORHOOD · NEARBY GRAVITY SOURCES STREAMED AROUND THE SHIP · " +
-        stats.total + "/" + ACTIVE_STAR_CONFIG.totalLimit + " LIVE SOURCES";
+    head.textContent = "ACTIVE NEIGHBORHOOD · " +
+        stats.total + "/" + ACTIVE_STAR_CONFIG.totalLimit + " LIVE GRAVITY SOURCES NEAR THE SHIP";
     ui.results.appendChild(head);
     if (!rows.length) {
         const div = document.createElement("div");

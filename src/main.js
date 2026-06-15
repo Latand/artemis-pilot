@@ -802,6 +802,7 @@ function checkBodyContacts() {
 
 // ---- hover: body velocity readout + direction arrow ----
 const hoverTipEl = document.getElementById("hoverTip");
+const flModeEl = document.getElementById("flMode");
 const cabinHudEl = document.getElementById("cabinHud");
 const hovLinePos = new Float32Array(6);
 const hovLineGeom = new THREE.BufferGeometry();
@@ -1524,7 +1525,8 @@ function frame() {
             updateMobileControls(oi, cosmicSpeed, aMag);
             if (!renderQuality.mobile) {
                 updateHUD(oi, aMag, mainIn, cosmicSpeed, cosmicSpeed, 1);
-                if (fFlow) setHudText(fFlow, "LOD " + cosmicLod);
+                if (flModeEl) setHudText(flModeEl, "DETAIL");
+                if (fFlow) setHudText(fFlow, String(cosmicLod));
                 if (fDark) setHudText(fDark, G.darkEnergy ? expansionSpeedLabel(darkEnergySpeedKmS(Math.hypot(G.x, G.y, G.z))) : "OFF");
                 if (fHalo && !G.darkMatter) setHudText(fHalo, "OFF");
                 hintTick(oi);
@@ -1701,6 +1703,7 @@ function frame() {
         updateShells(Math.min(river.dtVis ?? advanced, 900), fRiver);
     }
     if (fRiver > .01 && hudDue && !renderQuality.mobile) {
+        if (flModeEl) setHudText(flModeEl, "INFALL");
         setHudText(fFlow, (flowVel(oriX, oriY, oriZ, moonV.x, moonV.y, moonV.z, fv) * 1000).toFixed(2) + " km/s");
         const deShip = G.darkEnergy ? darkEnergySpeedKmS(Math.hypot(G.x, G.y, G.z)) : 0;
         setHudText(fDark, G.darkEnergy ? expansionSpeedLabel(deShip) : "OFF");

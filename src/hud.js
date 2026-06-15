@@ -92,6 +92,9 @@ export function toggleHelp() {
     if (help.shown) hideHelp();
     else { helpEl.style.display = "block"; help.shown = true; }
 }
+// closable by tapping the scrim or the ✕ button (essential on touch — no Esc key there)
+helpEl.addEventListener("click", e => { if (e.target === helpEl) hideHelp(); });
+document.getElementById("helpClose")?.addEventListener("click", hideHelp);
 
 // ---- escape tracker: speed milestones vs Earth / Sun / nearest black hole ----
 // collapsed behind a small toggle header; the open state survives a refresh
@@ -203,6 +206,9 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
             " · v " + vFrame.toFixed(2) + " km/s · helio " + vSun.toFixed(2) + " km/s · ship " + fmtDist(dShip) +
             " · g " + fmtAccel(pwAccelMs2(BH.mu[focusBH], dShip, BH.rs[focusBH])) + " · r_s " + fmtKm(BH.rs[focusBH]));
     } else setText(bhLineEl, "⚫ r_s " + fmtKm(bhReadoutRs) + " · " + bhMassLabel(bhReadoutRs) + " · " + bhHawkingLabel(bhReadoutRs) + " · B PLACE · N FOCUS · [ ] SIZE" + (BH.n ? " · ACTIVE " + BH.n + "/6" : ""));
+    // the right-side BLACK HOLE SELECTOR carries this data — only surface the left-deck
+    // line once a hole actually exists or is focused, to keep the flight deck uncluttered
+    setStyle(bhLineEl, "display", (BH.n > 0 || focusBH >= 0) ? "block" : "none");
     if (fB > .25) {
         const clock = clockRateAtShip();
         setText(fShip, kVLoc.toFixed(2) + " km/s");
