@@ -11,7 +11,11 @@ if (!url) {
   await viteServer.listen();
   const address = viteServer.httpServer?.address();
   if (!address || typeof address === "string") throw new Error("Vite server did not expose a TCP port");
-  url = `http://127.0.0.1:${address.port}/?bloom=0&hidehelp=1`;
+  // tier1=0: this smoke tests active-star neighborhood/drag/jump behavior,
+  // not Tier-1 streaming, and Tier-1's background tile fetches (WP10) keep
+  // the network non-idle for its whole ~25-minute load, which would make
+  // every `networkidle` wait below time out.
+  url = `http://127.0.0.1:${address.port}/?bloom=0&hidehelp=1&tier1=0`;
 }
 
 let pwModule;

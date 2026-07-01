@@ -59,6 +59,8 @@ import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
 import { equatorialKmToGal } from "./universe/coords.js";
+import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats } from "./universe/athygTier1.js";
+import { getOrigin, maybeRebase } from "./universe/renderOrigin.js";
 import { PERF, markPerf } from "./perf.js";
 import { initMobileControls, updateMobileControls } from "./mobileControls.js";
 import { initAttitude, drawAttitude } from "./attitude.js";
@@ -71,6 +73,13 @@ const bloomForced = bloomRequested;
 const bloomDisabled = !bloomRequested;
 const skipSceneCompile = query.get("compile") === "0" || query.get("warmcompile") === "0";
 const galaxyBackdropForced = query.get("galaxy") === "1";
+// WP10 decision: the floating origin stays pinned at (0,0,0) this wave — every
+// legacy render path (bodies, stars.js, realSky, cosmic) still assumes origin
+// 0 and doesn't consume renderOrigin (that's WP16). Rebasing it now would
+// offset tier-1 stars relative to everything else, so maybeRebase is only
+// exercised behind this experimental flag until WP16/17 make the rest of the
+// scene origin-aware too.
+const tier1RebaseEnabled = query.get("rebase") === "1";
 let lensingPass = { enabled: false };
 let updateLensingImpl = null;
 let lensingReady = null;
@@ -297,6 +306,12 @@ perfEnd("startup.buildStars", starsT0);
 const cosmicInitT0 = perfStart();
 initCosmicLayer(scene);
 perfEnd("startup.initCosmicLayer", cosmicInitT0);
+// Tier-1 AT-HYG streaming star layer (WP9/WP10): fetches its manifest and
+// streams tiles over ~25 minutes, so it's fired without an `await` to avoid
+// gating app startup on the network; self-gates on `?tier1=0`. frame() drives
+// it every tick via updateTier1 below. Exposed for the live gate probe.
+initTier1({ scene }).catch(err => console.error("athygTier1: init failed:", err?.message || err));
+window.__tier1Stats = tier1Stats; // debug/testing handle
 // hook the live instrument textures onto the cockpit MFD screens
 mfdScreens.forEach((scr, i) => {
     scr.material.map = mfdTextures[i];
@@ -1012,6 +1027,8 @@ const clock = new THREE.Clock();
 const earthV = new THREE.Vector3(), moonV = new THREE.Vector3(), velV = new THREE.Vector3(), upV = new THREE.Vector3(0, 1, 0), dirV = new THREE.Vector3();
 const camPrevTgt = new THREE.Vector3(), camDelta = new THREE.Vector3();
 const cabinEye = new THREE.Vector3(), cabinLook = new THREE.Vector3();
+const tier1CamDirScene = new THREE.Vector3();
+const tier1CamDirWorld = { x: 0, y: 0, z: 1 };
 let camPrevFocus = null;
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 const arrC = [0, 0, 0];
@@ -1469,7 +1486,7 @@ function frame() {
     if (activeStarsDue) {
         if (proceduralFocusId(G.focus) && !activeStarForFocus(G.focus)) setFocus("ship");
         if (hygCatalogFocusId(G.focus) && hygCatalogStats().loaded && !activeStarForFocus(G.focus)) setFocus("ship");
-        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus);
+        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t);
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
@@ -1534,6 +1551,29 @@ function frame() {
         camera.lookAt(cabinLook);
     } else applyCamera();
     perfEnd("scene.camera", sceneCameraT0, PERF.enabled ? { cabin: cabinActive, vr: VR.active, focus: String(G.focus) } : null);
+    // ---- Tier-1 streaming star field (WP10) ----
+    // Runs every frame, deliberately ahead of the cosmicView early-return
+    // below, so the sky keeps streaming in even while zoomed out to galaxy
+    // scale. camera.position is scene units relative to the render origin
+    // (frozen at (0,0,0) this wave, see tier1RebaseEnabled above); invert the
+    // world->scene axis map from renderOrigin.js to recover the camera's
+    // world-frame (heliocentric-equatorial) km position and forward direction
+    // that updateTier1/queryDisc expect.
+    {
+        const tier1Origin = getOrigin();
+        const camWorldKmX = tier1Origin.x + camera.position.x / K;
+        const camWorldKmY = tier1Origin.y - camera.position.z / K;
+        const camWorldKmZ = tier1Origin.z + camera.position.y / K;
+        camera.getWorldDirection(tier1CamDirScene);
+        tier1CamDirWorld.x = tier1CamDirScene.x;
+        tier1CamDirWorld.y = -tier1CamDirScene.z;
+        tier1CamDirWorld.z = tier1CamDirScene.y;
+        updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, tier1CamDirWorld, G.t);
+        if (tier1RebaseEnabled) {
+            const rebaseThresholdKm = Math.max(1e6, (cam.dist / K) * .5);
+            if (maybeRebase(camWorldKmX, camWorldKmY, camWorldKmZ, rebaseThresholdKm)) refreshTier1Residuals();
+        }
+    }
     const bodyLodT0 = perfStart();
     const bodyLodEvery = detailShed ? (renderQuality.mobile ? 6 : 3) : 1;
     const bodyLodDistJump = bodyLodLastDist > 0 ? Math.abs(Math.log(Math.max(1e-9, cam.dist / bodyLodLastDist))) : Infinity;
