@@ -577,7 +577,7 @@ async function buildCosmicLayer() {
         galaxyRoot.add(points(await makeGalaxyCloudAsync(170000, 0x6d57, 4096, idleSlice), 1.20, .5));
         await idleSlice();
         galaxyRoot.add(milkyWayHalo());
-        galaxyRoot.add(galacticPlaneRing(8200, 0x53617a, .30));
+        galaxyRoot.add(galacticPlaneRing(8178, 0x53617a, .30));
         galaxyRoot.add(galacticPlaneRing(16000, 0x344058, .24));
         catalogRoot.frustumCulled = false;
         await idleSlice();

@@ -1,5 +1,5 @@
 import { DARK_ENERGY, DARK_MATTER, MU_S, PC_KM } from "./constants.js";
-import { equatorialKmToGal, galacticToEquatorial, R0_PC } from "./universe/coords.js";
+import { equatorialKmToGal, galacticToEquatorial, R0_PC, Z_SUN_PC } from "./universe/coords.js";
 import { smooth01 } from "./format.js";
 
 const _haloA = [0, 0, 0];
@@ -84,5 +84,5 @@ export function darkMatterRelativeAccel(x, y, z, originX = 0, originY = 0, origi
 }
 
 export function darkMatterLocalCircularSpeedKmS() {
-    return darkMatterCircularSpeedKmSAtGalRadiusPc(Math.hypot(R0_PC, 20));
+    return darkMatterCircularSpeedKmSAtGalRadiusPc(Math.hypot(R0_PC, Z_SUN_PC));
 }

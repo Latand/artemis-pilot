@@ -12,7 +12,7 @@ globalThis.window = {};
 
 const {
     starsInCell, sampleLocalStarsNear, localStarById, densityAt, clearCache, setSeed, getSeed,
-    CELL_PC, LOCAL_CELL_PC, N_SUN_PC3,
+    CELL_PC, LOCAL_CELL_PC, N_SUN_PC3, armBetaAtKpc, starPositionAt,
 } =
     await import("../src/universe/galaxy.js");
 const { galToEquatorialKm, SUN_GAL, R0_PC } = await import("../src/universe/coords.js");
@@ -75,10 +75,16 @@ hr("Frame: Galactic centre maps to Sgr A*");
 // ── 3. Local number density near the Sun ──────────────────────────────────
 hr("Local stellar number density near the Sun");
 {
-    // Use a single ~100 pc cell straddling the Sun's neighbourhood.
+    // Use a single ~100 pc cell straddling the Sun's neighbourhood. WP6:
+    // N_SUN_PC3 dropped from the old flat 0.14 to the CNS5-calibrated
+    // H-burning density (~0.08/pc³); this cell's stars are the H-burning
+    // population's evolutionary outcomes (MS/giant/WD/NS/BH combined via
+    // synthStar, see galaxy.js's H_BURNING_DENSITY_PC3 doc comment), so the
+    // measured density sits a little below N_SUN_PC3 itself (some of the
+    // pool has evolved into remnants) rather than matching it exactly.
     const sunCell = starsInCell(82, 0, 0); // centre ≈ (8250, 50, 50) pc, near R0
     const density = sunCell.length / (CELL_PC ** 3);
-    ok(density > 0.07 && density < 0.30, "density ≈ 0.14 stars/pc³",
+    ok(density > 0.04 && density < 0.12, "density ≈ CNS5 H-burning density (~0.08 stars/pc³)",
         `got ${density.toFixed(3)} (model base ${N_SUN_PC3})`);
 
     // ── 4. IMF population realism (large in-cell sample) ──────────────────
@@ -105,11 +111,17 @@ hr("Disc structure: vertical falloff & spiral arms");
     ok(ratio > 1.8 && ratio < 3.4, "density drops with height (thin-disc scale ~300 pc)",
         `ρ(0)/ρ(300pc) = ${ratio.toFixed(2)}`);
 
-    // Spiral arm: compare a point on an arm vs interarm at the same radius.
-    const R = 8000, TAN = Math.tan(12.8 * Math.PI / 180);
-    const base = Math.log(R / 3000) / TAN;          // arm-0 crossing angle at R
-    const onArm = densityAt(R * Math.cos(base), R * Math.sin(base), 0);
-    const off = densityAt(R * Math.cos(base + Math.PI / 4), R * Math.sin(base + Math.PI / 4), 0);
+    // Spiral arm: compare a point on the "Local" arm's own centerline (Reid
+    // et al. 2019, at its R_kink = 8.26 kpc — the arm nearest the Sun) vs a
+    // point 90° away at the same radius (well outside its Gaussian width, so
+    // interarm). WP6 replaced the old single-pitch 4-arm model with the real
+    // 5-arm Reid model; the old-population arm amplitude is deliberately
+    // mild (ARM_AMP_OLD=0.3, report target ≲1.5x), so the ratio here is
+    // smaller than the pre-WP6 test's but still a genuine on/off-arm contrast.
+    const Rkpc = 8.26, R = Rkpc * 1000;
+    const armBeta = armBetaAtKpc("Local", Rkpc) * Math.PI / 180;
+    const onArm = densityAt(R * Math.cos(armBeta), R * Math.sin(armBeta), 0);
+    const off = densityAt(R * Math.cos(armBeta + Math.PI / 2), R * Math.sin(armBeta + Math.PI / 2), 0);
     ok(onArm > off * 1.15, "spiral arm is denser than interarm", `arm/interarm = ${(onArm / off).toFixed(2)}`);
 }
 
@@ -125,6 +137,61 @@ hr("Eker 2018 derived properties");
     const b = deriveStar(10);
     ok((b.cls === "B" || b.cls === "O") && b.L > 1000, "10 M⊙ → hot luminous B star",
         `L=${b.L | 0} R=${b.R.toFixed(1)} T=${b.Teff | 0}K ${b.cls}`);
+}
+
+// ── 6b. Epicyclic star motion (WP6: stars stop being static) ─────────────
+hr("Epicyclic star motion (starPositionAt)");
+{
+    const cellStars = starsInCell(82, 0, 0).filter(s => Number.isFinite(s.epiKappa0));
+    const star = cellStars[0];
+    const out1 = [0, 0, 0], out2 = [0, 0, 0];
+    starPositionAt(star, 0, out1);
+    ok(out1[0] === star.gx && out1[1] === star.gy && out1[2] === star.gz,
+        "simT=0 reproduces the sampled position exactly", `[${out1.join(",")}]`);
+
+    const oneGyrSec = 1e9 * 365.25 * 86400;
+    starPositionAt(star, oneGyrSec, out1);
+    starPositionAt(star, oneGyrSec, out2);
+    ok(out1[0] === out2[0] && out1[1] === out2[1] && out1[2] === out2[2],
+        "starPositionAt(simT) is deterministic across repeated calls", `t=1 Gyr -> [${out1.map(v => v.toFixed(2)).join(",")}]`);
+
+    const moved = Math.hypot(out1[0] - star.gx, out1[1] - star.gy, out1[2] - star.gz);
+    ok(moved > 1, "a star has actually moved after 1 Gyr of epicyclic drift", `Δ=${moved.toFixed(1)} pc`);
+
+    let allFinite = true;
+    for (const s of cellStars.slice(0, 200)) {
+        starPositionAt(s, oneGyrSec, out1);
+        if (!Number.isFinite(out1[0] + out1[1] + out1[2])) allFinite = false;
+    }
+    ok(allFinite, "starPositionAt stays finite across a sample of stars at 1 Gyr");
+
+    // CONTINUITY: starPositionAt must not jump the instant t moves off
+    // exactly 0. The t=0 exact-reproduction check above can't catch this,
+    // because it short-circuits t===0 to the raw sampled position — it
+    // can't see a formula bug that only shows up at t=0+ (e.g. the Rg sign
+    // bug: R(0+) used to disagree with R(0) by 2x the epicycle x-offset).
+    const contSample = cellStars.slice(0, Math.max(50, Math.min(200, cellStars.length)));
+    let maxDrift1ms = 0, maxDrift1hr = 0;
+    for (const s of contSample) {
+        starPositionAt(s, 0, out1);
+        starPositionAt(s, 1e-3, out2);
+        maxDrift1ms = Math.max(maxDrift1ms, Math.hypot(out2[0] - out1[0], out2[1] - out1[1], out2[2] - out1[2]));
+        starPositionAt(s, 3600, out2); // 1 hour
+        maxDrift1hr = Math.max(maxDrift1hr, Math.hypot(out2[0] - out1[0], out2[1] - out1[1], out2[2] - out1[2]));
+    }
+    ok(maxDrift1ms < 1e-6, "position is continuous at t=0 (1 ms drift < 1e-6 pc)",
+        `max=${maxDrift1ms.toExponential(2)} pc (n=${contSample.length})`);
+    ok(maxDrift1hr < 0.01, "motion over 1 hour is physically slow (< 0.01 pc)",
+        `max=${maxDrift1hr.toExponential(2)} pc`);
+
+    // Independent kinematics anchor (review F5, mirrors validate-astro check
+    // 8b): the star's own epiNu should give a vertical oscillation period
+    // matching the literature's ~70-90 Myr solar estimate.
+    if (star.epiNu > 0) {
+        const periodMyr = (2 * Math.PI / star.epiNu) / (1e6 * 365.25 * 86400);
+        ok(periodMyr > 69 && periodMyr < 99, "vertical oscillation period matches solar estimate (84±15 Myr)",
+            `period=${periodMyr.toFixed(1)} Myr`);
+    }
 }
 
 // ── 7. Local procedural streaming for the active universe layer ───────────

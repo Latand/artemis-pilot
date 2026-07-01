@@ -12,9 +12,16 @@ export const LY_KM = 9460730472580.8;
 export const PC_LY = 3.2615637771674;          // 1 parsec in light-years
 export const PC_KM = LY_KM * PC_LY;             // 1 parsec in km (≈3.0857e13)
 
-// --- Galactic structure anchors (McMillan 2017) --------------------------
-export const R0_PC = 8200;     // Sun → Galactic-centre distance
-export const Z_SUN_PC = 20;    // Sun above the disc mid-plane
+// --- Galactic structure anchors ------------------------------------------
+// Matches astroConstants.js R_SUN_KPC/Z_SUN_PC exactly (kept as independent
+// literals, not an import, since coords.js has no other module dependencies
+// and astroConstants.js documents itself as depending on nothing but pure
+// data) — GRAVITY Collaboration 2019 (R_SUN, arXiv 1904.05721) and
+// Bennett & Bovy 2019 (Z_SUN, arXiv 1809.03507). Was [8200, 0, 20]
+// (McMillan 2017); WP6 carry-forward S3 makes this the single authoritative
+// Sun-position anchor (previously duplicated with a slightly different value).
+export const R0_PC = 8178;     // Sun → Galactic-centre distance
+export const Z_SUN_PC = 20.8;  // Sun above the disc mid-plane
 
 // Galactocentric frame (parsecs, right-handed): origin = Galactic centre, disc
 // in X–Y, +Z → North Galactic Pole. +X points from the GC toward the Sun, so the

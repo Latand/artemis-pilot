@@ -19,7 +19,13 @@ export const Z_SUN_PC = 20.8;    // Bennett & Bovy 2019
 // CNS5 (Golovin+ 2023) 25 pc census: (7.99 ± 0.11)e-2 living MS stars/pc³.
 export const MS_DENSITY_PC3 = 0.08;
 // Remnant/substellar densities are order-of-magnitude (larger uncertainties);
-// midpoints of the report's ranges.
+// midpoints of the report's ranges. WD_DENSITY_PC3/NS_DENSITY_PC3/
+// BH_DENSITY_PC3 are REFERENCE-ONLY: generation does not read these
+// constants directly — the actual remnant densities are calibrated via
+// galaxy.js's REMNANT_RETAIN fractions against validate-astro.mjs checks
+// 4/5, which are the arbiter. (There is also a known discrepancy between
+// this section's ranges and the research report's own §9 checklist targets;
+// §9 — what checks 4/5 target — is the adopted set.)
 export const WD_DENSITY_PC3 = 5e-3;   // white dwarfs, ~5e-3 (up to ~0.014 in some surveys)
 export const NS_DENSITY_PC3 = 2e-4;   // neutron stars, 2-4e-4
 export const BH_DENSITY_PC3 = 3e-5;   // stellar black holes, 2-6e-5
