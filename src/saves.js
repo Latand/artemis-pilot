@@ -12,8 +12,11 @@ import {
     hygCatalogFocusId, hygCatalogFocusValue, proceduralFocusId, proceduralFocusValue,
     restorePinnedProceduralStars, serializePinnedProceduralStars,
 } from "./universe/activeStars.js";
+import { getSeed, setSeed } from "./universe/galaxy.js";
+import { getEpochMs, setEpochMs } from "./epoch.js";
 
 const SLOT = "artemis.quicksave.v1";
+const DEFAULT_SEED = 0x9e3779b9;
 const G_FIELDS = [
     "t", "x", "y", "z", "vx", "vy", "vz", "heading", "pitch", "throttle", "warp", "paused",
     "fuel", "infinite", "dvUsed", "hold", "landed", "dead", "deadReason",
@@ -39,6 +42,20 @@ async function restorePromotedCatalogStars(rows = []) {
     return mod.restorePromotedCatalogStars(rows);
 }
 
+// epoch.js has landed (WP21), so the touch points use the static import
+// directly: saveState stays SYNCHRONOUS with the keypress (review F2 — an
+// await before localStorage.setItem could drop a quicksave on immediate
+// tab-close, and a pre-try throw became an unhandled rejection).
+function readEpochMs() {
+    const ms = getEpochMs();
+    return Number.isFinite(ms) ? ms : null;
+}
+
+function applyEpochMs(ms) {
+    if (!Number.isFinite(ms)) return;
+    setEpochMs(ms);
+}
+
 export function saveState() {
     const ephSt = snapshotEphem();
     const focusMatch = typeof G.focus === "string" && G.focus.match(/^star:(\d+)$/);
@@ -46,8 +63,11 @@ export function saveState() {
     const focusProcId = proceduralFocusId(G.focus);
     const focusHygId = hygCatalogFocusId(G.focus);
     const procStars = Array.from(new Set(serializePinnedProceduralStars().concat(focusProcId ? [focusProcId] : [])));
+    const epochMs = readEpochMs();
     const data = {
-        v: 8,
+        v: 9,
+        galaxySeed: getSeed(),
+        epochMs,
         g: Object.fromEntries(G_FIELDS.map(k => [k, G[k]])),
         focusCatalog: focusStar && focusStar.catalog === "hyg-v41-promoted"
             ? { hygIndex: focusStar.hygIndex, name: focusStar.name }
@@ -65,6 +85,12 @@ export function saveState() {
             vx: Array.from(ephSt.vx), vy: Array.from(ephSt.vy),
             earthX: ephSt.earthX, earthY: ephSt.earthY,
             earthVx: ephSt.earthVx, earthVy: ephSt.earthVy,
+            // 3-D ephemeris (WP13) isn't shipped yet; serialize the z/vz
+            // fields speculatively so this format needs no bump once it lands.
+            ...(ephSt.z !== undefined ? { z: Array.from(ephSt.z) } : {}),
+            ...(ephSt.vz !== undefined ? { vz: Array.from(ephSt.vz) } : {}),
+            ...(Number.isFinite(ephSt.earthZ) ? { earthZ: ephSt.earthZ } : {}),
+            ...(Number.isFinite(ephSt.earthVz) ? { earthVz: ephSt.earthVz } : {}),
         },
         bh: Array.from({ length: BH.n }, (_, i) => [BH.x[i], BH.y[i], BH.vx[i], BH.vy[i], BH.rs[i]]),
         // gravity-front bookkeeping: per-hole mass-gain events, plus the
@@ -86,7 +112,11 @@ export function saveState() {
 export async function loadState() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
-    if (!data || (data.v < 1 || data.v > 8)) { toast("No saved state · K to save one"); return false; }
+    if (!data || (data.v < 1 || data.v > 9)) { toast("No saved state · K to save one"); return false; }
+    // The procedural galaxy is a pure function of (seed, cell coords), so the
+    // seed must land before any procedural star is regenerated from a saved id.
+    setSeed(data.v >= 9 && Number.isFinite(data.galaxySeed) ? (data.galaxySeed >>> 0) : DEFAULT_SEED);
+    applyEpochMs(data.v >= 9 ? data.epochMs : null);
     const restoredStars = data.v >= 5 ? await restorePromotedCatalogStars(data.hygStars) : [];
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     Object.assign(G, data.g);
@@ -123,6 +153,12 @@ export async function loadState() {
         vx: Float64Array.from(data.eph.vx), vy: Float64Array.from(data.eph.vy),
         earthX: data.eph.earthX, earthY: data.eph.earthY,
         earthVx: data.eph.earthVx, earthVy: data.eph.earthVy,
+        // Pre-WP13 saves (and pre-WP13 code reading a v9 save) simply have no
+        // z/vz keys here; only pass them through when both are present.
+        ...(data.eph.z ? { z: Float64Array.from(data.eph.z) } : {}),
+        ...(data.eph.vz ? { vz: Float64Array.from(data.eph.vz) } : {}),
+        ...(Number.isFinite(data.eph.earthZ) ? { earthZ: data.eph.earthZ } : {}),
+        ...(Number.isFinite(data.eph.earthVz) ? { earthVz: data.eph.earthVz } : {}),
         t: data.g.t, // gravity fronts measure from the saved clock
     });
     GS.length = 0;

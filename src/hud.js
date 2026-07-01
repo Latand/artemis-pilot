@@ -1,7 +1,8 @@
 import { PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, warpLabel } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
-import { fmtKm, fmtDist, fmtMET, escapeKmS, accelMs2, fmtAccel } from "./format.js";
+import { fmtKm, fmtDist, fmtMET, fmtCivilDate, escapeKmS, accelMs2, fmtAccel } from "./format.js";
+import { getEpochMs } from "./epoch.js";
 import { bhHawkingLabel, bhMassLabel, pwAccelMs2 } from "./blackholes.js";
 import { clockRateAtShip, clockRateLabel } from "./relativity.js";
 import { darkEnergyAccelerationKmS2, darkMatterRelativeAccel } from "./cosmology.js";
@@ -12,7 +13,7 @@ const bhFocusIndex = f => {
     const m = f.match(/^bh:(\d+)$/);
     return m ? Number(m[1]) : -1;
 };
-export const metEl = $("met"), warpEl = $("warpLine"), engineEl = $("engineLine"), throttleEl = $("throttleLine");
+export const metEl = $("met"), civilDateEl = $("civilDate"), warpEl = $("warpLine"), engineEl = $("engineLine"), throttleEl = $("throttleLine");
 export const fuelTxtEl = $("fuelTxt"), fuelFillEl = $("fuelFill");
 export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVel = $("cVel"), cApPe = $("cApPe"), cMoon = $("cMoon"), cSun = $("cSun"), cDv = $("cDv"), cGrav = $("cGrav");
 export const fFlow = $("fFlow"), fDark = $("fDark"), fHalo = $("fHalo"), fShip = $("fShip"), fClock = $("fClock"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
@@ -144,6 +145,7 @@ export function updateEscapeTracker(oi) {
 
 export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     setText(metEl, "T+ " + fmtMET(G.t));
+    setText(civilDateEl, fmtCivilDate(getEpochMs(), G.t));
     setText(warpEl, "⏩ " + warpLabel(G.warp) +
         (aMag > 0 && G.warp > 600 ? " · ⚠ THRUST AT HIGH WARP" : "") + (G.paused ? " · ❚❚ PAUSED" : ""));
     setClass(warpEl, G.paused ? "warn" : "");

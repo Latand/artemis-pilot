@@ -7,7 +7,7 @@ function assert(ok, message) {
 }
 
 const { BH, GS, bhRegister, bhMuAt, addPhantom, gsPull } = await import("../src/state.js");
-const { C_LIGHT } = await import("../src/constants.js");
+const { C_LIGHT, PL, I_EARTH, OM_EARTH, I_MOON, OM_MOON0, OM_MOON_RATE } = await import("../src/constants.js");
 const { segmentSphereHit } = await import("../src/geometry.js");
 const { hashInts, makeRNG, splitSeed, gaussian, randNormal, samplePoisson } = await import("../src/universe/prng.js");
 const {
@@ -29,6 +29,21 @@ const ghostPull = [0, 0, 0];
 gsPull(0, 0, 10, 0, ghostPull);
 assert(ghostPull[2] < 0, "phantom and ghost gravity should pull off-plane points in z");
 assert(Math.abs(ghostPull[0]) < 1e-12 && Math.abs(ghostPull[1]) < 1e-12, "axis-aligned ghost pull should not create lateral drift");
+
+// WP11: J2000 3-D orbital elements (inclination/node) on PL[] and the Moon.
+// Not yet consumed by keplerInit (WP13 wires them into a 3-D path) — this is
+// a pure data-presence and physical-range check.
+const DEG = Math.PI / 180;
+for (const p of PL) {
+  assert(typeof p.i === "number" && typeof p.Om === "number", `${p.name} should carry i and Om`);
+  assert(p.i > 0 && p.i < 8 * DEG, `${p.name} inclination should be a small positive angle (< 8°)`);
+  assert(p.Om >= 0 && p.Om < 360 * DEG, `${p.name} node should be a longitude in [0, 360)°`);
+}
+assert(PL.find((p) => p.name === "MERCURY").i === 7.005 * DEG, "Mercury should keep the largest planetary inclination (7.005°)");
+assert(I_EARTH === 0 && OM_EARTH === 0, "Earth defines the ecliptic reference plane: i=Om=0 by construction");
+assert(I_MOON > 0 && I_MOON < 8 * DEG, "Moon inclination to the ecliptic should be a small positive angle (< 8°)");
+assert(OM_MOON0 >= 0 && OM_MOON0 < 360 * DEG, "Moon epoch node should be a longitude in [0, 360)°");
+assert(OM_MOON_RATE < 0, "Moon's node regresses (18.6-yr nodal precession), so its rate should be negative");
 
 const blackholesSrc = readFileSync(new URL("../src/blackholes.js", import.meta.url), "utf8");
 const hudSrc = readFileSync(new URL("../src/hud.js", import.meta.url), "utf8");

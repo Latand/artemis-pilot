@@ -46,6 +46,16 @@ export const A_MOON = 384400;        // lunar semi-major axis, km (27.32-day mon
 export const E_MOON = 0.0549;        // lunar eccentricity
 export const OMEGA = Math.sqrt((MU_E + MU_M) / (A_MOON * A_MOON * A_MOON));
 export const AM3 = A_MOON * A_MOON * A_MOON;
+// Moon's inclination to the ecliptic (radians, same convention as PL[].i).
+export const I_MOON = 5.145 * DEG;
+// The Moon's ascending node regresses (18.6-yr nodal precession), so unlike
+// the planets it needs both an epoch value and a rate rather than one fixed
+// Om. Om0 is the J2000.0 longitude of ascending node (Meeus); OM_MOON_RATE
+// is its regression rate in radians/day (source value -0.0529538 deg/day),
+// applied as Om(t) = OM_MOON0 + OM_MOON_RATE * daysSinceJ2000 by WP13 — or a
+// fixed epoch Om if WP13 decides that's simpler; both constants are provided.
+export const OM_MOON0 = 125.1228 * DEG;
+export const OM_MOON_RATE = -0.0529538 * DEG;
 export const K = .001;
 export const AU_KM = 149597870.7;
 export const LY_KM = 9460730472580.8;
@@ -143,19 +153,27 @@ export const OM_YEAR = Math.sqrt((MU_S + MU_E) / SUN_D3); // ~365.25 d period
 // Earth's own heliocentric orbital elements (J2000 mean values)
 export const E_EARTH = 0.0167;
 export const VARPI_EARTH = 102.95 * DEG;
+// Earth defines the ecliptic reference plane the whole sim uses for z=0, so
+// its inclination and node are zero by construction (not measured values).
+export const I_EARTH = 0;
+export const OM_EARTH = 0;
 // planets: true radii, true μ, eccentric coplanar heliocentric orbits from
 // J2000 mean elements (e, varpi = longitude of perihelion); `phase` is the
 // initial MEAN anomaly M0 (values kept as-is for scenario continuity).
 // atmH/atmD0: exponential atmosphere scale height (km) and surface density
 // relative to Earth sea level; atmTop is where drag becomes negligible.
+// i/Om: J2000 inclination to the ecliptic and longitude of ascending node,
+// stored in radians like varpi (source values in degrees, converted by DEG).
+// Not yet consumed by keplerInit (2-D only) — WP13 wires these into a 3-D
+// keplerInit3 without changing the values here.
 export const PL = [
-    { name: "MERCURY", tag: "ME", a: 57.909e6, e: 0.2056, varpi: 77.46 * DEG, R: 2439.7, mu: 22031.9, color: 0x9c8e7e, phase: 4.2, rotD: 58.6462, tilt: 0.034, gas: false, tex: "2k_mercury.jpg" },
-    { name: "VENUS", tag: "VE", a: 108.21e6, e: 0.0068, varpi: 131.53 * DEG, R: 6051.8, mu: 324858.6, color: 0xe6c98e, phase: 1.1, rotD: -243.018, tilt: 177.4, gas: false, tex: "2k_venus_atmosphere.jpg", atmH: 15.9, atmTop: 380, atmD0: 53 },
-    { name: "MARS", tag: "MA", a: 227.956e6, e: 0.0934, varpi: 336.04 * DEG, R: 3389.5, mu: 42828.4, color: 0xc96b4a, phase: 5.4, rotD: 1.02595676, tilt: 25.2, gas: false, tex: "2k_mars.jpg", atmH: 11.1, atmTop: 200, atmD0: 0.016 },
-    { name: "JUPITER", tag: "JU", a: 778.479e6, e: 0.0484, varpi: 14.75 * DEG, R: 69911, mu: 126686531, color: 0xc9a47a, phase: 2.6, rotD: 0.41354, tilt: 3.1, gas: true, tex: "2k_jupiter.jpg", atmH: 27, atmTop: 520, atmD0: 0.13 },
-    { name: "SATURN", tag: "SA", a: 1432.041e6, e: 0.0542, varpi: 92.43 * DEG, R: 58232, mu: 37931206, color: 0xe0d0a4, phase: 0.4, rotD: 0.44401, tilt: 26.7, gas: true, ring: [74500, 140200], tex: "2k_saturn.jpg", atmH: 59.5, atmTop: 1100, atmD0: 0.155 },
-    { name: "URANUS", tag: "UR", a: 2867.043e6, e: 0.0472, varpi: 170.96 * DEG, R: 25362, mu: 5793951, color: 0x9fd6dd, phase: 3.5, rotD: -0.71833, tilt: 97.8, gas: true, tex: "2k_uranus.jpg", atmH: 27.7, atmTop: 540, atmD0: 0.34 },
-    { name: "NEPTUNE", tag: "NE", a: 4514.953e6, e: 0.0086, varpi: 44.97 * DEG, R: 24622, mu: 6835100, color: 0x5d7fe8, phase: 5.9, rotD: 0.67125, tilt: 28.3, gas: true, tex: "2k_neptune.jpg", atmH: 19.7, atmTop: 390, atmD0: 0.37 },
+    { name: "MERCURY", tag: "ME", a: 57.909e6, e: 0.2056, varpi: 77.46 * DEG, i: 7.005 * DEG, Om: 48.331 * DEG, R: 2439.7, mu: 22031.9, color: 0x9c8e7e, phase: 4.2, rotD: 58.6462, tilt: 0.034, gas: false, tex: "2k_mercury.jpg" },
+    { name: "VENUS", tag: "VE", a: 108.21e6, e: 0.0068, varpi: 131.53 * DEG, i: 3.395 * DEG, Om: 76.680 * DEG, R: 6051.8, mu: 324858.6, color: 0xe6c98e, phase: 1.1, rotD: -243.018, tilt: 177.4, gas: false, tex: "2k_venus_atmosphere.jpg", atmH: 15.9, atmTop: 380, atmD0: 53 },
+    { name: "MARS", tag: "MA", a: 227.956e6, e: 0.0934, varpi: 336.04 * DEG, i: 1.850 * DEG, Om: 49.558 * DEG, R: 3389.5, mu: 42828.4, color: 0xc96b4a, phase: 5.4, rotD: 1.02595676, tilt: 25.2, gas: false, tex: "2k_mars.jpg", atmH: 11.1, atmTop: 200, atmD0: 0.016 },
+    { name: "JUPITER", tag: "JU", a: 778.479e6, e: 0.0484, varpi: 14.75 * DEG, i: 1.303 * DEG, Om: 100.464 * DEG, R: 69911, mu: 126686531, color: 0xc9a47a, phase: 2.6, rotD: 0.41354, tilt: 3.1, gas: true, tex: "2k_jupiter.jpg", atmH: 27, atmTop: 520, atmD0: 0.13 },
+    { name: "SATURN", tag: "SA", a: 1432.041e6, e: 0.0542, varpi: 92.43 * DEG, i: 2.489 * DEG, Om: 113.665 * DEG, R: 58232, mu: 37931206, color: 0xe0d0a4, phase: 0.4, rotD: 0.44401, tilt: 26.7, gas: true, ring: [74500, 140200], tex: "2k_saturn.jpg", atmH: 59.5, atmTop: 1100, atmD0: 0.155 },
+    { name: "URANUS", tag: "UR", a: 2867.043e6, e: 0.0472, varpi: 170.96 * DEG, i: 0.773 * DEG, Om: 74.006 * DEG, R: 25362, mu: 5793951, color: 0x9fd6dd, phase: 3.5, rotD: -0.71833, tilt: 97.8, gas: true, tex: "2k_uranus.jpg", atmH: 27.7, atmTop: 540, atmD0: 0.34 },
+    { name: "NEPTUNE", tag: "NE", a: 4514.953e6, e: 0.0086, varpi: 44.97 * DEG, i: 1.770 * DEG, Om: 131.784 * DEG, R: 24622, mu: 6835100, color: 0x5d7fe8, phase: 5.9, rotD: 0.67125, tilt: 28.3, gas: true, tex: "2k_neptune.jpg", atmH: 19.7, atmTop: 390, atmD0: 0.37 },
 ];
 for (const p of PL) {
     p.n = Math.sqrt(MU_S / (p.a * p.a * p.a));

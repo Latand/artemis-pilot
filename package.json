@@ -9,6 +9,7 @@
     "catalog:athyg": "node scripts/build-athyg-tier1.mjs",
     "smoke:catalog": "node scripts/smoke-catalog.mjs",
     "smoke:core": "node scripts/smoke-core.mjs",
+    "smoke:saves": "node scripts/smoke-saves.mjs",
     "smoke:stellar-live": "node scripts/smoke-stellar-live.mjs",
     "smoke:universe": "node scripts/smoke-universe.mjs",
     "validate:astro": "node scripts/validate-astro.mjs",
@@ -16,6 +17,7 @@
     "smoke:special-objects": "node scripts/smoke-special-objects.mjs",
     "smoke:tier1-runtime": "node scripts/smoke-tier1-runtime.mjs",
     "smoke:local-tier": "node scripts/smoke-local-tier.mjs",
+    "smoke:epoch": "node scripts/smoke-epoch.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },

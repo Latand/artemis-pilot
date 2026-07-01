@@ -1,4 +1,5 @@
 import { AU_KM, LY_KM, SEC_YEAR } from "./constants.js";
+import { civilDateAt, fmtCivil } from "./epoch.js";
 
 const INT_FMT_CACHE = new Map();
 function fmtInt(n) {
@@ -38,6 +39,9 @@ export function fmtMET(s) {
     const h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60), ss = Math.floor(s % 60);
     const p = n => String(n).padStart(2, "0");
     return p(d) + ":" + p(h) + ":" + p(m) + ":" + p(ss);
+}
+export function fmtCivilDate(epochMs, simElapsedSeconds) {
+    return fmtCivil(civilDateAt(epochMs, simElapsedSeconds));
 }
 export const clamp01 = x => Math.max(0, Math.min(1, x));
 export function smooth01(a, b, x) { const q = clamp01((x - a) / (b - a)); return q * q * (3 - 2 * q); }
