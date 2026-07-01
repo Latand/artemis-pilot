@@ -1,5 +1,9 @@
 import { K, LY_KM, MU_S, R_SUN } from "../constants.js";
 import { hygCatalogMetaUrl, loadHygCatalogData } from "./catalogData.js";
+import { equatorialKmToGal, galToEquatorialKmInto } from "./coords.js";
+import { starPositionAt } from "./galaxy.js";
+import { DISP, vCirc } from "./astroConstants.js";
+import { gaussian, hashInts, makeRNG, splitSeed } from "./prng.js";
 
 const PC_LY = 3.261563777;
 const PC_KM = LY_KM * PC_LY;
@@ -11,6 +15,111 @@ const INDEX_STEP_MAX = 1024;
 const INDEX_STEP_MIN_BUDGET_MS = 1.25;
 const INDEX_STEP_MAX_BUDGET_MS = 3.5;
 const INDEX_APPLY_STEP_MAX = 4096;
+
+// --- Tier-0 catalog motion (WP8) --------------------------------------------
+// The HYG binary carries only a static epoch position (schema v2's 10-float
+// stride has no proper-motion fields — real pm arrives with the AT-HYG Tier-1
+// integration, WP9). Until then each catalog row gets a STATISTICALLY
+// PLAUSIBLE synthetic velocity, drawn deterministically from the star's own
+// stable catalog identity — HIP, else HD, else HR, else (only for the id-less
+// remainder) its row index; see tier0SeedInts below for the fallback ladder
+// and why identity beats row index (a real star has one true motion
+// regardless of which procedural universe seed the player is on, so the draw
+// is keyed purely to the star's identity, ignoring the global seed), then
+// advected with the same closed-form epicyclic
+// approximation galaxy.js uses for procedural stars. That helper
+// (computeEpicyclic) isn't exported, and galaxy.js is a consumed module this
+// wave, so this is an intentional, documented duplicate of its math —
+// starPositionAt itself (which IS exported) still does the actual per-frame
+// trig; this only derives the (Rg,X,phi0,Omega0,kappa0) input it needs.
+const TIER0_VEL_SALT = 0x54494552; // 'TIER', arbitrary fixed salt
+const TIER0_MOTION = new Map(); // index -> {epiRg,epiX,epiPhi0,epiOmega0,epiKappa0,epiNu,vz}, derived once per row and cached
+
+// Sun's own vertical epicyclic frequency ν=sqrt(4πGρ_mid), reused as a shared
+// approximation for every tier-0 row: galaxy.js derives ν per-position from
+// the local mass density, but tier-0 rows all sit within tens of pc of the
+// Sun (same disc environment), so sharing one constant is an acceptable
+// simplification for this placeholder motion (real value ≈2.4e-15 rad/s,
+// an ~84 Myr vertical oscillation period, matching galaxy.js's own solar
+// figure).
+const G_SI = 6.674e-11, MSUN_KG = 1.98892e30;
+const PC_M = PC_KM * 1000;
+const RHO_MID_SUN_MSUN_PC3 = 0.1; // Oort-limit dynamical midplane density (Holmberg & Flynn 2004)
+const TIER0_NU_S = Math.sqrt(4 * Math.PI * G_SI * (MSUN_KG / (PC_M * PC_M * PC_M)) * RHO_MID_SUN_MSUN_PC3);
+
+// Re-evaluation cadence: same drift-budget policy as activeStars.js's
+// procedural cadence (recompute once a moving star could have drifted
+// ~0.001 pc at a typical ~50 km/s) — kept as an independent constant here
+// since these two modules intentionally share no internals this wave.
+const TIER0_REEVAL_DRIFT_PC = 0.001;
+const TIER0_REEVAL_SPEED_KMS = 50;
+const TIER0_REEVAL_DT_S = (TIER0_REEVAL_DRIFT_PC * PC_KM) / TIER0_REEVAL_SPEED_KMS; // ≈19.6 years
+function tier0SimTBucket(simT) {
+    return Math.floor(simT / TIER0_REEVAL_DT_S);
+}
+
+const GAL_MOTION_SCRATCH = [0, 0, 0];
+const EQ_MOTION_SCRATCH = [0, 0, 0];
+
+// Real astronomical identity (HIP/HD/HR catalog number), not this build's row
+// index, is what a star's synthetic velocity should be seeded from — the row
+// index a star lands at is an artifact of HYG CSV ordering and would change
+// if the catalog were ever re-exported/re-sorted, silently reseeding every
+// star's "random" motion even though the star itself hasn't changed. Ladder:
+// HIP (Hipparcos, the most universally-assigned id in this catalog) first,
+// then HD, then HR, then — only for the id-less remainder LABELS has no
+// entry for at all — the row index itself as a last resort (still fully
+// deterministic, just not tied to the star's real-world identity). Each rung
+// gets its own small integer tag folded into the same hashInts call so e.g.
+// HIP 100 and row-index 100 don't hash to the same seed.
+function tier0SeedInts(index) {
+    const row = LABELS.get(index);
+    const hip = row?.[2], hd = row?.[3], hr = row?.[4];
+    if (hip) return [1, Number(hip)];
+    if (hd) return [2, Number(hd)];
+    if (hr) return [3, Number(hr)];
+    return [0, index];
+}
+
+function tier0MotionFor(index, gx, gy) {
+    let m = TIER0_MOTION.get(index);
+    if (m) return m;
+    const [tag, seedId] = tier0SeedInts(index);
+    const rng = makeRNG(splitSeed(hashInts(TIER0_VEL_SALT, tag, seedId), 1));
+    const disp = DISP.thin;
+    const U = disp.sU * gaussian(rng);
+    const Vpec = -disp.lag + disp.sV * gaussian(rng);
+    const W = disp.sW * gaussian(rng);
+    const Rpc = Math.max(Math.hypot(gx, gy), 50);
+    const Rkm = Rpc * PC_KM;
+    const vcircKms = Math.max(vCirc(Rpc / 1000), 1e-6);
+    const Omega0 = vcircKms / Rkm;
+    const kappa0 = Math.SQRT2 * Omega0;
+    const xKm = -Vpec / (2 * Omega0), yKm = -U / kappa0;
+    const Xkm = Math.hypot(xKm, yKm);
+    const phi0 = Math.atan2(yKm, xKm);
+    let Rg = Rpc - xKm / PC_KM, X = Xkm / PC_KM;
+    if (!(Rg > 0) || X > 0.5 * Rg) { Rg = Rpc; X = 0; } // same linearization-breakdown guard as galaxy.js's computeEpicyclic
+    m = { epiRg: Rg, epiX: X, epiPhi0: phi0, epiOmega0: Omega0, epiKappa0: kappa0, epiNu: TIER0_NU_S, vz: W };
+    TIER0_MOTION.set(index, m);
+    return m;
+}
+
+// Advances a catalog star's epoch position (xKm,yKm,zKm) to simT seconds,
+// writing the result into `out` (length-3, reused by the caller — matches
+// EQ_MOTION_SCRATCH's role in the simT!==0 branch, so neither branch
+// allocates a fresh array per call). simT===0 copies the exact catalog
+// position untouched (no round-trip through the galactocentric frame at
+// all), matching the "positions must remain EXACTLY the catalog position at
+// simT=0" contract.
+function tier0PositionAt(index, xKm, yKm, zKm, simT, out) {
+    if (simT === 0) { out[0] = xKm; out[1] = yKm; out[2] = zKm; return out; }
+    const [gx, gy, gz] = equatorialKmToGal(xKm, yKm, zKm);
+    const mot = tier0MotionFor(index, gx, gy);
+    starPositionAt({ gx, gy, gz, ...mot }, simT, GAL_MOTION_SCRATCH);
+    galToEquatorialKmInto(GAL_MOTION_SCRATCH[0], GAL_MOTION_SCRATCH[1], GAL_MOTION_SCRATCH[2], out);
+    return out;
+}
 
 let META = null;
 let VALS = null;
@@ -61,6 +170,9 @@ function isEvolvedSpectralClass(spect) {
     return /(^|[^A-Z])(I|II|III)(A|B|AB)?([^A-Z]|$)/.test(s);
 }
 
+// 25-60 pc M-dwarf ACTIVE density is intentionally delegated to the tier-1
+// visual layer (per-shell floor asserted in smoke-local-tier); follow-up WP
+// makes tier-1 queryable.
 function isLowMassMDwarf(mass, spect) {
     return mass > 0 && mass <= .25 && /(^|[^A-Z])D?M|^M|\bM\d/i.test(String(spect || ""));
 }
@@ -346,12 +458,16 @@ export function hygCatalogFocusValue(indexOrStar) {
     return Number.isFinite(index) && index >= 0 ? "hyg:" + index : "";
 }
 
-export function hygStarById(id) {
+export function hygStarById(id, simT = 0) {
     const m = String(id || "").match(/^hyg:(\d+)$/);
-    return m ? hygStarByIndex(Number(m[1])) : null;
+    return m ? hygStarByIndex(Number(m[1]), simT) : null;
 }
 
-export function hygStarByIndex(index) {
+// simT (seconds): sim time to evaluate the row's statistically-plausible
+// motion at (see the "Tier-0 catalog motion" block above). Defaults to 0 —
+// the exact catalog epoch position — so every pre-existing caller keeps its
+// current behaviour untouched.
+export function hygStarByIndex(index, simT = 0) {
     if (!META || !VALS || !Number.isInteger(index) || index < 0 || index >= META.count) return null;
     const stride = META.stride || 10;
     const base = index * stride;
@@ -363,6 +479,7 @@ export function hygStarByIndex(index) {
     const row = LABELS.get(index);
     const radiusSolar = catalogRuntimeRadiusSolar(mass, rawRadiusSolar, row?.[5]);
     const radiusKm = radiusSolar * R_SUN;
+    const [x, y, z] = tier0PositionAt(index, xPc * PC_KM, yPc * PC_KM, zPc * PC_KM, simT, EQ_MOTION_SCRATCH);
     return {
         id: "hyg:" + index,
         name: displayName(row, index),
@@ -373,15 +490,17 @@ export function hygStarByIndex(index) {
         hd: row?.[3] || "",
         hr: row?.[4] || "",
         spect: row?.[5] || "",
-        x: xPc * PC_KM,
-        y: yPc * PC_KM,
-        z: zPc * PC_KM,
-        dLy: dPc * PC_LY,
+        x, y, z,
+        dLy: Math.hypot(x, y, z) / LY_KM,
         color: colorHexFromBV(VALS[base + FIELD.bv]),
         mass,
         mu: MU_S * mass,
         R: radiusKm,
         radiusSolar,
+        // NS/WD luminosities are tiny but finite (stellar.js's synthRemnant);
+        // this module never logs them so that's safe as-is. Real HYG rows
+        // don't carry an evolutionary "kind" (no per-row IFMR), so catalog
+        // stars stay plain photometric points — no BH rows exist in this tier.
         lumSolar: VALS[base + FIELD.lum],
         tempK: VALS[base + FIELD.temp] || SOLAR_TEMP_K,
         mag: VALS[base + FIELD.mag],
@@ -392,7 +511,7 @@ export function hygStarByIndex(index) {
     };
 }
 
-export function sampleHygStarsNear(wx, wy, wz, radiusPc = 20, limit = 96) {
+export function sampleHygStarsNear(wx, wy, wz, radiusPc = 20, limit = 96, simT = 0) {
     if (!META || !VALS || !INDEX_READY) return [];
     const gx = wx / PC_KM, gy = wy / PC_KM, gz = wz / PC_KM;
     const key = [
@@ -402,6 +521,7 @@ export function sampleHygStarsNear(wx, wy, wz, radiusPc = 20, limit = 96) {
         Math.floor(gz / CACHE_GRID_PC),
         radiusPc,
         limit,
+        tier0SimTBucket(simT),
     ].join(":");
     if (SAMPLE_CACHE.key === key) return SAMPLE_CACHE.stars;
     const stride = META.stride || 10;
@@ -430,7 +550,7 @@ export function sampleHygStarsNear(wx, wy, wz, radiusPc = 20, limit = 96) {
     found.sort((a, b) => b.score - a.score || a.d2 - b.d2 || a.index - b.index);
     if (found.length > limit) found.length = limit;
     SAMPLE_CACHE.key = key;
-    SAMPLE_CACHE.stars = found.map(item => hygStarByIndex(item.index)).filter(Boolean);
+    SAMPLE_CACHE.stars = found.map(item => hygStarByIndex(item.index, simT)).filter(Boolean);
     return SAMPLE_CACHE.stars;
 }
 

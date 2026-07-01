@@ -13,6 +13,9 @@
     "smoke:universe": "node scripts/smoke-universe.mjs",
     "validate:astro": "node scripts/validate-astro.mjs",
     "smoke:catalog-tier1": "node scripts/smoke-catalog-tier1.mjs",
+    "smoke:special-objects": "node scripts/smoke-special-objects.mjs",
+    "smoke:tier1-runtime": "node scripts/smoke-tier1-runtime.mjs",
+    "smoke:local-tier": "node scripts/smoke-local-tier.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },

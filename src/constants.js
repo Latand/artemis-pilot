@@ -1,6 +1,7 @@
 // Physical constants and configuration. km, km/s, km³/s² everywhere;
 // the scene uses K to map km → scene units (1 unit = 1,000 km).
 import { HYG_PHYSICAL_STARS } from "./generated/hygPhysicalStars.js";
+import { SPECIAL_OBJECTS } from "./universe/specialObjects.js";
 
 export const MU_E = 398600.4418, MU_M = 4902.8001, MU_S = 132712440018;
 export const R_EARTH = 6371, R_MOON = 1737.4, R_SUN = 696340;
@@ -110,6 +111,7 @@ export const STARS = [
     skyStar("RIGEL", 860, 78.6345, -8.2016, 0xbfd8ff, 21, 78.9),
     skyStar("DENEB", 2615, 310.3580, 45.2803, 0xeaf2ff, 19, 203),
     ...HYG_PHYSICAL_STARS.map(catalogStar),
+    ...SPECIAL_OBJECTS,
 ];
 function finalizeStar(s) {
     if (s.x === undefined || s.y === undefined) {
