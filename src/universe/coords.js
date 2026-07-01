@@ -12,21 +12,6 @@ export const LY_KM = 9460730472580.8;
 export const PC_LY = 3.2615637771674;          // 1 parsec in light-years
 export const PC_KM = LY_KM * PC_LY;             // 1 parsec in km (≈3.0857e13)
 
-// --- Sector (floating-origin) scale --------------------------------------
-// A sector is a cube SECTOR_KM on a side. A position is (integer sector index,
-// float64 local offset). At |offset| < SECTOR_KM/2 ≈ 5e8 km, float64 keeps
-// sub-metre precision; the integer sector carries the magnitude exactly, so we
-// never form catastrophic differences like (star.x − earth.x) at 1e13 km.
-export const SECTOR_KM = 1e9;                   // ≈ 6.7 AU per sector
-
-export function sectorOf(km) { return Math.round(km / SECTOR_KM); }
-export function localOf(km, sector) { return km - sector * SECTOR_KM; }
-// Precise separation between two sectorised points: (Δsector)·SECTOR_KM is exact
-// (small integers), the local difference is float64 — no large-number cancel.
-export function sectorSep(saIdx, saLoc, sbIdx, sbLoc) {
-    return (saIdx - sbIdx) * SECTOR_KM + (saLoc - sbLoc);
-}
-
 // --- Galactic structure anchors (McMillan 2017) --------------------------
 export const R0_PC = 8200;     // Sun → Galactic-centre distance
 export const Z_SUN_PC = 20;    // Sun above the disc mid-plane

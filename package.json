@@ -6,10 +6,13 @@
   "scripts": {
     "dev": "vite",
     "catalog:hyg": "node scripts/build-hyg-catalog.mjs",
+    "catalog:athyg": "node scripts/build-athyg-tier1.mjs",
     "smoke:catalog": "node scripts/smoke-catalog.mjs",
     "smoke:core": "node scripts/smoke-core.mjs",
     "smoke:stellar-live": "node scripts/smoke-stellar-live.mjs",
     "smoke:universe": "node scripts/smoke-universe.mjs",
+    "validate:astro": "node scripts/validate-astro.mjs",
+    "smoke:catalog-tier1": "node scripts/smoke-catalog-tier1.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },
