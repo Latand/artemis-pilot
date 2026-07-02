@@ -4,6 +4,7 @@ import { dotTexture } from "./textures.js";
 import { renderQuality, scene } from "./scene.js";
 import { smooth01 } from "./format.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
+import { applyTerrellToMaterial } from "./relView.js";
 
 // Physical renderings for the named stellar destinations. Until now a star
 // was only a point in the cosmic layer: flying 4 ly to Proxima showed a dot.
@@ -127,7 +128,7 @@ export function addStarVisual(star) {
     let disk = null;
     if (star.bh) {
         const rsU = star.rs * K;
-        g.add(new THREE.Mesh(sphere(rsU, 48, 32, 24, 16), new THREE.MeshBasicMaterial({ color: 0x000000 })));
+        g.add(new THREE.Mesh(sphere(rsU, 48, 32, 24, 16), applyTerrellToMaterial(new THREE.MeshBasicMaterial({ color: 0x000000 }))));
         // thin photon-ring halo hugging the horizon
         g.add(fresnelShell(rsU * 1.06, 0xfff2d8, 5.0, .9));
         disk = radialRing(rsU * 1.9, rsU * 7.5, accretionTexture(0xffb46a));
@@ -143,7 +144,7 @@ export function addStarVisual(star) {
         }
     } else {
         const col = new THREE.Color(star.color);
-        g.add(new THREE.Mesh(sphere(star.R * K, 48, 32, 24, 16), new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(1.15) })));
+        g.add(new THREE.Mesh(sphere(star.R * K, 48, 32, 24, 16), applyTerrellToMaterial(new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(1.15) }))));
         g.add(fresnelShell(star.R * K * 1.3, star.color, 2.2, .5));
     }
     const glow = new THREE.Sprite(new THREE.SpriteMaterial({

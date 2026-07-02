@@ -9,6 +9,7 @@ import {
 import { renderQuality, scene } from "./scene.js";
 import { initRealSky, realSkyReady, realSkyStatus, updateRealSkyFade } from "./realSky.js";
 import { BRIGHTNESS_CURVE, observedMag, sizePxForMag, hdrIntensityForMag, teffToRGB, SUN_TEFF_K } from "./render/viewBrightness.js";
+import { applyTerrellToMaterial } from "./relView.js";
 import { G } from "./state.js";
 import { sunStateAt, AGB_TIP_R_RSUN } from "./universe/sunEvolution.js";
 
@@ -297,7 +298,7 @@ export function buildBodies(maps) {
         uTint: { value: new THREE.Vector3(1, 1, 1) },
     };
     shaderTick.sunUniforms = sunUniforms;
-    const sunMat = new THREE.ShaderMaterial({
+    const sunMat = applyTerrellToMaterial(new THREE.ShaderMaterial({
         uniforms: sunUniforms,
         vertexShader: /* glsl */`
             varying vec2 vUv; varying vec3 vNv; varying vec3 vPv;
@@ -340,7 +341,7 @@ export function buildBodies(maps) {
                 col += vec3(1.0, .46, .10) * pow(mu, 3.1) * .025;
                 gl_FragColor = vec4(col * uTint, 1.0);
             }`,
-    });
+    }));
     sunCore = new THREE.Mesh(sphere(SUN_RADIUS, 96, 72, 48, 32), sunMat);
     scene.add(sunCore);
     // animated corona: fresnel rim shell with streamer noise
@@ -504,7 +505,7 @@ export function buildBodies(maps) {
     shaderTick.earthUniforms = earthUniforms;
     earth = new THREE.Mesh(
         sphere(R_EARTH * K, 96, 72, 48, 32),
-        new THREE.ShaderMaterial({
+        applyTerrellToMaterial(new THREE.ShaderMaterial({
             uniforms: earthUniforms,
             vertexShader: /* glsl */`
                 varying vec2 vUv; varying vec3 vNw; varying vec3 vPw;
@@ -542,11 +543,11 @@ export function buildBodies(maps) {
                     col += vec3(.25, .5, 1.0) * rim * .2 * (0.12 + 0.88 * dayF);
                     gl_FragColor = vec4(col, 1.0);
                 }`,
-        }));
+        })));
     clouds = maps.clouds
         ? new THREE.Mesh(
             sphere(R_EARTH * K * 1.014, 80, 56, 40, 28),
-            new THREE.MeshLambertMaterial({ color: 0xffffff, alphaMap: maps.clouds, transparent: true, opacity: .92, depthWrite: false }))
+            applyTerrellToMaterial(new THREE.MeshLambertMaterial({ color: 0xffffff, alphaMap: maps.clouds, transparent: true, opacity: .92, depthWrite: false })))
         : new THREE.Group();
     const atmoUniforms = {
         c: { value: new THREE.Color(0x4d9fff) },
@@ -582,7 +583,7 @@ export function buildBodies(maps) {
     const useMoonBump = !!moonMap && new URLSearchParams(location.search).get("moonbump") === "1";
     moon = new THREE.Mesh(
         sphere(R_MOON * K, 112, 80, 48, 32),
-        new THREE.MeshPhongMaterial({ color: moonMap ? 0xffffff : 0xb9bcc2, map: moonMap || null, bumpMap: useMoonBump ? moonMap : null, bumpScale: .045, shininess: 2.2, specular: 0x20242b }));
+        applyTerrellToMaterial(new THREE.MeshPhongMaterial({ color: moonMap ? 0xffffff : 0xb9bcc2, map: moonMap || null, bumpMap: useMoonBump ? moonMap : null, bumpScale: .045, shininess: 2.2, specular: 0x20242b })));
     scene.add(moon);
     // moon orbit ring
     {
@@ -611,7 +612,7 @@ export function buildBodies(maps) {
         const g = new THREE.Group();
         const materialConfig = { color: p.color, shininess: p.gas ? 8 : 4 };
         if (maps.planets[i]) materialConfig.map = maps.planets[i];
-        const surface = new THREE.Mesh(sphere(p.R * K, 48, 32, 32, 20), new THREE.MeshPhongMaterial(materialConfig));
+        const surface = new THREE.Mesh(sphere(p.R * K, 48, 32, 32, 20), applyTerrellToMaterial(new THREE.MeshPhongMaterial(materialConfig)));
         g.rotation.z = p.visualTilt || 0;
         g.add(surface);
         if (p.ring) {
@@ -648,7 +649,7 @@ export function buildBodies(maps) {
         const g = new THREE.Group();
         const surface = new THREE.Mesh(
             sphere(Math.max(m.R, 30) * K, 28, 20, 16, 12),
-            new THREE.MeshPhongMaterial({ color: m.color, shininess: 3, specular: 0x1a1d22 }));
+            applyTerrellToMaterial(new THREE.MeshPhongMaterial({ color: m.color, shininess: 3, specular: 0x1a1d22 })));
         g.add(surface);
         scene.add(g);
         const glow = new THREE.Sprite(new THREE.SpriteMaterial({
