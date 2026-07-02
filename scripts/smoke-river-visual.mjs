@@ -112,6 +112,8 @@ assert(!computeFrag.includes("chosen == 2") && !computeFrag.includes("chosen==2"
 // 8) GLSL <-> JS literal sync (entries appended by WP-R2..R6)
 const GLSL_SYNC = [
   // WP-R2..R6 append exact literals here
+  "float wave = fract(ph + uPhase * kq + segT * 0.5)",
+  "0.72 + 0.55 * pow(0.5 + 0.5 * cos(6.2831853 * wave), 3.0)",
 ];
 for (const lit of GLSL_SYNC) {
   assert(src.includes(lit), "river.js GLSL out of sync with riverMath, missing literal: " + lit);

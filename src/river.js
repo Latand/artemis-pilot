@@ -7,6 +7,7 @@ import { scene, renderer, camera, cam, renderQuality } from "./scene.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
+import { pulsePhaseRate } from "./riverMath.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
 // Positions live in a float texture advected by a compute pass; the analytic
@@ -103,6 +104,7 @@ const uniformsShared = {
     uLoadShed: { value: 0 },
     uLocalFocus: { value: 0 },
     uSegs: { value: SEGS },
+    uPhase: { value: 0 },
 };
 
 const FLOW_GLSL = /* glsl */`
@@ -241,7 +243,7 @@ void main() {
 
 const LINE_VERT = /* glsl */`
 uniform sampler2D uPos;
-uniform float uVRef, uOpacity;
+uniform float uVRef, uOpacity, uPhase;
 uniform vec3 uCam;
 uniform int uSegs;
 attribute vec2 ref;
@@ -358,6 +360,17 @@ void main() {
     }
     vec3 pos = cur;
     float segT = float(segIdx) / float(uSegs);
+    // Brightness band traveling tail→head along each streak (with the flow,
+    // toward the sink) at a rate floored in REAL elapsed time (uPhase is fed
+    // from dtReal in updateRiver), so the contraction direction stays visible
+    // even at warp 0 where the field itself barely moves. Per-particle hash
+    // offset ph kills global strobing; kq gives faster streaks integer-
+    // multiple pulse rates (integer so fract() stays continuous when uPhase
+    // wraps at 64).
+    float ph = hash13(vec3(ref * 91.7, 3.1));
+    float kq = 1.0 + floor(2.9 * clamp(tVis + ph * 0.34, 0.0, 0.999));
+    float wave = fract(ph + uPhase * kq + segT * 0.5);
+    float pulse = 0.72 + 0.55 * pow(0.5 + 0.5 * cos(6.2831853 * wave), 3.0);
     vec3 cBlue = vec3(0.16 + 0.5 * t, 0.4 + 0.45 * t, 0.6 + 0.4 * t);
     vec3 cHole = vec3(0.14 + 0.42 * t, 0.62 + 0.30 * t, 1.0);
     vec3 cGold = vec3(0.6 + 0.4 * t, 0.34 + 0.42 * t, 0.12 + 0.26 * t);
@@ -372,7 +385,7 @@ void main() {
     // comet-tail fade: bright head, nonlinear falloff to a faint tail (a
     // steeper, smoother gradient than the old linear head/tail mix)
     float cometFade = mix(0.94, 0.08, pow(segT, 0.8));
-    vColor = fieldColor * fade * fieldInk * (1.0 + localInk * 1.7 + uLocalFocus * 0.65) * mix(0.85, 1.24, tVis) * cometFade * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime);
+    vColor = fieldColor * fade * fieldInk * (1.0 + localInk * 1.7 + uLocalFocus * 0.65) * mix(0.85, 1.24, tVis) * cometFade * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime) * pulse;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
 
@@ -712,6 +725,10 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     uniformsShared.uDE.value = DARK_ENERGY.H_PHYS * deFade;
     uniformsShared.uPlaneBias.value = planeBias;
     uniformsShared.uTimeRate.value = dtReal > 0 ? Math.max(1, dtSim / dtReal) : 1;
+    // Render-only pulse clock: accumulated REAL time (dtReal), never sim
+    // state — determinism smokes see no new randomness or sim-time consumers.
+    const dtPulse = Math.max(0, Math.min(dtReal, 0.1));
+    uniformsShared.uPhase.value = (uniformsShared.uPhase.value + dtPulse * pulsePhaseRate(uniformsShared.uTimeRate.value)) % 64;
     uniformsShared.uTick.value = (uniformsShared.uTick.value + .618) % 64;
     if (PERF.enabled) markPerf("river.volume", performance.now() - riverVolumeT0, { radius: smoothR, respawn });
 
