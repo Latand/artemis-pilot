@@ -124,12 +124,17 @@ void main() {
 const FRAG = /* glsl */`
 varying vec3 vColor;
 varying float vHdr;
+uniform float uFade;
 void main() {
     vec2 uv = gl_PointCoord - 0.5;
     float r2 = dot(uv, uv);
     float g = exp(-r2 * 14.0) + exp(-r2 * 60.0) * max(0.0, vHdr - 1.0) * 0.6;
     if (g < 0.006) discard;
-    gl_FragColor = vec4(vColor * max(vHdr, 1.0), clamp(g, 0.0, 4.0));
+    // uFade dissolves the whole Sun-bubble tier-1 field as the camera pulls out
+    // to galactic scale, where these ~2.5M near-Sun points would otherwise
+    // additively stack into a white ball brighter than the galactic core. The
+    // disk cloud already carries the statistical star field at that range.
+    gl_FragColor = vec4(vColor * max(vHdr, 1.0), clamp(g, 0.0, 4.0) * uFade);
 }
 `;
 
@@ -142,6 +147,7 @@ function makeTier1Material() {
             uMaxPx: { value: BRIGHTNESS_CURVE.maxPx },
             uMagLimit: { value: BRIGHTNESS_CURVE.magLimit },
             uPcScene: { value: PC_KM * K },
+            uFade: { value: 1 },
         },
         vertexShader: VERT,
         fragmentShader: FRAG,

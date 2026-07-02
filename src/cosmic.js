@@ -1148,7 +1148,12 @@ export function updateCosmicLayer() {
     // appeared, leaving an empty "dead zone" that flickered while zooming.
     const gal = smooth01(LY_SCENE * 40, LY_SCENE * 5000, cam.dist);
     const near = 1 - smooth01(LY_SCENE * 500, LY_SCENE * 8000, cam.dist);
-    const catalog = 1 - smooth01(LY_SCENE * 12000, LY_SCENE * 110000, cam.dist);
+    // Sun-bubble catalog cloud shares the tier-1 fade band (main.js setTier1Fade):
+    // both dissolve to zero by ~15 kly so the procedural disk — which already
+    // carries the statistical star field at galactic scale — is what remains,
+    // and the near-Sun points stop stacking into a core-outshining white ball.
+    // The disk is fully faded in by 5 kly, so no empty zone opens in the overlap.
+    const catalog = 1 - smooth01(LY_SCENE * 1500, LY_SCENE * 15000, cam.dist);
     const group = smooth01(LY_SCENE * 70000, LY_SCENE * 1200000, cam.dist);
     const deep = smooth01(LY_SCENE * 220000, LY_SCENE * 1600000, cam.dist);
     const catalogLoadShed = G.warp > 600 && cam.dist < LY_SCENE * .2;

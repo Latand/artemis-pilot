@@ -61,7 +61,7 @@ import {
 } from "./cosmology.js";
 import { equatorialKmToGal, setSunGalAnchor } from "./universe/coords.js";
 import { solarGalacticStateAt } from "./universe/solarOrbit.js";
-import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats } from "./universe/athygTier1.js";
+import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
 import { getOrigin, maybeRebase } from "./universe/renderOrigin.js";
 import { PERF, markPerf, sampleRendererInfo, sampleMemory } from "./perf.js";
 import { initXrPerf, tickXrPerf, shouldGateBloom } from "./render/xrPerf.js";
@@ -1620,6 +1620,12 @@ function frame() {
         tier1CamDirWorld.y = -tier1CamDirScene.z;
         tier1CamDirWorld.z = tier1CamDirScene.y;
         updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, tier1CamDirWorld, G.t);
+        // Dissolve the near-Sun tier-1 field before galactic scale: past a few
+        // thousand ly its ~2.5M points additively stack into a white ball that
+        // outshines the galactic core, and the disk cloud already carries the
+        // statistical field there. Fully gone by ~15 kly (see cosmic.js catalog
+        // fade, which shares this band).
+        setTier1Fade(1 - smooth01(LY_SCENE * 1500, LY_SCENE * 15000, cam.dist));
         if (tier1RebaseEnabled) {
             const rebaseThresholdKm = Math.max(1e6, (cam.dist / K) * .5);
             if (maybeRebase(camWorldKmX, camWorldKmY, camWorldKmZ, rebaseThresholdKm)) refreshTier1Residuals();

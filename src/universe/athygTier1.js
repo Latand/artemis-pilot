@@ -305,6 +305,24 @@ export function pumpResidualRefresh(maxStarsPerCall = DEFAULT_RESIDUAL_STARS_PER
     return result;
 }
 
+// Fade factor (1 = full, 0 = gone) for the whole tier-1 field, driven per frame
+// from camera distance so the Sun-bubble star cloud dissolves before the camera
+// reaches galactic scale. A no-op until init; `last` guards the per-group uniform
+// writes so a steady fade (the common case) touches nothing.
+let lastTier1Fade = 1;
+export function setTier1Fade(fade) {
+    if (!state) return;
+    const f = fade < 0 ? 0 : fade > 1 ? 1 : fade;
+    if (Math.abs(f - lastTier1Fade) < .003) return;
+    lastTier1Fade = f;
+    const visible = f > .002;
+    for (const g of state.groups) {
+        if (!g.mesh) continue;
+        g.mesh.material.uniforms.uFade.value = f;
+        g.mesh.visible = visible;
+    }
+}
+
 export function disposeTier1() {
     if (!state) return;
     if (state.worker) state.worker.terminate();
