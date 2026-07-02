@@ -3,6 +3,10 @@ const { MU_S, C_LIGHT, K } = await import("../src/constants.js");
 const { BH, bhRegister } = await import("../src/state.js");
 const { L_EDD_PER_MSUN, iscoKm } = await import("../src/tde.js");
 const { hashInts, splitSeed } = await import("../src/universe/prng.js");
+const {
+  serializeNebulae, restoreNebulaRecords, NEBULAE, addNebulaRecord,
+  NEBULA_ARCHETYPES, NEBULA_RADIUS_PRESETS_KM,
+} = await import("../src/universe/nebulaeData.js");
 function assert(ok, m, c) { if (!ok) throw new Error(m + (c ? " " + JSON.stringify(c) : "")); }
 // quasar presets: mu from rs must equal the target solar masses to 0.1%
 for (const [rsKm, msun] of [[2.9532e8, 1e8], [2.9532e9, 1e9]]) {
@@ -31,4 +35,18 @@ const ang = (t, p) => (t % p) / p * 2 * Math.PI;
 // not an integer number of Crab periods: 1/0.0334 = 29.94)
 assert(Math.abs(ang(0.777, 0.0334) - ang(0.777 + 0.0334, 0.0334)) < 1e-6, "spin angle periodic in sim time");
 BH.n = 0; // leave state clean
+// nebula records: deterministic seeds, serialize/restore round-trip (pure part)
+restoreNebulaRecords([]);
+for (let i = 0; i < NEBULA_RADIUS_PRESETS_KM.length; i++) {
+  assert(NEBULA_RADIUS_PRESETS_KM[i] === [1, 4, 10][i] * 9.4607e12, "nebula radius preset exact", { i, radiusKm: NEBULA_RADIUS_PRESETS_KM[i] });
+}
+const ns1 = splitSeed(hashInts(0x45584f21, 4), 3), ns2 = splitSeed(hashInts(0x45584f21, 5), 3);
+assert(ns1 === splitSeed(hashInts(0x45584f21, 4), 3) && ns1 !== ns2, "nebula seed determinism");
+assert(addNebulaRecord({ xKm: 1, yKm: 2, zKm: 3, radiusKm: NEBULA_RADIUS_PRESETS_KM[0], archetype: 0, seed: ns1 }) === 0, "nebula add 0");
+assert(addNebulaRecord({ xKm: -4, yKm: 5, zKm: -6, radiusKm: NEBULA_RADIUS_PRESETS_KM[2], archetype: 2, seed: ns2 }) === 1, "nebula add 1");
+for (const n of NEBULAE) assert(n.archetype >= 0 && n.archetype < NEBULA_ARCHETYPES.length, "nebula archetype bounds", n);
+const nebRows = serializeNebulae();
+restoreNebulaRecords(nebRows);
+assert(JSON.stringify(serializeNebulae()) === JSON.stringify(nebRows), "nebula round trip");
+restoreNebulaRecords([]);
 console.log("exotic smoke passed");

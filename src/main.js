@@ -61,6 +61,8 @@ import {
     refreshActiveStars, getFocusedSystem, getCachedFocusedSystem,
 } from "./universe/activeStars.js";
 import { initSystemRender, updateSystemRender, planetScenePosition, moonScenePosition } from "./render/systemBodies.js";
+import { updateNebulae, nebulaScenePos, nebulaHudSummary } from "./render/nebulae.js";
+import { NEBULAE } from "./universe/nebulaeData.js";
 import { moonWorldState, planetFocusIndex, planetMoonFocusIndex, planetWorldState } from "./universe/planetarySystem.js";
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
@@ -585,7 +587,12 @@ function starScenePos(i, out = _starFocusPos) {
 function activeStarScenePos(star, out = _starFocusPos) {
     return out.set(star.x * K, (star.z || 0) * K, -star.y * K);
 }
+function nebulaFocusIndex(focus) {
+    const m = typeof focus === "string" && focus.match(/^neb:(\d+)$/);
+    return m ? Number(m[1]) : -1;
+}
 function isBHTarget(target) { return blackHoleFocusIndex(target) >= 0; }
+function isNebulaTarget(target) { return nebulaFocusIndex(target) >= 0; }
 function targetBHIndex(target) { return blackHoleFocusIndex(target); }
 function isStarTarget(target) { return starFocusIndex(target) >= 0; }
 function targetStarIndex(target) { return starFocusIndex(target); }
@@ -626,6 +633,7 @@ function flyFocus(fv) {
 function focusTarget(target, approach = false) {
     const from = cam.dist;
     if (isBHTarget(target)) focusBlackHole(targetBHIndex(target));
+    else if (isNebulaTarget(target)) { setFocus(target); unlockBodyPrediction(); }
     else if (moonFocusIndex(target) >= 0) { setFocus(target); unlockBodyPrediction(); }
     else if (stellarTarget(target)) { setFocus(target); unlockBodyPrediction(); }
     else if (approach) { setFocus(target === BODY_EARTH ? "earth" : target === BODY_MOON ? "moon" : target === BODY_SUN ? "sun" : target); unlockBodyPrediction(); }
@@ -1694,6 +1702,8 @@ function frame() {
     }
     const focusBH = blackHoleFocusIndex(G.focus);
     if (focusBH >= BH.n) setFocus("ship");
+    const focusNeb = nebulaFocusIndex(G.focus);
+    if (focusNeb >= NEBULAE.length) setFocus("ship");
     const focusStar = starFocusIndex(G.focus);
     if (focusStar >= STARS.length) setFocus("ship");
     // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time
@@ -1717,6 +1727,7 @@ function frame() {
     const sceneCameraT0 = perfStart();
     // "free" focus: the target stays wherever panning put it
     const activeBHFocus = focusBH >= 0 && focusBH < BH.n;
+    const activeNebFocus = focusNeb >= 0 && focusNeb < NEBULAE.length;
     const activeStarFocus = focusStar >= 0 && focusStar < STARS.length;
     const activeMoonFocus = focusMoon >= 0;
     const activeDynamicFocus = activeStarForFocus(G.focus);
@@ -1725,11 +1736,13 @@ function frame() {
     const activePlanetFocus = planetFocusIndex(G.focus);
     const activePlanetMoonFocus = planetMoonFocusIndex(G.focus);
     updateSystemRender(focusedSystem, G.t, camera, G.focus);
+    updateNebulae(camera, dtR);
     {
         const cp = Math.cos(G.pitch || 0);
         dirV.set(cp * Math.cos(G.heading), Math.sin(G.pitch || 0), -cp * Math.sin(G.heading));
     }
     const tgt = activeBHFocus ? bhScenePos(focusBH) :
+        activeNebFocus ? (nebulaScenePos(activeNebFocus, _focusPos) || shipG.position) :
         activePlanetMoonFocus ? (moonScenePosition(focusedSystem, activePlanetMoonFocus.planetIndex, activePlanetMoonFocus.moonIndex, G.t, _focusPos) || shipG.position) :
         activePlanetFocus >= 0 ? (planetScenePosition(focusedSystem, activePlanetFocus, G.t, _focusPos) || shipG.position) :
         activeStarFocus ? starScenePos(focusStar) :
@@ -1749,6 +1762,7 @@ function frame() {
         camPrevFocus = G.focus;
     } else camPrevFocus = null;
     const minD = activeBHFocus ? Math.max(.05, BH.rs[focusBH] * K * 1.3) :
+        activeNebFocus ? Math.max(.05, NEBULAE[activeNebFocus].radiusKm * K * 2.5) :
         activePlanetMoonFocus && focusedSystem?.planets?.[activePlanetMoonFocus.planetIndex]?.moons?.[activePlanetMoonFocus.moonIndex] ? focusedSystem.planets[activePlanetMoonFocus.planetIndex].moons[activePlanetMoonFocus.moonIndex].R * K * 1.3 :
         activePlanetFocus >= 0 && focusedSystem?.planets?.[activePlanetFocus] ? focusedSystem.planets[activePlanetFocus].radiusKm * K * 1.8 :
         activeStarFocus ? STARS[focusStar].R * K * 1.8 :
@@ -1888,7 +1902,7 @@ function frame() {
             updateMobileControls(oi, cosmicSpeed, aMag);
             if (!renderQuality.mobile) {
                 updateHUD(oi, aMag, mainIn, cosmicSpeed, cosmicSpeed, 1);
-                if (fSystem) setHudText(fSystem, systemSummary(focusedSystem));
+                if (fSystem) setHudText(fSystem, activeNebFocus ? nebulaHudSummary(activeNebFocus) : systemSummary(focusedSystem));
                 if (flModeEl) setHudText(flModeEl, "DETAIL");
                 if (fFlow) setHudText(fFlow, String(cosmicLod));
                 if (fDark) setHudText(fDark, G.darkEnergy ? expansionSpeedLabel(darkEnergySpeedKmS(Math.hypot(G.x, G.y, G.z))) : "OFF");
@@ -2146,7 +2160,7 @@ function frame() {
     if (hudDue) {
         if (!renderQuality.mobile) {
             updateHUD(oi, aMag, mainIn, sp, kVLoc, fRiver);
-            if (fSystem) setHudText(fSystem, systemSummary(focusedSystem));
+            if (fSystem) setHudText(fSystem, activeNebFocus ? nebulaHudSummary(activeNebFocus) : systemSummary(focusedSystem));
             const va = Math.atan2(G.vy, G.vx);
             const moving = Math.hypot(G.vx, G.vy) > 1e-4;
             drawAttitude(G.heading, va, moving);

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, K } from "./constants.js";
+import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, K, LY_SCENE, LY_KM } from "./constants.js";
 import { tidalRadiusKm, mostBoundEnergy, fallbackTimeSec, circularizationKm, iscoKm, tdeLuminosityW, boundFraction, L_EDD_PER_MSUN } from "./tde.js";
 import { G, BH, WORLD, EPHT, bhRegister, bhMuAt, gsPull, addPhantom, GS } from "./state.js";
 import { eph, setLiveGuard } from "./ephemeris.js";
@@ -9,6 +9,8 @@ import { scene, camera, cam, cvHost, lastPtr, renderer, renderQuality } from "./
 import { noteNotable } from "./discoveryLog.js";
 import { hashInts, splitSeed } from "./universe/prng.js";
 import { registerPlacedPulsar, unregisterPlacedPulsar } from "./ambientAudio.js";
+import { addNebula } from "./render/nebulae.js";
+import { NEBULAE, NEB_MAX, NEBULA_ARCHETYPES, nebulaRadiusKmFromPreset } from "./universe/nebulaeData.js";
 
 export const BH_META = []; // visual groups, parallel to the data arrays
 
@@ -26,12 +28,17 @@ const PULSAR_ALIAS_SHIMMER_HZ = 2;
 const EXO_PRESETS = {
     1: [{ label: "10⁸ M☉", rsKm: 2.9532e8 }, { label: "10⁹ M☉", rsKm: 2.9532e9 }],
     2: [{ label: "CRAB 33 ms", rsKm: 4.1345, period: 0.0334 }, { label: "VELA 89 ms", rsKm: 4.1345, period: 0.0893 }, { label: "B1919 1.34 s", rsKm: 4.1345, period: 1.3373 }],
+    3: [
+        { label: "EMISSION 1 ly", archetype: 0, radiusKm: 9.4607e12 },
+        { label: "REFLECT 4 ly", archetype: 1, radiusKm: 4 * 9.4607e12 },
+        { label: "PLANETARY 10 ly", archetype: 2, radiusKm: 10 * 9.4607e12 },
+    ],
 };
 const EXO_KINDS = [
     { label: "HOLE", kind: 0 },
     { label: "QUASAR", kind: 1 },
     { label: "PULSAR", kind: 2 },
-    { label: "NEBULA", kind: 3, disabled: true, title: "WP-X3" },
+    { label: "NEBULA", kind: 3, title: "zoom out to interstellar scale to place nebulae" },
 ];
 export function bhMassLabel(rs) {
     const msun = rs * C_LIGHT * C_LIGHT / 2 / MU_S;
@@ -321,6 +328,19 @@ function activePreset() {
 const placeRaycaster = new THREE.Raycaster();
 const placeNdc = new THREE.Vector2();
 const placeHit = new THREE.Vector3();
+function nebulaPlacementEnabled() {
+    return cam.dist > LY_SCENE * .5;
+}
+function setPlacementRay(clientX = null, clientY = null) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const w = rect.width || cvHost.clientWidth || 1;
+    const h = rect.height || cvHost.clientHeight || 1;
+    const px = Number.isFinite(clientX) ? clientX : lastPtr ? lastPtr[0] : rect.left + w * .5;
+    const py = Number.isFinite(clientY) ? clientY : lastPtr ? lastPtr[1] : rect.top + h * .5;
+    placeNdc.set(((px - rect.left) / Math.max(1, w)) * 2 - 1, -((py - rect.top) / Math.max(1, h)) * 2 + 1);
+    placeRaycaster.setFromCamera(placeNdc, camera);
+    return placeRaycaster.ray;
+}
 function ensureBHPlacementPreview() {
     if (BH_PLACE.preview) return BH_PLACE.preview;
     const g = new THREE.Group();
@@ -361,13 +381,7 @@ function ensureBHPlacementPreview() {
     return BH_PLACE.preview;
 }
 function cursorPlaneHit(clientX = null, clientY = null, out = placeHit) {
-    const rect = renderer.domElement.getBoundingClientRect();
-    const w = rect.width || cvHost.clientWidth || 1;
-    const h = rect.height || cvHost.clientHeight || 1;
-    const px = Number.isFinite(clientX) ? clientX : lastPtr ? lastPtr[0] : rect.left + w * .5;
-    const py = Number.isFinite(clientY) ? clientY : lastPtr ? lastPtr[1] : rect.top + h * .5;
-    placeNdc.set(((px - rect.left) / Math.max(1, w)) * 2 - 1, -((py - rect.top) / Math.max(1, h)) * 2 + 1);
-    placeRaycaster.setFromCamera(placeNdc, camera);
+    setPlacementRay(clientX, clientY);
     const dy = placeRaycaster.ray.direction.y;
     if (Math.abs(dy) < 1e-10) return null;
     const t = -placeRaycaster.ray.origin.y / dy;
@@ -379,6 +393,15 @@ function updateBHPlacementPreview(dtR = 0) {
     if (!BH_PLACE.active) {
         p.g.visible = false;
         BH_PLACE.valid = false;
+        return;
+    }
+    if (BH_PLACE.kind === 3) {
+        const ray = setPlacementRay();
+        p.g.visible = false;
+        BH_PLACE.valid = nebulaPlacementEnabled();
+        BH_PLACE.point.copy(ray.origin).addScaledVector(ray.direction, cam.dist);
+        BH_PLACE.xKm = BH_PLACE.point.x / K;
+        BH_PLACE.yKm = -BH_PLACE.point.z / K;
         return;
     }
     const hit = cursorPlaneHit(null, null, BH_PLACE.point);
@@ -458,7 +481,9 @@ function renderBHSizeRail() {
         b.type = "button";
         b.className = "bhSizeBtn";
         b.textContent = preset.label;
-        b.title = "Schwarzschild radius " + fmtKm(preset.rsKm);
+        b.title = BH_PLACE.kind === 3
+            ? NEBULA_ARCHETYPES[preset.archetype] + " nebula radius " + (preset.radiusKm / LY_KM).toFixed(0) + " ly"
+            : "Schwarzschild radius " + fmtKm(preset.rsKm);
         b.onclick = e => {
             e.preventDefault();
             if (BH_PLACE.kind === 0) BH.sizeIdx = preset.index;
@@ -535,16 +560,25 @@ function updateBHPlacementUI(force = false) {
         BH_PLACE.bodyMode = BH_PLACE.active;
     }
     const preset = activePreset();
-    const rs = preset.rsKm;
+    const rs = preset.rsKm || 0;
     const mu = rs * C_LIGHT * C_LIGHT / 2;
     const msun = mu / MU_S;
     const hint = document.getElementById("bhPlaceHint");
     const updateHint = () => {
         if (!hint) return;
         let hintKey = "", text = "";
-        if (BH.n >= BH_MAX) {
+        if (BH_PLACE.kind === 3 && NEBULAE.length >= NEB_MAX) {
+            hintKey = "neb-max:" + NEBULAE.length;
+            text = "Maximum " + NEB_MAX + " nebulae";
+        } else if (BH_PLACE.kind !== 3 && BH.n >= BH_MAX) {
             hintKey = "max:" + BH.n;
             text = "Maximum " + BH_MAX + " active holes - V removes the last one";
+        } else if (BH_PLACE.kind === 3 && !nebulaPlacementEnabled()) {
+            hintKey = "neb-zoom";
+            text = "zoom out to interstellar scale to place nebulae";
+        } else if (BH_PLACE.kind === 3 && BH_PLACE.active) {
+            hintKey = "neb-valid:" + Math.round(cam.dist);
+            text = "CLICK TO PLACE - cursor ray range " + fmtDist(cam.dist / K);
         } else if (BH_PLACE.active && BH_PLACE.valid) {
             const dist = Math.hypot(G.x - BH_PLACE.xKm, G.y - BH_PLACE.yKm, G.z);
             const bucket = dist > 1e7 ? Math.round(dist / 10000) * 10000 :
@@ -572,6 +606,8 @@ function updateBHPlacementUI(force = false) {
         BH_PLACE.presetIdx,
         BH.sizeIdx,
         BH.n,
+        NEBULAE.length,
+        nebulaPlacementEnabled() ? 1 : 0,
         Array.from({ length: BH.n }, (_, i) => BH.kind[i]).join(","),
         Array.from({ length: BH.n }, (_, i) => Math.round(BH.rs[i] * 1000)).join(","),
     ].join(":");
@@ -586,15 +622,23 @@ function updateBHPlacementUI(force = false) {
     const massEl = document.getElementById("bhMassVal");
     const gravEl = document.getElementById("bhGravityVal");
     if (pill) pill.textContent = BH_PLACE.active ? "ARMED" : "B ARM";
-    if (rsEl) rsEl.textContent = BH_PLACE.kind === 1 ? (rs / AU_KM).toFixed(2) + " AU" : BH_PLACE.kind === 2 ? "12 km surface" : fmtKm(rs);
-    if (massEl) massEl.textContent = BH_PLACE.kind === 2 ? bhMassLabel(rs) + " · " + pulsarFactsLabel(preset.period || 0) : bhMassLabel(rs);
-    if (gravEl) gravEl.textContent = BH_PLACE.kind === 1
+    if (rsEl) rsEl.textContent = BH_PLACE.kind === 3 ? (preset.radiusKm / LY_KM).toFixed(0) + " ly radius" : BH_PLACE.kind === 1 ? (rs / AU_KM).toFixed(2) + " AU" : BH_PLACE.kind === 2 ? "12 km surface" : fmtKm(rs);
+    if (massEl) massEl.textContent = BH_PLACE.kind === 3 ? NEBULA_ARCHETYPES[preset.archetype] + " NEBULA" : BH_PLACE.kind === 2 ? bhMassLabel(rs) + " · " + pulsarFactsLabel(preset.period || 0) : bhMassLabel(rs);
+    if (gravEl) gravEl.textContent = BH_PLACE.kind === 3
+        ? "visual impostor · real cloud mass ~10^2-10^4 M☉ spread over light-years - locally negligible"
+        : BH_PLACE.kind === 1
         ? "L_bol ≈ L_Edd = " + (L_EDD_PER_MSUN * msun).toExponential(2) + " W"
         : BH_PLACE.kind === 2 ? "NS surface · " + pulsarAliasLabel(preset.period || 0)
         : gravityPanelLabel(pwAccelMs2(mu, rs * 3, rs));
     updateHint();
     const kindButtons = document.querySelectorAll("#bhKindRail .bhKindBtn");
-    kindButtons.forEach((b, i) => b.classList.toggle("active", EXO_KINDS[i]?.kind === BH_PLACE.kind));
+    kindButtons.forEach((b, i) => {
+        const kind = EXO_KINDS[i]?.kind;
+        const disabled = kind === 3 && !nebulaPlacementEnabled();
+        b.disabled = !!disabled;
+        b.title = disabled ? "zoom out to interstellar scale to place nebulae" : (EXO_KINDS[i]?.title || "");
+        b.classList.toggle("active", kind === BH_PLACE.kind);
+    });
     const buttons = document.querySelectorAll("#bhSizeRail .bhSizeBtn");
     buttons.forEach((b, i) => b.classList.toggle("active", BH_PLACE.kind === 0 ? i === BH.sizeIdx : i === BH_PLACE.presetIdx));
     const list = document.getElementById("bhActiveList");
@@ -624,7 +668,13 @@ function updateBHPlacementUI(force = false) {
 export function isBHPlacementMode() { return BH_PLACE.active; }
 export function setBHPlacementMode(active) {
     const requested = !!active;
-    if (requested && BH.n >= BH_MAX) {
+    if (requested && BH_PLACE.kind === 3 && !nebulaPlacementEnabled()) {
+        H.toast("zoom out to interstellar scale to place nebulae");
+        active = false;
+    } else if (requested && BH_PLACE.kind === 3 && NEBULAE.length >= NEB_MAX) {
+        H.toast("Maximum " + NEB_MAX + " nebulae");
+        active = false;
+    } else if (requested && BH_PLACE.kind !== 3 && BH.n >= BH_MAX) {
         H.toast("Maximum " + BH_MAX + " black holes");
         active = false;
     }
@@ -641,6 +691,33 @@ export function cancelBHPlacementMode() {
     setBHPlacementMode(false);
 }
 function commitBHPlacement(clientX, clientY) {
+    if (BH_PLACE.kind === 3) {
+        if (!nebulaPlacementEnabled()) {
+            H.toast("zoom out to interstellar scale to place nebulae");
+            return;
+        }
+        if (NEBULAE.length >= NEB_MAX) {
+            H.toast("Maximum " + NEB_MAX + " nebulae");
+            return;
+        }
+        const preset = activePreset();
+        const ray = setPlacementRay(clientX, clientY);
+        placeHit.copy(ray.origin).addScaledVector(ray.direction, cam.dist);
+        const seed = splitSeed(hashInts(0x45584f21, BH.placeCount++), 3);
+        const archetype = preset.archetype ?? 0;
+        addNebula({
+            xKm: placeHit.x / K,
+            yKm: -placeHit.z / K,
+            zKm: placeHit.y / K,
+            radiusKm: preset.radiusKm || nebulaRadiusKmFromPreset(1),
+            archetype,
+            seed,
+        });
+        noteNotable("nebula", NEBULA_ARCHETYPES[archetype] + " NEBULA");
+        updateBHPlacementPreview();
+        updateBHPlacementUI(true);
+        return;
+    }
     const hit = cursorPlaneHit(clientX, clientY, placeHit);
     if (!hit) {
         H.toast("Aim the cursor at the orbital plane");

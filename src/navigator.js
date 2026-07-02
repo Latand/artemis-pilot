@@ -7,6 +7,7 @@ import { PL, STARS, K } from "./constants.js";
 import { MOONS, moonFocusValue } from "./moons.js";
 import { BH, G } from "./state.js";
 import { fmtKm } from "./format.js";
+import { NEBULAE, NEBULA_ARCHETYPES, nebulaArchetypeIndex, nebulaRadiusLy } from "./universe/nebulaeData.js";
 
 const $ = id => document.getElementById(id);
 const hex = c => "#" + (c >>> 0).toString(16).padStart(6, "0").slice(-6);
@@ -63,6 +64,13 @@ function rebuild() {
     for (let i = 0; i < BH.n; i++) {
         const label = BH.kind[i] === 1 ? "QUASAR " : BH.kind[i] === 2 ? "PULSAR " : "BLACK HOLE ";
         if (has("BLACK HOLE") || has("BH") || has(label.trim())) add(label + (i + 1), "r_s " + fmtKm(BH.rs[i]), "bh:" + i, 0, "#c9b6ff");
+    }
+
+    for (let i = 0; i < NEBULAE.length; i++) {
+        const n = NEBULAE[i];
+        const archetype = NEBULA_ARCHETYPES[nebulaArchetypeIndex(n.archetype)];
+        const sizeLy = nebulaRadiusLy(n.radiusKm).toFixed(n.radiusKm >= 10 * 9.4607e12 ? 0 : 1);
+        if (has("NEBULA") || has(archetype)) add("NEBULA " + (i + 1), archetype + " · " + sizeLy + " ly", "neb:" + i, 0, "#7fd8c8");
     }
 
     let starHdr = false;

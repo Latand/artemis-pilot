@@ -5,6 +5,7 @@ import { G, WORLD, BH, GS } from "./state.js";
 import { snapshotEphem, loadEphemSnapshot } from "./ephemeris.js";
 import { serializeLog, restoreLog } from "./discoveryLog.js";
 import { addBlackHole, clearBlackHoles } from "./blackholes.js";
+import { serializeNebulae, restoreNebulae } from "./render/nebulae.js";
 import { clearTrail, pushTrail, computePrediction } from "./trails.js";
 import { hideBanner, showBanner } from "./hud.js";
 import { fmtMET } from "./format.js";
@@ -95,6 +96,7 @@ export function saveState() {
             ...(Number.isFinite(ephSt.earthVz) ? { earthVz: ephSt.earthVz } : {}),
         },
         bh: Array.from({ length: BH.n }, (_, i) => [BH.x[i], BH.y[i], BH.vx[i], BH.vy[i], BH.rs[i], BH.kind[i], BH.period[i]]),
+        neb: serializeNebulae(),
         // gravity-front bookkeeping: per-hole mass-gain events, plus the
         // phantom/ghost sources (Infinity survives JSON as null)
         bhEv: Array.from({ length: BH.n }, (_, i) => (BH.ev[i] || []).map(e => [e.x, e.y, e.z || 0, e.t, e.dmu])),
@@ -173,6 +175,7 @@ export async function loadState() {
         GS.push({ x, y, z, vx, vy, vz, mu, R, t0, t: t === null ? Infinity : t });
     }
     clearBlackHoles();
+    restoreNebulae(data.neb || []);
     data.bh.forEach(([x, y, vx, vy, rs, kind, period], i) => {
         const raw = data.bhEv && data.bhEv[i];
         const ev = raw && raw.length ? raw.map(row => row.length >= 5
