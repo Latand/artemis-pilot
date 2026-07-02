@@ -80,6 +80,7 @@ import { initAttitude, drawAttitude } from "./attitude.js";
 import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
 import { initUiMode, setXrPresenting } from "./uiMode.js";
+import { cancelTimeJump, setExternalTimeDriver, tickJump } from "./timeCtl.js";
 
 // ============================ WIRING ============================
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
@@ -197,6 +198,7 @@ function die(reason, swallowed) {
     showBanner("VEHICLE LOST", reason + " · MET " + fmtMET(G.t) + " · max Earth distance " + fmtKm(G.maxRE) + " · Δv used " + Math.round(G.dvUsed) + " m/s", "R TO REBUILD SHIP");
 }
 function restart() {
+    cancelTimeJump("restart");
     resetEphem();
     resetShip();
     rebaseBHEvents(); // clock rewound to 0: surviving holes count as long-established
@@ -1569,6 +1571,8 @@ function frame() {
     // ---- physics ----
     const physicsT0 = perfStart();
     let advanced = 0, activeStarsFresh = false;
+    setExternalTimeDriver(cinematic.isPlaying() || REL.active);
+    tickJump(dtR);
     if (!G.paused) {
         if (REL.active) {
             advanced = dtR * G.warp;

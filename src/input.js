@@ -1,4 +1,4 @@
-import { WARPS, WARP_DIGIT_OFFSET, warpStepDown, warpStepUp, PL, STARS, BH_SIZES, K, LY_SCENE } from "./constants.js";
+import { WARPS, WARP_DIGIT_OFFSET, PL, STARS, BH_SIZES, K, LY_SCENE } from "./constants.js";
 import { MOONS, moonFocusIndex } from "./moons.js";
 import { G, keys, BH } from "./state.js";
 import { cam } from "./scene.js";
@@ -22,6 +22,7 @@ import { requestPlanetTexture, requestRealSkyLoad } from "./bodies.js";
 import { setCineOpen, toggleCine } from "./cinematic.js";
 import { toggleLog } from "./discoveryLog.js";
 import { cycleUiMode, isXrPresenting, setUiMode } from "./uiMode.js";
+import { setPaused, setWarp, stepWarp } from "./timeCtl.js";
 
 export function setFocus(f) {
     G.focus = f;
@@ -92,14 +93,14 @@ function onKeyDown(e) {
     if (e.code === "KeyZ" && !e.shiftKey) G.throttle = Math.max(.05, G.throttle / 1.3);
     if (e.code === "KeyX" && !e.shiftKey) G.throttle = Math.min(100, G.throttle * 1.3);
     if (e.code === "KeyX" && e.shiftKey) apOff("cancelled", toast);
-    if (e.code === "Comma") G.warp = warpStepDown(G.warp);
-    if (e.code === "Period") G.warp = warpStepUp(G.warp);
+    if (e.code === "Comma") stepWarp(-1, "keys");
+    if (e.code === "Period") stepWarp(1, "keys");
     if (e.repeat) return;
     switch (e.code) {
         case "Escape":
             if (isBHPlacementMode()) cancelBHPlacementMode();
             break;
-        case "Space": G.paused = !G.paused; break;
+        case "Space": setPaused(!G.paused, "keys"); break;
         case "KeyT":
             if (e.shiftKey) apTravelToFocus(toast);
             else G.hold = G.hold === "pro" ? null : "pro";
@@ -203,7 +204,7 @@ function onKeyDown(e) {
         case "KeyH": toggleHelp(); break;
         default: {
             const m = e.code.match(/^Digit([1-9])$/);
-            if (m) G.warp = WARPS[Number(m[1]) - 1 + WARP_DIGIT_OFFSET];
+            if (m) setWarp(WARPS[Number(m[1]) - 1 + WARP_DIGIT_OFFSET], "keys");
         }
     }
 }

@@ -5,6 +5,7 @@
 import { cam } from "./scene.js";
 import { G } from "./state.js";
 import { WARP_MAX, CAM_DIST_MAX } from "./constants.js";
+import { setWarp } from "./timeCtl.js";
 
 const $ = id => document.getElementById(id);
 
@@ -13,7 +14,7 @@ function zoom(factor) {
     cam.distTarget = null; // manual zoom cancels any fly-in
 }
 function warp(faster) {
-    G.warp = faster ? Math.min(WARP_MAX, G.warp * 2) : Math.max(1, G.warp / 2);
+    setWarp(faster ? Math.min(WARP_MAX, G.warp * 2) : Math.max(1, G.warp / 2), "quickctl");
 }
 
 // press-and-hold: fire once immediately, then repeat while held

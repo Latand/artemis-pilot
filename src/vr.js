@@ -16,6 +16,7 @@ import { earthG, moon, sunCore, plGroups, sky, galaxyBackdrop } from "./bodies.j
 import { shipG } from "./ship.js";
 import { fmtMET, fmtDist } from "./format.js";
 import { AP, apTravelToFocus, apOff } from "./autopilot.js";
+import { setWarp } from "./timeCtl.js";
 
 // WebXR (PSVR2 / any xr-standard headset) support. Two modes:
 //
@@ -423,11 +424,11 @@ export function vrPoll(dtR) {
     }
     // shared bindings
     if (repeatFire("warpUp", R?.buttons[4]?.pressed ?? false, dtR)) {
-        G.warp = Math.min(WARP_MAX, G.warp * 2);
+        setWarp(Math.min(WARP_MAX, G.warp * 2), "vr");
         say("WARP " + warpLabel(G.warp));
     }
     if (repeatFire("warpDn", R?.buttons[5]?.pressed ?? false, dtR)) {
-        G.warp = Math.max(1, G.warp / 2);
+        setWarp(Math.max(1, G.warp / 2), "vr");
         say("WARP " + warpLabel(G.warp));
     }
     if (justPressed("lX", L?.buttons[4])) { G.gr = !G.gr; say("RIVER " + (G.gr ? "ON" : "OFF")); }
