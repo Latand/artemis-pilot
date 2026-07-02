@@ -154,3 +154,35 @@ export function planetOffsetKm(planet, hostMassSolar, simT, out) {
     out.z = y1 * si;
     return out;
 }
+
+const _worldPrev = { x: 0, y: 0, z: 0 };
+const _worldNext = { x: 0, y: 0, z: 0 };
+export function planetWorldState(system, planetIndex, hostStar, simT, out) {
+    const p = system?.planets?.[planetIndex];
+    if (!p || !hostStar) return null;
+    planetOffsetKm(p, system.hostMass || hostStar.mass || 1, simT, out);
+    const h = 0.5;
+    planetOffsetKm(p, system.hostMass || hostStar.mass || 1, simT - h, _worldPrev);
+    planetOffsetKm(p, system.hostMass || hostStar.mass || 1, simT + h, _worldNext);
+    out.vx = (hostStar.vx || 0) + (_worldNext.x - _worldPrev.x) / (2 * h);
+    out.vy = (hostStar.vy || 0) + (_worldNext.y - _worldPrev.y) / (2 * h);
+    out.vz = (hostStar.vz || 0) + (_worldNext.z - _worldPrev.z) / (2 * h);
+    out.x += hostStar.x || 0;
+    out.y += hostStar.y || 0;
+    out.z += hostStar.z || 0;
+    return out;
+}
+
+const _domPlanetState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+export function dominantSystemPlanet(sys, hostStar, shipWorld, simT) {
+    if (!sys?.planets?.length || !hostStar || !shipWorld) return null;
+    let best = null;
+    for (const p of sys.planets) {
+        planetWorldState(sys, p.index, hostStar, simT, _domPlanetState);
+        const d = Math.hypot(shipWorld.x - _domPlanetState.x, shipWorld.y - _domPlanetState.y, shipWorld.z - _domPlanetState.z);
+        const soi = Math.max(p.radiusKm * 3, p.a * AU_KM * Math.pow(p.mu / Math.max(1, hostStar.mu || MU_S), 0.4));
+        const acc = p.mu / Math.max(1, d * d);
+        if (d < soi && (!best || acc > best.acc)) best = { planet: p, index: p.index, d, soi, acc, dominant: true };
+    }
+    return best;
+}

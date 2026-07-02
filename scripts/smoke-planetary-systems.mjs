@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { setSeed } from "../src/universe/galaxy.js";
 import {
-    generateSystem, systemSeed, aFromPeriodDays, periodDaysFromA,
+    generateSystem, systemSeed, aFromPeriodDays, periodDaysFromA, planetWorldState, dominantSystemPlanet,
 } from "../src/universe/planetarySystem.js";
 import { hzEdgesAU, massMeFromRadiusRe, occurrenceLambda } from "../src/universe/astroConstants.js";
 
@@ -72,5 +72,28 @@ for (let i = 0; i < 5000; i++) {
     highG += generateSystem(fake("highG-" + i, 1.6, 4, "MS", 0.4)).planets.some(p => p.type === "gas") ? 1 : 0;
 }
 assert(highG > lowG, "giant occurrence should rise with mass and metallicity");
+
+const host = { name: "Smoke Host", mass: 1, mu: 132712440018, x: 1000, y: -2000, z: 300, vx: 0, vy: 0, vz: 0 };
+const sys = {
+    starId: "smoke-host",
+    hostMass: 1,
+    planets: [{
+        index: 0, a: 1, e: 0, i: 0, Om: 0, varpi: 0, M0: 0,
+        radiusKm: 6371, mu: 398600.4418, gas: false, name: "SMOKE b",
+    }],
+};
+const pw = planetWorldState(sys, 0, host, 0, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 });
+assert(pw && Number.isFinite(pw.x) && Number.isFinite(pw.vy), "planetWorldState should return finite world state");
+const shipWorld = { x: pw.x + sys.planets[0].radiusKm + 1, y: pw.y, z: pw.z };
+const dom = dominantSystemPlanet(sys, host, shipWorld, 0);
+assert(dom?.dominant && dom.index === 0, "dominantSystemPlanet should select a nearby procedural planet");
+assert(dom.soi > sys.planets[0].radiusKm * 3 && Number.isFinite(dom.acc), "procedural planet SOI math should be finite and positive");
+const eps = 0.01;
+const dx = shipWorld.x - pw.x, dy = shipWorld.y - pw.y, dz = shipWorld.z - pw.z;
+const f = (sys.planets[0].radiusKm + eps) / Math.hypot(dx, dy, dz);
+const snapped = { x: pw.x + dx * f, y: pw.y + dy * f, z: pw.z + dz * f, vx: pw.vx, vy: pw.vy, vz: pw.vz };
+assert(Math.abs(Math.hypot(snapped.x - pw.x, snapped.y - pw.y, snapped.z - pw.z) - (sys.planets[0].radiusKm + eps)) < 1e-6,
+    "procedural planet contact snap should land at radius plus epsilon");
+assert.equal(snapped.vx, pw.vx, "procedural planet contact should inherit planet vx");
 
 console.log("smoke-planetary-systems ok", { deterministic: h1, lowG, highG });

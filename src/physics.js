@@ -10,8 +10,9 @@ import {
 import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody } from "./state.js";
 import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
-import { ACTIVE_STARS, refreshActiveStars } from "./universe/activeStars.js";
+import { ACTIVE_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
 import { strongestActiveStarWell } from "./universe/starDominance.js";
+import { dominantSystemPlanet, planetWorldState } from "./universe/planetarySystem.js";
 import { darkEnergyAccel, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc } from "./cosmology.js";
 import { equatorialKmToGal } from "./universe/coords.js";
 import { segmentSphereHit } from "./geometry.js";
@@ -95,6 +96,9 @@ function checkSunEngulfment(sunMaxRKmEver) {
 
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 const _pv = { vx: 0, vy: 0 };
+const _pw = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+const _pwSnap = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+let warnedLostSysPlanetLanding = false;
 
 // derivative of [x,y,z,vx,vy,vz] incl. the live n-body field in the Earth-relative
 // frame, PW black holes, Earth J2, Sun 1PN, atmosphere drag, thrust.
@@ -255,7 +259,7 @@ export function orbitInfo() {
     let domMoon = !WORLD.moonDestroyed && rM < SOI_M;
     let domPl = !domMoon && pNear >= 0 && pNearD < PL[pNear].soi;
     let domSun = !WORLD.sunDestroyed && !domMoon && !domPl && (WORLD.earthDestroyed || rE > SOI_E);
-    let domStar = false, star = null, bh = false, rs = 0;
+    let domStar = false, domSysPlanet = false, star = null, sysPlanet = null, sysPlanetIndex = -1, sysStarId = "", bh = false, rs = 0;
     let mu, rx, ry, rz, rvx, rvy, rvz, R, body;
     // moonState/planetVel are 2-D-only helpers (ephemeris.js, read-only this
     // wave); Vz for the Moon/planets/Sun comes straight off eph.*Vz instead.
@@ -288,6 +292,30 @@ export function orbitInfo() {
         bh = !!starWell.star.bh;
         rs = starWell.star.rs || 0;
     }
+    const sys = getCachedFocusedSystem();
+    if (starWell?.star && sys?.hostStar === starWell.star) {
+        const sp = dominantSystemPlanet(sys, starWell.star, { x: wx, y: wy, z: wz }, G.t);
+        if (sp?.dominant) {
+            domMoon = false;
+            domPl = false;
+            domSun = false;
+            domStar = false;
+            domSysPlanet = true;
+            sysPlanet = sp.planet;
+            sysPlanetIndex = sp.index;
+            sysStarId = sys.starId;
+            planetWorldState(sys, sp.index, starWell.star, G.t, _pw);
+            mu = sp.planet.mu;
+            rx = wx - _pw.x; ry = wy - _pw.y; rz = wz - _pw.z;
+            rvx = G.vx + eph.earthVx - _pw.vx;
+            rvy = G.vy + eph.earthVy - _pw.vy;
+            rvz = G.vz - _pw.vz;
+            R = sp.planet.radiusKm;
+            body = sp.planet.name || ("P" + (sp.index + 1));
+            bh = false;
+            rs = 0;
+        }
+    }
     const r = Math.hypot(rx, ry, rz), v2 = rvx * rvx + rvy * rvy + rvz * rvz;
     const E = v2 / 2 - mu / r;
     const hx = ry * rvz - rz * rvy;
@@ -300,7 +328,7 @@ export function orbitInfo() {
     if (E < 0) { rp = a * (1 - e); ra = a * (1 + e); }
     else { rp = Math.abs(a) * (e - 1); ra = Infinity; }
     return {
-        domMoon, domSun, domPl, domStar, star, starNear: starWell?.star || null,
+        domMoon, domSun, domPl, domStar, domSysPlanet, star, sysPlanet, sysPlanetIndex, sysStarId, starNear: starWell?.star || null,
         starNearD: starWell?.d ?? Infinity, starNearAcc: starWell?.acc || 0,
         starId: starWell?.star?.id || starWell?.star?.name || "", bh, rs, pNear, pNearD, body, mu, r, rp, ra, e, E, R, rE, rM, rS,
         relV: Math.sqrt(v2), rx, ry, rz, rvx, rvy, rvz,
@@ -372,6 +400,29 @@ function handlePlanetContact(s, i) {
         H.banner("LANDED ON " + p.name, "Touchdown at " + (rel * 1000).toFixed(0) + " m/s · MET " + fmtMET(G.t), "W TO LIFT OFF · R TO RESTART");
     } else H.die("Hit " + p.name + " at " + rel.toFixed(2) + " km/s");
 }
+function handleSystemPlanetContact(s, sys, planetIndex, hostStar) {
+    const p = sys?.planets?.[planetIndex];
+    if (!p || !planetWorldState(sys, planetIndex, hostStar, G.t, _pwSnap)) return;
+    let dx = eph.earthX + s[0] - _pwSnap.x, dy = eph.earthY + s[1] - _pwSnap.y, dz = s[2] - _pwSnap.z;
+    const eps = 0.01;
+    const r = Math.hypot(dx, dy, dz) || 1, f = (p.radiusKm + eps) / r;
+    dx *= f; dy *= f; dz *= f;
+    s[0] = _pwSnap.x + dx - eph.earthX; s[1] = _pwSnap.y + dy - eph.earthY; s[2] = _pwSnap.z + dz;
+    const rel = Math.hypot(s[3] + eph.earthVx - _pwSnap.vx, s[4] + eph.earthVy - _pwSnap.vy, s[5] - _pwSnap.vz);
+    const name = p.name || ("P" + (planetIndex + 1));
+    if (p.gas) {
+        G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
+        H.die("Crushed in " + name + "'s atmosphere at " + rel.toFixed(1) + " km/s");
+        return;
+    }
+    if (rel < 0.3) {
+        G.landed = { body: "sysplanet", starId: sys.starId, i: planetIndex, ang: Math.atan2(dy, dx), uz: dz / (p.radiusKm + eps) };
+        G.heading = Math.atan2(dy, dx);
+        G.pitch = 0;
+        s[3] = _pwSnap.vx - eph.earthVx; s[4] = _pwSnap.vy - eph.earthVy; s[5] = _pwSnap.vz;
+        H.banner("LANDED ON " + name, "Touchdown at " + (rel * 1000).toFixed(0) + " m/s · MET " + fmtMET(G.t), "W TO LIFT OFF · R TO RESTART");
+    } else H.die("Hit " + name + " at " + rel.toFixed(2) + " km/s");
+}
 export function snapLanded() {
     if (!G.landed) return;
     if (G.landed.body === "earth") {
@@ -388,6 +439,24 @@ export function snapLanded() {
         G.y = eph.plY[i] + r * uy; G.z = eph.plZ[i] + r * uz;
         planetVel(i, G.t, _pv);
         G.vx = _pv.vx; G.vy = _pv.vy; G.vz = eph.plVz[i];
+    } else if (G.landed.body === "sysplanet") {
+        const sys = getCachedFocusedSystem();
+        const star = sys?.hostStar;
+        const p = sys?.starId === G.landed.starId ? sys.planets?.[G.landed.i] : null;
+        if (!star || !p || !planetWorldState(sys, G.landed.i, star, G.t, _pwSnap)) {
+            if (!warnedLostSysPlanetLanding) {
+                warnedLostSysPlanetLanding = true;
+                console.warn("procedural planet landing lost focused system", G.landed);
+            }
+            G.landed = null;
+            return;
+        }
+        const r = p.radiusKm + 0.01;
+        const [ux, uy, uz] = landingUnit(G.landed.ang, G.landed.uz);
+        G.x = _pwSnap.x + r * ux - eph.earthX;
+        G.y = _pwSnap.y + r * uy - eph.earthY;
+        G.z = _pwSnap.z + r * uz;
+        G.vx = _pwSnap.vx - eph.earthVx; G.vy = _pwSnap.vy - eph.earthVy; G.vz = _pwSnap.vz;
     } else {
         moonState(G.t, _m);
         const th = _m.ang + G.landed.ang, r = R_MOON + 0.003;
@@ -671,6 +740,16 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         for (let i = 0; i < PL.length; i++)
             if (!WORLD.plDestroyed[i] && Math.hypot(s[0] - eph.plX[i], s[1] - eph.plY[i], s[2] - eph.plZ[i]) <= PL[i].R) { hitP = i; break; }
         if (hitP >= 0) { handlePlanetContact(s, hitP); break; }
+        const sys = getCachedFocusedSystem();
+        if (sys?.hostStar && sys.planets?.length) {
+            const wx = eph.earthX + s[0], wy = eph.earthY + s[1], wz = s[2];
+            let hitSysP = -1;
+            for (const p of sys.planets) {
+                planetWorldState(sys, p.index, sys.hostStar, G.t, _pw);
+                if (Math.hypot(wx - _pw.x, wy - _pw.y, wz - _pw.z) <= p.radiusKm) { hitSysP = p.index; break; }
+            }
+            if (hitSysP >= 0) { handleSystemPlanetContact(s, sys, hitSysP, sys.hostStar); break; }
+        }
         for (let i = 0; i < BH.n; i++) {
             const dBH = Math.hypot(s[0] - BH.x[i], s[1] - BH.y[i], s[2]);
             if (dBH <= BH.rs[i]) {
@@ -855,7 +934,7 @@ export function shipDeepJump(dt) {
         G.t += dt;
         return dt;
     }
-    const atmTop = oi.body === "EARTH" ? ATM_TOP : oi.domPl ? (PL[oi.pNear].atmTop || 0) : 0;
+    const atmTop = oi.body === "EARTH" ? ATM_TOP : oi.domPl ? (PL[oi.pNear].atmTop || 0) : oi.domSysPlanet ? (oi.sysPlanet?.atmTop || 0) : 0;
     if (oi.r - oi.R < atmTop) return 0;     // inside the drag shell: integrate it
     if (oi.rp < oi.R + atmTop) return 0;    // orbit dips into it: let the decay/impact play out
     if (Math.abs(oi.e - 1) < 1e-4) return 0;
@@ -869,6 +948,12 @@ export function shipDeepJump(dt) {
     let bx = 0, by = 0, bz = 0, bvx = 0, bvy = 0, bvz = 0;
     if (oi.domMoon) { bx = eph.moonX; by = eph.moonY; bz = eph.moonZ; bvx = eph.moonVx; bvy = eph.moonVy; bvz = eph.moonVz; }
     else if (oi.domPl) { bx = eph.plX[oi.pNear]; by = eph.plY[oi.pNear]; bz = eph.plZ[oi.pNear]; bvx = eph.plVx[oi.pNear]; bvy = eph.plVy[oi.pNear]; bvz = eph.plVz[oi.pNear]; }
+    else if (oi.domSysPlanet) {
+        const sys = getCachedFocusedSystem();
+        if (!sys?.hostStar || sys.starId !== oi.sysStarId || !planetWorldState(sys, oi.sysPlanetIndex, sys.hostStar, G.t + dt, _pwSnap)) return 0;
+        bx = _pwSnap.x - eph.earthX; by = _pwSnap.y - eph.earthY; bz = _pwSnap.z;
+        bvx = _pwSnap.vx - eph.earthVx; bvy = _pwSnap.vy - eph.earthVy; bvz = _pwSnap.vz;
+    }
     else if (oi.domSun) { bx = eph.sunX; by = eph.sunY; bz = eph.sunZ; bvx = eph.sunVx; bvy = eph.sunVy; bvz = eph.sunVz; }
     G.x = bx + _dj.x; G.y = by + _dj.y; G.z = bz + _dj.z;
     G.vx = bvx + _dj.vx; G.vy = bvy + _dj.vy; G.vz = bvz + _dj.vz;

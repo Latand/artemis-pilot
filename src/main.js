@@ -54,10 +54,10 @@ import { initHints, hintTick } from "./hints.js";
 import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
 import {
     ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId,
-    refreshActiveStars, getFocusedSystem,
+    refreshActiveStars, getFocusedSystem, getCachedFocusedSystem,
 } from "./universe/activeStars.js";
 import { initSystemRender, updateSystemRender, planetScenePosition } from "./render/systemBodies.js";
-import { planetFocusIndex } from "./universe/planetarySystem.js";
+import { planetFocusIndex, planetWorldState } from "./universe/planetarySystem.js";
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
@@ -917,6 +917,7 @@ registerNearTierOnly(
     hovLine, hovCone, focusVelLine, focusVelCone,
 );
 const _hv = { vx: 0, vy: 0 };
+const _planetWorld = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 const upHover = new THREE.Vector3(0, 1, 0);
 const hovDir = new THREE.Vector3();
 const focusVel = { vx: 0, vy: 0 };
@@ -1367,6 +1368,12 @@ function frame() {
             // teleport a high-latitude ship back to the equatorial plane.
             let cx = 0, cy = 0, cz = 0;
             if (G.landed.body === "planet") { cx = eph.plX[G.landed.i]; cy = eph.plY[G.landed.i]; cz = eph.plZ ? eph.plZ[G.landed.i] : 0; }
+            else if (G.landed.body === "sysplanet") {
+                const sys = getCachedFocusedSystem();
+                if (sys?.starId === G.landed.starId && planetWorldState(sys, G.landed.i, sys.hostStar, G.t, _planetWorld)) {
+                    cx = _planetWorld.x - eph.earthX; cy = _planetWorld.y - eph.earthY; cz = _planetWorld.z;
+                }
+            }
             else if (G.landed.body !== "earth") { moonState(G.t, _m); cx = _m.mx; cy = _m.my; cz = eph.moonZ || 0; }
             const rdx = G.x - cx, rdy = G.y - cy, rdz = G.z - cz;
             const rlen = Math.hypot(rdx, rdy, rdz) || 1;

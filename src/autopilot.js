@@ -1,7 +1,8 @@
-import { MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, STARS, MAIN_A, ROT_RATE, SOI_M } from "./constants.js";
+import { MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, STARS, MAIN_A, ROT_RATE, SOI_M, AU_KM } from "./constants.js";
 import { G } from "./state.js";
 import { eph, moonState, planetVel } from "./ephemeris.js";
-import { activeStarForFocus } from "./universe/activeStars.js";
+import { activeStarForFocus, getCachedFocusedSystem } from "./universe/activeStars.js";
+import { planetFocusIndex, planetWorldState } from "./universe/planetarySystem.js";
 
 // Flight computer: flies the ship so the player can watch the physics, and
 // hands the stick back the instant any manual input arrives.
@@ -13,6 +14,7 @@ export const AP = { mode: "off", phase: "", msg: "", target: null };
 
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 const _pv = { vx: 0, vy: 0 };
+const _pw = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 
 // target state in the ship's Earth-relative frame
 function targetState(t) {
@@ -25,6 +27,18 @@ function targetState(t) {
     if (t === "moon") { moonState(G.t, _m); return { x: _m.mx, y: _m.my, z: 0, vx: _m.vmx, vy: _m.vmy, vz: 0, R: R_MOON, mu: MU_M, name: "MOON", soi: SOI_M }; }
     if (t === "earth") return { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, R: R_EARTH, mu: MU_E, name: "EARTH", soi: 924000 };
     if (t === "sun") return { x: eph.sunX, y: eph.sunY, z: 0, vx: eph.sunVx, vy: eph.sunVy, vz: 0, R: R_SUN, mu: MU_S, name: "SUN", soi: 5e9 };
+    const pi = planetFocusIndex(t);
+    if (pi >= 0) {
+        const sys = getCachedFocusedSystem();
+        const p = sys?.planets?.[pi];
+        if (!p || !planetWorldState(sys, pi, sys.hostStar, G.t, _pw)) return null;
+        const soi = Math.max(p.radiusKm * 3, p.a * AU_KM * Math.pow(p.mu / Math.max(1, sys.hostStar?.mu || MU_S), 0.4));
+        return {
+            x: _pw.x - eph.earthX, y: _pw.y - eph.earthY, z: _pw.z,
+            vx: _pw.vx - eph.earthVx, vy: _pw.vy - eph.earthVy, vz: _pw.vz,
+            R: p.radiusKm, mu: p.mu, name: p.name || ("P" + (pi + 1)), soi,
+        };
+    }
     const m = typeof t === "string" && t.match(/^star:(\d+)$/);
     if (m) {
         const st = STARS[+m[1]];
