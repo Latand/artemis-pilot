@@ -285,20 +285,25 @@ void main() {
     // Relative flow speed (tVis) now mostly modulates BRIGHTNESS further
     // below rather than raw length.
     float camDist = max(distance(p, uCam), 1e-4);
-    float lenSpeedMod = mix(0.6, 1.3, pow(tVis, 0.6));
+    float lenSpeedMod = mix(0.25, 2.6, pow(tVis, 0.6));
     float minL = camDist * 0.0006;
     float maxL = camDist * 0.028 * loadTrim * timeTrim;
     float L = clamp(camDist * 0.01 * mix(0.5, 1.6, warpInk) * loadTrim * timeTrim * lenSpeedMod, minL, maxL);
     // fades: volume edge, camera proximity, sink proximity
     // (p is already relative to the river's own center — see uCenterShift)
     float fade = clamp(1.0 - (length(p) - uRadius * 0.52) / (uRadius * 0.48), 0.0, 1.0);
-    float camBlind = mix(uRadius * 0.10, uRadius * 0.018, uLocalFocus);
-    float camFadeBand = mix(uRadius * 0.45, uRadius * 0.16, uLocalFocus);
+    float camBlind = mix(uRadius * 0.045, uRadius * 0.018, uLocalFocus);
+    float camFadeBand = mix(uRadius * 0.30, uRadius * 0.16, uLocalFocus);
     fade *= clamp((distance(p, uCam) - camBlind) / max(1e-6, camFadeBand), 0.0, 1.0);
     fade *= 0.55 + 0.45 * hash13(vec3(ref * 53.7, 7.77)); // per-streak variety
     // golden when the Sun's river dominates locally, violet when expansion wins
-    float sunPart = uBody[2].w * inversesqrt(max(uSink[2] * 0.5, distance(p, uBody[2].xyz)));
-    float gold = smoothstep(0.5, 0.95, clamp(sunPart / spd, 0.0, 1.0));
+    float dSun = distance(p, uBody[2].xyz);
+    float sunPart = uBody[2].w * inversesqrt(max(uSink[2] * 0.5, dSun));
+    // gold = Sun-dominated infall as palette language, confined to the inner
+    // system (full inside ~0.47 AU, gone by ~1.07 AU): at survey scale
+    // sunPart dominates the whole field and painted everything gold ("the
+    // Sun is on fire"); outside, the neutral blue field color takes over
+    float gold = smoothstep(0.5, 0.95, clamp(sunPart / spd, 0.0, 1.0)) * (1.0 - smoothstep(7.0e4, 1.6e5, dSun));
     float expPart = length((p - uOrigin) * uDE);
     // only tint where expansion truly dominates the local flow — with the
     // Earth-centered origin a loose threshold painted the whole 1 AU shell
@@ -315,7 +320,8 @@ void main() {
         if (i >= uNB) break;
         float dSrc = distance(p, uBody[i].xyz);
         float bhCore = sourceCore(uSink[i], uHole[i]);
-        float surfaceBand = mix(uSink[i] * 1.5 + uRadius * 0.02, max(uRadius * 0.035, uSink[i] * 0.055), uLocalFocus);
+        float bandMul = i == 2 ? 3.0 : 1.0;
+        float surfaceBand = mix((uSink[i] * 1.5 + uRadius * 0.02) * bandMul, max(uRadius * 0.035, uSink[i] * 0.055), uLocalFocus);
         float regularSinkFade = clamp((dSrc - uSink[i]) / max(1e-6, surfaceBand), 0.0, 1.0);
         float bhSinkFade = smoothstep(bhCore * 0.9, max(bhCore * 9.0, uRadius * 0.13), dSrc);
         fade *= mix(regularSinkFade, bhSinkFade, uHole[i]);

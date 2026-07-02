@@ -119,6 +119,10 @@ const GLSL_SYNC = [
   "uSoi[chosen] > 0.0 ? min(uSoi[chosen] * 1.5, uRadius * 0.22) : uRadius * 0.22",
   "min(max(sink * 30.0, lo), max(hi, sink * 2.0))",
   "pow(h3, 1.6)",
+  "mix(0.25, 2.6, pow(tVis, 0.6))",
+  "mix(uRadius * 0.045, uRadius * 0.018, uLocalFocus)",
+  "(1.0 - smoothstep(7.0e4, 1.6e5, dSun))",
+  "float bandMul = i == 2 ? 3.0 : 1.0",
 ];
 for (const lit of GLSL_SYNC) {
   assert(src.includes(lit), "river.js GLSL out of sync with riverMath, missing literal: " + lit);
