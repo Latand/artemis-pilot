@@ -79,6 +79,7 @@ import { initMobileControls, updateMobileControls } from "./mobileControls.js";
 import { initAttitude, drawAttitude } from "./attitude.js";
 import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
+import { initUiMode, setXrPresenting } from "./uiMode.js";
 
 // ============================ WIRING ============================
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
@@ -233,6 +234,8 @@ initInput({ restart, openCatalogSearch: openCatalogSearchLazy });
 initScenarios({ restart });
 initHints();
 initVR({ restart });
+renderer.xr.addEventListener("sessionstart", () => setXrPresenting(true));
+renderer.xr.addEventListener("sessionend", () => setXrPresenting(false));
 initMobileControls({
     restart,
     cycleFocus() {
@@ -248,6 +251,7 @@ initLog();
 cinematic.bindCinematic({ camera, cam, G, renderer, setCamRoll, applyCameraRoll });
 cinematic.initCine();
 initQuickControls();
+initUiMode();
 
 // Camera/share-state must be applied before renderer warmup; otherwise startup
 // compiles the default low-orbit view, then immediately renders a different

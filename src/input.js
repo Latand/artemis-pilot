@@ -19,8 +19,9 @@ import { getCachedFocusedSystem } from "./universe/activeStars.js";
 import { planetFocusIndex, planetFocusValue } from "./universe/planetarySystem.js";
 import { setConstellationsVisible } from "./realSky.js";
 import { requestPlanetTexture, requestRealSkyLoad } from "./bodies.js";
-import { toggleCine } from "./cinematic.js";
+import { setCineOpen, toggleCine } from "./cinematic.js";
 import { toggleLog } from "./discoveryLog.js";
+import { cycleUiMode, isXrPresenting, setUiMode } from "./uiMode.js";
 
 export function setFocus(f) {
     G.focus = f;
@@ -77,11 +78,17 @@ export function initInput(hooks) {
     window.addEventListener("blur", () => keys.clear());
 }
 function onKeyDown(e) {
+    if (e.code === "Tab" && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.target?.tagName !== "INPUT" && !isXrPresenting()) {
+        e.preventDefault();
+        cycleUiMode();
+        return;
+    }
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
     initAudio();
     if (thrustGain?.context) { initAmbient(thrustGain.context); resumeAmbient(); }
     keys.add(e.code);
     if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code) && help.shown) hideHelp();
+    if (["KeyW", "ArrowUp", "KeyS", "ArrowDown"].includes(e.code) && G.uiMode === "observe") setUiMode("pilot");
     if (e.code === "KeyZ" && !e.shiftKey) G.throttle = Math.max(.05, G.throttle / 1.3);
     if (e.code === "KeyX" && !e.shiftKey) G.throttle = Math.min(100, G.throttle * 1.3);
     if (e.code === "KeyX" && e.shiftKey) apOff("cancelled", toast);
@@ -118,7 +125,10 @@ function onKeyDown(e) {
         case "Digit0": setFocus("ship"); break;
         case "KeyP":
             if (e.shiftKey) {
-                toggleCine();
+                if (G.uiMode !== "direct") {
+                    setUiMode("direct");
+                    setCineOpen(true);
+                } else toggleCine();
                 toast("Director panel");
             } else {
                 G.predict = !G.predict;
@@ -183,7 +193,10 @@ function onKeyDown(e) {
             }
             else focusNextStar();
             break;
-        case "KeyB": toggleBHPlacementMode(); break;
+        case "KeyB":
+            if (G.uiMode !== "direct") setUiMode("direct");
+            toggleBHPlacementMode();
+            break;
         case "KeyV": removeLastBH(); break;
         case "BracketLeft": BH.sizeIdx = Math.max(0, BH.sizeIdx - 1); break;
         case "BracketRight": BH.sizeIdx = Math.min(BH_SIZES.length - 1, BH.sizeIdx + 1); break;

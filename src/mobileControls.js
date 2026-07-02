@@ -10,6 +10,7 @@ import { requestRealSkyLoad } from "./bodies.js";
 import { toggleHelp } from "./hud.js";
 import { toggleScenarioMenu } from "./scenarios.js";
 import { toggleBHPlacementMode } from "./blackholes.js";
+import { setUiMode } from "./uiMode.js";
 
 const $ = id => document.getElementById(id);
 
@@ -154,7 +155,7 @@ function initMenu(hooks) {
         setConstellationsVisible(G.constellations);
     });
     bindTap("mNav", () => { setMenu(false); hooks.openNavigator?.(); });
-    bindTap("mBH", () => { setMenu(false); toggleBHPlacementMode(); });
+    bindTap("mBH", () => { setMenu(false); if (G.uiMode !== "direct") setUiMode("direct"); toggleBHPlacementMode(); });
     bindTap("mCatalog", () => { setMenu(false); hooks.openCatalogSearch?.(); });
     bindTap("mAuto", () => { setMenu(false); apTravelToFocus(toast); });
     bindTap("mApOff", () => apOff("cancelled", toast));

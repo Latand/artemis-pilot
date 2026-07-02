@@ -337,6 +337,25 @@ body.mode-cabin #hudTL, body.mode-cabin #hudTR, body.mode-cabin #hudBot,
 body.mode-cabin #flowPanel, body.mode-cabin #hint, body.mode-cabin .lbl,
 body.mode-cabin #simsBtn, body.mode-cabin #navBall, body.mode-cabin #navBtn, body.mode-cabin #navPanel { display: none !important; }
 
+/* ============ UI MODES ============ */
+body.mode-observe:not(.mode-xr) #objPanel,
+body.mode-observe:not(.mode-xr) #bhPlacer,
+body.mode-observe:not(.mode-xr) #navBall,
+body.mode-observe:not(.mode-xr) #hudBot,
+body.mode-observe:not(.mode-xr) #hudTL .gauge,
+body.mode-observe:not(.mode-xr) #throttleLine,
+body.mode-observe:not(.mode-xr) #vTrack,
+body.mode-observe:not(.mode-xr) #bhLine,
+body.mode-observe:not(.mode-xr) #tdeLine {
+  display: none !important;
+}
+body.mode-pilot:not(.mode-xr) #bhPlacer {
+  display: none !important;
+}
+body.mode-direct:not(.mode-xr) #bhPlacer {
+  display: block;
+}
+
 /* ============ SHARED BUTTONS ============ */
 .uiBtn { font-family: var(--font-ui); font-size: 11px; font-weight: 600; letter-spacing: .14em; color: var(--ink);
   cursor: pointer; background: rgba(13,18,26,.85); border: 1px solid var(--line-2); border-radius: var(--r-sm);

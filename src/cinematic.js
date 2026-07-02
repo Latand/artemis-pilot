@@ -258,13 +258,18 @@ export function initCine() {
     rebuildCine();
 }
 
+export function setCineOpen(open) {
+    if (!panel) initCine();
+    if (!panel) return false;
+    panel.style.display = open ? "block" : "none";
+    rebuildCine();
+    return !!open;
+}
+
 export function toggleCine() {
     if (!panel) initCine();
     if (!panel) return false;
-    const open = panel.style.display !== "block";
-    panel.style.display = open ? "block" : "none";
-    rebuildCine();
-    return open;
+    return setCineOpen(panel.style.display !== "block");
 }
 
 export function rebuildCine() {
