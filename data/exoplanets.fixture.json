@@ -1,0 +1,82 @@
+{
+  "generatedUTC": "fixture",
+  "count": 2,
+  "hosts": {
+    "cat:HD209458": {
+      "hostname": "HD 209458",
+      "hip": "108859",
+      "hd": "209458",
+      "raDeg": 330.79488,
+      "decDeg": 18.88432,
+      "distPc": 48.3,
+      "planets": [
+        {
+          "letter": "b",
+          "aAU": 0.04707,
+          "e": 0.0082,
+          "periodDays": 3.52474859,
+          "radiusMe": 15.22,
+          "massMe": 220.0,
+          "inclDeg": 86.71
+        }
+      ]
+    },
+    "cat:HIP108859": {
+      "hostname": "HD 209458",
+      "hip": "108859",
+      "hd": "209458",
+      "raDeg": 330.79488,
+      "decDeg": 18.88432,
+      "distPc": 48.3,
+      "planets": [
+        {
+          "letter": "b",
+          "aAU": 0.04707,
+          "e": 0.0082,
+          "periodDays": 3.52474859,
+          "radiusMe": 15.22,
+          "massMe": 220.0,
+          "inclDeg": 86.71
+        }
+      ]
+    },
+    "cat:HD 209458": {
+      "hostname": "HD 209458",
+      "hip": "108859",
+      "hd": "209458",
+      "raDeg": 330.79488,
+      "decDeg": 18.88432,
+      "distPc": 48.3,
+      "planets": [
+        {
+          "letter": "b",
+          "aAU": 0.04707,
+          "e": 0.0082,
+          "periodDays": 3.52474859,
+          "radiusMe": 15.22,
+          "massMe": 220.0,
+          "inclDeg": 86.71
+        }
+      ]
+    },
+    "cat:Blend Smoke": {
+      "hostname": "Blend Smoke",
+      "hip": null,
+      "hd": null,
+      "raDeg": 0,
+      "decDeg": 0,
+      "distPc": 10,
+      "planets": [
+        {
+          "letter": "b",
+          "aAU": 1.0,
+          "e": 0.02,
+          "periodDays": 365.25,
+          "radiusMe": 1.0,
+          "massMe": null,
+          "inclDeg": 89.0
+        }
+      ]
+    }
+  }
+}

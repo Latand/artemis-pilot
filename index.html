@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="description" content="Pilot a spacecraft through a live Three.js Earth-Moon and Solar System gravity sandbox with trajectory prediction, time warp, planets, black holes, and spacetime river flow." />
+  <meta property="og:title" content="Artemis Pilot" />
+  <meta property="og:description" content="Real-time Earth-Moon and Solar System gravity sandbox in Three.js." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="/social-preview.jpg" />
+  <meta property="og:image:width" content="1280" />
+  <meta property="og:image:height" content="640" />
+  <meta property="og:image:alt" content="Artemis Pilot spacecraft orbiting Earth through a spacetime river field." />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="Artemis Pilot" />
+  <meta name="twitter:description" content="Real-time Earth-Moon and Solar System gravity sandbox in Three.js." />
+  <meta name="twitter:image" content="/social-preview.jpg" />
+  <meta name="twitter:image:alt" content="Artemis Pilot spacecraft orbiting Earth through a spacetime river field." />
+  <meta name="theme-color" content="#04060a" />
+  <title>Artemis Pilot — Earth–Moon Gravity Sandbox</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='42' cy='28' r='8' fill='%238b95a3'/%3E%3Cpath d='M7 52 C 24 51, 54 43, 59 18' stroke='%23ff4226' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Orbitron:wght@600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    #cinePanel { position: absolute; right: 18px; top: 166px; width: 260px; display: none; z-index: 7; padding: 12px; }
+    #cinePanel .cineGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    #cinePanel .cineWide { grid-column: 1 / -1; }
+    #cinePanel button { font-family: var(--font-ui); font-size: 10px; letter-spacing: .08em; color: var(--ink); background: rgba(8,12,18,.78); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 8px; cursor: pointer; }
+    #cinePanel button:hover { color: #fff; border-color: var(--cyan); }
+    #cinePanel label { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-family: var(--font-ui); font-size: 10px; letter-spacing: .08em; color: var(--ink-2); }
+    #cineCountLine { margin-top: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--ice); }
+    body.mode-clean #hudTL, body.mode-clean #hudTR, body.mode-clean #hudBot,
+    body.mode-clean #flowPanel, body.mode-clean #hint, body.mode-clean #help,
+    body.mode-clean #simsBtn, body.mode-clean #simsMenu, body.mode-clean #navBtn,
+    body.mode-clean #navPanel, body.mode-clean #hygSearch, body.mode-clean #cinePanel,
+    body.mode-clean #mobileUI, body.mode-clean .lbl, body.mode-clean #cosmicScale,
+    body.mode-clean #banner, body.mode-clean #toasts, body.mode-clean #navBall { display: none !important; }
+  </style>
+  <script type="module" crossorigin src="./assets/index-CA6KobAl.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/three.module-BZcyeVFu.js">
+  <link rel="modulepreload" crossorigin href="./assets/activeStars-BSeWxV3U.js">
+  <link rel="modulepreload" crossorigin href="./assets/ephemeris-BjWxoZHZ.js">
+  <link rel="stylesheet" crossorigin href="./assets/index-iFW-9ElT.css">
+</head>
+<body>
+  <div id="root">
+    <div id="gl"></div>
+
+    <span class="lbl" id="lblE">EARTH</span>
+    <span class="lbl" id="lblM">MOON</span>
+    <span class="lbl" id="lblO" style="color:#ffd9d1">SHIP</span>
+    <span class="lbl" id="lblS" style="color:#ffe3a8">SUN</span>
+
+    <!-- ============ TOP-LEFT · FLIGHT DECK ============ -->
+    <div id="hudTL" class="panel panel--ember">
+      <div class="brand">
+        <span class="brand__mark" aria-hidden="true">
+          <svg width="30" height="20" viewBox="0 0 30 20">
+            <circle cx="22.5" cy="10" r="3.1" fill="#8b95a3"></circle>
+            <path d="M2 17 C 10 17, 26 14, 27.5 7" stroke="#ff4226" stroke-width="2.1" fill="none" stroke-linecap="round"></path>
+          </svg>
+        </span>
+        <span class="brand__word">ARTEMIS<i>PILOT</i></span>
+      </div>
+
+      <div class="met" id="met">T+ 00:00:00:00</div>
+      <div class="met__cap" id="civilDate">—</div>
+
+      <div class="chips">
+        <div id="warpLine" class="chip chip--warp">⏩ —</div>
+        <div id="engineLine" class="chip chip--engine">ENGINE OFF</div>
+      </div>
+
+      <div id="scaleLadder" class="chips">
+        <div id="scaleRung" class="chip">SCALE —</div>
+        <div id="lightTravel" class="chip">LIGHT —</div>
+      </div>
+
+      <div id="quickCtl">
+        <div class="qcRow"><span class="qcLab">ZOOM</span><button id="dZoomIn" class="qcBtn" type="button" aria-label="Zoom in">＋</button><button id="dZoomOut" class="qcBtn" type="button" aria-label="Zoom out">−</button></div>
+        <div class="qcRow"><span class="qcLab">WARP</span><button id="dWarpDown" class="qcBtn" type="button" aria-label="Slow time">≪</button><button id="dWarpUp" class="qcBtn" type="button" aria-label="Speed time">≫</button></div>
+      </div>
+
+      <div class="gauge">
+        <div class="gauge__label">PROPELLANT <span id="fuelTxt"></span></div>
+        <div id="fuelBar"><div id="fuelFill"></div></div>
+      </div>
+      <div id="throttleLine" class="metric">THROTTLE 100%</div>
+      <div id="bhLine" class="metric metric--bh">⚫ —</div>
+      <div id="tdeLine" class="metric metric--bh">◉ TDE —</div>
+
+      <div id="vTrack">
+        <div id="escToggle">ESC ▸ ESCAPE TRACKER</div>
+        <div id="vRows"></div>
+      </div>
+    </div>
+
+    <div id="hoverTip"></div>
+    <div id="cosmicScale">COSMIC SCALE</div>
+
+    <!-- attitude / heading dial: nose vs prograde/retrograde (the navball this sim was missing) -->
+    <div id="navBall" class="panel panel--cyan">
+      <div class="navBall__cap">ATTITUDE</div>
+      <canvas id="attCanvas" width="128" height="128" aria-label="Attitude indicator"></canvas>
+      <div id="navRead">HDG — · PRO —</div>
+    </div>
+
+    <!-- ============ TOP-RIGHT · MISSION + INSTRUMENTS ============ -->
+    <div id="hudTR">
+      <div class="panel panel--amber" id="objPanel">
+        <div class="panel__head">FLIGHT OBJECTIVES</div>
+        <ul id="objList"></ul>
+      </div>
+
+      <div id="bhPlacer" class="panel panel--violet" aria-live="polite">
+        <div id="bhPanelHead" class="panel__head"><span>BLACK HOLE SELECTOR</span><span id="bhModePill">B ARM</span></div>
+        <canvas id="bhPreviewCanvas" width="220" height="124" aria-label="Selected black hole preview"></canvas>
+        <div id="bhReadout">
+          <div><span>r<sub>s</sub></span><strong id="bhRsVal">—</strong></div>
+          <div><span>MASS</span><strong id="bhMassVal">—</strong></div>
+          <div><span>PW GRAVITY @ 3r<sub>s</sub></span><strong id="bhGravityVal">—</strong></div>
+        </div>
+        <div id="bhSizeRail" aria-label="Black hole size selector"></div>
+        <div id="bhPlaceHint">B arms placement · click the orbital plane</div>
+        <div id="bhActiveList"></div>
+      </div>
+
+      <div id="toasts"></div>
+    </div>
+
+    <!-- go-to navigator: direct destination picker (ship / planets+moons / stars / holes) -->
+    <button id="navBtn" class="uiBtn" type="button">◎ GO TO</button>
+    <div id="navPanel" class="panel panel--cyan" aria-live="polite">
+      <div id="navHead" class="panel__head"><span>GO TO · NAVIGATOR</span><button id="navClose" type="button">×</button></div>
+      <input id="navQuery" autocomplete="off" spellcheck="false" placeholder="FILTER PLANETS / MOONS / STARS" />
+      <div id="navList"></div>
+    </div>
+
+    <div id="logPanel" class="panel panel--cyan" aria-live="polite">
+      <div id="logHead" class="panel__head"><span>EXPEDITION LOG</span><button id="logClose" type="button">×</button></div>
+      <div id="logRecords"></div>
+      <div id="logList"></div>
+    </div>
+
+    <div id="cinePanel" class="panel panel--cyan" aria-live="polite">
+      <div class="panel__head"><span>DIRECTOR</span></div>
+      <div class="cineGrid">
+        <button id="cineAdd" type="button">ADD KEYFRAME</button>
+        <button id="cineDelete" type="button">DELETE LAST</button>
+        <button id="cinePlay" type="button">PLAY</button>
+        <button id="cineStop" type="button">STOP</button>
+        <button id="cineClear" class="cineWide" type="button">CLEAR</button>
+      </div>
+      <label><input id="cineClean" type="checkbox" /> CLEAN RENDER</label>
+      <div id="cineCountLine">KEYFRAMES <span id="cineCount">0</span></div>
+    </div>
+
+    <!-- star catalog: sibling of the rails so it can also surface as a mobile overlay -->
+    <div id="hygSearch" class="panel panel--cyan" aria-live="polite">
+      <div id="hygHead" class="panel__head"><span>STAR CATALOG</span><button id="hygClose" type="button">×</button></div>
+      <input id="hygQuery" autocomplete="off" spellcheck="false" placeholder="ACTIVE NEARBY / NAME / HIP / HD / HR / INDEX" />
+      <div id="hygResults"></div>
+    </div>
+
+    <!-- ============ TOP-CENTER · SPACETIME RIVER ============ -->
+    <div id="flowPanel" class="panel">
+      <div class="flow__title">SPACETIME FLOW · RIVER MODEL</div>
+      <div class="flow__row">
+        <span class="fl fl--cyan"><i id="flMode" class="flMode">INFALL</i> <b id="fFlow">—</b></span>
+        <span class="fl fl--violet">EXPANSION <b id="fDark">—</b></span>
+        <span class="fl fl--mint">HALO <b id="fHalo">—</b></span>
+        <span class="fl fl--mint">SYSTEM <b id="fSystem"></b></span>
+        <span class="fl fl--ember">SHIP <b id="fShip">—</b></span>
+        <span class="fl fl--ice">CLOCK <b id="fClock">—</b></span>
+        <span class="fl fl--warp" id="relLine" style="display:none">REL —</span>
+      </div>
+      <div class="flow__sub">
+        Earth v<sub>esc</sub> <b id="fEsc">—</b> · Moon v<sub>esc</sub> <b id="fEscM">—</b> · net g <b id="fAcc">—</b>
+      </div>
+    </div>
+
+    <div id="banner"></div>
+
+    <!-- ============ CONTROLS REFERENCE ============ -->
+    <div id="help">
+      <div class="help__inner panel">
+        <div class="help__title">CONTROLS<button id="helpClose" class="help__dismiss" type="button">✕ CLOSE</button></div>
+        <div class="help__keys">
+          <div class="kb__sec">FLIGHT</div>
+          <div class="kb"><span class="kb__k">W / ↑</span><span class="kb__d">main engine — thrust along the nose</span></div>
+          <div class="kb"><span class="kb__k">S / ↓</span><span class="kb__d">reverse thrust</span></div>
+          <div class="kb"><span class="kb__k">A / D, ← / →</span><span class="kb__d">rotate ship</span></div>
+          <div class="kb"><span class="kb__k">Q / E</span><span class="kb__d">RCS lateral translation</span></div>
+          <div class="kb"><span class="kb__k">SHIFT</span><span class="kb__d">×4 boost (needed to lift off Earth)</span></div>
+          <div class="kb"><span class="kb__k">Z / X</span><span class="kb__d">throttle ÷ / × — no upper limit</span></div>
+          <div class="kb"><span class="kb__k">T / Y</span><span class="kb__d">hold prograde / retrograde</span></div>
+
+          <div class="kb__sec">AUTOPILOT</div>
+          <div class="kb"><span class="kb__k">SHIFT+T</span><span class="kb__d">travel to the focused body / star</span></div>
+          <div class="kb"><span class="kb__k">SHIFT+C</span><span class="kb__d">circularize current orbit</span></div>
+          <div class="kb"><span class="kb__k">SHIFT+X</span><span class="kb__d">autopilot off (any manual input takes over)</span></div>
+
+          <div class="kb__sec">TIME</div>
+          <div class="kb"><span class="kb__k">1 – 9</span><span class="kb__d">time warp presets: real time … 1 yr/s</span></div>
+          <div class="kb"><span class="kb__k">, / .</span><span class="kb__d">warp ÷2 / ×2 — up to 1 Byr/s</span></div>
+          <div class="kb"><span class="kb__k">SPACE</span><span class="kb__d">pause</span></div>
+
+          <div class="kb__sec">CAMERA &amp; SCALE</div>
+          <div class="kb"><span class="kb__k">F</span><span class="kb__d">camera focus: ship → moon → earth → sun</span></div>
+          <div class="kb"><span class="kb__k">SHIFT+F</span><span class="kb__d">cycle the planets (Mercury … Neptune)</span></div>
+          <div class="kb"><span class="kb__k">C</span><span class="kb__d">cycle Solar / Milky Way / Local Group scale</span></div>
+          <div class="kb"><span class="kb__k">U</span><span class="kb__d">cycle nearby stellar destinations</span></div>
+          <div class="kb"><span class="kb__k">SHIFT+U</span><span class="kb__d">browse active stars / search HYG catalog</span></div>
+          <div class="kb"><span class="kb__k">J</span><span class="kb__d">toggle in-ship cabin view</span></div>
+          <div class="kb"><span class="kb__k">0 / click label</span><span class="kb__d">focus ship / focus body</span></div>
+          <div class="kb"><span class="kb__k">hold-drag ship</span><span class="kb__d">grab the ship, release with damped velocity</span></div>
+          <div class="kb"><span class="kb__k">RMB drag</span><span class="kb__d">pan — free camera, detached from any body</span></div>
+
+          <div class="kb__sec">VISUALIZATION</div>
+          <div class="kb"><span class="kb__k">P</span><span class="kb__d">trajectory prediction on/off</span></div>
+          <div class="kb"><span class="kb__k">G</span><span class="kb__d">spacetime river view on/off</span></div>
+          <div class="kb"><span class="kb__k">SHIFT+G</span><span class="kb__d">constellation guide lines on/off</span></div>
+          <div class="kb"><span class="kb__k">O</span><span class="kb__d">dark-energy expansion on/off</span></div>
+          <div class="kb"><span class="kb__k">SHIFT+O</span><span class="kb__d">Milky Way dark-matter halo on/off</span></div>
+
+          <div class="kb__sec">BLACK HOLES</div>
+          <div class="kb"><span class="kb__k">B</span><span class="kb__d">placement mode; click the plane to place</span></div>
+          <div class="kb"><span class="kb__k">ESC</span><span class="kb__d">exit black-hole placement mode</span></div>
+          <div class="kb"><span class="kb__k">N / click BH</span><span class="kb__d">focus next black hole + telemetry</span></div>
+          <div class="kb"><span class="kb__k">[ / ]</span><span class="kb__d">size: r_s 1 m … 5,000,000 km</span></div>
+          <div class="kb"><span class="kb__k">V</span><span class="kb__d">remove last black hole</span></div>
+
+          <div class="kb__sec">SYSTEM</div>
+          <div class="kb"><span class="kb__k">I</span><span class="kb__d">toggle limited-fuel challenge mode</span></div>
+          <div class="kb"><span class="kb__k">M</span><span class="kb__d">mute sound</span></div>
+          <div class="kb"><span class="kb__k">R</span><span class="kb__d">restart in low Earth orbit</span></div>
+          <div class="kb"><span class="kb__k">K / L</span><span class="kb__d">quicksave / quickload (browser storage)</span></div>
+          <div class="kb"><span class="kb__k">SHIFT+S</span><span class="kb__d">travel simulations menu</span></div>
+          <div class="kb"><span class="kb__k">H</span><span class="kb__d">this help</span></div>
+        </div>
+        <div class="help__legend">
+          <b>River colors:</b> <span class="fl--ember">red</span> ship velocity ·
+          <span class="fl--cyan">cyan</span> space infall ·
+          <span class="fl--violet">violet</span> dark-energy expansion ·
+          <span class="fl--mint">green</span> Milky Way halo ·
+          <span class="fl--amber">yellow</span> the nose. When cyan rivals red, the river wins — that's the turn.
+        </div>
+        <div class="help__note">
+          Physics runs live: RK4 world motion for Earth, Sun, Moon, planets, and
+          black holes, with Earth-local high-precision ship dynamics for launch,
+          landing, and atmosphere. All seven planets are in, true radii and μ,
+          each with its own SOI; you can land on the rocky ones.
+          Exponential Earth atmosphere below 160 km.
+          Black holes are real point masses (μ = r_s·c²/2) with the Paczyński–Wiita
+          potential for ISCO and capture. The river view follows v = √(2μ/r) and
+          uses a small visual core for tiny holes so their local direction stays readable. Dark energy adds the physical ΛCDM a = ΩΛH₀²r term,
+          visible from stellar-balance scale upward, and Shift+O adds the Milky Way dark-matter halo. Cosmic scale adds HYG real-star catalog points with estimated mass/radius/luminosity/temperature,
+          generated world-space stars, nearby named stars,
+          the Milky Way disk, Andromeda, Triangulum, and Local Group dwarf bodies.
+          Nearby named stars and a capped HYG physical subset are destinations with true light-year 3D RA/declination positions,
+          photosphere contact, and gravity in the live field. Holes and planets move through the live n-body field.
+          Drag to orbit the camera, scroll to zoom.
+          Aim for the Moon, capture orbit, land, come home — or dive into something dark.
+        </div>
+        <div class="help__cta">PRESS H OR START FLYING</div>
+      </div>
+    </div>
+
+    <div id="hint">H HELP · DRAG SHIP · J CABIN · U STARS · C COSMIC SCALE · P PREDICT</div>
+
+    <div id="cabinHud" aria-hidden="true">CABIN · DRAG TO LOOK · J EXTERNAL VIEW</div>
+
+    <!-- ============ BOTTOM · INSTRUMENT STRIP ============ -->
+    <div id="hudBot">
+      <div id="cells">
+        <div class="cell panel"><div class="cellL" id="cAltL">ALT · EARTH</div><div class="cellV" id="cAlt">—</div></div>
+        <div class="cell panel"><div class="cellL">VELOCITY</div><div class="cellV" id="cVel">—</div></div>
+        <div class="cell panel cell-dim"><div class="cellL" id="cApPeL">APO / PERI</div><div class="cellV" id="cApPe">—</div></div>
+        <div class="cell panel cell-dim"><div class="cellL">MOON DIST</div><div class="cellV" id="cMoon">—</div></div>
+        <div class="cell panel cell-dim"><div class="cellL">SUN DIST</div><div class="cellV" id="cSun">—</div></div>
+        <div class="cell panel cell-dim"><div class="cellL">Δv USED</div><div class="cellV" id="cDv">0 m/s</div></div>
+        <div class="cell panel cell-dim"><div class="cellL">GRAVITY PULL</div><div class="cellV" id="cGrav">—</div></div>
+      </div>
+    </div>
+
+    <!-- ============ MOBILE FLIGHT UI · portrait, gesture-first ============ -->
+    <div id="mobileUI" aria-label="Flight controls">
+      <!-- slim top telemetry -->
+      <div id="mTopBar">
+        <div class="mTel"><span>MET</span><b id="mMet">00:00:00</b></div>
+        <div class="mTel"><span>VEL</span><b id="mVel">—</b></div>
+        <div class="mTel"><span>ALT</span><b id="mAlt">—</b></div>
+        <div class="mTel mTel--mode"><span>MODE</span><b id="mMode">COAST</b></div>
+        <button id="mMenuBtn" type="button" aria-label="Open flight systems menu">☰</button>
+      </div>
+
+      <!-- on-screen warp (left) + zoom (right) so the core controls aren't buried -->
+      <div id="mWarpCtl">
+        <button id="mWarpDown2" class="mQc" type="button" aria-label="Slow time">≪</button>
+        <b id="mWarpVal">—</b>
+        <button id="mWarpUp2" class="mQc" type="button" aria-label="Speed time">≫</button>
+      </div>
+      <div id="mZoomCtl">
+        <button id="mZoomIn" class="mQc mQcRound" type="button" aria-label="Zoom in">＋</button>
+        <button id="mZoomOut" class="mQc mQcRound" type="button" aria-label="Zoom out">−</button>
+      </div>
+
+      <!-- bottom-left: attitude + boost -->
+      <div id="mLeft">
+        <div class="mAttRow">
+          <button id="mYawL" class="mTouch mHold" type="button" aria-label="Rotate left"><b>↺</b></button>
+          <button id="mYawR" class="mTouch mHold" type="button" aria-label="Rotate right"><b>↻</b></button>
+        </div>
+        <div class="mAttRow mAttRow--rcs">
+          <button id="mRcsL" class="mTouch mHold mTiny" type="button" aria-label="RCS strafe left"><b>◂</b><i>RCS</i></button>
+          <button id="mRcsR" class="mTouch mHold mTiny" type="button" aria-label="RCS strafe right"><b>▸</b><i>RCS</i></button>
+        </div>
+        <button id="mBoost" class="mTouch mHold mBoost" type="button" aria-label="Boost ×4">BOOST ×4</button>
+      </div>
+
+      <!-- bottom-right: vertical throttle (drag up = thrust, down = retro) -->
+      <div id="mThrottle" aria-label="Throttle">
+        <div id="mThrTrack">
+          <div id="mThrFill"></div>
+          <div id="mThrZero"></div>
+          <div id="mThrKnob"><b>⇕</b></div>
+        </div>
+        <div id="mThrCap">THROTTLE</div>
+      </div>
+
+      <!-- slide-up flight systems sheet -->
+      <div id="mMenu">
+        <div id="mMenuCard" class="panel">
+          <div id="mMenuHead"><span>FLIGHT SYSTEMS</span><button id="mMenuClose" type="button">✕ CLOSE</button></div>
+          <div id="mMenuStat">
+            <div><span>FOCUS</span><b id="mFocus">SHIP</b></div>
+            <div><span>WARP</span><b id="mWarp">—</b></div>
+          </div>
+          <div id="mMenuGrid">
+            <button id="mNav" class="mMItem mMItem--wide" type="button"><b>◎</b><i>GO TO · NAVIGATOR</i></button>
+            <button id="mWarpDown" class="mMItem" type="button"><b>≪</b><i>WARP −</i></button>
+            <button id="mWarpUp" class="mMItem" type="button"><b>≫</b><i>WARP +</i></button>
+            <button id="mPause" class="mMItem mTgl" type="button"><b>Ⅱ</b><i>PAUSE</i></button>
+            <button id="mFocusBtn" class="mMItem" type="button"><b>⌾</b><i>CYCLE</i></button>
+            <button id="mScaleBtn" class="mMItem" type="button"><b>⊙</b><i>SCALE</i></button>
+            <button id="mBH" class="mMItem" type="button"><b>⚫</b><i>EXOTIC</i></button>
+            <button id="mCatalog" class="mMItem" type="button"><b>★</b><i>STAR CATALOG</i></button>
+            <button id="mPredict" class="mMItem mTgl" type="button"><b>P</b><i>PREDICT</i></button>
+            <button id="mRiver" class="mMItem mTgl" type="button"><b>G</b><i>RIVER</i></button>
+            <button id="mConst" class="mMItem mTgl" type="button"><b>✦</b><i>GUIDES</i></button>
+            <button id="mAuto" class="mMItem" type="button"><b>➤</b><i>AUTOPILOT</i></button>
+            <button id="mApOff" class="mMItem" type="button"><b>⊘</b><i>AP OFF</i></button>
+            <button id="mSims" class="mMItem" type="button"><b>▦</b><i>SIMS</i></button>
+            <button id="mReset" class="mMItem" type="button"><b>⟳</b><i>RESET</i></button>
+            <button id="mHelpBtn" class="mMItem" type="button"><b>?</b><i>HELP</i></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <button id="simsBtn" class="uiBtn">▦ SIMS</button>
+
+    <div id="physCard"></div>
+
+    <!-- ============ TRAVEL SIMULATIONS ============ -->
+    <div id="simsMenu">
+      <div id="simsCard" class="panel">
+        <div id="simsHead"><span>TRAVEL SIMULATIONS</span><span id="simsClose">✕ CLOSE</span></div>
+        <div id="simsSub">Pre-flight states for the long crossing · physics is always live · ⇧S toggles this menu</div>
+        <div id="simsGrid"></div>
+      </div>
+    </div>
+
+    <!-- ============ INTRO / TITLE ============ -->
+    <div id="intro">
+      <div id="introCard" class="panel">
+        <div id="introLogo">
+          <svg width="48" height="32" viewBox="0 0 30 20" aria-hidden="true">
+            <circle cx="22.5" cy="10" r="3.1" fill="#8b95a3"></circle>
+            <path d="M2 17 C 10 17, 26 14, 27.5 7" stroke="#ff4226" stroke-width="2.1" fill="none" stroke-linecap="round"></path>
+          </svg>
+        </div>
+        <div id="introTitle">ARTEMIS PILOT</div>
+        <div id="introSub">VR TRAVEL SIMULATOR · LIVE PHYSICS</div>
+        <div id="introLore">
+          The crossing takes centuries. Your body will be regrown at the far end;
+          your mind rides the ship. While the hull coasts between stars you live here,
+          inside a physics-true simulation of the gravity outside the wall.
+          Fly it, warp it, break it — the autopilot hands you the stick and takes it back whenever you ask.
+        </div>
+        <div id="introBtns">
+          <button id="introEnter" class="uiBtn uiBtnHot">ENTER SIMULATION</button>
+          <button id="introSims" class="uiBtn">TRAVEL SIMULATIONS</button>
+        </div>
+      </div>
+    </div>
+    <script>try { if (localStorage.getItem("ap_introSeen")) document.getElementById("intro").style.display = "none"; } catch (e) { }</script>
+  </div>
+</body>
+</html>
