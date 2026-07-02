@@ -7,7 +7,8 @@ import { scene, renderer, camera, cam, renderQuality } from "./scene.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
-import { pulsePhaseRate, shellStep, shellOuterRadius, RIVER_VIS } from "./riverMath.js";
+import { pulsePhaseRate, shellStep, shellOuterRadius, frameBlendW, shipFrameW, frameVelToScene, RIVER_VIS } from "./riverMath.js";
+import { eph } from "./ephemeris.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
 // Positions live in a float texture advected by a compute pass; the analytic
@@ -106,6 +107,8 @@ const uniformsShared = {
     uSegs: { value: SEGS },
     uPhase: { value: 0 },
     uSoi: { value: soiVals },
+    uFrameVel: { value: new THREE.Vector3() },
+    uFrameW: { value: 0 },
 };
 
 const FLOW_GLSL = /* glsl */`
@@ -124,6 +127,8 @@ uniform float uTimeRate;
 uniform float uLoadShed;
 uniform float uLocalFocus;
 uniform float uSoi[${MAXB}];
+uniform vec3 uFrameVel;
+uniform float uFrameW;
 float sourceCore(float sink, float isHole) {
     // Tiny holes get a display core so their local flow direction stays visible.
     float visualBH = min(max(uRadius * 0.0008, 0.45), 64.0);
@@ -150,10 +155,15 @@ vec3 flowField(vec3 p) {
     vec3 raw = v + de;
     float rawLen = length(raw);
     float pullLen = length(pull);
-    if (rawLen < 1e-12 || pullLen < 1e-18) return raw;
+    if (rawLen < 1e-12 || pullLen < 1e-18) return raw - uFrameVel * uFrameW;
     float deShare = length(de) / max(rawLen, 1e-12);
     float deInk = smoothstep(0.45, 0.92, deShare);
-    return mix(normalize(pull) * rawLen, raw, deInk);
+    // Relative-frame display: near the focus body/ship the same field is
+    // drawn (and advected) in that body's rest frame — an exact boost of the
+    // universal contraction field, giving the "carried by the current"
+    // reading without adding any field component. uFrameW is 0 at survey
+    // zoom, so the wide view stays the Sun-frame river.
+    return mix(normalize(pull) * rawLen, raw, deInk) - uFrameVel * uFrameW;
 }
 float hash13(vec3 p3) {
     p3 = fract(p3 * .1031);
@@ -536,6 +546,8 @@ const shellAnchorColor = new THREE.Color();
 let shellAnchorC = 0, shellAnchorSink = 1, shellAnchorROut = 170;
 let shellAnchorIdx = -1, shellAnchorLive = false, shellAnchorSwitched = false;
 const shellRnd = mulberry32(20260702);
+let frameW = 0, lastFrameKind = -1, lastFrameIdx = -1;
+const frameVelScene = [0, 0, 0];
 const smoothCenter = new THREE.Vector3();
 // Absolute (scene-space, float64-as-JS-number) center from the previous
 // frame, used only to compute uCenterShift — never uploaded to the GPU
@@ -649,33 +661,56 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     }
     const planeBias = smooth01(6000, 420000, cam.dist);
     let localFocus = 0;
+    let frameKind = -1, frameIdx = -1;  // 0 earth, 1 moon, 2 sun, 3 planet i, 4 hole i, 5 ship
     const earthCamD = WORLD.earthDestroyed ? Infinity : camera.position.distanceTo(earthV);
     const earthClear = Math.max(0, earthCamD - R_EARTH * K);
     if (!WORLD.earthDestroyed) {
         const orbitalView = 1 - smooth01(0.06, 9.5, earthClear);
         const lowOrbitView = 1 - smooth01(0.18, 80, earthClear);
-        localFocus = Math.max(localFocus, Math.max(orbitalView, lowOrbitView * .92));
+        const cand = Math.max(orbitalView, lowOrbitView * .92); if (cand > localFocus) { localFocus = cand; frameKind = 0; }
     }
     if (!WORLD.moonDestroyed) {
         const clear = Math.max(0, camera.position.distanceTo(moonV) - R_MOON * K);
-        localFocus = Math.max(localFocus, 0.82 * (1 - smooth01(16, 180, clear)));
+        const cand = 0.82 * (1 - smooth01(16, 180, clear)); if (cand > localFocus) { localFocus = cand; frameKind = 1; }
     }
     if (!WORLD.sunDestroyed) {
         const clear = Math.max(0, camera.position.distanceTo(sunPosV) - SUN_RADIUS);
-        localFocus = Math.max(localFocus, 0.96 * (1 - smooth01(SUN_RADIUS * 0.18, SUN_RADIUS * 7.5, clear)));
+        const cand = 0.96 * (1 - smooth01(SUN_RADIUS * 0.18, SUN_RADIUS * 7.5, clear)); if (cand > localFocus) { localFocus = cand; frameKind = 2; }
     }
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) continue;
         const sink = PL[i].R * K;
         const clear = Math.max(0, camera.position.distanceTo(plPos[i]) - sink);
-        localFocus = Math.max(localFocus, 0.95 * (1 - smooth01(Math.max(8, sink * 1.5), Math.max(90, sink * 34), clear)));
+        const cand = 0.95 * (1 - smooth01(Math.max(8, sink * 1.5), Math.max(90, sink * 34), clear)); if (cand > localFocus) { localFocus = cand; frameKind = 3; frameIdx = i; }
     }
     for (let i = 0; i < BH.n; i++) {
         bhRiverPos.set(earthV.x + BH.sx[i], earthV.y, earthV.z + BH.sz[i]);
         const sink = Math.max(BH.sinkS[i], .45);
         const clear = Math.max(0, camera.position.distanceTo(bhRiverPos) - sink);
-        localFocus = Math.max(localFocus, 0.97 * (1 - smooth01(Math.max(16, sink * 3), Math.max(220, sink * 120), clear)));
+        const cand = 0.97 * (1 - smooth01(Math.max(16, sink * 3), Math.max(220, sink * 120), clear)); if (cand > localFocus) { localFocus = cand; frameKind = 4; frameIdx = i; }
     }
+    // Frame velocity from EXACT ephemeris state (never finite differences —
+    // those alias at high warp): world km/s = Earth world velocity + the
+    // body's Earth-relative velocity (eph fields, ephemeris.js:48-54), then
+    // the same axis map main.js applies to positions: (x,y,z)→(x·K, z·K, −y·K).
+    let frameTargetW = frameBlendW(localFocus);
+    let fvx = eph.earthVx, fvy = eph.earthVy, fvz = eph.earthVz;
+    if (frameKind === 1) { fvx += eph.moonVx; fvy += eph.moonVy; fvz += eph.moonVz; }
+    else if (frameKind === 2) { fvx += eph.sunVx; fvy += eph.sunVy; fvz += eph.sunVz; }
+    else if (frameKind === 3) { fvx += eph.plVx[frameIdx]; fvy += eph.plVy[frameIdx]; fvz += eph.plVz[frameIdx]; }
+    else if (frameKind === 4) { fvx += BH.vx[frameIdx]; fvy += BH.vy[frameIdx]; }
+    else if (frameKind === -1) {
+        // no body dominates: ship focus gives the first-person "carried by
+        // the river" frame, fading out toward the survey view (planeBias→1)
+        if (G.focus === "ship") { frameKind = 5; fvx += G.vx; fvy += G.vy; fvz += G.vz; frameTargetW = shipFrameW(planeBias); }
+        else { fvx = 0; fvy = 0; fvz = 0; frameTargetW = 0; }
+    }
+    if (frameKind !== lastFrameKind || frameIdx !== lastFrameIdx) frameW = 0; // snap on target switch, then ease in
+    lastFrameKind = frameKind; lastFrameIdx = frameIdx;
+    frameW += (frameTargetW - frameW) * Math.min(1, dtReal * RIVER_VIS.FRAME_EASE);
+    frameVelToScene(fvx, fvy, fvz, frameVelScene);
+    uniformsShared.uFrameVel.value.set(frameVelScene[0], frameVelScene[1], frameVelScene[2]);
+    uniformsShared.uFrameW.value = frameW;
     const nearEarthLoad = (1 - smooth01(38, 760, earthClear)) * (1 - smooth01(R_EARTH * K * 28, R_EARTH * K * 150, earthCamD));
     const loadShed = Math.max(0, Math.min(1, nearEarthLoad * (1 - localFocus * .78)));
     const zoomShed = smooth01(2.0e7, LY_SCENE * .18, cam.dist) * (1 - localFocus * .72);
