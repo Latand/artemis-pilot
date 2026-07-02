@@ -23,10 +23,20 @@
 // not applied to position anywhere in this module — Tier-1 stars are static
 // until a later work package decides an update cadence for real per-star
 // kinematics; this only reserves the storage and documents the gap.
+//
+// Brightness (WP16): the GPU `absMag` attribute holds each star's ABSOLUTE
+// magnitude (mag - 5*log10(distFromSol_pc/10)), computed once at ingest from
+// the raw AT-HYG apparent magnitude + its own decoded distance. The vertex
+// shader turns that into apparent brightness observer-relative to the live
+// camera every frame (src/render/viewBrightness.js's shared model) — this is
+// what keeps a tier-1 star's rendered brightness consistent with a tier-0 or
+// procedural star at the same camera distance, instead of forever reflecting
+// how bright it happens to look from Sol.
 
 import * as THREE from "three";
 import { PC_KM, K } from "../constants.js";
 import { worldToResidualArr } from "../universe/renderOrigin.js";
+import { BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, bvToTeff, teffToRGB, absMagFromApparent } from "./viewBrightness.js";
 
 export const GROUP_TILE_SPAN = 256;
 
@@ -66,67 +76,72 @@ export function addTileToLayout(layout, tileId, count) {
     return { offset, count, isNew: true };
 }
 
-// --- color ramp (same B-V/CI piecewise ramp as src/realSky.js's colorFromBV,
-// re-expressed against a reusable output array instead of THREE.Color so the
-// per-star ingest loop below allocates nothing) --------------------------
-
-function bvColor(ci, out) {
-    const t = Math.max(0, Math.min(1, ((Number.isFinite(ci) ? ci : .65) + .4) / 2.4));
-    let r, g, b;
-    if (t < .32) { r = .58 + t * 1.05; g = .72 + t * .75; b = 1.0; }
-    else if (t < .58) { r = .90 + (t - .32) * .38; g = .94 + (t - .32) * .18; b = 1.0 - (t - .32) * .38; }
-    else { r = 1.0; g = .98 - (t - .58) * .72; b = .82 - (t - .58) * .78; }
-    out[0] = Math.min(1, r); out[1] = Math.min(1, g); out[2] = Math.min(1, b);
+// --- color: true Teff-based hue via the shared blackbody LUT (WP16 b) ------
+// AT-HYG tier-1 only carries a color index (no tempK column), so every star's
+// hue comes from the Ballesteros B-V->Teff estimate feeding the same LUT the
+// other star layers use — replaces the old ad hoc 3-stop piecewise ramp.
+const _teffRGB = [1, 1, 1];
+function ciColor(ci, out) {
+    teffToRGB(bvToTeff(ci), _teffRGB);
+    out[0] = _teffRGB[0]; out[1] = _teffRGB[1]; out[2] = _teffRGB[2];
 }
 
-// --- magnitude -> size/alpha shader (numerics report §2 formulas) ----------
+// --- observer-relative magnitude -> size/alpha/HDR shader (WP16 a1) --------
+// Re-exported curve constants (same numbers as BRIGHTNESS_CURVE) kept for any
+// external caller/smoke that still references the old TIER1_* names.
+export const TIER1_BASE_PX = BRIGHTNESS_CURVE.basePx;
+export const TIER1_MAG_REF = BRIGHTNESS_CURVE.magRef;
+export const TIER1_MIN_PX = BRIGHTNESS_CURVE.minPx;
+export const TIER1_MAX_PX = BRIGHTNESS_CURVE.maxPx;
+export const TIER1_MAG_LIMIT = BRIGHTNESS_CURVE.magLimit;
 
-export const TIER1_BASE_PX = 6.0;
-export const TIER1_MAG_REF = 4.0;
-export const TIER1_MIN_PX = 0.6;
-export const TIER1_MAX_PX = 10.0;
-export const TIER1_MAG_LIMIT = 8.0;
-
-const VERT = `
+const VERT = /* glsl */`
 attribute vec3 color;
-attribute float mag;
+attribute float absMag;
 varying vec3 vColor;
-varying float vAlpha;
+varying float vHdr;
 uniform float uBasePx;
 uniform float uMagRef;
 uniform float uMinPx;
 uniform float uMaxPx;
 uniform float uMagLimit;
+uniform float uPcScene;
+${VIEW_BRIGHTNESS_GLSL}
 void main() {
     vColor = color;
-    float size = uBasePx * pow(10.0, -0.2 * (mag - uMagRef));
-    gl_PointSize = clamp(size, uMinPx, uMaxPx);
-    vAlpha = clamp(pow(10.0, -0.4 * (mag - uMagLimit)), 0.0, 1.0);
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    float camDistPc = length(mvPosition.xyz) / uPcScene;
+    float mag = obmApparentMagAt(absMag, camDistPc);
+    gl_PointSize = obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
+    vHdr = obmHdrIntensity(mag, uMagLimit);
     gl_Position = projectionMatrix * mvPosition;
 }
 `;
 
-const FRAG = `
+// PSF-style soft gaussian falloff (not a hard disc) with an HDR-boosted core
+// for the brightest stars, so they saturate toward white instead of clipping
+// into a flat disc (WP16 b).
+const FRAG = /* glsl */`
 varying vec3 vColor;
-varying float vAlpha;
+varying float vHdr;
 void main() {
     vec2 uv = gl_PointCoord - 0.5;
-    float d = dot(uv, uv);
-    if (d > 0.25) discard;
-    float edge = smoothstep(0.25, 0.1, d);
-    gl_FragColor = vec4(vColor, vAlpha * edge);
+    float r2 = dot(uv, uv);
+    float g = exp(-r2 * 14.0) + exp(-r2 * 60.0) * max(0.0, vHdr - 1.0) * 0.6;
+    if (g < 0.006) discard;
+    gl_FragColor = vec4(vColor * max(vHdr, 1.0), clamp(g, 0.0, 4.0));
 }
 `;
 
 function makeTier1Material() {
     return new THREE.ShaderMaterial({
         uniforms: {
-            uBasePx: { value: TIER1_BASE_PX },
-            uMagRef: { value: TIER1_MAG_REF },
-            uMinPx: { value: TIER1_MIN_PX },
-            uMaxPx: { value: TIER1_MAX_PX },
-            uMagLimit: { value: TIER1_MAG_LIMIT },
+            uBasePx: { value: BRIGHTNESS_CURVE.basePx },
+            uMagRef: { value: BRIGHTNESS_CURVE.magRef },
+            uMinPx: { value: BRIGHTNESS_CURVE.minPx },
+            uMaxPx: { value: BRIGHTNESS_CURVE.maxPx },
+            uMagLimit: { value: BRIGHTNESS_CURVE.magLimit },
+            uPcScene: { value: PC_KM * K },
         },
         vertexShader: VERT,
         fragmentShader: FRAG,
@@ -158,7 +173,7 @@ export function createTileGroups(parent, manifest, span = GROUP_TILE_SPAN) {
         magAttr.setUsage(THREE.DynamicDrawUsage);
         geometry.setAttribute("position", posAttr);
         geometry.setAttribute("color", colAttr);
-        geometry.setAttribute("mag", magAttr);
+        geometry.setAttribute("absMag", magAttr);
         geometry.setDrawRange(0, 0);
         const mesh = new THREE.Points(geometry, makeTier1Material());
         mesh.frustumCulled = false;
@@ -190,7 +205,7 @@ export function ingestTile(groups, tileId, tileData, span = GROUP_TILE_SPAN) {
     const { positions, magCi, pm } = tileData;
     const posArr = group.geometry.attributes.position.array;
     const colArr = group.geometry.attributes.color.array;
-    const magArr = group.geometry.attributes.mag.array;
+    const magArr = group.geometry.attributes.absMag.array;
     for (let i = 0; i < count; i++) {
         const si = offset + i;
         const pcX = positions[i * 3], pcY = positions[i * 3 + 1], pcZ = positions[i * 3 + 2];
@@ -199,15 +214,20 @@ export function ingestTile(groups, tileId, tileData, span = GROUP_TILE_SPAN) {
         worldToResidualArr(wx, wy, wz, posArr, si * 3, K);
         const mag = magCi[i * 2] / 100;
         const ci = magCi[i * 2 + 1] / 1000;
-        bvColor(ci, _tmpColor);
+        ciColor(ci, _tmpColor);
         colArr[si * 3] = _tmpColor[0]; colArr[si * 3 + 1] = _tmpColor[1]; colArr[si * 3 + 2] = _tmpColor[2];
-        magArr[si] = mag;
+        // Absolute magnitude derived once at ingest from AT-HYG's apparent
+        // (Sol-relative) mag + this same star's own decoded distance — the
+        // shader then re-derives apparent brightness from the live camera
+        // distance every frame (WP16 a1).
+        const distPc = Math.sqrt(pcX * pcX + pcY * pcY + pcZ * pcZ);
+        magArr[si] = absMagFromApparent(mag, distPc);
         group.pm[si * 2] = pm[i * 2]; group.pm[si * 2 + 1] = pm[i * 2 + 1];
     }
 
     const posAttr = group.geometry.attributes.position;
     const colAttr = group.geometry.attributes.color;
-    const magAttr = group.geometry.attributes.mag;
+    const magAttr = group.geometry.attributes.absMag;
     posAttr.addUpdateRange(offset * 3, count * 3); posAttr.needsUpdate = true;
     colAttr.addUpdateRange(offset * 3, count * 3); colAttr.needsUpdate = true;
     magAttr.addUpdateRange(offset, count); magAttr.needsUpdate = true;

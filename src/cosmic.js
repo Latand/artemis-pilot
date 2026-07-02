@@ -8,6 +8,9 @@ import { hygCatalogMetaUrl, loadHygCatalogData, rememberHygCatalogData } from ".
 import { makeGalaxyCloudAsync, galacticCenterScene, galacticRingPositions } from "./universe/starfield.js";
 import { registerHygCatalog } from "./universe/hygActiveCatalog.js";
 import { PERF, markPerf } from "./perf.js";
+import {
+    BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, bvToTeff, teffToRGB, absMagFromApparent,
+} from "./render/viewBrightness.js";
 
 // Galactic-centre position in scene units (toward Sgr A*, ~26,000 ly). The
 // procedural galaxy cloud and the real HYG catalog share this equatorial frame.
@@ -83,21 +86,20 @@ function colorMix(a, b, t, jitter = 0) {
     ];
 }
 
-function bvColor(ci, mag, out) {
-    const bv = Number.isFinite(ci) ? Math.max(-0.35, Math.min(2.0, ci)) : 0.65;
-    const t = Math.max(0, Math.min(1, (bv + .35) / 2.35));
-    let c;
-    if (t < .34) c = colorMix([.58, .68, 1.0], [.93, .96, 1.0], t / .34);
-    else if (t < .58) c = colorMix([.93, .96, 1.0], [1.0, .86, .58], (t - .34) / .24);
-    else c = colorMix([1.0, .86, .58], [1.0, .42, .28], (t - .58) / .42);
-    const gain = Math.max(.32, Math.min(1.55, 1.12 - ((Number.isFinite(mag) ? mag : 9) - 5) * .055));
-    out[0] = Math.min(1, c[0] * gain);
-    out[1] = Math.min(1, c[1] * gain);
-    out[2] = Math.min(1, c[2] * gain);
+// True Teff-based hue — no apparent-magnitude gain baked in (WP16 a1/b: color
+// is intrinsic, brightness is observer-relative and evaluated in the shader).
+function starColor(tempK, bv, out) {
+    return teffToRGB(tempK > 0 ? tempK : bvToTeff(bv), out);
 }
 
-function installCatalogObject(pos, col, count, stats) {
-    const obj = points({ pos, col }, 1.18, .5);
+function starAbsMag(lum, absMagField, mag, distPc) {
+    if (lum > 0) return -2.5 * Math.log10(lum) + 4.74;
+    if (Number.isFinite(absMagField)) return absMagField;
+    return absMagFromApparent(mag, distPc);
+}
+
+function installCatalogObject(pos, col, absMag, count, stats) {
+    const obj = viewBrightPoints(pos, col, absMag, { basePx: 1.9, maxPx: 14, opacity: .82 });
     obj.name = "HYG v4.1 catalog";
     catalogRoot.add(obj);
     catalogCount = count;
@@ -126,6 +128,7 @@ async function loadCatalogStarsFallback(reason) {
         const iRadius = field("radiusSolar");
         const iLum = field("lumSolar");
         const iTemp = field("tempK");
+        const iAbsMagField = field("absMag");
         const count = Math.floor(vals.length / stride);
         const keep = new Uint8Array(count);
         let kept = 0;
@@ -141,6 +144,7 @@ async function loadCatalogStarsFallback(reason) {
         }
         const pos = new Float32Array(kept * 3);
         const col = new Float32Array(kept * 3);
+        const absMag = new Float32Array(kept);
         const c = [1, 1, 1];
         const stats = {
             sourceCount: count,
@@ -157,21 +161,24 @@ async function loadCatalogStarsFallback(reason) {
             pos[out * 3] = xPc * PC_SCENE;
             pos[out * 3 + 1] = zPc * PC_SCENE;
             pos[out * 3 + 2] = -yPc * PC_SCENE;
-            bvColor(vals[j + iBv], vals[j + iMag], c);
-            col[out * 3] = c[0];
-            col[out * 3 + 1] = c[1];
-            col[out * 3 + 2] = c[2];
             const mass = iMass === null ? NaN : vals[j + iMass];
             const radius = iRadius === null ? NaN : vals[j + iRadius];
             const lum = iLum === null ? NaN : vals[j + iLum];
             const temp = iTemp === null ? NaN : vals[j + iTemp];
+            const absMagField = iAbsMagField === null ? NaN : vals[j + iAbsMagField];
+            const distPc = Math.sqrt(xPc * xPc + yPc * yPc + zPc * zPc);
+            absMag[out] = starAbsMag(lum, absMagField, vals[j + iMag], distPc);
+            starColor(temp, vals[j + iBv], c);
+            col[out * 3] = c[0];
+            col[out * 3 + 1] = c[1];
+            col[out * 3 + 2] = c[2];
             if (mass > 0) { stats.massEstimated++; stats.massSolarSum += mass; }
             if (radius > 0) stats.radiusEstimated++;
             if (lum > 0) stats.lumEstimated++;
             if (temp > 0) stats.tempEstimated++;
             out++;
         }
-        installCatalogObject(pos, col, kept, stats);
+        installCatalogObject(pos, col, absMag, kept, stats);
     } catch (err) {
         console.warn("HYG catalog layer unavailable", err);
         catalogLoading = false;
@@ -209,6 +216,7 @@ async function loadCatalogStars() {
                 installCatalogObject(
                     new Float32Array(msg.pos),
                     new Float32Array(msg.col),
+                    new Float32Array(msg.absMag),
                     msg.count,
                     msg.stats,
                 );
@@ -263,6 +271,68 @@ function makeLocalStars() {
         n++;
     }
     return { pos, col };
+}
+
+// Observer-relative-brightness point cloud: unlike `points()` (plain
+// PointsMaterial, size/alpha baked in at build time from apparent magnitude),
+// every star's on-screen size/alpha/HDR intensity is recomputed in the vertex
+// shader every frame from its absMag attribute and the live camera distance
+// (WP16 a1). This is what makes the catalog cloud's brightness match a
+// procedural star at the same camera distance instead of staying anchored to
+// "distance from Sol" — the fix for the near-Sun bubble at galaxy zoom.
+const PC_SCENE_UNITS = PC_SCENE;
+function viewBrightPoints(pos, col, absMag, opts = {}) {
+    const curve = { ...BRIGHTNESS_CURVE, ...opts };
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    geom.setAttribute("absMag", new THREE.BufferAttribute(absMag, 1));
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uBasePx: { value: curve.basePx },
+            uMagRef: { value: curve.magRef },
+            uMinPx: { value: curve.minPx },
+            uMaxPx: { value: curve.maxPx },
+            uMagLimit: { value: curve.magLimit },
+            uPcScene: { value: PC_SCENE_UNITS },
+            uOpacity: { value: curve.opacity ?? 1 },
+        },
+        vertexShader: /* glsl */`
+            attribute float absMag;
+            varying vec3 vColor;
+            varying float vHdr;
+            uniform float uBasePx, uMagRef, uMinPx, uMaxPx, uMagLimit, uPcScene;
+            ${VIEW_BRIGHTNESS_GLSL}
+            void main() {
+                vColor = color;
+                vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                float camDistPc = length(mvPosition.xyz) / uPcScene;
+                float mag = obmApparentMagAt(absMag, camDistPc);
+                gl_PointSize = obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
+                vHdr = obmHdrIntensity(mag, uMagLimit);
+                gl_Position = projectionMatrix * mvPosition;
+            }`,
+        fragmentShader: /* glsl */`
+            varying vec3 vColor;
+            varying float vHdr;
+            uniform float uOpacity;
+            void main() {
+                vec2 uv = gl_PointCoord - 0.5;
+                float r2 = dot(uv, uv);
+                float g = exp(-r2 * 14.0) + exp(-r2 * 60.0) * max(0.0, vHdr - 1.0) * 0.6;
+                if (g < 0.006) discard;
+                gl_FragColor = vec4(vColor * max(vHdr, 1.0), clamp(g, 0.0, 4.0) * uOpacity);
+            }`,
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending,
+    });
+    mat.userData.baseOpacity = curve.opacity ?? 1;
+    const obj = new THREE.Points(geom, mat);
+    obj.frustumCulled = false;
+    return obj;
 }
 
 function points(data, size, opacity) {
@@ -728,7 +798,12 @@ export function updateCosmicLayer() {
     }
     for (const child of catalogRoot.children) if (child.material) {
         child.visible = catalogVisible;
-        child.material.opacity = Math.min(1, (.68 + .30 * gal) * catalog * (1 - group * .48));
+        // viewBrightPoints is a custom ShaderMaterial: brightness is driven by
+        // its own uOpacity uniform (baked into vHdr/alpha in-shader), not the
+        // generic Material.opacity property other clouds here use.
+        const fade = Math.min(1, (.68 + .30 * gal) * catalog * (1 - group * .48));
+        if (child.material.uniforms?.uOpacity) child.material.uniforms.uOpacity.value = (child.material.userData.baseOpacity ?? 1) * fade;
+        else child.material.opacity = fade;
     }
     setTreeOpacity(localRoot, .16 + .84 * group);
     setTreeOpacity(deepRoot, deep);

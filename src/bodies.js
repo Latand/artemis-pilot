@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K } from "./constants.js";
+import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM } from "./constants.js";
 import { MOONS } from "./moons.js";
 import { mulberry32 } from "./format.js";
 import {
@@ -7,7 +7,8 @@ import {
     planetTextureProc, ringTextureProc, loadEarthNightMap, loadPlanetMap,
 } from "./textures.js";
 import { renderQuality, scene } from "./scene.js";
-import { initRealSky, realSkyReady, realSkyStatus } from "./realSky.js";
+import { initRealSky, realSkyReady, realSkyStatus, updateRealSkyFade } from "./realSky.js";
+import { BRIGHTNESS_CURVE, sunObservedMag, sizePxForMag, hdrIntensityForMag, teffToRGB, SUN_TEFF_K } from "./render/viewBrightness.js";
 
 export const sunPos = new THREE.Vector3();
 export let sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, galaxyBackdrop;
@@ -30,7 +31,10 @@ function shouldUseRealSky() {
     const flag = new URLSearchParams(location.search).get("realsky");
     if (flag === "1") return true;
     if (flag === "0") return false;
-    return false;
+    // Default ON since Wave 6: the real HYG naked-eye sky is a core
+    // requirement (readable constellations); ?realsky=0 opts out for
+    // low-bandwidth sessions.
+    return true;
 }
 
 function shouldLoadRealSkyImmediately() {
@@ -181,6 +185,49 @@ export function updateBodyShaders(camera, t) {
     if (u.sunUniforms) u.sunUniforms.uT.value = t;
 }
 
+// The Sun's own Teff (5772 K) run through the same blackbody LUT every other
+// star's color comes from — WP16 a2: from outside, the Sun IS an ordinary
+// star, so it must share every part of the model, color included.
+const SUN_TEFF_COLOR = teffToRGB(SUN_TEFF_K);
+// bodies.js doesn't own the renderer/canvas (main.js does), so the sprite's
+// pixel<->world-unit conversion uses a nominal reference viewport height
+// instead of the real one. This only shapes the halo's absolute on-screen
+// footprint (a cosmetic/artistic knob); the photometric quantities that the
+// WP16 gate actually checks — opacity and HDR color intensity — come
+// straight from the shared curve and don't depend on this constant.
+const SUN_NOMINAL_VIEWPORT_H = 900;
+
+/**
+ * Frozen contract (WP16 -> WP17): replaces the old inline sunGlow scale/
+ * opacity block in main.js. Implements a true inverse-square falloff with NO
+ * opacity floor and NO linear-with-distance size term (the old bugs that kept
+ * the Sun a constant over-bright blob from any distance) — brightness comes
+ * from the exact same observer-relative curve every other star uses,
+ * evaluated with the Sun's L=1 Lsun/Teff=5772K. Because both the "near
+ * corona glow" and "far star point" regimes are the SAME continuous function
+ * of camDistPc, there is no discrete sprite->point handoff to seam — the
+ * function is continuous by construction across the whole range (verified by
+ * smoke:brightness). Also drives the realSky naked-eye dome's distance fade,
+ * since "distance from the Sun" and "distance from Sol" are the same number.
+ */
+export function updateSunView(camera, camDistPc) {
+    const d = Math.max(camDistPc, 1e-9);
+    const mag = sunObservedMag(d);
+    const sizePx = sizePxForMag(mag, BRIGHTNESS_CURVE);
+    const hdr = hdrIntensityForMag(mag, BRIGHTNESS_CURVE); // unclamped: feeds HDR bloom up close
+    const pxScale = SUN_NOMINAL_VIEWPORT_H / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * .5));
+    const distScene = d * PC_KM * K;
+    const pointWorldScale = sizePx * distScene / Math.max(1e-6, pxScale);
+    // Size floor: never smaller than a sane multiple of the photosphere's own
+    // radius (a physical minimum for the corona-glow's footprint up close),
+    // NOT a brightness floor — opacity/color intensity below have none.
+    sunGlow.scale.setScalar(Math.max(SUN_RADIUS * 2.2, Math.min(SUN_RADIUS * 180, pointWorldScale)));
+    sunGlow.material.opacity = Math.min(1, Math.max(0, hdr));
+    const boost = Math.max(1, hdr); // >1 saturates the additive core toward white for bloom
+    sunGlow.material.color.setRGB(SUN_TEFF_COLOR[0] * boost, SUN_TEFF_COLOR[1] * boost, SUN_TEFF_COLOR[2] * boost);
+    updateRealSkyFade(d);
+}
+
 export function buildBodies(maps) {
     // ---- sun ----
     // point light, no decay: every planet gets lit from the Sun's true
@@ -271,7 +318,11 @@ export function buildBodies(maps) {
     }));
     scene.add(sunCorona);
     // soft glow only — no lens flare, it blocked the view ahead
-    sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,196,82,0.75)", "rgba(255,104,24,0.15)"), transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, opacity: .06 }));
+    // PSF-style soft gaussian dot (no square sprite); the texture itself is
+    // neutral white so the Sun's true Teff=5772K hue comes entirely from
+    // material.color, set every frame by updateSunView from the same
+    // blackbody LUT every other star uses.
+    sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,255,255,0.95)", "rgba(255,255,255,0.2)"), transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, opacity: .06 }));
     sunGlow.scale.setScalar(SUN_RADIUS * 2.2);
     scene.add(sunGlow);
     // ---- stars: three magnitude bands, blackbody-ish colors ----

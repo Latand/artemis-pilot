@@ -162,7 +162,9 @@ assert(
     riverSrc.includes("starFieldRelevant") &&
     riverSrc.includes("insertRiverStarPick") &&
     riverSrc.includes("ACTIVE_STARS") &&
-    riverSrc.includes("renderQuality.mobile ? 136 : 176") &&
+    // desktop river texture width traded 176 -> 124 in the WP22 redesign to
+    // offset the 2x vertex cost of curved segments (commit dc61483)
+    riverSrc.includes("renderQuality.mobile ? 136 : 124") &&
     riverSrc.includes("const RIVER_DENSITY_GAIN") &&
     riverSrc.includes("river.renderShed") &&
     riverSrc.includes("if (drawCount !== river.drawCount)") &&

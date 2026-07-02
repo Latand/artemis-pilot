@@ -1,24 +1,14 @@
-function colorMix(a, b, t) {
-    return [
-        a[0] * (1 - t) + b[0] * t,
-        a[1] * (1 - t) + b[1] * t,
-        a[2] * (1 - t) + b[2] * t,
-    ];
+import { bvToTeff, teffToRGB, absMagFromApparent } from "./render/viewBrightness.js";
+
+// True Teff-based hue (no apparent-magnitude gain baked in — WP16 a1/b: color
+// is intrinsic to the star, brightness comes from observer-relative
+// photometry evaluated per-frame in the point shader instead).
+function starColor(tempK, bv, out) {
+    const teff = tempK > 0 ? tempK : bvToTeff(bv);
+    return teffToRGB(teff, out);
 }
 
-function bvColor(ci, mag, out) {
-    const bv = Number.isFinite(ci) ? Math.max(-0.35, Math.min(2.0, ci)) : 0.65;
-    const t = Math.max(0, Math.min(1, (bv + .35) / 2.35));
-    let c;
-    if (t < .34) c = colorMix([.58, .68, 1.0], [.93, .96, 1.0], t / .34);
-    else if (t < .58) c = colorMix([.93, .96, 1.0], [1.0, .86, .58], (t - .34) / .24);
-    else c = colorMix([1.0, .86, .58], [1.0, .42, .28], (t - .58) / .42);
-    const gain = Math.max(.32, Math.min(1.55, 1.12 - ((Number.isFinite(mag) ? mag : 9) - 5) * .055));
-    out[0] = Math.min(1, c[0] * gain);
-    out[1] = Math.min(1, c[1] * gain);
-    out[2] = Math.min(1, c[2] * gain);
-}
-
+// Absolute magnitude (and from it, solar luminosity) for a catalog row: prefer
 self.onmessage = async e => {
     try {
         const { url, meta, vals: inputVals, pcScene, suppress = [] } = e.data;
@@ -50,6 +40,7 @@ self.onmessage = async e => {
         const iRadius = field("radiusSolar");
         const iLum = field("lumSolar");
         const iTemp = field("tempK");
+        const iAbsMag = field("absMag");
         const count = Math.floor(vals.length / stride);
         const keep = new Uint8Array(count);
         let kept = 0;
@@ -64,6 +55,12 @@ self.onmessage = async e => {
         }
         const pos = new Float32Array(kept * 3);
         const col = new Float32Array(kept * 3);
+        // Per-star absolute magnitude — the observer-relative photometric
+        // truth source. The shader turns this + camera distance into apparent
+        // brightness every frame, so it replaces the old "bake distance-from-
+        // Sol into the color gain" scheme (that's the root cause of the
+        // near-Sun brightness bubble at galaxy zoom: WP16 a1).
+        const absMag = new Float32Array(kept);
         const c = [1, 1, 1];
         const stats = {
             sourceCount: count,
@@ -76,17 +73,26 @@ self.onmessage = async e => {
         let out = 0;
         for (let i = 0, j = 0; i < count; i++, j += stride) {
             if (!keep[i]) continue;
-            pos[out * 3] = vals[j + iX] * pcScene;
-            pos[out * 3 + 1] = vals[j + iZ] * pcScene;
-            pos[out * 3 + 2] = -vals[j + iY] * pcScene;
-            bvColor(vals[j + iBv], vals[j + iMag], c);
-            col[out * 3] = c[0];
-            col[out * 3 + 1] = c[1];
-            col[out * 3 + 2] = c[2];
+            const xPc = vals[j + iX], yPc = vals[j + iY], zPc = vals[j + iZ];
+            pos[out * 3] = xPc * pcScene;
+            pos[out * 3 + 1] = zPc * pcScene;
+            pos[out * 3 + 2] = -yPc * pcScene;
             const mass = iMass === null ? NaN : vals[j + iMass];
             const radius = iRadius === null ? NaN : vals[j + iRadius];
             const lum = iLum === null ? NaN : vals[j + iLum];
             const temp = iTemp === null ? NaN : vals[j + iTemp];
+            const absMagField = iAbsMag === null ? NaN : vals[j + iAbsMag];
+            const mag = vals[j + iMag];
+            const distPc = Math.sqrt(xPc * xPc + yPc * yPc + zPc * zPc);
+            absMag[out] = lum > 0
+                ? -2.5 * Math.log10(lum) + 4.74
+                : Number.isFinite(absMagField)
+                    ? absMagField
+                    : absMagFromApparent(mag, distPc);
+            starColor(temp, vals[j + iBv], c);
+            col[out * 3] = c[0];
+            col[out * 3 + 1] = c[1];
+            col[out * 3 + 2] = c[2];
             if (mass > 0) { stats.massEstimated++; stats.massSolarSum += mass; }
             if (radius > 0) stats.radiusEstimated++;
             if (lum > 0) stats.lumEstimated++;
@@ -102,8 +108,9 @@ self.onmessage = async e => {
             meta: data,
             pos: pos.buffer,
             col: col.buffer,
+            absMag: absMag.buffer,
         };
-        const transfer = [pos.buffer, col.buffer];
+        const transfer = [pos.buffer, col.buffer, absMag.buffer];
         if (fetched) {
             msg.vals = vals.buffer;
             transfer.push(vals.buffer);

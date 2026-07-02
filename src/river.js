@@ -16,6 +16,18 @@ import { PERF, markPerf } from "./perf.js";
 // arcs per the redesign brief). Fixed at init per quality tier (not adjusted
 // live) since vertex count is baked into the geometry; mobile/VR keeps the
 // cheaper single straight segment.
+//
+// Deep-time / float32 precision: the GPU position texture and every uniform
+// are float32, but a warped ship can sit at scene coordinates many orders of
+// magnitude beyond float32's ~7-digit precision (e.g. after tens of Gyr of
+// dark-energy expansion). So nothing scene-absolute ever reaches the GPU:
+// every position (bodies, camera, the dark-energy origin, the particles
+// themselves) is expressed relative to `smoothCenter`, a float64 JS number
+// that tracks the camera and is subtracted on the CPU before upload. Because
+// `smoothCenter` itself moves every frame, the persistent particle-position
+// texture is re-based each frame by `uCenterShift` (this frame's center minus
+// last frame's, computed in float64) so stored positions keep meaning across
+// frames instead of drifting. See WP22 deep-time fix.
 const SEGS = renderQuality.mobile ? 1 : 2;
 // Desktop's default particle count is traded down (176 -> 124, ~1/sqrt(2))
 // so total line-vertex-shader work (particles * VPP, each vertex running the
@@ -70,7 +82,7 @@ const rsScene = mu => 2 * mu / C2 * K;
 const uniformsShared = {
     uPos: { value: null },
     uDtSim: { value: 0 },
-    uCenter: { value: new THREE.Vector3() },
+    uCenterShift: { value: new THREE.Vector3() },
     uOrigin: { value: new THREE.Vector3() },
     uRadius: { value: 22 },
     uCam: { value: new THREE.Vector3() },
@@ -102,7 +114,6 @@ uniform float uRs[${MAXB}];
 uniform float uHole[${MAXB}];
 uniform vec3 uColor[${MAXB}];
 uniform float uRadius;
-uniform vec3 uCenter;
 uniform vec3 uOrigin;
 uniform float uDE;
 uniform float uPlaneBias;
@@ -151,10 +162,19 @@ precision highp float;
 uniform sampler2D uPos;
 uniform float uDtSim, uTick, uRespawn;
 uniform vec3 uCam;
+uniform vec3 uCenterShift;
 varying vec2 vUv;
 ${FLOW_GLSL}
 void main() {
-    vec3 p = texture2D(uPos, vUv).xyz;
+    // Positions are stored relative to the river's own float64 center
+    // (see uCenterShift's declaration site in river.js), never in absolute
+    // scene coordinates, so they stay small — and float32-precise — no
+    // matter how far that center has drifted in world space. The center
+    // itself moves every frame (it tracks the camera), so before reusing
+    // last frame's stored position it is re-expressed relative to THIS
+    // frame's center by subtracting the frame-to-frame shift (computed in
+    // float64 on the CPU, where large-magnitude drift is lossless).
+    vec3 p = texture2D(uPos, vUv).xyz - uCenterShift;
     vec3 v = flowField(p);
     vec3 stp = v * uDtSim;
     float sl = length(stp);
@@ -162,7 +182,7 @@ void main() {
     if (sl > cap) stp *= cap / sl;
     p += stp;
     bool kill = hash13(vec3(vUv * 719.3, uTick + 9.7)) < uRespawn;
-    if (distance(p, uCenter) > uRadius * 1.04) kill = true;
+    if (length(p) > uRadius * 1.04) kill = true;
     for (int i = 0; i < ${MAXB}; i++) {
         if (i >= uSinkNB) break;
         float sink = sourceCore(uSink[i], uHole[i]);
@@ -204,7 +224,7 @@ void main() {
             p = uBody[chosen].xyz + vec3(cos(th) * rr, yy, sin(th) * rr) * rad;
         } else {
             float rad = uRadius * pow(h3, 0.3333333);
-            p = uCenter + vec3(cos(th) * rr, yy, sin(th) * rr) * rad;
+            p = vec3(cos(th) * rr, yy, sin(th) * rr) * rad;
         }
         // never spawn inside a sink: push out radially
         for (int i = 0; i < ${MAXB}; i++) {
@@ -255,7 +275,8 @@ void main() {
     float maxL = camDist * 0.028 * loadTrim * timeTrim;
     float L = clamp(camDist * 0.01 * mix(0.5, 1.6, warpInk) * loadTrim * timeTrim * lenSpeedMod, minL, maxL);
     // fades: volume edge, camera proximity, sink proximity
-    float fade = clamp(1.0 - (distance(p, uCenter) - uRadius * 0.52) / (uRadius * 0.48), 0.0, 1.0);
+    // (p is already relative to the river's own center — see uCenterShift)
+    float fade = clamp(1.0 - (length(p) - uRadius * 0.52) / (uRadius * 0.48), 0.0, 1.0);
     float camBlind = mix(uRadius * 0.10, uRadius * 0.018, uLocalFocus);
     float camFadeBand = mix(uRadius * 0.45, uRadius * 0.16, uLocalFocus);
     fade *= clamp((distance(p, uCam) - camBlind) / max(1e-6, camFadeBand), 0.0, 1.0);
@@ -443,8 +464,48 @@ export function warmRiverCompute() {
     return true;
 }
 
+// Test/diagnostic only (see scripts/smoke-river-deeptime.mjs): reads back a
+// strip of the live particle-position render target so a headless smoke can
+// assert the GPU-side simulation hasn't degenerated (gone all-NaN, all-zero,
+// or frozen to a single quantized point — the deep-time float32 collapse this
+// module's uCenterShift design exists to prevent). Not used by the render path.
+export function riverDebugReadPositions(rows = 4) {
+    if (!river.enabled || !rtA) return null;
+    const w = TEXW;
+    const h = Math.max(1, Math.min(rows, TEXW));
+    const px = new Float32Array(w * h * 4);
+    renderer.readRenderTargetPixels(rtA, 0, 0, w, h, px);
+    let finite = true, nonZero = 0, distinct = 0;
+    let hash = 2166136261;
+    let firstX = px[0], firstY = px[1], firstZ = px[2];
+    for (let i = 0; i < w * h; i++) {
+        const x = px[i * 4], y = px[i * 4 + 1], z = px[i * 4 + 2];
+        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) finite = false;
+        if (x !== 0 || y !== 0 || z !== 0) nonZero++;
+        if (Math.abs(x - firstX) > 1e-6 || Math.abs(y - firstY) > 1e-6 || Math.abs(z - firstZ) > 1e-6) distinct++;
+        hash = Math.imul(hash ^ (Math.round(x * 1000) & 0xffff), 16777619) >>> 0;
+        hash = Math.imul(hash ^ (Math.round(y * 1000) & 0xffff), 16777619) >>> 0;
+        hash = Math.imul(hash ^ (Math.round(z * 1000) & 0xffff), 16777619) >>> 0;
+    }
+    return {
+        finite, nonZero, distinct, sampled: w * h, hash,
+        center: { x: smoothCenter.x, y: smoothCenter.y, z: smoothCenter.z }, radius: smoothR,
+        // render placement: the lines mesh must carry the center back into
+        // world space (review C1 — particles are center-relative; a mesh left
+        // at origin renders the river displaced by -smoothCenter)
+        meshPos: lines ? { x: lines.position.x, y: lines.position.y, z: lines.position.z } : null,
+        visible: lines ? lines.visible : false,
+    };
+}
+
 let lastR = 0, lastCx = 0, lastCz = 0;
 const smoothCenter = new THREE.Vector3();
+// Absolute (scene-space, float64-as-JS-number) center from the previous
+// frame, used only to compute uCenterShift — never uploaded to the GPU
+// itself. Kept equal to smoothCenter on any frame that resets/snaps the
+// center so the shift is exactly zero instead of a stale, possibly huge
+// jump on the frame where the center relocates.
+const prevCenter = new THREE.Vector3();
 let smoothR = 0;
 const bhRiverPos = new THREE.Vector3();
 const riverStarPickIndex = new Int32Array(RIVER_STAR_SOURCE_MAX);
@@ -605,6 +666,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         smoothCenter.copy(c);
         smoothR = targetR;
         respawn = 1;
+        prevCenter.copy(smoothCenter); // first frame: no prior center to shift from
     } else {
         const move = Math.hypot(c.x - smoothCenter.x, c.y - smoothCenter.y, c.z - smoothCenter.z);
         const zoomDelta = Math.abs(Math.log(Math.max(1e-9, targetR / smoothR)));
@@ -618,15 +680,33 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
             smoothCenter.copy(c);
             smoothR = targetR;
             respawn = .28;
+            prevCenter.copy(smoothCenter); // hard snap: treat as a fresh center, zero shift
         }
     }
     respawn = Math.min(.18, respawn + localFocus * .075);
     river.radius = smoothR;
     lastR = smoothR; lastCx = smoothCenter.x; lastCz = smoothCenter.z;
-    uniformsShared.uCenter.value.copy(smoothCenter);
-    uniformsShared.uOrigin.value.copy(earthV);
+    // Particle positions live in the smoothCenter-relative frame (float32-safe
+    // at deep-time magnitudes); the mesh itself must carry the center back so
+    // the river renders around the focus, not at scene origin. The view*model
+    // translation cancels in float64 before any float32 upload, preserving the
+    // precision win (review C1).
+    lines.position.copy(smoothCenter);
+    lines.updateMatrixWorld();
+    // Everything handed to the GPU below is expressed relative to smoothCenter
+    // (float64 on the CPU) rather than in absolute scene coordinates, so it
+    // stays small and float32-precise regardless of how far smoothCenter has
+    // drifted in deep time/space. uCenterShift re-bases the persistent
+    // particle-position texture onto this frame's center (see COMPUTE_FRAG).
+    uniformsShared.uCenterShift.value.set(
+        smoothCenter.x - prevCenter.x,
+        smoothCenter.y - prevCenter.y,
+        smoothCenter.z - prevCenter.z,
+    );
+    prevCenter.copy(smoothCenter);
+    uniformsShared.uOrigin.value.set(earthV.x - smoothCenter.x, earthV.y - smoothCenter.y, earthV.z - smoothCenter.z);
     uniformsShared.uRadius.value = smoothR;
-    uniformsShared.uCam.value.copy(camera.position);
+    uniformsShared.uCam.value.set(camera.position.x - smoothCenter.x, camera.position.y - smoothCenter.y, camera.position.z - smoothCenter.z);
     uniformsShared.uRespawn.value = respawn;
     const deFade = G.darkEnergy ? smooth01(DARK_ENERGY.VISIBLE_START_KM * K, DARK_ENERGY.VISIBLE_FULL_KM * K, smoothR) : 0;
     uniformsShared.uDE.value = DARK_ENERGY.H_PHYS * deFade;
@@ -636,23 +716,25 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     if (PERF.enabled) markPerf("river.volume", performance.now() - riverVolumeT0, { radius: smoothR, respawn });
 
     const riverSourcesT0 = PERF.enabled ? performance.now() : 0;
-    bodyVals[0].set(earthV.x, earthV.y, earthV.z, WORLD.earthDestroyed ? 0 : FLOW.CE);
+    // Every body position below is written relative to smoothCenter (see the
+    // uCenterShift comment above) rather than in absolute scene coordinates.
+    bodyVals[0].set(earthV.x - smoothCenter.x, earthV.y - smoothCenter.y, earthV.z - smoothCenter.z, WORLD.earthDestroyed ? 0 : FLOW.CE);
     sinkVals[0] = R_EARTH * K + .6;
     rsVals[0] = rsScene(MU_E);
     holeVals[0] = 0;
     colorVals[0].set(0.22, 0.48, 1.0);
-    bodyVals[1].set(moonV.x, moonV.y, moonV.z, WORLD.moonDestroyed ? 0 : FLOW.CM);
+    bodyVals[1].set(moonV.x - smoothCenter.x, moonV.y - smoothCenter.y, moonV.z - smoothCenter.z, WORLD.moonDestroyed ? 0 : FLOW.CM);
     sinkVals[1] = R_MOON * K + .5;
     rsVals[1] = rsScene(MU_M);
     holeVals[1] = 0;
     colorVals[1].set(0.72, 0.76, 0.82);
-    bodyVals[2].set(sunPosV.x, sunPosV.y, sunPosV.z, WORLD.sunDestroyed ? 0 : FLOW.CS);
+    bodyVals[2].set(sunPosV.x - smoothCenter.x, sunPosV.y - smoothCenter.y, sunPosV.z - smoothCenter.z, WORLD.sunDestroyed ? 0 : FLOW.CS);
     sinkVals[2] = SUN_RADIUS * 1.08;
     rsVals[2] = rsScene(MU_S);
     holeVals[2] = 0;
     colorVals[2].set(1.0, 0.55, 0.13);
     for (let i = 0; i < PL.length; i++) {
-        bodyVals[3 + i].set(plPos[i].x, plPos[i].y, plPos[i].z, WORLD.plDestroyed[i] ? 0 : .001 * Math.sqrt(2 * PL[i].mu / 1000));
+        bodyVals[3 + i].set(plPos[i].x - smoothCenter.x, plPos[i].y - smoothCenter.y, plPos[i].z - smoothCenter.z, WORLD.plDestroyed[i] ? 0 : .001 * Math.sqrt(2 * PL[i].mu / 1000));
         sinkVals[3 + i] = PL[i].R * K;
         rsVals[3 + i] = rsScene(PL[i].mu);
         holeVals[3 + i] = 0;
@@ -660,7 +742,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     }
     let nb = 3 + PL.length;
     for (let i = 0; i < BH.n && nb < MAXB; i++, nb++) {
-        bodyVals[nb].set(earthV.x + BH.sx[i], earthV.y, earthV.z + BH.sz[i], BH.c[i] * Math.max(.08, BH.obsT[i] || 1));
+        bodyVals[nb].set(earthV.x + BH.sx[i] - smoothCenter.x, earthV.y - smoothCenter.y, earthV.z + BH.sz[i] - smoothCenter.z, BH.c[i] * Math.max(.08, BH.obsT[i] || 1));
         sinkVals[nb] = BH.sinkS[i];
         rsVals[nb] = BH.rs[i] * K;
         holeVals[nb] = 1;
@@ -686,7 +768,6 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
             const sx = s.x * K, sy = (s.z || 0) * K, sz = -s.y * K;
             const cStar = .001 * Math.sqrt(2 * s.mu / 1000);
             const sink = (s.bh ? s.rs : s.R) * K;
-            bodyVals[slot].set(sx, sy, sz, cStar);
             sinkVals[slot] = sink;
             rsVals[slot] = (s.bh ? s.rs : 2 * s.mu / C2) * K;
             holeVals[slot] = s.bh ? 1 : 0;
@@ -704,6 +785,16 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         riverStarUniformCount = flowStarCount;
     } else {
         flowCtx.starCount = starSourceCount;
+    }
+    // flowCtx.star{X,Y,Z} are cached ABSOLUTE positions (also consumed by
+    // flowfield.js's CPU-side flowVel(), which needs absolute coordinates),
+    // refreshed only when the star selection itself changes above. smoothCenter
+    // moves every frame though, so the GPU-facing residual is re-derived here
+    // unconditionally — reusing a stale residual between cache refreshes would
+    // silently drift each star's apparent position in the flow field.
+    for (let p = 0; p < flowCtx.starCount; p++) {
+        const slot = sinkSourceCount + p;
+        bodyVals[slot].set(flowCtx.starX[p] - smoothCenter.x, flowCtx.starY[p] - smoothCenter.y, flowCtx.starZ[p] - smoothCenter.z, flowCtx.starC[p]);
     }
     nb = sinkSourceCount + flowCtx.starCount;
     uniformsShared.uNB.value = nb;
@@ -724,12 +815,15 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         starUniformDirty || respawn > .08 ||
         vRefMove > Math.max(12, smoothR * .025) || vRefRadiusDelta > .05;
     if (vRefDue) {
-        // Color/length normalization follows the same absolute field as the
-        // shader, using a local representative radius for each source.
+        // Color/length normalization follows the same field as the shader,
+        // using a local representative radius for each source. bodyVals[i]
+        // already holds each body's position relative to smoothCenter (see
+        // above), so its own length IS the distance from smoothCenter to the
+        // body — no separate subtraction needed here.
         let best = 0, bestS = -1, bestTyp = .01;
         let typSampleCount = 0;
         for (let i = 0; i < nb; i++) {
-            const dC = Math.max(sinkVals[i], Math.hypot(smoothCenter.x - bodyVals[i].x, smoothCenter.y - bodyVals[i].y, smoothCenter.z - bodyVals[i].z));
+            const dC = Math.max(sinkVals[i], Math.hypot(bodyVals[i].x, bodyVals[i].y, bodyVals[i].z));
             const typ = bodyVals[i].w / Math.sqrt(Math.max(sinkVals[i], Math.max(dC - smoothR, sinkVals[i])));
             typSampleCount = insertTypSample(typ, typSampleCount);
             if (typ > bestS) { bestS = typ; best = i; bestTyp = typ; }

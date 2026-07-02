@@ -3,20 +3,26 @@ import { STAR_CATALOG_META } from "./constants.js";
 import { G } from "./state.js";
 import { dotTexture } from "./textures.js";
 import { PERF, markPerf } from "./perf.js";
+import { SKY_CURVE, bvToTeff, teffToRGB, sizePxForMag, skyDomeFade } from "./render/viewBrightness.js";
 
 const SKY_R = 5.92e6;
 const MAG_LIMIT = 6.5;
 const LABEL_R = SKY_R * 0.985;
 const LINE_R = SKY_R * 0.992;
 
-const MAG_BANDS = [
-    { max: 0.5, size: 6.25, opacity: 1.0 },
-    { max: 1.5, size: 5.05, opacity: 1.0 },
-    { max: 2.5, size: 3.9, opacity: 1.0 },
-    { max: 3.5, size: 2.95, opacity: .98 },
-    { max: 5.0, size: 2.15, opacity: .94 },
-    { max: MAG_LIMIT, size: 1.52, opacity: .86 },
-];
+// Per-band size/opacity now come straight from the shared SKY_CURVE
+// (WP16 a3: constellation readability) instead of hand-tuned numbers, so a
+// bright star's dominance over a faint one is the same photometric ranking
+// every other star layer uses. Bands still exist to keep the draw-call
+// budget at 6 (one THREE.Points per band) — only their per-band size/opacity
+// values are now curve-derived, at each band's brightest (most legible) edge.
+const MAG_BAND_EDGES = [0.5, 1.5, 2.5, 3.5, 5.0, MAG_LIMIT];
+const MAG_BAND_OPACITY = [1.0, 1.0, .96, .88, .76, .6];
+const MAG_BANDS = MAG_BAND_EDGES.map((max, i) => ({
+    max,
+    size: sizePxForMag(i === 0 ? -1.2 : MAG_BAND_EDGES[i - 1], SKY_CURVE),
+    opacity: MAG_BAND_OPACITY[i],
+}));
 
 const ASTERISMS = [
     {
@@ -199,16 +205,14 @@ function dirFromRecord(vals, j, ix, iy, iz, out = new THREE.Vector3()) {
     return out.normalize();
 }
 
-function colorFromBV(bv, c = new THREE.Color()) {
-    const t = THREE.MathUtils.clamp((bv + .4) / 2.4, 0, 1);
-    if (t < .32) c.setRGB(.58 + t * 1.05, .72 + t * .75, 1.0);
-    else if (t < .58) c.setRGB(.90 + (t - .32) * .38, .94 + (t - .32) * .18, 1.0 - (t - .32) * .38);
-    else c.setRGB(1.0, .98 - (t - .58) * .72, .82 - (t - .58) * .78);
+// True Teff-based hue via the shared blackbody LUT (WP16 b): color is
+// intrinsic to the star, not brightened/dimmed by its apparent magnitude —
+// that job now belongs entirely to the per-band size/opacity curve above.
+const _teffRGB = [1, 1, 1];
+function colorFromTemp(tempK, bv, c = new THREE.Color()) {
+    teffToRGB(tempK > 0 ? tempK : bvToTeff(bv), _teffRGB);
+    c.setRGB(_teffRGB[0], _teffRGB[1], _teffRGB[2]);
     return c;
-}
-
-function magGain(mag) {
-    return THREE.MathUtils.clamp(Math.pow(10, -0.4 * (mag - 1.0)), .16, 6.4);
 }
 
 function makeLabelTexture(text, color = "#d9e7ff") {
@@ -234,13 +238,15 @@ function makeLabelTexture(text, color = "#d9e7ff") {
 }
 
 function addSkyLabel(parent, text, dir, scaleX, scaleY, color) {
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    const mat = new THREE.SpriteMaterial({
         map: makeLabelTexture(text, color),
         transparent: true,
         opacity: .94,
         depthTest: false,
         depthWrite: false,
-    }));
+    });
+    mat.userData.baseOpacity = .94;
+    const sprite = new THREE.Sprite(mat);
     sprite.position.copy(dir).multiplyScalar(LABEL_R);
     sprite.scale.set(scaleX, scaleY, 1);
     sprite.renderOrder = 3;
@@ -332,6 +338,7 @@ async function addConstellations(parent, meta, vals, indexes) {
             depthWrite: false,
             blending: THREE.AdditiveBlending,
         });
+        m.userData.baseOpacity = .42;
         const lines = new THREE.LineSegments(g, m);
         lines.frustumCulled = false;
         lines.renderOrder = -1;
@@ -370,13 +377,9 @@ async function addRealStars(parent, meta, vals, indexes) {
         const band = bands[bandIndex];
         band.pos.push(dir.x * SKY_R, dir.y * SKY_R, dir.z * SKY_R);
         const bv = vals[j + indexes.bv];
-        const c = colorFromBV(Number.isFinite(bv) ? bv : .65, color);
-        const gain = magGain(mag);
-        band.col.push(
-            Math.min(3.0, c.r * (.48 + gain * .62)),
-            Math.min(3.0, c.g * (.48 + gain * .62)),
-            Math.min(3.0, c.b * (.48 + gain * .62)),
-        );
+        const tempK = indexes.tempK != null ? vals[j + indexes.tempK] : NaN;
+        const c = colorFromTemp(tempK, Number.isFinite(bv) ? bv : .65, color);
+        band.col.push(c.r, c.g, c.b);
         visible++;
         if ((i & 2047) === 0) await yieldIfNeeded(slice);
     }
@@ -388,7 +391,7 @@ async function addRealStars(parent, meta, vals, indexes) {
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(band.pos), 3));
         g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(band.col), 3));
-        const pts = new THREE.Points(g, new THREE.PointsMaterial({
+        const mat = new THREE.PointsMaterial({
             vertexColors: true,
             size: MAG_BANDS[i].size,
             sizeAttenuation: false,
@@ -398,7 +401,9 @@ async function addRealStars(parent, meta, vals, indexes) {
             depthWrite: false,
             map: sprite,
             blending: THREE.AdditiveBlending,
-        }));
+        });
+        mat.userData.baseOpacity = MAG_BANDS[i].opacity;
+        const pts = new THREE.Points(g, mat);
         pts.frustumCulled = false;
         pts.renderOrder = -2;
         parent.add(pts);
@@ -428,6 +433,7 @@ async function loadRealSky() {
         zPc: fieldIndex(meta, "zPc"),
         bv: fieldIndex(meta, "bv"),
         mag: fieldIndex(meta, "mag"),
+        tempK: meta.fields.indexOf("tempK") >= 0 ? meta.fields.indexOf("tempK") : null,
     };
     await idleSlice();
     await addRealStars(root, meta, vals, indexes);
@@ -466,4 +472,24 @@ export function setConstellationsVisible(visible) {
 
 export function realSkyStatus() {
     return { ...status };
+}
+
+// WP16 a1: the fixed-distance-shell naked-eye dome only makes sense within
+// the solar neighborhood — once the camera is 50-500 pc from Sol it fades to
+// fully invisible (an "Earth sky" is meaningless from that far away). Every
+// material this touches carries a userData.baseOpacity set at creation time
+// so repeated calls re-derive from the same baseline instead of compounding.
+let lastDomeFade = 1;
+export function updateRealSkyFade(camDistFromSolPc) {
+    if (!root) return;
+    const fade = skyDomeFade(camDistFromSolPc);
+    if (Math.abs(fade - lastDomeFade) < .004) return;
+    lastDomeFade = fade;
+    root.visible = fade > .003;
+    if (!root.visible) return;
+    root.traverse(obj => {
+        if (!obj.material) return;
+        const base = obj.material.userData.baseOpacity ?? obj.material.opacity;
+        obj.material.opacity = base * fade;
+    });
 }

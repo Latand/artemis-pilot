@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import {
     R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
-    MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS,
+    MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS, PC_KM,
     OMEGA_EARTH, FUEL_DV0, warpLabel,
 } from "./constants.js";
 import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
@@ -12,11 +12,12 @@ import { loadAllMaps } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
     renderQuality, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
+    farTierGroup, renderSceneTiered, registerNearTierOnly,
 } from "./scene.js";
 import {
     buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
     plGroups, plSurfaces, plGlows, plOrbitRings, plLabels, galaxyBackdrop, sunDirW, updateBodyShaders, scheduleDeferredRealSkyLoad, requestEarthNightTexture,
-    moonGroups, moonSurfaces, moonGlows, moonLabels,
+    moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
 import { MOONS, moonOffset, moonFocusValue, moonFocusIndex, MOON_LABEL_DIST } from "./moons.js";
 import { addStarVisual, buildStars, updateStars } from "./stars.js";
@@ -61,7 +62,8 @@ import {
 import { equatorialKmToGal } from "./universe/coords.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats } from "./universe/athygTier1.js";
 import { getOrigin, maybeRebase } from "./universe/renderOrigin.js";
-import { PERF, markPerf } from "./perf.js";
+import { PERF, markPerf, sampleRendererInfo, sampleMemory } from "./perf.js";
+import { initXrPerf, tickXrPerf, shouldGateBloom } from "./render/xrPerf.js";
 import { initMobileControls, updateMobileControls } from "./mobileControls.js";
 import { initAttitude, drawAttitude } from "./attitude.js";
 
@@ -73,6 +75,10 @@ const bloomForced = bloomRequested;
 const bloomDisabled = !bloomRequested;
 const skipSceneCompile = query.get("compile") === "0" || query.get("warmcompile") === "0";
 const galaxyBackdropForced = query.get("galaxy") === "1";
+// WP18: sets foveation + primes the framebuffer scale factor before any XR
+// session is requested; tickXrPerf() below self-inits if this is skipped, but
+// calling it explicitly here means foveation is live from the very first frame.
+initXrPerf(renderer);
 // WP10 decision: the floating origin stays pinned at (0,0,0) this wave — every
 // legacy render path (bodies, stars.js, realSky, cosmic) still assumes origin
 // 0 and doesn't consume renderOrigin (that's WP16). Rebasing it now would
@@ -299,18 +305,33 @@ const maps = await loadAllMaps();
 perfEnd("startup.loadMaps", mapsT0);
 const bodiesT0 = perfStart();
 buildBodies(maps);
+// WP17 multi-frustum tiering (scene.js): sky dome / star sprites / galaxy
+// backdrop are camera-attached, but their shell radii (sky ~4.0e6, skyStars
+// ~5.9e6, galaxyBackdrop ~3.3e6 units) sit well inside TIER_SPLIT_UNITS
+// (~1.89e8), i.e. near-tier scale, not "at infinity". Parenting them under
+// `farTierGroup` was tried here but renderSceneTiered hides that whole group
+// for the near pass (scene.js:renderSceneTiered) while their own radii get
+// clipped out of the far pass's near plane, so they never drew in either
+// pass -- an empty sky from anywhere inside the near tier (i.e. almost
+// always). bodies.js already adds them straight to `scene`, which renders
+// correctly in the near pass; leave them there.
 perfEnd("startup.buildBodies", bodiesT0);
 const starsT0 = perfStart();
 buildStars();
 perfEnd("startup.buildStars", starsT0);
 const cosmicInitT0 = perfStart();
-initCosmicLayer(scene);
+// initCosmicLayer/initTier1 just call `.add()` on whatever parent they're
+// given (verified in cosmic.js/athygTier1.js — neither relies on Scene-only
+// behavior), so handing them `farTierGroup` instead of `scene` buckets the
+// entire cosmic layer (catalog/procedural galaxy clouds, Local Group) and
+// the whole tier-1 streaming field into the far tier for free.
+initCosmicLayer(farTierGroup);
 perfEnd("startup.initCosmicLayer", cosmicInitT0);
 // Tier-1 AT-HYG streaming star layer (WP9/WP10): fetches its manifest and
 // streams tiles over ~25 minutes, so it's fired without an `await` to avoid
 // gating app startup on the network; self-gates on `?tier1=0`. frame() drives
 // it every tick via updateTier1 below. Exposed for the live gate probe.
-initTier1({ scene }).catch(err => console.error("athygTier1: init failed:", err?.message || err));
+initTier1({ scene: farTierGroup }).catch(err => console.error("athygTier1: init failed:", err?.message || err));
 window.__tier1Stats = tier1Stats; // debug/testing handle
 // hook the live instrument textures onto the cockpit MFD screens
 mfdScreens.forEach((scr, i) => {
@@ -359,7 +380,7 @@ async function warmRendererStartup() {
         // when the first live frame is expected to use post-processing.
         const warmComposer = !!(bloomPass.enabled || lensingPass.enabled);
         if (warmComposer && composer) composer.render();
-        else renderer.render(scene, camera);
+        else renderSceneTiered(renderer, scene, camera);
         if (PERF.enabled) markPerf("startup.warmComposer", performance.now() - composerT0, {
             composer: warmComposer,
             bloom: !!bloomPass.enabled,
@@ -875,6 +896,20 @@ focusVelLine.frustumCulled = false; focusVelLine.renderOrder = 6; focusVelLine.v
 const focusVelCone = new THREE.Mesh(new THREE.ConeGeometry(1, 2.6, 12), new THREE.MeshBasicMaterial({ color: 0xffc778, transparent: true, opacity: .9, depthTest: false }));
 focusVelCone.frustumCulled = false; focusVelCone.renderOrder = 6; focusVelCone.visible = false;
 scene.add(focusVelLine, focusVelCone);
+// WP17 multi-frustum tiering: these are always ship/cockpit-scale content
+// (never meaningfully at galactic distance) but opt out of frustum culling
+// to survive camera-relative repositioning, so without this they'd cost one
+// wasted (fully clipped, invisible) draw call in the far pass every frame.
+// river.js's particle `lines` and trails.js's `predLine`/`bodyPredLine`/
+// `bodyPredDots` are the same kind of always-near, frustumCulled:false
+// content but aren't exported by their owning module this wave, so they
+// still pay that one extra draw call — a documented, harmless (invisible
+// either way) follow-up.
+registerNearTierOnly(
+    shipG, dot, flame, plasma, exhaust, explosion, xpFlash,
+    arrow, flowArrow, darkEnergyArrow, haloArrow, tipV, tipF, tipDE, tipHalo,
+    hovLine, hovCone, focusVelLine, focusVelCone,
+);
 const _hv = { vx: 0, vy: 0 };
 const upHover = new THREE.Vector3(0, 1, 0);
 const hovDir = new THREE.Vector3();
@@ -1237,7 +1272,7 @@ function renderFrame(showCockpit) {
     const renderT0 = perfStart();
     const worldRenderT0 = perfStart();
     if ((bloomPass.enabled || lensingPass.enabled) && composer) composer.render();
-    else renderer.render(scene, camera);
+    else renderSceneTiered(renderer, scene, camera);
     perfEnd("render.world", worldRenderT0, PERF.enabled ? {
         bloom: !!bloomPass.enabled,
         lensing: !!lensingPass.enabled,
@@ -1263,6 +1298,8 @@ function renderFrame(showCockpit) {
         dpr: renderQuality.dpr,
         loadShed: renderQuality.loadShed,
     } : null);
+    sampleRendererInfo(renderer);
+    sampleMemory();
 }
 
 function finishFramePerf(start, dtR, rawDtR, dtRCap, cosmicView, cabinActive) {
@@ -1281,6 +1318,7 @@ function finishFramePerf(start, dtR, rawDtR, dtRCap, cosmicView, cabinActive) {
 function frame() {
     const frameT0 = perfStart();
     const rawDtR = clock.getDelta();
+    tickXrPerf(renderer, rawDtR * 1000);
     const highWarp = G.warp > 600;
     const dtRCap = highWarp ? (renderQuality.mobile ? 1 / 45 : 1 / 30) : .06;
     const dtR = Math.min(dtRCap, rawDtR);
@@ -1657,7 +1695,7 @@ function frame() {
         return;
     }
     updateLensingLazy(camera, camera.aspect);
-    const bloomLoadShed = renderQuality.mobile ||
+    const bloomLoadShed = renderQuality.mobile || shouldGateBloom() ||
         (!bloomForced && G.warp > 86400 && G.gr && grB > .18 && cam.dist > LY_SCENE * .05);
     bloomPass.enabled = !bloomDisabled && (bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
     if (bloomPass.enabled && !composer) ensurePostProcessing(lensingPass);
@@ -1665,14 +1703,9 @@ function frame() {
     const starsT0 = perfStart();
     updateStars(camera, dtR);
     perfEnd("stars.update", starsT0, PERF.enabled ? { entries: STARS.length, activeStars: ACTIVE_STARS.length } : null);
-    const dSun = camera.position.distanceTo(sunPos);
-    const nearSunGlow = 1 - smooth01(SUN_RADIUS * 8, SUN_RADIUS * 90, dSun);
-    const farSunGlow = smooth01(SUN_RADIUS * 16, SUN_RADIUS * 600, dSun);
-    sunGlow.scale.setScalar(Math.min(
-        SUN_RADIUS * 180,
-        Math.max(SUN_RADIUS * (2.1 + 2.2 * nearSunGlow), dSun * (.0019 + .055 * farSunGlow)),
-    ));
-    sunGlow.material.opacity = Math.min(.65, .045 + .38 * nearSunGlow + .5 * farSunGlow);
+    // WP16 owns the Sun's view-aware brightness model; this call site is the
+    // frozen handoff (see bodies.js:updateSunView) so WP17 never edits bodies.js.
+    updateSunView(camera, camera.position.distanceTo(sunPos) / K / PC_KM);
     // ---- craft pose & adaptive size ----
     craft.quaternion.setFromUnitVectors(upV, dirV);
     const cd = camera.position.distanceTo(shipG.position);

@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { G } from "./state.js";
-import { CAM_DIST_MAX, K } from "./constants.js";
+import { CAM_DIST_MAX, K, LY_SCENE } from "./constants.js";
 import { eph } from "./ephemeris.js";
 import { look, LOOK_YAW_MAX, LOOK_PITCH_MIN, LOOK_PITCH_MAX } from "./cockpit.js";
 import { apOff } from "./autopilot.js";
@@ -10,6 +10,12 @@ import {
 } from "./shipGrabPolicy.js";
 
 export const cvHost = document.getElementById("gl");
+// A6 depth-precision decision (WP17): `reversedDepthBuffer` isn't a
+// constructor option in the installed three@0.164.1 (checked against
+// node_modules/three's WebGLRenderer source — no match), so that A6
+// alternative to logarithmicDepthBuffer isn't available here; the
+// multi-frustum tiering below (`renderSceneTiered`) is the whole fix.
+// logarithmicDepthBuffer itself stays off per A6 (fill-rate cost).
 export const renderer = new THREE.WebGLRenderer({ antialias: true });
 const q = new URLSearchParams(location.search);
 const dprOverride = Number(q.get("dpr") || q.get("pixelRatio"));
@@ -48,6 +54,88 @@ cvHost.appendChild(renderer.domElement);
 
 export const scene = new THREE.Scene();
 export const camera = new THREE.PerspectiveCamera(48, 1, .02, CAM_DIST_MAX * 1.35);
+
+// ---- multi-frustum scale tiers (WP17 / plan A6) ----
+// The single camera spans a clearance-based near plane (main.js shrinks it
+// to ~2e-6 units, ~2 m, when the ship sits right at a surface) out to
+// `camera.far` (CAM_DIST_MAX*1.35, ~5.1e16 units, galactic/extragalactic
+// scale) in one non-logarithmic depth buffer. That near:far ratio can
+// exceed 1e18, which starves a standard depth buffer for anything past the
+// first few units from the camera -- exactly why depth-tested-but-not-depth-
+// written (`depthWrite:false, depthTest:true`) light-year-scale content (the
+// tier-1 star field in athygStars.js, the HYG/procedural galaxy clouds in
+// cosmic.js) sparkles/z-fights against itself and against near-field bodies
+// once the ship leaves the immediate cockpit vicinity.
+//
+// Fix: split the frame into two passes, depth cleared between, drawn
+// back-to-front, each with its own near/far so its own ratio stays small:
+//   pass 1 (far):  [TIER_SPLIT_UNITS, camera.far]  -- galactic/interstellar field
+//   pass 2 (near): [dynamic near, TIER_SPLIT_UNITS] -- solar system + ship
+// A single split is enough here (not the full cockpit/system/interstellar/
+// galactic 4-way tiering the plan sketches) because it already removes
+// ~13-14 orders of magnitude from the worst-case ratio; escalate to a third
+// pass only if the shoot-lod.mjs before/after comparison still shows
+// fighting.
+//
+// Content is NOT manually bucketed per pass by category: three.js clips
+// per-vertex against whatever near/far is active when a draw call is
+// issued, regardless of which pass issued it, so an object simply produces
+// no visible pixels in a pass whose range doesn't contain it -- correct
+// occlusion falls out of "farther content drawn first, nearer content drawn
+// on top of a freshly cleared depth buffer" for free. The one cost: a
+// handful of always-near objects (ship/trail/river visuals) opt out of
+// CPU-side frustum culling (`frustumCulled = false`, so they survive
+// camera-relative repositioning tricks) and would otherwise still cost one
+// wasted, GPU-clipped-to-nothing draw call in the far pass every frame;
+// `registerNearTierOnly` hides those for that one pass instead. A few
+// objects that are always near-field but aren't exported by their owning
+// module this wave (river.js's particle `lines`, trails.js's `predLine`/
+// `bodyPredLine`/`bodyPredDots`) aren't reachable from here without editing
+// files owned by other WPs this wave; they keep costing one harmless (fully
+// clipped, invisible) extra draw call in the far pass -- flagged as a small
+// follow-up for whichever WP next touches those files.
+export const farTierGroup = new THREE.Group();
+farTierGroup.name = "scaleTier.far";
+scene.add(farTierGroup);
+export const TIER_SPLIT_UNITS = LY_SCENE * .02; // ~1265 AU: past Neptune/Oort-inner, short of Proxima (4.24 ly)
+
+const nearTierOnly = [];
+export function registerNearTierOnly(...objects) {
+    for (const o of objects) if (o && !nearTierOnly.includes(o)) nearTierOnly.push(o);
+}
+
+const tierSavedVis = [];
+export function renderSceneTiered(rendererArg, sceneArg, cameraArg) {
+    const savedNear = cameraArg.near, savedFar = cameraArg.far;
+    tierSavedVis.length = 0;
+    for (let i = 0; i < nearTierOnly.length; i++) {
+        tierSavedVis.push(nearTierOnly[i].visible);
+        nearTierOnly[i].visible = false;
+    }
+    farTierGroup.visible = true;
+    cameraArg.near = Math.min(savedFar, Math.max(savedNear, TIER_SPLIT_UNITS));
+    cameraArg.far = savedFar;
+    cameraArg.updateProjectionMatrix();
+    rendererArg.render(sceneArg, cameraArg);
+    for (let i = 0; i < nearTierOnly.length; i++) nearTierOnly[i].visible = tierSavedVis[i];
+    farTierGroup.visible = false;
+    // autoClear defaults to true, so an un-flagged second render() call would
+    // clear pass 1's color buffer right back to black before drawing the
+    // near tier on top of it -- same guard the existing cockpit-overlay pass
+    // already uses (see renderFrame in main.js).
+    const oldAutoClear = rendererArg.autoClear;
+    rendererArg.autoClear = false;
+    rendererArg.clearDepth();
+    cameraArg.near = savedNear;
+    cameraArg.far = Math.min(savedFar, TIER_SPLIT_UNITS);
+    cameraArg.updateProjectionMatrix();
+    rendererArg.render(sceneArg, cameraArg);
+    rendererArg.autoClear = oldAutoClear;
+    farTierGroup.visible = true;
+    cameraArg.near = savedNear;
+    cameraArg.far = savedFar;
+    cameraArg.updateProjectionMatrix();
+}
 
 // ---- post-processing: bloom / lensing ----
 const composerHdr = q.get("hdr") === "1" || q.get("composer") === "hdr";
@@ -93,7 +181,37 @@ export async function ensurePostProcessing(lensingPass = null) {
         composerTarget.texture.name = composerHdr ? "Composer.hdr" : "Composer.ldr";
         composer = new EffectComposer(renderer, composerTarget);
         composerPixelRatio = renderer.getPixelRatio();
-        composer.addPass(new RenderPass(scene, camera));
+        // Same multi-frustum tiering as the non-composer path (renderSceneTiered
+        // above), just swapped in for RenderPass's single renderer.render() call
+        // so the bloom/lensing pipeline gets the same depth-precision fix.
+        class TieredRenderPass extends RenderPass {
+            render(rendererArg, writeBuffer, readBuffer) {
+                const oldAutoClear = rendererArg.autoClear;
+                rendererArg.autoClear = false;
+                let oldClearAlpha, oldOverrideMaterial;
+                if (this.overrideMaterial !== null) {
+                    oldOverrideMaterial = this.scene.overrideMaterial;
+                    this.scene.overrideMaterial = this.overrideMaterial;
+                }
+                if (this.clearColor !== null) {
+                    rendererArg.getClearColor(this._oldClearColor);
+                    rendererArg.setClearColor(this.clearColor);
+                }
+                if (this.clearAlpha !== null) {
+                    oldClearAlpha = rendererArg.getClearAlpha();
+                    rendererArg.setClearAlpha(this.clearAlpha);
+                }
+                if (this.clearDepth === true) rendererArg.clearDepth();
+                rendererArg.setRenderTarget(this.renderToScreen ? null : readBuffer);
+                if (this.clear === true) rendererArg.clear(rendererArg.autoClearColor, rendererArg.autoClearDepth, rendererArg.autoClearStencil);
+                renderSceneTiered(rendererArg, this.scene, this.camera);
+                if (this.clearColor !== null) rendererArg.setClearColor(this._oldClearColor);
+                if (this.clearAlpha !== null) rendererArg.setClearAlpha(oldClearAlpha);
+                if (this.overrideMaterial !== null) this.scene.overrideMaterial = oldOverrideMaterial;
+                rendererArg.autoClear = oldAutoClear;
+            }
+        }
+        composer.addPass(new TieredRenderPass(scene, camera));
         addLensingPass(lensingPass); // bend the world before bloom: warped disk light still glows
         if (legacyBloom) {
             const { UnrealBloomPass } = await import("three/addons/postprocessing/UnrealBloomPass.js");
