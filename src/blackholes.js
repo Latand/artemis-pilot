@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, K } from "./constants.js";
 import { tidalRadiusKm, mostBoundEnergy, fallbackTimeSec, circularizationKm, iscoKm, tdeLuminosityW, boundFraction, L_EDD_PER_MSUN } from "./tde.js";
-import { G, BH, WORLD, EPHT, bhRegister, bhMuAt, gsPull, addPhantom } from "./state.js";
+import { G, BH, WORLD, EPHT, bhRegister, bhMuAt, gsPull, addPhantom, GS } from "./state.js";
 import { eph, setLiveGuard } from "./ephemeris.js";
 import { fmtAccel, fmtDist, fmtKm, mulberry32 } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
@@ -17,6 +17,7 @@ export function initBHHooks(hooks) { H = { ...H, ...hooks }; }
 
 const SOLAR_MASS_KG = 1.98847e30;
 const G_KM = 6.674e-20;
+const TDE_WATCH_WARP = 600;
 export function bhMassLabel(rs) {
     const msun = rs * C_LIGHT * C_LIGHT / 2 / MU_S;
     if (msun >= 100) return Math.round(msun).toLocaleString("en-US") + " M☉";
@@ -769,6 +770,32 @@ function absorbBody(i, target, x, y, vx, vy, muBody) {
     if (BH_META[i]) BH_META[i].flare = 1;
     H.absorbed(target, BH.rs[i], i);
 }
+function removePhantomSource(ph) {
+    if (!ph) return;
+    const idx = GS.indexOf(ph);
+    if (idx >= 0) GS.splice(idx, 1);
+}
+function activateTdeMeta(i, t0Sim, tFbSec, mStarKg, mBhMsun) {
+    const m = BH_META[i];
+    if (!m) return;
+    const LEddW = L_EDD_PER_MSUN * mBhMsun;
+    m.tde = {
+        active: true,
+        t0Sim,
+        tFbSec,
+        LpeakW: tdeLuminosityW(tFbSec, tFbSec, mStarKg, mBhMsun),
+        LnowW: LEddW,
+        LEddW,
+    };
+}
+function resolveTdeInstant(i, target, x, y, vx, vy, radius, muBody) {
+    const muBH = BH.mu[i];
+    const tFb = fallbackTimeSec(radius, muBH, muBody);
+    const mBhMsun = muBH / MU_S;
+    const mStarKg = muBody / G_KM;
+    activateTdeMeta(i, EPHT.t, tFb, mStarKg, mBhMsun);
+    absorbBody(i, target, x, y, vx, vy, muBody);
+}
 function bhBodyLimit(rs, radius, muBody, muBH) {
     const roche = radius * Math.cbrt(muBH / Math.max(1e-9, muBody));
     const tidal = Math.min(radius * 18, roche * .55);
@@ -845,6 +872,10 @@ function disruptionBodyState(d) {
 }
 function beginDisruption(i, target, x, y, vx, vy, radius, muBody, dist, limit) {
     if (isDisrupting(target) || i < 0 || i >= BH.n) return;
+    if (G.warp > TDE_WATCH_WARP) {
+        resolveTdeInstant(i, target, x, y, vx, vy, radius, muBody);
+        return;
+    }
     const rel = Math.hypot(vx - BH.vx[i], vy - BH.vy[i]);
     const muBH = BH.mu[i];
     const tFb = fallbackTimeSec(radius, muBH, muBody);
@@ -859,6 +890,7 @@ function beginDisruption(i, target, x, y, vx, vy, radius, muBody, dist, limit) {
         bh: i, target, name, x, y, vx, vy, radius, muBody,
         age: 0, visual: 0, duration,
         tFb, eMb, rCirc, rIsco, mBhMsun, mStarKg,
+        accretionR: rCirc,
         boundFrac: boundFraction(), tPeak: null, t0Sim: EPHT.t,
         color: targetDisruptionColor(target),
         limit: Math.max(limit, radius), bornRt: performance.now(),
@@ -877,6 +909,15 @@ function advanceDisruptions(dt) {
         if (d.bh < 0 || d.bh >= BH.n) { DISRUPT.splice(k, 1); continue; }
         disruptionBodyState(d);
         d.age += dt;
+        const p = clamp(d.age / Math.max(1e-9, d.duration), 0, 1);
+        d.accretionR = d.rCirc + (d.rIsco - d.rCirc) * smooth01(0, 1, p);
+        if (G.warp > TDE_WATCH_WARP) {
+            removePhantomSource(d.phantom);
+            d.phantom = null;
+            resolveTdeInstant(d.bh, d.target, d.x, d.y, d.vx, d.vy, d.radius, d.muBody);
+            DISRUPT.splice(k, 1);
+            continue;
+        }
         const simDone = d.age >= d.duration;
         const visibleDone = d.visual >= .96 && performance.now() - d.bornRt > 5000;
         if (simDone && visibleDone) {
@@ -885,6 +926,8 @@ function advanceDisruptions(dt) {
             const horizon = Math.max(BH.rs[d.bh] * 1.08, 1e-6);
             const x = BH.x[d.bh] + dx / r * horizon;
             const y = BH.y[d.bh] + dy / r * horizon;
+            d.tPeak = d.t0Sim + d.tFb;
+            activateTdeMeta(d.bh, d.t0Sim, d.tFb, d.mStarKg, d.mBhMsun);
             absorbBody(d.bh, d.target, x, y, d.vx, d.vy, d.muBody);
             if (d.phantom) {
                 // phantom → ghost: outside the expanding front the old debris
