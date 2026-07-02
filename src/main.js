@@ -1453,8 +1453,14 @@ function frame() {
     if (!G.paused) {
         if (REL.active) {
             advanced = dtR * G.warp;
-            relTravelStep(advanced);
-            activeStarsFresh = false;
+            if (G.warp < 0) relCancel("reverse warp", toast);
+            if (REL.active) {
+                relTravelStep(advanced);
+                activeStarsFresh = false;
+            } else {
+                advanced = advance(advanced, atx, aty, atz, aMag);
+                activeStarsFresh = true;
+            }
         } else if (G.dead) {
             advanced = dtR * G.warp;
             advanceEphem(advanced);

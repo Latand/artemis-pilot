@@ -101,7 +101,8 @@ export function relCancel(reason, toast) {
 export function relTravelStep(simAdvSec) {
     const p = REL.plan;
     const prev = REL.coordElapsed;
-    const s = Math.min(prev + simAdvSec, p.T);
+    // reverse warp cannot rewind a cruise — see main.js cancel guard.
+    const s = Math.min(Math.max(0, prev + simAdvSec), p.T);
     const sample = brachistochroneSampleInto(p, s, _relSampA);
     G.x = REL.originX + REL.dirX * sample.distKm;
     G.y = REL.originY + REL.dirY * sample.distKm;

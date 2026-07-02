@@ -6,6 +6,7 @@ import {
     hzEdgesAU, massMeFromRadiusRe, occurrenceLambda,
 } from "./astroConstants.js";
 import { exoplanetSystemFor } from "./exoplanetHosts.js";
+import { SYS_MAX_PLANETS } from "../render/systemBodies.js";
 
 const TAU = Math.PI * 2;
 export const SALT_COUNT = 1, SALT_ARCH = 2, SALT_PLANET = 3, SALT_MOON = 4, SALT_RING = 5;
@@ -204,11 +205,11 @@ export function generateSystem(star) {
     if (real?.planets?.length) {
         const planets = real.planets.slice();
         for (const p of base.planets) {
-            if (planets.length >= 9) break;
+            if (planets.length >= SYS_MAX_PLANETS) break;
             const overlaps = planets.some(rp => Math.abs(p.a - rp.a) / Math.max(rp.a, 1e-9) <= 0.25);
             if (!overlaps) planets.push(p);
         }
-        planets.sort((a, b) => a.a - b.a).splice(9);
+        planets.sort((a, b) => a.a - b.a).splice(SYS_MAX_PLANETS);
         for (let i = 0; i < planets.length; i++) {
             const p = planets[i];
             const typed = planetType(p.radiusKm / R_EARTH, p.a, hz.inner, hz.outer, host.L);
