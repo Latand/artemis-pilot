@@ -5,6 +5,7 @@ import {
     FORECASTER, PLANET_OCCURRENCE, PLANET_TYPE_COLOR,
     hzEdgesAU, massMeFromRadiusRe, occurrenceLambda,
 } from "./astroConstants.js";
+import { exoplanetSystemFor } from "./exoplanetHosts.js";
 
 const TAU = Math.PI * 2;
 export const SALT_COUNT = 1, SALT_ARCH = 2, SALT_PLANET = 3, SALT_MOON = 4, SALT_RING = 5;
@@ -133,6 +134,23 @@ export function generateSystem(star) {
         .sort((a, b) => a.a - b.a)
         .slice(0, 8)
         .map((p, i, arr) => finishPlanet(p, i, host, hz.inner, hz.outer, rng, arr.length > 1));
+    const real = exoplanetSystemFor(star);
+    if (real?.planets?.length) {
+        const planets = real.planets.slice();
+        for (const p of base.planets) {
+            if (planets.length >= 9) break;
+            const overlaps = planets.some(rp => Math.abs(p.a - rp.a) / Math.max(rp.a, 1e-9) <= 0.25);
+            if (!overlaps) planets.push(p);
+        }
+        planets.sort((a, b) => a.a - b.a).splice(9);
+        for (let i = 0; i < planets.length; i++) {
+            const p = planets[i];
+            const typed = planetType(p.radiusKm / R_EARTH, p.a, hz.inner, hz.outer, host.L);
+            p.index = i;
+            p.inHZ = typed.inHZ;
+        }
+        base.planets = planets;
+    }
     return base;
 }
 

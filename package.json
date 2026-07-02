@@ -20,6 +20,7 @@
     "smoke:catalog-tier1-est": "node scripts/smoke-catalog-tier1-est.mjs",
     "smoke:tier1-est-runtime": "node scripts/smoke-tier1-est-runtime.mjs",
     "smoke:planetary-systems": "node scripts/smoke-planetary-systems.mjs",
+    "smoke:exoplanets": "node scripts/smoke-exoplanets.mjs",
     "smoke:local-tier": "node scripts/smoke-local-tier.mjs",
     "smoke:epoch": "node scripts/smoke-epoch.mjs",
     "smoke:lunar-elp": "node scripts/smoke-lunar-elp.mjs",
