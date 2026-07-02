@@ -7,6 +7,7 @@ import { activeTde, bhHawkingLabel, bhMassLabel, pwAccelMs2 } from "./blackholes
 import { clockRateAtShip, clockRateLabel } from "./relativity.js";
 import { darkEnergyAccelerationKmS2, darkMatterRelativeAccel } from "./cosmology.js";
 import { REL } from "./relTravel.js";
+import { scaleRungLabel, lightTravelLabel } from "./scaleLadder.js";
 
 const $ = id => document.getElementById(id);
 const bhFocusIndex = f => {
@@ -15,6 +16,7 @@ const bhFocusIndex = f => {
     return m ? Number(m[1]) : -1;
 };
 export const metEl = $("met"), civilDateEl = $("civilDate"), warpEl = $("warpLine"), engineEl = $("engineLine"), throttleEl = $("throttleLine");
+export const scaleRungEl = $("scaleRung"), lightTravelEl = $("lightTravel");
 export const fuelTxtEl = $("fuelTxt"), fuelFillEl = $("fuelFill");
 export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVel = $("cVel"), cApPe = $("cApPe"), cMoon = $("cMoon"), cSun = $("cSun"), cDv = $("cDv"), cGrav = $("cGrav");
 export const fFlow = $("fFlow"), fDark = $("fDark"), fHalo = $("fHalo"), fShip = $("fShip"), fClock = $("fClock"), relLineEl = $("relLine"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
@@ -70,6 +72,30 @@ function addGravRank(label, value) {
 }
 function gravDisplayLabel(label) {
     return /[^\x00-\x7F]/.test(label) ? "BH" : label;
+}
+function focusName(label) {
+    if (label) return String(label).toUpperCase();
+    if (G.focus === "ship") return "SHIP";
+    if (G.focus === "free") return "FREE";
+    if (G.focus === "earth") return "EARTH";
+    if (G.focus === "moon") return "MOON";
+    if (G.focus === "sun") return "SUN";
+    if (typeof G.focus === "number") return PL[G.focus]?.name || "PLANET";
+    if (typeof G.focus === "string" && G.focus.startsWith("bh:")) return "BLACK HOLE";
+    if (typeof G.focus === "string" && G.focus.startsWith("star:")) return "STAR";
+    return "FOCUS";
+}
+function relRemainingLabel() {
+    if (!REL.active || !REL.plan) return "";
+    const coordLeft = Math.max(0, REL.plan.coordTotal - REL.coordElapsed) / SEC_YEAR;
+    const properLeft = Math.max(0, REL.plan.properTotal - (G.tau - REL.startTauSec)) / SEC_YEAR;
+    return " · ECHO ship " + properLeft.toFixed(2) + " yr / Earth " + coordLeft.toFixed(2) + " yr left";
+}
+export function updateScaleLadder(camDistKm, focusDistKm, focusLabel) {
+    setText(scaleRungEl, "SCALE " + scaleRungLabel(camDistKm));
+    if (focusDistKm != null && focusDistKm > 0) {
+        setText(lightTravelEl, "LIGHT-TRAVEL " + lightTravelLabel(focusDistKm) + " to " + focusName(focusLabel) + relRemainingLabel());
+    } else setText(lightTravelEl, "LIGHT-TRAVEL —");
 }
 
 export function showBanner(title, sub, hint) {

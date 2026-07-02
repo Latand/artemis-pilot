@@ -23,7 +23,7 @@ import { MOONS, moonOffset, moonFocusValue, moonFocusIndex, MOON_LABEL_DIST } fr
 import { addStarVisual, buildStars, updateStars } from "./stars.js";
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
-import { AP, apStep, apOff } from "./autopilot.js";
+import { AP, apStep, apOff, targetState } from "./autopilot.js";
 import { REL, relTravelStep, relCancel } from "./relTravel.js";
 import {
     shipG, craft, dot, flame, plasma, updateHeadingArrow,
@@ -43,7 +43,7 @@ import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance, isBHPlacementMod
 import { thrustGain, boom } from "./audio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
 import {
-    showBanner, hideBanner, updateHUD, updateEscapeTracker, hideHelp,
+    showBanner, hideBanner, updateHUD, updateEscapeTracker, updateScaleLadder, hideHelp,
     fFlow, fDark, fHalo, lblE, lblM, lblO, lblS,
     setText as setHudText, systemSummary,
 } from "./hud.js";
@@ -98,6 +98,14 @@ const lensPrecheckV = new THREE.Vector3();
 function perfStart() { return PERF.enabled ? performance.now() : 0; }
 function perfEnd(name, start, detail = null) {
     if (PERF.enabled) markPerf(name, performance.now() - start, detail);
+}
+function focusLightTarget() {
+    const target = G.focus === "ship" || G.focus === "free" ? null : targetState(G.focus);
+    if (!target) return null;
+    return {
+        distKm: Math.hypot(G.x - target.x, G.y - target.y, G.z - target.z),
+        name: target.name,
+    };
 }
 function lensCandidateCouldBeVisible(wx, wy, wz, rsU, camera) {
     lensPrecheckV.set(wx, wy, wz).applyMatrix4(camera.matrixWorldInverse);
@@ -1716,6 +1724,10 @@ function frame() {
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
         updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, 1);
+        if (frameNo % 6 === 0) {
+            const focusLight = focusLightTarget();
+            updateScaleLadder(cam.dist / K, focusLight?.distKm ?? null, focusLight?.name);
+        }
         if (hudDue) {
             updateMobileControls(oi, cosmicSpeed, aMag);
             if (!renderQuality.mobile) {
@@ -1955,6 +1967,10 @@ function frame() {
     // ---- HUD & labels ----
     const hudT0 = perfStart();
     const hudUpdateT0 = perfStart();
+    if (frameNo % 6 === 0) {
+        const focusLight = focusLightTarget();
+        updateScaleLadder(cam.dist / K, focusLight?.distKm ?? null, focusLight?.name);
+    }
     if (hudDue) {
         if (!renderQuality.mobile) {
             updateHUD(oi, aMag, mainIn, sp, kVLoc, fRiver);
