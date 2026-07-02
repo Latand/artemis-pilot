@@ -1316,12 +1316,16 @@ function frame() {
         if (latIn) { const a = RCS_A * mult * latIn; atx += -a * hy; aty += a * hx; }
         aMag = Math.hypot(atx, aty, atz);
         if (G.landed && mainIn > 0) {
-            // liftoff: nudge off the surface and hand back to physics
-            let radial;
-            if (G.landed.body === "earth") radial = Math.atan2(G.y, G.x);
-            else if (G.landed.body === "planet") radial = Math.atan2(G.y - eph.plY[G.landed.i], G.x - eph.plX[G.landed.i]);
-            else { moonState(G.t, _m); radial = Math.atan2(G.y - _m.my, G.x - _m.mx); }
-            G.x += 0.03 * Math.cos(radial); G.y += 0.03 * Math.sin(radial); G.z = 0;
+            // liftoff: nudge off the surface along the full 3-D radial and
+            // hand back to physics. Bodies carry real z since WP13/14 and
+            // snapLanded preserves landing latitude — zeroing G.z here would
+            // teleport a high-latitude ship back to the equatorial plane.
+            let cx = 0, cy = 0, cz = 0;
+            if (G.landed.body === "planet") { cx = eph.plX[G.landed.i]; cy = eph.plY[G.landed.i]; cz = eph.plZ ? eph.plZ[G.landed.i] : 0; }
+            else if (G.landed.body !== "earth") { moonState(G.t, _m); cx = _m.mx; cy = _m.my; cz = eph.moonZ || 0; }
+            const rdx = G.x - cx, rdy = G.y - cy, rdz = G.z - cz;
+            const rlen = Math.hypot(rdx, rdy, rdz) || 1;
+            G.x += 0.03 * rdx / rlen; G.y += 0.03 * rdy / rlen; G.z += 0.03 * rdz / rlen;
             G.landed = null;
             hideBanner();
         }

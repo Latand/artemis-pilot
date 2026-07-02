@@ -236,6 +236,18 @@ export function orbitInfo() {
 }
 
 // ============================ CONTACT / LANDING ============================
+// A landing site is stored as (ang, uz): `ang` is the touchdown azimuth in the
+// body's equatorial plane, already de-rotated against whatever spin/orbital
+// angle the body carries (so it stays fixed to the ground as the body turns);
+// `uz` is the z-component of the body-relative unit landing vector, i.e. the
+// sine of latitude — invariant under that same de-rotation because it only
+// spins the xy-projection. Pre-fix saves/landings have no `uz` and are
+// equivalent to `uz: 0` (equatorial), which is what `landingUnit` defaults to.
+function landingUnit(ang, uz) {
+    const z = uz ?? 0;
+    const ur = Math.sqrt(Math.max(0, 1 - z * z));
+    return [ur * Math.cos(ang), ur * Math.sin(ang), z];
+}
 function handleEarthContact(s) {
     const r = Math.hypot(s[0], s[1], s[2]), f = (R_EARTH + 0.005) / r;
     s[0] *= f; s[1] *= f; s[2] *= f;
@@ -243,7 +255,7 @@ function handleEarthContact(s) {
     const spd = Math.hypot(s[3] - surfVx, s[4] - surfVy, s[5]);
     if (spd < 0.35) {
         s[3] = surfVx; s[4] = surfVy; s[5] = 0;
-        G.landed = { body: "earth", ang: Math.atan2(s[1], s[0]), t0: G.t };
+        G.landed = { body: "earth", ang: Math.atan2(s[1], s[0]), uz: s[2] / (R_EARTH + 0.005), t0: G.t };
         G.heading = G.landed.ang;
         G.pitch = 0;
         if (G.leftHome) H.award("home");
@@ -258,10 +270,10 @@ function handleMoonContact(s) {
     s[0] = _m.mx + dx; s[1] = _m.my + dy; s[2] = eph.moonZ + dz;
     const relSpd = Math.hypot(s[3] - _m.vmx, s[4] - _m.vmy, s[5] - eph.moonVz);
     if (relSpd < 0.12) {
-        G.landed = { body: "moon", ang: Math.atan2(dy, dx) - _m.ang };
+        G.landed = { body: "moon", ang: Math.atan2(dy, dx) - _m.ang, uz: dz / (R_MOON + 0.003) };
         G.heading = Math.atan2(dy, dx);
         G.pitch = 0;
-        s[2] = eph.moonZ; s[3] = _m.vmx; s[4] = _m.vmy; s[5] = eph.moonVz;
+        s[2] = eph.moonZ + dz; s[3] = _m.vmx; s[4] = _m.vmy; s[5] = eph.moonVz;
         H.award("landM");
         H.banner("LUNAR LANDING", "Touched down at " + (relSpd * 1000).toFixed(0) + " m/s · MET " + fmtMET(G.t), "W TO LIFT OFF · R TO RESTART");
     } else H.die("Hit the Moon at " + relSpd.toFixed(2) + " km/s");
@@ -280,10 +292,10 @@ function handlePlanetContact(s, i) {
         return;
     }
     if (rel < 0.3) {
-        G.landed = { body: "planet", i, ang: Math.atan2(dy, dx) };
+        G.landed = { body: "planet", i, ang: Math.atan2(dy, dx), uz: dz / (p.R + 0.01) };
         G.heading = Math.atan2(dy, dx);
         G.pitch = 0;
-        s[2] = eph.plZ[i]; s[3] = _pv.vx; s[4] = _pv.vy; s[5] = eph.plVz[i];
+        s[2] = eph.plZ[i] + dz; s[3] = _pv.vx; s[4] = _pv.vy; s[5] = eph.plVz[i];
         if (p.name === "MARS") H.award("mars");
         H.banner("LANDED ON " + p.name, "Touchdown at " + (rel * 1000).toFixed(0) + " m/s · MET " + fmtMET(G.t), "W TO LIFT OFF · R TO RESTART");
     } else H.die("Hit " + p.name + " at " + rel.toFixed(2) + " km/s");
@@ -293,21 +305,25 @@ export function snapLanded() {
     if (G.landed.body === "earth") {
         const r = R_EARTH + 0.005;
         const th = G.landed.ang + OMEGA_EARTH * (G.t - (G.landed.t0 ?? G.t));
-        G.x = r * Math.cos(th); G.y = r * Math.sin(th); G.z = 0;
+        const [ux, uy, uz] = landingUnit(th, G.landed.uz);
+        G.x = r * ux; G.y = r * uy; G.z = r * uz;
         G.vx = -OMEGA_EARTH * G.y; G.vy = OMEGA_EARTH * G.x; G.vz = 0;
     } else if (G.landed.body === "planet") {
         const i = G.landed.i, r = PL[i].R + 0.01;
         updEphem(G.t);
-        G.x = eph.plX[i] + r * Math.cos(G.landed.ang);
-        G.y = eph.plY[i] + r * Math.sin(G.landed.ang); G.z = eph.plZ[i];
+        const [ux, uy, uz] = landingUnit(G.landed.ang, G.landed.uz);
+        G.x = eph.plX[i] + r * ux;
+        G.y = eph.plY[i] + r * uy; G.z = eph.plZ[i] + r * uz;
         planetVel(i, G.t, _pv);
         G.vx = _pv.vx; G.vy = _pv.vy; G.vz = eph.plVz[i];
     } else {
         moonState(G.t, _m);
         const th = _m.ang + G.landed.ang, r = R_MOON + 0.003;
-        G.x = _m.mx + r * Math.cos(th); G.y = _m.my + r * Math.sin(th); G.z = eph.moonZ;
-        G.vx = _m.vmx - r * _m.om * Math.sin(th);
-        G.vy = _m.vmy + r * _m.om * Math.cos(th); G.vz = eph.moonVz;
+        const [ux, uy, uz] = landingUnit(th, G.landed.uz);
+        const X = r * ux, Y = r * uy;
+        G.x = _m.mx + X; G.y = _m.my + Y; G.z = eph.moonZ + r * uz;
+        G.vx = _m.vmx - _m.om * Y;
+        G.vy = _m.vmy + _m.om * X; G.vz = eph.moonVz;
     }
 }
 

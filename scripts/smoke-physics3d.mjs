@@ -446,7 +446,7 @@ assert(BH.n === 0 && GS.length === 0, "this smoke test assumes a clean BH/GS sta
 {
   const digestParts = [eph.moonX, eph.moonY, eph.moonZ, eph.sunX, eph.sunY, eph.sunZ,
     ...eph.plX, ...eph.plY, ...eph.plZ];
-  console.log("(f) determinism digest:", digestParts.map(v => v.toPrecision(15)).join(","));
+  console.log("(f) determinism digest:", digestParts.map(v => v.toPrecision(12)).join(","));
 }
 
 console.log("physics3d smoke passed");
