@@ -57,8 +57,8 @@ import {
     ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId,
     refreshActiveStars, getFocusedSystem, getCachedFocusedSystem,
 } from "./universe/activeStars.js";
-import { initSystemRender, updateSystemRender, planetScenePosition } from "./render/systemBodies.js";
-import { planetFocusIndex, planetWorldState } from "./universe/planetarySystem.js";
+import { initSystemRender, updateSystemRender, planetScenePosition, moonScenePosition } from "./render/systemBodies.js";
+import { moonWorldState, planetFocusIndex, planetMoonFocusIndex, planetWorldState } from "./universe/planetarySystem.js";
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
@@ -1385,6 +1385,11 @@ function frame() {
                 if (sys?.starId === G.landed.starId && planetWorldState(sys, G.landed.i, sys.hostStar, G.t, _planetWorld)) {
                     cx = _planetWorld.x - eph.earthX; cy = _planetWorld.y - eph.earthY; cz = _planetWorld.z;
                 }
+            } else if (G.landed.body === "sysmoon") {
+                const sys = getCachedFocusedSystem();
+                if (sys?.starId === G.landed.starId && moonWorldState(sys, G.landed.planetIndex, G.landed.moonIndex, sys.hostStar, G.t, _planetWorld)) {
+                    cx = _planetWorld.x - eph.earthX; cy = _planetWorld.y - eph.earthY; cz = _planetWorld.z;
+                }
             }
             else if (G.landed.body !== "earth") { moonState(G.t, _m); cx = _m.mx; cy = _m.my; cz = eph.moonZ || 0; }
             const rdx = G.x - cx, rdy = G.y - cy, rdz = G.z - cz;
@@ -1582,12 +1587,14 @@ function frame() {
     const systemHost = activeDynamicFocus || (activeStarFocus ? STARS[focusStar] : nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star);
     const focusedSystem = systemHost ? getFocusedSystem(systemHost, G.t) : null;
     const activePlanetFocus = planetFocusIndex(G.focus);
-    updateSystemRender(focusedSystem, G.t, camera);
+    const activePlanetMoonFocus = planetMoonFocusIndex(G.focus);
+    updateSystemRender(focusedSystem, G.t, camera, G.focus);
     {
         const cp = Math.cos(G.pitch || 0);
         dirV.set(cp * Math.cos(G.heading), Math.sin(G.pitch || 0), -cp * Math.sin(G.heading));
     }
     const tgt = activeBHFocus ? bhScenePos(focusBH) :
+        activePlanetMoonFocus ? (moonScenePosition(focusedSystem, activePlanetMoonFocus.planetIndex, activePlanetMoonFocus.moonIndex, G.t, _focusPos) || shipG.position) :
         activePlanetFocus >= 0 ? (planetScenePosition(focusedSystem, activePlanetFocus, G.t, _focusPos) || shipG.position) :
         activeStarFocus ? starScenePos(focusStar) :
         activeMoonFocus ? moonGroups[focusMoon].position :
@@ -1606,6 +1613,7 @@ function frame() {
         camPrevFocus = G.focus;
     } else camPrevFocus = null;
     const minD = activeBHFocus ? Math.max(.05, BH.rs[focusBH] * K * 1.3) :
+        activePlanetMoonFocus && focusedSystem?.planets?.[activePlanetMoonFocus.planetIndex]?.moons?.[activePlanetMoonFocus.moonIndex] ? focusedSystem.planets[activePlanetMoonFocus.planetIndex].moons[activePlanetMoonFocus.moonIndex].R * K * 1.3 :
         activePlanetFocus >= 0 && focusedSystem?.planets?.[activePlanetFocus] ? focusedSystem.planets[activePlanetFocus].radiusKm * K * 1.8 :
         activeStarFocus ? STARS[focusStar].R * K * 1.8 :
         activeMoonFocus ? Math.max(.05, MOONS[focusMoon].R * K * 1.3) :

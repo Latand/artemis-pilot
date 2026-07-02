@@ -189,7 +189,8 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     setClass(warpEl, G.paused || WORLD.reverseBlocked ? "warn" : "");
     if (G.dead) setText(engineEl, "VEHICLE LOST — " + G.deadReason);
     else if (G.landed) setText(engineEl, G.landed.body === "earth" ? "ON THE SURFACE — SHIFT+W TO LIFT OFF" :
-        G.landed.body === "planet" ? "ON " + PL[G.landed.i].name + " — W TO LIFT OFF (SHIFT HELPS)" : "ON THE LUNAR SURFACE — W TO LIFT OFF");
+        G.landed.body === "planet" ? "ON " + PL[G.landed.i].name + " — W TO LIFT OFF (SHIFT HELPS)" :
+            G.landed.body === "sysmoon" ? "ON PROCEDURAL MOON — W TO LIFT OFF" : "ON THE LUNAR SURFACE — W TO LIFT OFF");
     else if (aMag > 0) setText(engineEl, (mainIn ? "MAIN ENGINE " + Math.round(G.throttle * 100) + "%" : "RCS") + (G.boost ? " · BOOST ×4" : "") + " · Δv flowing");
     else setText(engineEl, "ENGINE OFF — gravity shapes the path");
     setText(throttleEl, "THROTTLE " + Math.round(G.throttle * 100) + "% · " +

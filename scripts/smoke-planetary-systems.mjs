@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { setSeed } from "../src/universe/galaxy.js";
 import {
-    generateSystem, systemSeed, aFromPeriodDays, periodDaysFromA, planetWorldState, dominantSystemPlanet,
+    generateSystem, systemSeed, aFromPeriodDays, periodDaysFromA, planetWorldState, moonWorldState, dominantSystemBody, dominantSystemPlanet,
 } from "../src/universe/planetarySystem.js";
 import { hzEdgesAU, massMeFromRadiusRe, occurrenceLambda } from "../src/universe/astroConstants.js";
+import { AU_KM, MU_E, MU_S } from "../src/constants.js";
 
 function hash(v) {
     return createHash("sha256").update(JSON.stringify(v)).digest("hex").slice(0, 12);
@@ -95,5 +96,44 @@ const snapped = { x: pw.x + dx * f, y: pw.y + dy * f, z: pw.z + dz * f, vx: pw.v
 assert(Math.abs(Math.hypot(snapped.x - pw.x, snapped.y - pw.y, snapped.z - pw.z) - (sys.planets[0].radiusKm + eps)) < 1e-6,
     "procedural planet contact snap should land at radius plus epsilon");
 assert.equal(snapped.vx, pw.vx, "procedural planet contact should inherit planet vx");
+
+let moonHost = null, moonSystem = null, gasPlanet = null;
+for (let i = 0; i < 2000 && !gasPlanet; i++) {
+    const s = fake("moon-gas-" + i, 1, 1, "MS", 0.5);
+    const candidate = generateSystem(s);
+    const gp = candidate.planets.find(p => p.type === "gas" || p.type === "hot-jupiter");
+    if (gp) { moonHost = s; moonSystem = candidate; gasPlanet = gp; }
+}
+assert(gasPlanet, "seed search should find a gas giant for moon smoke");
+assert(gasPlanet.moons.length >= 2 && gasPlanet.moons.length <= 6, "gas giant moon count should be 2..6");
+const rHill = gasPlanet.a * AU_KM * Math.cbrt((gasPlanet.massMe * MU_E) / (3 * moonHost.mass * MU_S));
+for (const m of gasPlanet.moons) {
+    assert(m.a >= 2.5 * gasPlanet.radiusKm && m.a <= 0.5 * rHill, "moon orbit should stay inside the regular-moon Hill budget");
+    assert(m.R >= 100 && m.R <= 2600, "moon radius clamp should hold");
+    assert(m.mu > 0 && m.orbitMu === gasPlanet.mu, "moon should carry body mu and parent orbit mu");
+}
+assert.deepEqual(generateSystem(moonHost).planets[gasPlanet.index].moons, gasPlanet.moons, "moon generation should be deterministic");
+for (const p of moonSystem.planets) {
+    if (!p.ring) continue;
+    assert(p.ring[0] >= 1.19 * p.radiusKm && p.ring[0] <= 1.21 * p.radiusKm, "ring inner radius should be Saturn-like");
+    assert(p.ring[1] >= 1.8 * p.radiusKm && p.ring[1] <= 2.7 * p.radiusKm, "ring outer radius should be Saturn-like");
+    assert(p.ring.opacity > 0 && p.ring.opacity <= 1, "ring opacity should be finite");
+}
+const moon0 = gasPlanet.moons[0];
+const moonState = moonWorldState(moonSystem, gasPlanet.index, 0, moonHost, 0, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 });
+assert(moonState && Number.isFinite(moonState.x) && Number.isFinite(moonState.vx), "moonWorldState should return finite values");
+const moonShip = { x: moonState.x + moon0.R + 1, y: moonState.y, z: moonState.z };
+const domMoon = dominantSystemBody(moonSystem, moonHost, moonShip, 0);
+assert(domMoon?.moon === moon0 && domMoon.moonIndex === 0, "dominantSystemBody should select a procedural moon inside its SOI");
+
+let saltSys = null;
+for (let i = 0; i < 2000 && !saltSys; i++) {
+    const candidate = generateSystem(fake("moon-salt-" + i, 1, 1, "MS", 0.8));
+    if (candidate.planets.length >= 2 && candidate.planets[1].moons.length) saltSys = candidate;
+}
+assert(saltSys, "seed search should find a second planet with moons for salt smoke");
+const before = JSON.stringify(saltSys.planets[1].moons);
+saltSys.planets[0].moons = [{ name: "mutated upstream planet" }];
+assert.equal(JSON.stringify(saltSys.planets[1].moons), before, "per-planet moon records should be independent after generation");
 
 console.log("smoke-planetary-systems ok", { deterministic: h1, lowG, highG });

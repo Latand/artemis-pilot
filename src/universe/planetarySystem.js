@@ -41,6 +41,14 @@ export function planetFocusIndex(focus) {
     const i = m ? Number(m[1]) : -1;
     return i >= 0 && i < 8 ? i : -1;
 }
+export function planetMoonFocusValue(planetIndex, moonIndex) { return "planet:" + planetIndex + ":moon:" + moonIndex; }
+export function planetMoonFocusIndex(focus) {
+    if (typeof focus !== "string") return null;
+    const m = focus.match(/^planet:(\d+):moon:(\d+)$/);
+    if (!m) return null;
+    const planetIndex = Number(m[1]), moonIndex = Number(m[2]);
+    return planetIndex >= 0 && planetIndex < 8 && moonIndex >= 0 && moonIndex < 6 ? { planetIndex, moonIndex } : null;
+}
 
 function hostFields(star) {
     const mass = Math.max(0, Number(star?.mass) || 0);
@@ -87,6 +95,64 @@ function finishPlanet(raw, k, host, hzInnerAU, hzOuterAU, rng, multi = true) {
         inHZ: typed.inHZ, rotSec, tilt: gaussian(rng) * 25 * Math.PI / 180,
         color: PLANET_TYPE_COLOR[type], ...atm, real: false, moons: [], ring: null,
     };
+}
+
+function roman(n) {
+    return ["I", "II", "III", "IV", "V", "VI"][n] || String(n + 1);
+}
+
+function moonOffsetRaw(m, t, out) {
+    const n = Math.sqrt((m.orbitMu || m.mu) / (m.a * m.a * m.a));
+    let M = (m.phase || 0) + n * t;
+    M %= TAU;
+    let E = M;
+    for (let i = 0; i < 6; i++) E -= (E - m.e * Math.sin(E) - M) / (1 - m.e * Math.cos(E));
+    const cE = Math.cos(E), sE = Math.sin(E);
+    out.x = m.a * (cE - m.e);
+    out.y = m.a * Math.sqrt(1 - m.e * m.e) * sE;
+    out.z = 0;
+    return out;
+}
+
+export function moonOffsetKm(moon, simT, out) {
+    return moonOffsetRaw(moon, simT, out);
+}
+
+function populateMoonsAndRing(planet, host, hzOuterAU, seed) {
+    const rngMoon = makeRNG(splitSeed(seed, SALT_MOON + planet.index));
+    const rngRing = makeRNG(splitSeed(seed, SALT_RING + planet.index));
+    planet.moons = [];
+    planet.ring = null;
+    const rHillAU = planet.a * Math.cbrt((planet.massMe * MU_E) / Math.max(1, 3 * host.mass * MU_S));
+    const rHillKm = rHillAU * AU_KM;
+    if (planet.massMe >= 0.5 && planet.a >= 0.1 && rHillKm > planet.radiusKm * 6.25) {
+        let nMoons = 0;
+        if (planet.type === "gas" || planet.type === "hot-jupiter") nMoons = Math.min(6, 2 + samplePoisson(rngMoon, 2));
+        else if (planet.type === "sub-neptune") nMoons = Math.floor(rngMoon() * 3);
+        else nMoons = Math.min(1, samplePoisson(rngMoon, 0.4));
+        const loA = 2.5 * planet.radiusKm, hiA = Math.min(0.4 * rHillKm, 0.5 * rHillKm);
+        if (hiA > loA) {
+            for (let i = 0; i < nMoons; i++) {
+                const R = clamp(logUniform(rngMoon, 0.002 * planet.radiusKm, 0.05 * planet.radiusKm), 100, 2600);
+                const massMoonMe = Math.pow(R / R_EARTH, 3) * 0.6;
+                const a = logUniform(rngMoon, loA, hiA);
+                const e = clamp(0.005 * Math.sqrt(-2 * Math.log(Math.max(1e-12, 1 - rngMoon()))), 0, 0.08);
+                planet.moons.push({
+                    name: (planet.name || ("P" + (planet.index + 1))) + " " + roman(i),
+                    a, e, R, phase: rngMoon() * TAU,
+                    color: planet.a > hzOuterAU ? 0xd6e2ec : 0x9a938a,
+                    mu: Math.max(1, massMoonMe * MU_E), orbitMu: planet.mu,
+                });
+            }
+        }
+    }
+    const ringType = planet.type === "gas" || planet.type === "hot-jupiter" || planet.type === "sub-neptune";
+    const gasGiant = planet.type === "gas" || planet.type === "hot-jupiter";
+    if (ringType && (planet.a > 1.5 * hzOuterAU || (gasGiant && rngRing() < 0.08))) {
+        planet.ring = [1.2 * planet.radiusKm, (1.8 + rngRing() * 0.9) * planet.radiusKm];
+        planet.ring.opacity = 0.35 + rngRing() * 0.35;
+        planet.ring.tilt = planet.tilt + (rngRing() - 0.5) * 0.18;
+    }
 }
 
 function radiusValley(radiusRe, rng) {
@@ -151,6 +217,7 @@ export function generateSystem(star) {
         }
         base.planets = planets;
     }
+    for (const p of base.planets) populateMoonsAndRing(p, host, hz.outer, seed);
     return base;
 }
 
@@ -191,8 +258,28 @@ export function planetWorldState(system, planetIndex, hostStar, simT, out) {
     return out;
 }
 
+const _moonParent = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+const _moonOffPrev = { x: 0, y: 0, z: 0 };
+const _moonOffNext = { x: 0, y: 0, z: 0 };
+export function moonWorldState(system, planetIndex, moonIndex, hostStar, simT, out) {
+    const moon = system?.planets?.[planetIndex]?.moons?.[moonIndex];
+    if (!moon || !planetWorldState(system, planetIndex, hostStar, simT, _moonParent)) return null;
+    const h = 0.5;
+    moonOffsetKm(moon, simT - h, _moonOffPrev);
+    moonOffsetKm(moon, simT + h, _moonOffNext);
+    moonOffsetKm(moon, simT, out);
+    out.vx = _moonParent.vx + (_moonOffNext.x - _moonOffPrev.x) / (2 * h);
+    out.vy = _moonParent.vy + (_moonOffNext.y - _moonOffPrev.y) / (2 * h);
+    out.vz = _moonParent.vz + (_moonOffNext.z - _moonOffPrev.z) / (2 * h);
+    out.x += _moonParent.x;
+    out.y += _moonParent.y;
+    out.z += _moonParent.z;
+    return out;
+}
+
 const _domPlanetState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
-export function dominantSystemPlanet(sys, hostStar, shipWorld, simT) {
+const _domMoonState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+export function dominantSystemBody(sys, hostStar, shipWorld, simT) {
     if (!sys?.planets?.length || !hostStar || !shipWorld) return null;
     let best = null;
     for (const p of sys.planets) {
@@ -200,7 +287,24 @@ export function dominantSystemPlanet(sys, hostStar, shipWorld, simT) {
         const d = Math.hypot(shipWorld.x - _domPlanetState.x, shipWorld.y - _domPlanetState.y, shipWorld.z - _domPlanetState.z);
         const soi = Math.max(p.radiusKm * 3, p.a * AU_KM * Math.pow(p.mu / Math.max(1, hostStar.mu || MU_S), 0.4));
         const acc = p.mu / Math.max(1, d * d);
-        if (d < soi && (!best || acc > best.acc)) best = { planet: p, index: p.index, d, soi, acc, dominant: true };
+        if (d < soi && (!best || acc > best.acc)) {
+            best = { planet: p, index: p.index, d, soi, acc, dominant: true };
+            for (let i = 0; i < (p.moons?.length || 0); i++) {
+                const m = p.moons[i];
+                moonWorldState(sys, p.index, i, hostStar, simT, _domMoonState);
+                const dm = Math.hypot(shipWorld.x - _domMoonState.x, shipWorld.y - _domMoonState.y, shipWorld.z - _domMoonState.z);
+                const soiMoon = Math.max(3 * m.R, m.a * Math.pow(m.mu / Math.max(1, p.mu), 0.4));
+                if (dm < soiMoon) {
+                    const accMoon = m.mu / Math.max(1, dm * dm);
+                    best = { planet: p, index: p.index, moon: m, moonIndex: i, d: dm, soi: soiMoon, acc: accMoon, dominant: true };
+                }
+            }
+        }
     }
     return best;
+}
+
+export function dominantSystemPlanet(sys, hostStar, shipWorld, simT) {
+    const b = dominantSystemBody(sys, hostStar, shipWorld, simT);
+    return b?.moon ? { ...b, moon: undefined, moonIndex: undefined } : b;
 }
