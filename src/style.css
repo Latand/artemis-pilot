@@ -369,7 +369,7 @@ body.mode-cabin #simsBtn, body.mode-cabin #navBall, body.mode-cabin #navBtn, bod
 .help__note { font-size: 10px; color: var(--ink-3); margin-top: 12px; line-height: 1.7; }
 .help__cta { font-size: 10.5px; color: var(--ember); margin-top: 14px; letter-spacing: .14em; font-weight: 700; }
 
-#hintCard { position: absolute; left: 50%; top: 120px; transform: translateX(-50%); z-index: 6;
+#hintCard { position: absolute; left: 50%; top: 170px; transform: translateX(-50%); z-index: 6;
   pointer-events: none; font-size: 10px; letter-spacing: .1em; color: var(--ice); white-space: nowrap;
   background: rgba(6,10,16,.9); border: 1px solid var(--line-2); border-radius: var(--r-sm);
   padding: 8px 14px; opacity: 0; transition: opacity .45s; box-shadow: var(--shadow); }

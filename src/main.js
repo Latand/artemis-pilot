@@ -8,7 +8,7 @@ import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, 
 import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
 import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
 import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.js";
-import { loadAllMaps } from "./textures.js";
+import { loadAllMaps, dotTexture } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
     renderQuality, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
@@ -723,6 +723,59 @@ function hideStarLabels() {
     starLabelsVisible = false;
     starLabelCursor = 0;
 }
+// Star labels persist through the cosmic-mode transition (the old code hid
+// them wholesale in the cosmicView branch, causing the orphaned glyph cliff at
+// 1.89e9): full to 40 ly, faded out by 140 ly, where the named-star sprites
+// stop reading as markers and become ordinary star-field content.
+function updateStarLabels(w, h) {
+    const focusStar = targetStarIndex(G.focus);
+    const activeStarFocus = focusStar >= 0 && focusStar < STARS.length;
+    const starLabelFade = 1 - smooth01(LY_SCENE * 40, LY_SCENE * 140, cam.dist);
+    const showStarLabels = !renderQuality.mobile && starLabelFade > 0.05 &&
+        (cam.dist > LY_SCENE * .001 || activeStarFocus);
+    if (!showStarLabels) { hideStarLabels(); return { showStarLabels, starLabelsDue: false, starLabelBatch: 0 }; }
+    const starLabelsDue = !starLabelsVisible || frameNo % starLabelCadence() === 0;
+    let starLabelBatch = 0;
+    if (starLabelsDue) {
+        const fadeStr = starLabelFade >= 0.999 ? "1" : starLabelFade.toFixed(2);
+        const batch = Math.min(STARS.length, starLabelBatchSize());
+        for (let n = 0; n < batch; n++) {
+            const i = (starLabelCursor + n) % STARS.length;
+            // companion components (ALPHA CEN B, GUNIIBUU B...) overprint their
+            // primary at survey zoom and made the pair's label appear to rename
+            // itself; past 3e8 (sub-~15 px separation) only the primary labels.
+            // Built-in companions carry a `companion` field; runtime-promoted
+            // binary components (GUNIIBUU B) only carry the " B" name suffix.
+            if ((STARS[i].companion || / B$/.test(STARS[i].name)) && cam.dist > 3e8) {
+                if (starLabels[i]) hideLabel(starLabels[i]);
+                starLabelBatch++;
+                continue;
+            }
+            const starLabel = ensureStarLabel(i);
+            if (starLabel) put(starLabel, starScenePos(i, _starLabelPos), -8, w, h, fadeStr);
+            starLabelBatch++;
+        }
+        starLabelCursor = (starLabelCursor + batch) % STARS.length;
+        starLabelsVisible = true;
+    }
+    return { showStarLabels, starLabelsDue, starLabelBatch };
+}
+// Near-field label declutter: labels claim screen slots in priority order
+// (SHIP > SUN > EARTH > MOON > planets > moons > holes); anything whose
+// anchor lands within 26 px of an already-placed label hides instead of
+// overprinting.
+const labelSlots = [];
+const _slotP = [0, 0];
+function putUnlessCrowded(el, v3, dy, w, h) {
+    const p = projectTo(v3, w, h, _slotP);
+    if (!p) { hideLabel(el); return; }
+    for (let k = 0; k < labelSlots.length; k += 2) {
+        const dx = p[0] - labelSlots[k], dyy = p[1] - labelSlots[k + 1];
+        if (dx * dx + dyy * dyy < 26 * 26) { hideLabel(el); return; }
+    }
+    labelSlots.push(p[0], p[1]);
+    put(el, v3, dy, w, h);
+}
 function starLabelCadence() {
     if (renderQuality.mobile) return 8;
     return G.warp > 600 ? 6 : G.warp > 60 ? 3 : 2;
@@ -1095,6 +1148,12 @@ function updateFocusVelocityVector(alpha = 1) {
 // ============================ MAIN LOOP ============================
 const clock = new THREE.Clock();
 const earthV = new THREE.Vector3(), moonV = new THREE.Vector3(), velV = new THREE.Vector3(), upV = new THREE.Vector3(0, 1, 0), dirV = new THREE.Vector3();
+const moonBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: dotTexture("rgba(220,230,245,1)", "rgba(150,170,200,0)"),
+    color: 0xaeb9c8, transparent: true, opacity: .5, depthWrite: false,
+}));
+moonBeacon.visible = false;
+scene.add(moonBeacon);
 const camPrevTgt = new THREE.Vector3(), camDelta = new THREE.Vector3();
 const cabinEye = new THREE.Vector3(), cabinLook = new THREE.Vector3();
 const tier1CamDirScene = new THREE.Vector3();
@@ -1524,6 +1583,7 @@ function frame() {
         moon.position.copy(moonV);
         moon.rotation.y = _m.ang + Math.PI * .5;
         moonSoiRing.position.copy(moonV);
+        moonBeacon.position.copy(moonV);
     }
     const earthVisible = !WORLD.earthDestroyed && !cosmicView;
     earthG.visible = earthVisible;
@@ -1837,7 +1897,8 @@ function frame() {
             }
         }
         hideNearFieldLabels();
-        hideStarLabels();
+        if (!cabinActive && !VR.active) updateStarLabels(viewportSize.w, viewportSize.h);
+        else hideStarLabels();
         arrow.visible = false; flowArrow.visible = false; tipV.visible = false; tipF.visible = false;
         moonSoiRing.visible = false;
         clearBodyPrediction();
@@ -2009,6 +2070,14 @@ function frame() {
     }
     moonSoiRing.visible = fRiver > .01 && !WORLD.moonDestroyed;
     moonSoiRing.material.opacity = fRiver * (.14 + .1 * Math.sin(performance.now() * .002));
+    // min-size beacon (same rule as planet moons' moonGlows): the Moon mesh
+    // is a sub-10-px unlit crescent at Earth-survey framings, so the MOON
+    // label floated over nothing (zoom-ladder earth-60)
+    {
+        const dMoonCam = camera.position.distanceTo(moonV);
+        moonBeacon.scale.setScalar(Math.max(R_MOON * K * 1.4, dMoonCam * .006));
+        moonBeacon.visible = !WORLD.moonDestroyed && !cosmicView && dMoonCam > 150;
+    }
     // ---- velocity & flow vectors (one shared scale) ----
     velV.set(G.vx, G.vz, -G.vy);
     const sp = shipSpeed;
@@ -2109,21 +2178,9 @@ function frame() {
     if (!renderQuality.mobile && frameNo % 5 === 0) updateEscapeTracker(oi);
     const w = viewportSize.w, h = viewportSize.h;
     const labelsSuppressed = cabinActive || VR.active;
-    const showStarLabels = !labelsSuppressed && !renderQuality.mobile && ((cam.dist > LY_SCENE * .001 && cam.dist < LY_SCENE * 180) || activeStarFocus);
-    const starLabelsDue = showStarLabels && (!starLabelsVisible || frameNo % starLabelCadence() === 0);
-    let starLabelBatch = 0;
     const starLabelsT0 = perfStart();
-    if (starLabelsDue) {
-        const batch = Math.min(STARS.length, starLabelBatchSize());
-        for (let n = 0; n < batch; n++) {
-            const i = (starLabelCursor + n) % STARS.length;
-            const starLabel = ensureStarLabel(i);
-            if (starLabel) put(starLabel, starScenePos(i, _starLabelPos), -8, w, h);
-            starLabelBatch++;
-        }
-        starLabelCursor = (starLabelCursor + batch) % STARS.length;
-        starLabelsVisible = true;
-    } else if (!showStarLabels) hideStarLabels();
+    const starLabelState = labelsSuppressed ? (hideStarLabels(), { showStarLabels: false, starLabelsDue: false, starLabelBatch: 0 }) : updateStarLabels(w, h);
+    const { showStarLabels, starLabelsDue, starLabelBatch } = starLabelState;
     perfEnd("hud.starLabels", starLabelsT0, PERF.enabled ? { showStarLabels, starLabelsDue, starLabelBatch } : null);
     if (cosmicView || cabinActive || VR.active || renderQuality.mobile) {
         hoverTipEl.style.display = "none";
@@ -2185,19 +2242,22 @@ function frame() {
     const nearLabelT0 = perfStart();
     let planetLabelCount = 0, bhLabelCount = 0;
     if (nearLabelsDue) {
-        if (WORLD.earthDestroyed) hideLabel(lblE); else put(lblE, earthG.position, -8, w, h);
-        if (WORLD.moonDestroyed) hideLabel(lblM); else put(lblM, moon.position, -8, w, h);
+        labelSlots.length = 0;
+        if (G.dead) hideLabel(lblO);
+        else putUnlessCrowded(lblO, shipG.position, -22, w, h);
         if (WORLD.sunDestroyed || camera.position.distanceTo(sunCore.position) < SUN_RADIUS * 18) hideLabel(lblS);
-        else put(lblS, sunCore.position, -8, w, h);
+        else putUnlessCrowded(lblS, sunCore.position, -8, w, h);
+        if (WORLD.earthDestroyed) hideLabel(lblE); else putUnlessCrowded(lblE, earthG.position, -8, w, h);
+        if (WORLD.moonDestroyed) hideLabel(lblM); else putUnlessCrowded(lblM, moon.position, -8, w, h);
         for (let i = 0; i < PL.length; i++) {
             if (WORLD.plDestroyed[i]) hideLabel(plLabels[i]);
-            else { put(plLabels[i], plGroups[i].position, -8, w, h); planetLabelCount++; }
+            else { putUnlessCrowded(plLabels[i], plGroups[i].position, -8, w, h); planetLabelCount++; }
         }
         for (let i = 0; i < MOONS.length; i++) {
             const m = MOONS[i];
             const showMoon = !WORLD.plDestroyed[m.p] && moonGroups[i].visible &&
                 (focusMoon === i || camera.position.distanceTo(moonGroups[i].position) < MOON_LABEL_DIST(i));
-            if (showMoon) put(moonLabels[i], moonGroups[i].position, -7, w, h);
+            if (showMoon) putUnlessCrowded(moonLabels[i], moonGroups[i].position, -7, w, h);
             else hideLabel(moonLabels[i]);
         }
         for (let i = 0; i < BH_MAX; i++) {
@@ -2210,12 +2270,10 @@ function frame() {
                 setLabelDisplay(bhLabels[i], "block");
                 const bhText = "BH " + (i + 1);
                 if (bhLabels[i].textContent !== bhText) bhLabels[i].textContent = bhText;
-                put(bhLabels[i], bhScenePos(i, _bhLabelPos), -10, w, h);
+                putUnlessCrowded(bhLabels[i], bhScenePos(i, _bhLabelPos), -10, w, h);
                 bhLabelCount++;
             }
         }
-        if (G.dead) hideLabel(lblO);
-        else put(lblO, shipG.position, -22, w, h);
         nearLabelsReady = true;
     }
     perfEnd("labels.near", nearLabelT0, PERF.enabled ? { nearLabelsDue, labelEvery, mobile: renderQuality.mobile, planetLabelCount, bhLabelCount } : null);

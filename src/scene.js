@@ -580,9 +580,9 @@ export function projectTo(v3, w, h, out) {
 export const project = (v3, w, h) => {
     return projectTo(v3, w, h, [0, 0]);
 };
-export const put = (elRef, v3, dy, w, h) => {
+export const put = (elRef, v3, dy, w, h, opacity = "1") => {
     const p = projectTo(v3, w, h, labelProject);
     if (!p || p[0] < -40 || p[0] > w + 40 || p[1] < 0 || p[1] > h) { hideLabel(elRef); return; }
     const x = Math.round(p[0] + 10), y = Math.round(p[1] + dy);
-    setLabelState(elRef, "1", "translate(" + x + "px," + y + "px)");
+    setLabelState(elRef, opacity, "translate(" + x + "px," + y + "px)");
 };
