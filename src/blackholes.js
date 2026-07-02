@@ -87,6 +87,34 @@ function makeHawkingPoints(seed) {
     pts.renderOrder = 5;
     return pts;
 }
+function makeTdeJet() {
+    const seg = 36, verts = [], idx = [];
+    for (let side = 0; side < 2; side++) {
+        const dir = side === 0 ? 1 : -1;
+        const base = verts.length / 3;
+        verts.push(0, dir * .5, 0);
+        verts.push(0, 0, 0);
+        for (let s = 0; s < seg; s++) {
+            const a = s / seg * Math.PI * 2;
+            verts.push(Math.cos(a) * .06, 0, Math.sin(a) * .06);
+        }
+        for (let s = 0; s < seg; s++) idx.push(base, base + 2 + s, base + 2 + ((s + 1) % seg));
+        for (let s = 0; s < seg; s++) idx.push(base + 1, base + 2 + ((s + 1) % seg), base + 2 + s);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(verts), 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    const mat = new THREE.MeshBasicMaterial({
+        color: 0x9fd7ff, transparent: true, opacity: 0,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+    });
+    const jet = new THREE.Mesh(g, mat);
+    jet.frustumCulled = false;
+    jet.renderOrder = 9;
+    return jet;
+}
 function makeSpaghettificationStream(seed) {
     const N = 920, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
     const phase = new Float32Array(N), lane = new Float32Array(N), jitter = new Float32Array(N);
@@ -567,11 +595,12 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, ev
     diskTex.center.set(.5, .5);
     const disk = new THREE.Mesh(new THREE.PlaneGeometry(rsKm * K * 13, rsKm * K * 13), new THREE.MeshBasicMaterial({ map: diskTex, transparent: true, opacity: .82, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
     disk.rotation.x = -Math.PI / 2;
-    g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.group, coreMask);
+    const jet = makeTdeJet();
+    g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.group, jet, coreMask);
     scene.add(g);
     BH_META.push({
-        g, disk, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0,
-        tde: { active: false, t0Sim: 0, tFbSec: 0, LpeakW: 0, LnowW: 0, LEddW: L_EDD_PER_MSUN * (rsKm * C_LIGHT * C_LIGHT / 2 / MU_S) },
+        g, disk, diskBaseRs: rsKm, jet, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0,
+        tde: { active: false, t0Sim: 0, tFbSec: 0, LpeakW: 0, LnowW: 0, LEddW: L_EDD_PER_MSUN * (rsKm * C_LIGHT * C_LIGHT / 2 / MU_S), mStarKg: 0, mBhMsun: 0, rCirc: 0 },
     });
     BH.n++;
     if (quiet) return i;
@@ -775,7 +804,7 @@ function removePhantomSource(ph) {
     const idx = GS.indexOf(ph);
     if (idx >= 0) GS.splice(idx, 1);
 }
-function activateTdeMeta(i, t0Sim, tFbSec, mStarKg, mBhMsun) {
+function activateTdeMeta(i, t0Sim, tFbSec, mStarKg, mBhMsun, rCirc = 0) {
     const m = BH_META[i];
     if (!m) return;
     const LEddW = L_EDD_PER_MSUN * mBhMsun;
@@ -786,6 +815,9 @@ function activateTdeMeta(i, t0Sim, tFbSec, mStarKg, mBhMsun) {
         LpeakW: tdeLuminosityW(tFbSec, tFbSec, mStarKg, mBhMsun),
         LnowW: LEddW,
         LEddW,
+        mStarKg,
+        mBhMsun,
+        rCirc,
     };
 }
 function resolveTdeInstant(i, target, x, y, vx, vy, radius, muBody) {
@@ -793,7 +825,7 @@ function resolveTdeInstant(i, target, x, y, vx, vy, radius, muBody) {
     const tFb = fallbackTimeSec(radius, muBH, muBody);
     const mBhMsun = muBH / MU_S;
     const mStarKg = muBody / G_KM;
-    activateTdeMeta(i, EPHT.t, tFb, mStarKg, mBhMsun);
+    activateTdeMeta(i, EPHT.t, tFb, mStarKg, mBhMsun, circularizationKm(radius, muBH, muBody));
     absorbBody(i, target, x, y, vx, vy, muBody);
 }
 function bhBodyLimit(rs, radius, muBody, muBH) {
@@ -927,7 +959,7 @@ function advanceDisruptions(dt) {
             const x = BH.x[d.bh] + dx / r * horizon;
             const y = BH.y[d.bh] + dy / r * horizon;
             d.tPeak = d.t0Sim + d.tFb;
-            activateTdeMeta(d.bh, d.t0Sim, d.tFb, d.mStarKg, d.mBhMsun);
+            activateTdeMeta(d.bh, d.t0Sim, d.tFb, d.mStarKg, d.mBhMsun, d.rCirc);
             absorbBody(d.bh, d.target, x, y, d.vx, d.vy, d.muBody);
             if (d.phantom) {
                 // phantom → ghost: outside the expanding front the old debris
@@ -1062,6 +1094,10 @@ function updateSpagVisual(d, m, dtLocal, dBH, obsRate) {
     const stress = clamp((d.limit / Math.max(d.radius, 1) - 1) / 15, 0, 1);
     const tail = Math.max(inner * 1.12, len * (.16 + d.visual * (.42 + stress * .25)));
     const outer = Math.min(tail * .72, Math.max(len * .45, radiusU * 1.8));
+    const boundProg = smooth01(.2, .7, d.visual);
+    const splitProg = smooth01(.12, .55, d.visual);
+    const fallbackU = Math.max(inner * 1.1, (d.accretionR || d.rIsco || BH.rs[d.bh] * 3) * K);
+    const escapeTail = tail * (1 + splitProg * (1.1 + stress * .45));
     const heatPulse = .55 + .45 * Math.sin(performance.now() * .009 + d.visual * 9);
     const pos = spag.pos, col = spag.col;
     const rockBase = _bodyCol.setHex(d.color);
@@ -1074,17 +1110,24 @@ function updateSpagVisual(d, m, dtLocal, dBH, obsRate) {
         const neck = 1 - smooth01(.02, .34, q);
         const plasmaThin = plasmaTarget ? .42 : 1;
         const width = (radiusU * (.018 + Math.pow(q, 1.55) * .16) * plasmaThin + pixelU) * (1.05 - d.visual * .32);
-        const spiral = Math.sin(phase) * width * (.42 + spag.jitter[n] * 1.35) * reveal;
+        const lane = spag.lane[n];
+        const isBound = lane < 0;
+        const splitSign = isBound ? -1 : 1;
+        const spiral = (Math.sin(phase) * (.42 + spag.jitter[n] * 1.35) + splitSign * splitProg * (.7 + q * .9)) * width * reveal;
         const lift = Math.cos(phase * .71 + spag.jitter[n] * 2.2) * width * (.34 + neck * .18) * reveal;
         const shear = Math.sin(phase * .31) * width * .55 * stress;
-        const along = inner + qq * tail + shear;
+        const streamAlong = inner + qq * (isBound ? tail : escapeTail) + shear;
+        const wrap = fallbackU + (1 - qq) * inner * .8 + Math.sin(phase * .23) * width * .45;
+        const along = isBound ? streamAlong + (wrap - streamAlong) * boundProg : streamAlong;
         pos[n * 3] = along;
         pos[n * 3 + 1] = lift;
         pos[n * 3 + 2] = spiral;
         const hot = Math.pow(1 - q, plasmaTarget ? 2.4 : 3.2) * (.45 + heatPulse * .28);
-        col[n * 3] = rockBase.r * (.34 + q * .5) + hot * (plasmaTarget ? 1.25 : .92);
-        col[n * 3 + 1] = rockBase.g * (.33 + q * .42) + hot * (plasmaTarget ? .72 : .52);
-        col[n * 3 + 2] = rockBase.b * (.32 + q * .38) + hot * (plasmaTarget ? .22 : .16);
+        const boundHeat = isBound ? boundProg * (1.15 - q * .55) : 0;
+        const escapeFade = isBound ? 1 : (1 - splitProg * (.28 + q * .42));
+        col[n * 3] = (rockBase.r * (.34 + q * .5) + hot * (plasmaTarget ? 1.25 : .92) + boundHeat * .7) * escapeFade;
+        col[n * 3 + 1] = (rockBase.g * (.33 + q * .42) + hot * (plasmaTarget ? .72 : .52) + boundHeat * .82) * escapeFade;
+        col[n * 3 + 2] = (rockBase.b * (.32 + q * .38) + hot * (plasmaTarget ? .22 : .16) + boundHeat * 1.15) * escapeFade;
     }
     spag.attr.needsUpdate = true;
     spag.colAttr.needsUpdate = true;
@@ -1096,15 +1139,18 @@ function updateSpagVisual(d, m, dtLocal, dBH, obsRate) {
     const arms = 5, segs = 112;
     for (let a = 0; a < arms; a++) {
         const armPhase = a / arms * Math.PI * 2 + d.visual * (5.2 + a * .13);
+        const boundArm = a < Math.ceil(arms * Math.max(.2, d.boundFrac || .5));
         for (let s = 0; s < segs - 1; s++) {
             for (let end = 0; end < 2; end++) {
                 const q = (s + end) / (segs - 1);
                 const qq = Math.pow(q, 1.08);
                 const ang = armPhase + qq * (13 + stress * 8) - d.visual * 16;
                 const width = (radiusU * (.012 + Math.pow(q, 1.35) * .105) * (plasmaTarget ? .38 : 1) + pixelU * .75) * (1 - d.visual * .18);
-                spag.linePos[li++] = inner + qq * tail * (.78 + .16 * Math.sin(a * 1.7));
+                const streamAlong = inner + qq * (boundArm ? tail : escapeTail) * (.78 + .16 * Math.sin(a * 1.7));
+                const wrap = fallbackU + (1 - qq) * inner * .75;
+                spag.linePos[li++] = boundArm ? streamAlong + (wrap - streamAlong) * boundProg : streamAlong;
                 spag.linePos[li++] = Math.sin(ang * .67 + a) * width * .36;
-                spag.linePos[li++] = Math.cos(ang) * width;
+                spag.linePos[li++] = Math.cos(ang) * width + (boundArm ? -1 : 1) * splitProg * width * (.45 + q);
             }
         }
     }
@@ -1121,15 +1167,16 @@ function updateSpagVisual(d, m, dtLocal, dBH, obsRate) {
             spag.remnant.material.needsUpdate = true;
         }
         spag.remnant.position.set(outer, 0, 0);
+        const stretch = 1 + 4 * smooth01(0, .3, d.visual);
         if (plasmaTarget) {
             spag.remnant.scale.set(
-                Math.min(radiusU * (1.4 + d.visual * 4.6), Math.max(radiusU * 1.25, tail * .16)),
+                Math.min(radiusU * (1.4 + d.visual * 4.6) * stretch, Math.max(radiusU * 1.25, tail * .22)),
                 Math.max(radiusU * .28, radiusU * (1 - d.visual * .35)),
                 Math.max(radiusU * .25, radiusU * (1 - d.visual * .32)),
             );
         } else {
             spag.remnant.scale.set(
-                Math.min(radiusU * (1.05 + d.visual * (4.2 + stress * 4.8)), Math.max(radiusU * 1.25, tail * .11)),
+                Math.min(radiusU * (1.05 + d.visual * (4.2 + stress * 4.8)) * stretch, Math.max(radiusU * 1.25, tail * .18)),
                 Math.max(radiusU * .32, radiusU * (1 - d.visual * .58)),
                 Math.max(radiusU * .3, radiusU * (1 - d.visual * .55)),
             );
@@ -1146,16 +1193,19 @@ function updateSpagVisual(d, m, dtLocal, dBH, obsRate) {
         const reveal = smooth01(q * .35, .2 + q * .85, d.visual);
         const ang = spag.fragPhase[i] + q * (18 + stress * 10) - d.visual * (17 + spag.fragLane[i] * 4);
         const width = (radiusU * (.028 + Math.pow(q, 1.7) * .16) * (plasmaTarget ? .36 : 1) + pixelU) * reveal;
-        const along = inner + Math.pow(q, 1.12) * tail + Math.sin(ang * .27) * width * .6;
+        const boundFrag = spag.fragLane[i] < 0;
+        const streamAlong = inner + Math.pow(q, 1.12) * (boundFrag ? tail : escapeTail) + Math.sin(ang * .27) * width * .6;
+        const wrap = fallbackU + (1 - q) * inner * .9;
+        const along = boundFrag ? streamAlong + (wrap - streamAlong) * boundProg : streamAlong;
         const y = Math.sin(ang * .71) * width * .45;
-        const z = Math.cos(ang) * width;
+        const z = Math.cos(ang) * width + (boundFrag ? -1 : 1) * splitProg * width * (.6 + q);
         const scale = Math.max(.00001, radiusU * (.006 + .012 * spag.fragSize[i]) * reveal * (1 - d.visual * .35) * (plasmaTarget ? .32 : 1));
         _fragObj.position.set(along, y, z);
         _fragObj.rotation.set(ang * .17, ang * .31, ang * .23);
         _fragObj.scale.setScalar(scale);
         _fragObj.updateMatrix();
         spag.fragments.setMatrixAt(i, _fragObj.matrix);
-        const hot = Math.pow(1 - q, 2.2) * clamp(d.visual * 1.3, 0, 1);
+        const hot = Math.pow(1 - q, 2.2) * clamp(d.visual * 1.3, 0, 1) + (boundFrag ? boundProg * .55 : 0);
         spag.fragments.setColorAt(i, _fragCol.setHex(d.color).lerp(_hotFragCol, hot));
     }
     spag.fragments.instanceMatrix.needsUpdate = true;
@@ -1164,13 +1214,19 @@ function updateSpagVisual(d, m, dtLocal, dBH, obsRate) {
         ? clamp(.12 + d.visual * .38, 0, .48)
         : clamp(.12 + d.visual * .42, 0, .54);
 }
-function fadeSpagVisual(spag, dtR) {
+function fadeSpagVisual(m, dtR) {
+    const spag = m?.spag;
     if (!spag) return;
     spag.mat.opacity = Math.max(0, spag.mat.opacity - dtR * .85);
     spag.lines.material.opacity = Math.max(0, spag.lines.material.opacity - dtR * .7);
     spag.fragments.material.opacity = Math.max(0, spag.fragments.material.opacity - dtR * .75);
     spag.remnantUniforms.uAlpha.value = Math.max(0, spag.remnantUniforms.uAlpha.value - dtR * .9);
     spag.remnant.visible = spag.remnantUniforms.uAlpha.value > .01;
+    if (m.jet) m.jet.material.opacity = Math.max(0, m.jet.material.opacity - dtR * .9);
+    if (m.tde?.active && m.tde.LnowW > 0 && m.tde.LnowW < m.tde.LEddW * 1e-4) {
+        m.tde.active = false;
+        m.tde.LnowW = 0;
+    }
 }
 export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
     updateBHPlacementPreview(dtR);
@@ -1185,21 +1241,41 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         m.flare = Math.max(0, m.flare - dtLocal * .55);
         const massVis = smooth01(.5, 5000, m.rs);
         const diskVis = smooth01(50, 100000, m.rs);
+        let lum = 0;
+        if (m.tde?.active) {
+            const LnowW = tdeLuminosityW(EPHT.t - m.tde.t0Sim, m.tde.tFbSec, m.tde.mStarKg, m.tde.mBhMsun);
+            m.tde.LnowW = LnowW;
+            lum = clamp(LnowW / Math.max(1e-30, m.tde.LEddW), 0, 1);
+        }
         const screenRing = dBH * (.0026 + .002 * massVis);
         m.photon.scale.setScalar(Math.max(m.rs * K * 4.2, screenRing));
         m.glow.scale.setScalar(Math.max(m.rs * K * 8, dBH * (.0035 + .0055 * massVis)));
         const hot = Math.min(1, Math.max(.14, Math.pow(1000 / Math.max(1, m.rs), .34)));
         const flare = m.flare * m.flare;
-        m.disk.material.opacity = .045 + diskVis * .6 + flare * .28;
-        m.glow.material.opacity = .025 + hot * (.025 + .075 * massVis) + flare * .24;
+        const tdeFlare = Math.max(flare, lum);
+        const baseDiskScale = m.rs / Math.max(1e-9, m.diskBaseRs);
+        const circScale = m.tde?.active && m.tde.rCirc > 0
+            ? clamp((m.tde.rCirc * K * .5) / Math.max(1e-9, m.diskBaseRs * K * 6.5), baseDiskScale, baseDiskScale * 8)
+            : baseDiskScale;
+        m.disk.scale.setScalar(circScale * (1 + lum * .38));
+        m.disk.material.opacity = .045 + diskVis * .6 + lum * .5 + (m.tde?.active ? 0 : flare * .28);
+        m.glow.material.opacity = .025 + hot * (.025 + .075 * massVis) + flare * .24 + lum * .4;
         const hVis = Math.max(m.rs * K * 5.5, dBH * (.0015 + .0018 * massVis));
         m.hawk.scale.setScalar(hVis);
         m.hawk.rotation.y += dtLocal * (1.4 + hot * 4.8);
         m.hawk.rotation.z -= dtLocal * (.35 + hot * 1.2);
-        m.hawk.material.opacity = (.018 + hot * .055) * (.35 + .65 * massVis) + flare * .08;
+        m.hawk.material.opacity = (.018 + hot * .055) * (.35 + .65 * massVis) + flare * .08 + lum * .16;
         m.hawk.material.size = Math.max(.0025, dBH * (.00018 + .00018 * massVis)) * (.65 + hot * .35);
-        m.hawkGlow.scale.setScalar(Math.max(m.rs * K * (4.6 + flare * 5), dBH * (.0022 + .0035 * massVis + flare * .004)));
-        m.hawkGlow.material.opacity = .015 + hot * (.018 + .052 * massVis) * (0.65 + 0.35 * Math.sin(performance.now() * .004 + bi)) + flare * .22;
+        m.hawkGlow.scale.setScalar(Math.max(m.rs * K * (4.6 + tdeFlare * 5), dBH * (.0022 + .0035 * massVis + tdeFlare * .004)));
+        m.hawkGlow.material.opacity = .015 + hot * (.018 + .052 * massVis) * (0.65 + 0.35 * Math.sin(performance.now() * .004 + bi)) + flare * .22 + lum * .4;
+        if (m.jet) {
+            const jetOp = lum > .8 ? .3 * (lum - .8) / .2 : 0;
+            m.jet.material.opacity = jetOp;
+            const jetLen = Math.max(m.rs * K * 7, dBH * (.02 + .04 * lum));
+            const jetRad = Math.max(m.rs * K * .45, dBH * .0012);
+            m.jet.scale.set(jetRad, jetLen, jetRad);
+            m.jet.visible = jetOp > .001;
+        }
         if (m.coreMask) {
             m.coreMask.scale.setScalar(Math.max(m.rs * K * 3, dBH * (.0025 + .0045 * massVis)));
             m.coreMask.material.opacity = 1;
@@ -1207,7 +1283,7 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         }
         const d = DISRUPT.find(x => x.bh === bi);
         if (d) updateSpagVisual(d, m, dtLocal, dBH, obsRate);
-        else fadeSpagVisual(m.spag, dtR);
+        else fadeSpagVisual(m, dtR);
         m.tex.rotation -= dtLocal * (.25 + 9 / Math.sqrt(m.rs));
     }
 }
