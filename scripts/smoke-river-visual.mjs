@@ -75,8 +75,10 @@ for (const [r, C, sink] of [[100, 0.0282, 7], [5000, 16.29, 752], [50, 0.00313, 
 // outer radius: >= 6·sink, <= volR/2, equals SOI when SOI is inside those bounds
 assert(rm.shellOuterRadius(7, 924, 1e6) === 924, "shell rOut should sit at the SOI when defined");
 assert(rm.shellOuterRadius(752, 0, 1e6) === 752 * V.SHELL_NOSOI_MUL, "no-SOI rOut = 40·sink");
-assert(rm.shellOuterRadius(7, 924, 100) === 50, "rOut capped at half the volume radius");
+assert(rm.shellOuterRadius(7, 924, 100) === 18, "rOut capped at 0.18x the volume radius (camera stays outside the shells)");
 assert(rm.shellOuterRadius(1000, 100, 1e9) === 6000, "rOut floored at 6·sink");
+assert(V.SHELL_DOT_FRAC === 0.006 && V.SHELL_OPACITY === 0.30 && V.SHELL_FADE_IN === 0.30,
+  "WP-R7 shell legibility constants pinned");
 
 // 6) relative-frame blend + velocity-mapping handedness
 assert(rm.frameBlendW(0) === 0 && rm.frameBlendW(1) === 1, "frameBlendW endpoints");
@@ -124,6 +126,8 @@ const GLSL_SYNC = [
   "(1.0 - smoothstep(7.0e4, 1.6e5, dSun))",
   "float bandMul = i == 2 ? 3.0 : 1.0",
   "- uFrameVel * uFrameW",
+  "localViewInk * mix(1.15, 0.8, uLocalFocus)",
+  "localInk * mix(1.7, 1.0, uLocalFocus) + uLocalFocus * 0.4",
 ];
 for (const lit of GLSL_SYNC) {
   assert(src.includes(lit), "river.js GLSL out of sync with riverMath, missing literal: " + lit);

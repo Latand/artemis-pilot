@@ -404,7 +404,7 @@ void main() {
     vec3 cHole = vec3(0.14 + 0.42 * t, 0.62 + 0.30 * t, 1.0);
     vec3 cGold = vec3(0.6 + 0.4 * t, 0.34 + 0.42 * t, 0.12 + 0.26 * t);
     vec3 cViolet = vec3(0.38 + 0.3 * t, 0.22 + 0.26 * t, 0.85 + 0.15 * t);
-    float fieldInk = max(pow(tVis, mix(0.85, 0.48, uPlaneBias)), uPlaneBias * 0.18) * mix(0.82, 1.35, warpInk) * (1.0 + lapseInk * 0.55 + holeInk * 0.62 + holeHalo * 1.2 + localViewInk * 1.15);
+    float fieldInk = max(pow(tVis, mix(0.85, 0.48, uPlaneBias)), uPlaneBias * 0.18) * mix(0.82, 1.35, warpInk) * (1.0 + lapseInk * 0.55 + holeInk * 0.62 + holeHalo * 1.2 + localViewInk * mix(1.15, 0.8, uLocalFocus));
     fieldInk *= mix(1.0, 0.48, holeCrowd);
     fieldInk = max(fieldInk, uLocalFocus * localInk * 0.72);
     vec3 fieldColor = mix(mix(cBlue, cGold, gold), cViolet, violet);
@@ -414,7 +414,7 @@ void main() {
     // comet-tail fade: bright head, nonlinear falloff to a faint tail (a
     // steeper, smoother gradient than the old linear head/tail mix)
     float cometFade = mix(0.94, 0.08, pow(segT, 0.8));
-    vColor = fieldColor * fade * fieldInk * (1.0 + localInk * 1.7 + uLocalFocus * 0.65) * mix(0.85, 1.24, tVis) * cometFade * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime) * pulse;
+    vColor = fieldColor * fade * fieldInk * (1.0 + localInk * mix(1.7, 1.0, uLocalFocus) + uLocalFocus * 0.4) * mix(0.85, 1.24, tVis) * cometFade * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime) * pulse;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
 
@@ -718,9 +718,9 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     uniformsShared.uLoadShed.value = loadShed;
     uniformsShared.uLocalFocus.value = localFocus;
     const mobileOpacity = renderQuality.mobile ? 1.08 : 1;
-    uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + localFocus * 1.15) * (1 - loadShed * .12);
+    uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + localFocus * .7) * (1 - loadShed * .12);
     river.renderShed = renderShed;
-    let drawFrac = Math.max(.52, .56 + localFocus * .38, 1 - renderShed * .44);
+    let drawFrac = Math.max(.52, .56 + localFocus * .30, 1 - renderShed * .44);
     if (renderQuality.mobile) drawFrac = Math.min(drawFrac, renderQuality.loadShed >= 2 ? .72 : .84);
     const drawCount = Math.max(256, Math.min(NPART, Math.floor(NPART * drawFrac)));
     if (drawCount !== river.drawCount) {
@@ -1027,10 +1027,10 @@ export function updateShells(dtSim, fB) {
         if (sh.r < sink || sh.r > rOut * 1.2) sh.r = rOut * (0.86 + 0.26 * shellRnd());
         sh.obj.position.copy(shellAnchorPos);
         sh.obj.scale.setScalar(sh.r);
-        sh.obj.material.size = Math.max(.95, rOut * 0.012);
+        sh.obj.material.size = Math.max(.95, rOut * RIVER_VIS.SHELL_DOT_FRAC);
         sh.obj.material.color.copy(shellAnchorColor);
         sh.obj.visible = true;
-        const oo = fB * .42 * Math.min(1, (rOut - sh.r) / (rOut * .082)) * Math.min(1, (sh.r - sink) / (rOut * .041));
+        const oo = fB * RIVER_VIS.SHELL_OPACITY * Math.min(1, (rOut - sh.r) / (rOut * RIVER_VIS.SHELL_FADE_IN)) * Math.min(1, (sh.r - sink) / (rOut * .041));
         sh.obj.material.opacity = Math.max(0, oo);
     }
 }

@@ -32,7 +32,11 @@ export const RIVER_VIS = {
     GOLD_R1: 1.6e5,          // gold gone beyond ~1.07 AU
     SHELL_SINK_MIN: 6,       // shell outer radius at least 6·sink
     SHELL_NOSOI_MUL: 40,     // ...and 40·sink where no SOI is defined
-    SHELL_VOL_FRAC: 0.5,     // ...capped at half the river volume radius
+    SHELL_VOL_FRAC: 0.18,    // ...capped so the outer shell stays inside the focused view
+                             // (0.18·smoothR ≈ 0.76·cam.dist — camera outside the shell sphere)
+    SHELL_DOT_FRAC: 0.006,   // dot size as a fraction of rOut (~5 px at the Jupiter test case)
+    SHELL_OPACITY: 0.30,     // peak shell opacity (was a .42 literal — read as fog over planets)
+    SHELL_FADE_IN: 0.30,     // fraction of contraction spent fading in (staggers the 4 shells)
     SHELL_VIS_CAMDIST: 24,   // shells drawn only when cam.dist < rOut·24
     FRAME_SHIP_W: 0.85,      // max relative-frame weight in ship focus
     FRAME_EASE: 3,           // frame-weight easing rate, 1/s of real time
