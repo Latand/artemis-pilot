@@ -79,6 +79,17 @@ assert(rm.shellOuterRadius(7, 924, 100) === 18, "rOut capped at 0.18x the volume
 assert(rm.shellOuterRadius(1000, 100, 1e9) === 6000, "rOut floored at 6·sink");
 assert(V.SHELL_DOT_FRAC === 0.006 && V.SHELL_OPACITY === 0.30 && V.SHELL_FADE_IN === 0.30,
   "WP-R7 shell legibility constants pinned");
+// WP-R8: dot size across anchor scales. The 0.95 floor was the Moon-blob bug
+// (floor = half the Moon's radius); base rOut·frac is scale-invariant since
+// rOut = 0.756·cam.dist whenever a body is focused.
+assert(Math.abs(rm.shellDotSize(45.4, 60) - 45.4 * V.SHELL_DOT_FRAC) < 1e-12,
+  "Moon-scale dots must use the base fraction, not a floor");
+assert(Math.abs(rm.shellDotSize(680, 900) - 680 * V.SHELL_DOT_FRAC) < 1e-12,
+  "Jupiter dot size unchanged from WP-R7 (regression pin)");
+assert(rm.shellDotSize(680, 100) <= 680 * 0.05 * V.SHELL_NEAR_FRAC + 1e-12,
+  "camera inside the shell sphere must shrink dots, not explode them");
+assert(rm.shellDotSize(1, 10) === V.SHELL_DOT_MIN, "sub-pixel absolute floor");
+assert(V.SHELL_DOT_MIN === 0.05 && V.SHELL_NEAR_FRAC === 0.02, "WP-R8 constants pinned");
 
 // 6) relative-frame blend + velocity-mapping handedness
 assert(rm.frameBlendW(0) === 0 && rm.frameBlendW(1) === 1, "frameBlendW endpoints");

@@ -35,6 +35,10 @@ export const RIVER_VIS = {
     SHELL_VOL_FRAC: 0.18,    // ...capped so the outer shell stays inside the focused view
                              // (0.18·smoothR ≈ 0.76·cam.dist — camera outside the shell sphere)
     SHELL_DOT_FRAC: 0.006,   // dot size as a fraction of rOut (~5 px at the Jupiter test case)
+    SHELL_DOT_MIN: 0.05,     // absolute floor against sub-pixel shimmer only (NOT a size floor:
+                             // the old 0.95 floor was the Moon-blob bug — WP-R8)
+    SHELL_NEAR_FRAC: 0.02,   // clearance cap: ~22 px worst-case near-side dots (the ceiling the
+                             // critic passed at Jupiter); binds only in fly-in transients
     SHELL_OPACITY: 0.30,     // peak shell opacity (was a .42 literal — read as fog over planets)
     SHELL_FADE_IN: 0.30,     // fraction of contraction spent fading in (staggers the 4 shells)
     SHELL_VIS_CAMDIST: 24,   // shells drawn only when cam.dist < rOut·24
@@ -83,6 +87,18 @@ export const shellStep = (r, C, sink, dtSim) =>
     r - (C / Math.sqrt(Math.max(sink, r))) * dtSim;
 export const shellOuterRadius = (sink, soi, volR) =>
     Math.min(Math.max(sink * RIVER_VIS.SHELL_SINK_MIN, soi > 0 ? soi : sink * RIVER_VIS.SHELL_NOSOI_MUL), volR * RIVER_VIS.SHELL_VOL_FRAC);
+
+// Dot size for the shell layer. The base fraction is scale-invariant: with a
+// focused anchor rOut = 0.756·cam.dist for every body (the SHELL_VOL_FRAC cap
+// binds), so base gives ~5 px at the anchor's distance at any scale — Moon,
+// Earth, Jupiter alike. The clearance term caps near-side blow-up when the
+// camera approaches or transiently enters the shell sphere during fly-in;
+// at steady state it sits just above base and never binds (WP-R8).
+export function shellDotSize(rOut, camDist) {
+    const V = RIVER_VIS;
+    const clearance = Math.max(camDist - rOut, rOut * 0.05);
+    return Math.max(V.SHELL_DOT_MIN, Math.min(rOut * V.SHELL_DOT_FRAC, clearance * V.SHELL_NEAR_FRAC));
+}
 
 // ---- relative-frame display (P2-C): v_display = v_field − v_frame near the
 // focus body/ship. A frame choice over the SAME field — "тебе уносить". ----

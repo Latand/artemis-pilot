@@ -7,7 +7,7 @@ import { scene, renderer, camera, cam, renderQuality } from "./scene.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
-import { pulsePhaseRate, shellStep, shellOuterRadius, frameBlendW, shipFrameW, frameVelToScene, RIVER_VIS } from "./riverMath.js";
+import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW, shipFrameW, frameVelToScene, RIVER_VIS } from "./riverMath.js";
 import { eph } from "./ephemeris.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
@@ -1027,7 +1027,7 @@ export function updateShells(dtSim, fB) {
         if (sh.r < sink || sh.r > rOut * 1.2) sh.r = rOut * (0.86 + 0.26 * shellRnd());
         sh.obj.position.copy(shellAnchorPos);
         sh.obj.scale.setScalar(sh.r);
-        sh.obj.material.size = Math.max(.95, rOut * RIVER_VIS.SHELL_DOT_FRAC);
+        sh.obj.material.size = shellDotSize(rOut, cam.dist);
         sh.obj.material.color.copy(shellAnchorColor);
         sh.obj.visible = true;
         const oo = fB * RIVER_VIS.SHELL_OPACITY * Math.min(1, (rOut - sh.r) / (rOut * RIVER_VIS.SHELL_FADE_IN)) * Math.min(1, (sh.r - sink) / (rOut * .041));
