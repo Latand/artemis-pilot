@@ -107,12 +107,13 @@ uniform float uMinPx;
 uniform float uMaxPx;
 uniform float uMagLimit;
 uniform float uPcScene;
+uniform float uMagPenalty;
 ${VIEW_BRIGHTNESS_GLSL}
 void main() {
     vColor = color;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     float camDistPc = length(mvPosition.xyz) / uPcScene;
-    float mag = obmApparentMagAt(absMag, camDistPc);
+    float mag = obmApparentMagAt(absMag + uMagPenalty, camDistPc);
     gl_PointSize = hidden > 0.5 ? 0.0 : obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
     vHdr = obmHdrIntensity(mag, uMagLimit);
     gl_Position = projectionMatrix * mvPosition;
@@ -126,6 +127,7 @@ const FRAG = /* glsl */`
 varying vec3 vColor;
 varying float vHdr;
 uniform float uFade;
+uniform float uDim;
 void main() {
     vec2 uv = gl_PointCoord - 0.5;
     float r2 = dot(uv, uv);
@@ -135,11 +137,11 @@ void main() {
     // to galactic scale, where these ~2.5M near-Sun points would otherwise
     // additively stack into a white ball brighter than the galactic core. The
     // disk cloud already carries the statistical star field at that range.
-    gl_FragColor = vec4(vColor * max(vHdr, 1.0), clamp(g, 0.0, 4.0) * uFade);
+    gl_FragColor = vec4(vColor * max(vHdr, 1.0) * uDim, clamp(g, 0.0, 4.0) * uFade * uDim);
 }
 `;
 
-function makeTier1Material() {
+function makeTier1Material({ dim = 1, magPenalty = 0 } = {}) {
     return new THREE.ShaderMaterial({
         uniforms: {
             uBasePx: { value: BRIGHTNESS_CURVE.basePx },
@@ -149,6 +151,8 @@ function makeTier1Material() {
             uMagLimit: { value: BRIGHTNESS_CURVE.magLimit },
             uPcScene: { value: PC_KM * K },
             uFade: { value: 1 },
+            uDim: { value: dim },
+            uMagPenalty: { value: magPenalty },
         },
         vertexShader: VERT,
         fragmentShader: FRAG,
@@ -167,7 +171,7 @@ let activeGroups = null;
  * manifest capacity is 0 get no mesh (nothing to draw, ever) but keep a slot
  * in the returned array so `groupIndexForTile` stays a valid index into it.
  */
-export function createTileGroups(parent, manifest, span = GROUP_TILE_SPAN) {
+export function createTileGroups(parent, manifest, span = GROUP_TILE_SPAN, options = {}) {
     const capacities = computeGroupCapacities(manifest.tiles, span);
     const groups = capacities.map(capacity => {
         if (capacity === 0) return { capacity: 0, layout: createGroupLayout(0), mesh: null, geometry: null, worldKm: null, pm: null };
@@ -186,10 +190,10 @@ export function createTileGroups(parent, manifest, span = GROUP_TILE_SPAN) {
         geometry.setAttribute("absMag", magAttr);
         geometry.setAttribute("hidden", hiddenAttr);
         geometry.setDrawRange(0, 0);
-        const mesh = new THREE.Points(geometry, makeTier1Material());
+        const mesh = new THREE.Points(geometry, makeTier1Material(options));
         mesh.frustumCulled = false;
         mesh.renderOrder = -3;
-        mesh.name = "athygTier1Group";
+        mesh.name = options.name || "athygTier1Group";
         parent.add(mesh);
         return { capacity, layout, mesh, geometry, worldKm: new Float64Array(capacity * 3), pm: new Int16Array(capacity * 2) };
     });

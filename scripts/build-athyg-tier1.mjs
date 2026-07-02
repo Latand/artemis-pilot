@@ -21,11 +21,14 @@ import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
 import { execFileSync } from "node:child_process";
 import { ang2pix_nest, ORDER, NPIX } from "../src/universe/healpix.js";
+import { msAbsMagFromColor } from "../src/universe/mainSequenceCM.js";
 
 const CACHE_DIR = new URL("../cache/", import.meta.url);
 const OUT_DIR = new URL("../public/data/", import.meta.url);
 const OUT_BIN = new URL("../public/data/athyg-tier1.bin", import.meta.url);
 const OUT_MANIFEST = new URL("../public/data/athyg-tier1-manifest.json", import.meta.url);
+const OUT_EST_BIN = new URL("../public/data/athyg-tier1-estimated.bin", import.meta.url);
+const OUT_EST_MANIFEST = new URL("../public/data/athyg-tier1-estimated-manifest.json", import.meta.url);
 const TIER0_IDS_PATH = new URL("../public/data/hyg-tier0-ids.json", import.meta.url);
 
 // AT-HYG ships via Codeberg's Git LFS; the plain `/raw/` endpoint returns only the
@@ -114,6 +117,80 @@ class Column {
     }
 }
 
+function makeColumns(initialCapacity) {
+    return {
+        x: new Column(Float64Array, initialCapacity),
+        y: new Column(Float64Array, initialCapacity),
+        z: new Column(Float64Array, initialCapacity),
+        mag: new Column(Float64Array, initialCapacity),
+        ci: new Column(Float64Array, initialCapacity),
+        pmra: new Column(Float64Array, initialCapacity),
+        pmdec: new Column(Float64Array, initialCapacity),
+        pix: new Column(Int32Array, initialCapacity),
+    };
+}
+
+function pushStar(cols, x, y, z, mag, ci, pmra, pmdec, pix) {
+    cols.x.push(x); cols.y.push(y); cols.z.push(z);
+    cols.mag.push(mag); cols.ci.push(ci); cols.pmra.push(pmra); cols.pmdec.push(pmdec);
+    cols.pix.push(pix);
+}
+
+async function emitCatalog({ columns, count, outBin, outManifest, manifestExtra = {} }) {
+    const x = columns.x.view(), y = columns.y.view(), z = columns.z.view();
+    const mag = columns.mag.view(), ci = columns.ci.view(), pmra = columns.pmra.view(), pmdec = columns.pmdec.view();
+    const pix = columns.pix.view();
+
+    // Stable sort by (pix, mag) so within each tile stars are mag-ascending and the
+    // whole file is deterministic across runs.
+    const order = new Uint32Array(count);
+    for (let i = 0; i < count; i++) order[i] = i;
+    const orderArr = Array.from(order);
+    orderArr.sort((a, b) => (pix[a] - pix[b]) || (mag[a] - mag[b]) || (a - b));
+
+    const outBuf = Buffer.allocUnsafe(count * RECORD_BYTES);
+    const tiles = new Array(NPIX);
+    let cursor = 0;
+    let byteOffset = 0;
+    for (let t = 0; t < NPIX; t++) {
+        const start = cursor;
+        while (cursor < count && pix[orderArr[cursor]] === t) cursor++;
+        const tileCount = cursor - start;
+        tiles[t] = [byteOffset, tileCount];
+        for (let k = start; k < cursor; k++) {
+            const idx = orderArr[k];
+            let o = byteOffset;
+            outBuf.writeFloatLE(x[idx], o); o += 4;
+            outBuf.writeFloatLE(y[idx], o); o += 4;
+            outBuf.writeFloatLE(z[idx], o); o += 4;
+            outBuf.writeInt16LE(clampInt16(mag[idx] * 100), o); o += 2;
+            outBuf.writeInt16LE(clampInt16(ci[idx] * 1000), o); o += 2;
+            outBuf.writeInt16LE(clampInt16(pmra[idx] * 10), o); o += 2;
+            outBuf.writeInt16LE(clampInt16(pmdec[idx] * 10), o); o += 2;
+            byteOffset += RECORD_BYTES;
+        }
+    }
+    if (cursor !== count) throw new Error(`tile bucketing did not consume all rows: cursor=${cursor} count=${count}`);
+    if (byteOffset !== count * RECORD_BYTES) throw new Error("byte offset mismatch after packing");
+
+    await writeFile(outBin, outBuf);
+    await writeFile(outManifest, JSON.stringify({
+        schema: 1,
+        source: "AT-HYG v3.3 (Astronexus, https://codeberg.org/astronexus/athyg), CC BY-SA 4.0",
+        order: ORDER,
+        npix: NPIX,
+        recordBytes: RECORD_BYTES,
+        fields: ["xPc", "yPc", "zPc", "magX100", "ciX1000", "pmRaMasYrX10", "pmDecMasYrX10"],
+        encoding: "xyz: Float32 LE parsecs; mag/ci/pmRa/pmDec: Int16 LE scaled as named",
+        units: { position: "parsec", pm: "mas/yr" },
+        count,
+        ...manifestExtra,
+        tiles,
+    }));
+
+    return stat(outBin);
+}
+
 async function ensureTier0Ids() {
     if (existsSync(TIER0_IDS_PATH)) return;
     console.log("public/data/hyg-tier0-ids.json missing; running catalog:hyg to produce it...");
@@ -138,28 +215,59 @@ async function main() {
         await downloadWithRetry(FILES[i], cachePaths[i].pathname);
     }
 
-    const INITIAL_CAP = 2_800_000;
-    const cx = new Column(Float64Array, INITIAL_CAP);
-    const cy = new Column(Float64Array, INITIAL_CAP);
-    const cz = new Column(Float64Array, INITIAL_CAP);
-    const cmag = new Column(Float64Array, INITIAL_CAP);
-    const cci = new Column(Float64Array, INITIAL_CAP);
-    const cpmra = new Column(Float64Array, INITIAL_CAP);
-    const cpmdec = new Column(Float64Array, INITIAL_CAP);
-    const cpix = new Column(Int32Array, INITIAL_CAP);
+    const primaryCols = makeColumns(2_800_000);
+    const estimatedCols = makeColumns(70_000);
 
     let IDX = null;
     let rowsSeen = 0;
     let noDistance = 0;
+    let noDistanceMissingPhotometry = 0;
     let dedupedCount = 0;
+    let dedupedEstimatedCount = 0;
     let accepted = 0;
+    let estimatedAccepted = 0;
 
     const DEG2RAD = Math.PI / 180;
 
     function processRow(cols) {
         rowsSeen++;
         const dist = num(cols[IDX.dist]);
-        if (!(dist > 0)) { noDistance++; return; }
+        const mag = num(cols[IDX.mag]);
+        const ciRaw = num(cols[IDX.ci]);
+        if (!(dist > 0)) {
+            noDistance++;
+            if (mag === null || ciRaw === null) {
+                noDistanceMissingPhotometry++;
+                return;
+            }
+
+            const hygId = num(cols[IDX.hyg]);
+            const hipId = num(cols[IDX.hip]);
+            if ((hygId !== null && tier0HygIds.has(hygId)) || (hipId !== null && tier0HipIds.has(hipId))) {
+                dedupedEstimatedCount++;
+                return;
+            }
+
+            const raHours = num(cols[IDX.ra]);
+            const decDeg = num(cols[IDX.dec]);
+            if (raHours === null || decDeg === null) return;
+            const raDeg = raHours * 15;
+            const absMag = msAbsMagFromColor(ciRaw);
+            const distPc = Math.pow(10, (mag - absMag + 5) / 5);
+            if (!(distPc > 0) || !Number.isFinite(distPc)) return;
+            const raRad = raDeg * DEG2RAD, decRad = decDeg * DEG2RAD;
+            const cosDec = Math.cos(decRad);
+            const x = distPc * cosDec * Math.cos(raRad);
+            const y = distPc * cosDec * Math.sin(raRad);
+            const z = distPc * Math.sin(decRad);
+            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+            const pmra = num(cols[IDX.pm_ra]) ?? 0;
+            const pmdec = num(cols[IDX.pm_dec]) ?? 0;
+            const pix = ang2pix_nest(ORDER, raDeg, decDeg);
+            pushStar(estimatedCols, x, y, z, mag, ciRaw, pmra, pmdec, pix);
+            estimatedAccepted++;
+            return;
+        }
 
         const hygId = num(cols[IDX.hyg]);
         const hipId = num(cols[IDX.hip]);
@@ -188,17 +296,14 @@ async function main() {
         }
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
 
-        const mag = num(cols[IDX.mag]);
         if (mag === null) return;
-        const ci = num(cols[IDX.ci]) ?? 0;
+        const ci = ciRaw ?? 0;
         const pmra = num(cols[IDX.pm_ra]) ?? 0;
         const pmdec = num(cols[IDX.pm_dec]) ?? 0;
 
         const pix = ang2pix_nest(ORDER, raDeg, decDeg);
 
-        cx.push(x); cy.push(y); cz.push(z);
-        cmag.push(mag); cci.push(ci); cpmra.push(pmra); cpmdec.push(pmdec);
-        cpix.push(pix);
+        pushStar(primaryCols, x, y, z, mag, ci, pmra, pmdec, pix);
         accepted++;
     }
 
@@ -230,70 +335,43 @@ async function main() {
             isFirstLine = false;
             processRow(parseCsvLine(line));
         }
-        console.log(`processed file ${fi + 1}/${cachePaths.length}: rowsSeen=${rowsSeen} accepted=${accepted} noDistance=${noDistance} deduped=${dedupedCount}`);
+        console.log(`processed file ${fi + 1}/${cachePaths.length}: rowsSeen=${rowsSeen} accepted=${accepted} estimated=${estimatedAccepted} noDistance=${noDistance} noDistanceMissingPhotometry=${noDistanceMissingPhotometry} deduped=${dedupedCount} dedupedEstimated=${dedupedEstimatedCount}`);
     }
 
     if (!IDX) throw new Error("never found AT-HYG header row (file 1 empty?)");
 
     const n = accepted;
-    console.log(`total AT-HYG rows seen: ${rowsSeen}, accepted into Tier-1: ${n}, skipped (no distance): ${noDistance}, deduped vs Tier-0: ${dedupedCount}`);
+    console.log(`total AT-HYG rows seen: ${rowsSeen}, accepted into Tier-1: ${n}, estimated sidecar: ${estimatedAccepted}, skipped (no distance): ${noDistance}, missing mag/ci among no-distance: ${noDistanceMissingPhotometry}, deduped vs Tier-0: ${dedupedCount}, estimated deduped vs Tier-0: ${dedupedEstimatedCount}`);
 
-    const x = cx.view(), y = cy.view(), z = cz.view();
-    const mag = cmag.view(), ci = cci.view(), pmra = cpmra.view(), pmdec = cpmdec.view();
-    const pix = cpix.view();
-
-    // Stable sort by (pix, mag) so within each tile stars are mag-ascending and the
-    // whole file is deterministic across runs.
-    const order = new Uint32Array(n);
-    for (let i = 0; i < n; i++) order[i] = i;
-    const orderArr = Array.from(order);
-    orderArr.sort((a, b) => (pix[a] - pix[b]) || (mag[a] - mag[b]) || (a - b));
-
-    const outBuf = Buffer.allocUnsafe(n * RECORD_BYTES);
-    const tiles = new Array(NPIX);
-    let cursor = 0;
-    let byteOffset = 0;
-    for (let t = 0; t < NPIX; t++) {
-        const start = cursor;
-        while (cursor < n && pix[orderArr[cursor]] === t) cursor++;
-        const count = cursor - start;
-        tiles[t] = [byteOffset, count];
-        for (let k = start; k < cursor; k++) {
-            const idx = orderArr[k];
-            let o = byteOffset;
-            outBuf.writeFloatLE(x[idx], o); o += 4;
-            outBuf.writeFloatLE(y[idx], o); o += 4;
-            outBuf.writeFloatLE(z[idx], o); o += 4;
-            outBuf.writeInt16LE(clampInt16(mag[idx] * 100), o); o += 2;
-            outBuf.writeInt16LE(clampInt16(ci[idx] * 1000), o); o += 2;
-            outBuf.writeInt16LE(clampInt16(pmra[idx] * 10), o); o += 2;
-            outBuf.writeInt16LE(clampInt16(pmdec[idx] * 10), o); o += 2;
-            byteOffset += RECORD_BYTES;
-        }
-    }
-    if (cursor !== n) throw new Error(`tile bucketing did not consume all rows: cursor=${cursor} n=${n}`);
-    if (byteOffset !== n * RECORD_BYTES) throw new Error("byte offset mismatch after packing");
-
-    await writeFile(OUT_BIN, outBuf);
-    await writeFile(OUT_MANIFEST, JSON.stringify({
-        schema: 1,
-        source: "AT-HYG v3.3 (Astronexus, https://codeberg.org/astronexus/athyg), CC BY-SA 4.0",
-        order: ORDER,
-        npix: NPIX,
-        recordBytes: RECORD_BYTES,
-        fields: ["xPc", "yPc", "zPc", "magX100", "ciX1000", "pmRaMasYrX10", "pmDecMasYrX10"],
-        encoding: "xyz: Float32 LE parsecs; mag/ci/pmRa/pmDec: Int16 LE scaled as named",
-        units: { position: "parsec", pm: "mas/yr" },
+    const stBin = await emitCatalog({
+        columns: primaryCols,
         count: n,
-        dedupCount: dedupedCount,
-        skippedNoDistance: noDistance,
-        rowsSeen,
-        tiles,
-    }));
+        outBin: OUT_BIN,
+        outManifest: OUT_MANIFEST,
+        manifestExtra: {
+            dedupCount: dedupedCount,
+            skippedNoDistance: noDistance,
+            rowsSeen,
+        },
+    });
+    const stEstBin = await emitCatalog({
+        columns: estimatedCols,
+        count: estimatedAccepted,
+        outBin: OUT_EST_BIN,
+        outManifest: OUT_EST_MANIFEST,
+        manifestExtra: {
+            estimated: true,
+            distanceModel: "main-sequence B-V photometric distance; M_V from src/universe/mainSequenceCM.js",
+            dedupCount: dedupedEstimatedCount,
+            skippedNoDistanceMissingPhotometry: noDistanceMissingPhotometry,
+            skippedNoDistance: noDistance,
+            rowsSeen,
+        },
+    });
 
-    const stBin = await stat(OUT_BIN);
     console.log(`wrote ${OUT_BIN.pathname} (${stBin.size} bytes, ${(stBin.size / 1e6).toFixed(1)} MB) and ${OUT_MANIFEST.pathname}`);
-    console.log(`count=${n} dedupCount=${dedupedCount} skippedNoDistance=${noDistance}`);
+    console.log(`wrote ${OUT_EST_BIN.pathname} (${stEstBin.size} bytes, ${(stEstBin.size / 1e6).toFixed(1)} MB) and ${OUT_EST_MANIFEST.pathname}`);
+    console.log(`count=${n} dedupCount=${dedupedCount} skippedNoDistance=${noDistance} estimatedCount=${estimatedAccepted} estimatedDedupCount=${dedupedEstimatedCount} noDistanceMissingPhotometry=${noDistanceMissingPhotometry}`);
 }
 
 main().catch(err => {

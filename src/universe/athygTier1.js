@@ -23,13 +23,15 @@
 // failure self-heals instead of leaving a permanent hole in the sky.
 
 import { ORDER, NPIX, queryDisc, pix2ang_nest } from "./healpix.js";
-import { createTileGroups, ingestTile, markResidualsDirty, pumpGroupResiduals, disposeGroups, groupStats } from "../render/athygStars.js";
+import { GROUP_TILE_SPAN, createTileGroups, ingestTile, markResidualsDirty, pumpGroupResiduals, disposeGroups, groupStats } from "../render/athygStars.js";
 import { loadAndDecodeTile } from "../workers/athygTileWorker.js";
 import { PC_KM } from "./coords.js";
 import { deriveStar, deriveStarVisualInto, ekerMassForL } from "./stellar.js";
 
 const DEFAULT_MANIFEST_URL = "/data/athyg-tier1-manifest.json";
 const DEFAULT_BIN_URL = "/data/athyg-tier1.bin";
+const DEFAULT_EST_MANIFEST_URL = "/data/athyg-tier1-estimated-manifest.json";
+const DEFAULT_EST_BIN_URL = "/data/athyg-tier1-estimated.bin";
 const VIEW_CONE_DEG = 40;
 const DEC_BANDS = 64;
 const DEFAULT_TILES_PER_FRAME = 8;
@@ -47,6 +49,7 @@ const TILE_CPU_KEEP = 2048;
 const MAIN_THREAD_FETCH_CONCURRENCY = 4;
 
 let state = null;
+let estimatedState = null;
 const nearestScratch = [];
 
 function tier1DisabledByUrl() {
@@ -96,52 +99,52 @@ function normalizeCameraDir(cameraDirOrFrustum) {
     return null;
 }
 
-function startWorker() {
-    if (typeof Worker === "undefined") { state.workerFailed = true; return; }
+function startWorker(targetState) {
+    if (typeof Worker === "undefined") { targetState.workerFailed = true; return; }
     try {
         const worker = new Worker(new URL("../workers/athygTileWorker.js", import.meta.url), { type: "module" });
         worker.onmessage = e => {
             const msg = e.data || {};
-            if (msg.type === "tile") onTileLoaded(msg.tileId, msg);
-            else if (msg.type === "tileError") onTileError(msg.tileId, msg.error);
+            if (msg.type === "tile") onTileLoaded(targetState, msg.tileId, msg);
+            else if (msg.type === "tileError") onTileError(targetState, msg.tileId, msg.error);
         };
         worker.onerror = err => {
             console.error("athygTier1: tile worker crashed, falling back to main-thread fetch:", err?.message || err);
-            state.workerFailed = true;
+            targetState.workerFailed = true;
             worker.terminate();
-            if (state.worker === worker) state.worker = null;
-            retryPendingOnMainThread();
+            if (targetState.worker === worker) targetState.worker = null;
+            retryPendingOnMainThread(targetState);
         };
-        state.worker = worker;
+        targetState.worker = worker;
     } catch (err) {
         console.error("athygTier1: could not start tile worker, falling back to main-thread fetch:", err?.message || err);
-        state.workerFailed = true;
+        targetState.workerFailed = true;
     }
 }
 
-function onTileLoaded(tileId, msg) {
-    if (!state) return;
-    state.pending.delete(tileId);
-    state.loaded[tileId] = 1;
-    state.stats.tilesLoaded++;
-    state.stats.starsLoaded += msg.count || 0;
-    retainTileData(tileId, msg);
-    ingestTile(state.groups, tileId, msg);
-    resolveTilePromise(tileId, true);
+function onTileLoaded(targetState, tileId, msg) {
+    if (!targetState) return;
+    targetState.pending.delete(tileId);
+    targetState.loaded[tileId] = 1;
+    targetState.stats.tilesLoaded++;
+    targetState.stats.starsLoaded += msg.count || 0;
+    retainTileData(targetState, tileId, msg);
+    ingestTile(targetState.groups, tileId, msg);
+    resolveTilePromise(targetState, tileId, true);
 }
 
-function onTileError(tileId, error) {
-    if (!state) return;
-    state.pending.delete(tileId);
-    state.stats.tileErrors++;
+function onTileError(targetState, tileId, error) {
+    if (!targetState) return;
+    targetState.pending.delete(tileId);
+    targetState.stats.tileErrors++;
     console.error(`athygTier1: tile ${tileId} failed to load: ${error}`);
     // Deliberately NOT marked loaded — the next global-sweep wraparound in
     // updateTier1 will retry it, so a transient failure self-heals instead of
     // leaving a permanent gap in the sky.
-    resolveTilePromise(tileId, false);
+    resolveTilePromise(targetState, tileId, false);
 }
 
-function retainTileData(tileId, msg) {
+function retainTileData(targetState, tileId, msg) {
     const count = msg.count || 0;
     if (!count) return;
     const positions = new Float32Array(msg.positions);
@@ -152,54 +155,54 @@ function retainTileData(tileId, msg) {
         mag[i] = magCi[i * 2] / 100;
         ci[i] = magCi[i * 2 + 1] / 1000;
     }
-    if (state.tileData.has(tileId)) state.tileData.delete(tileId);
-    state.tileData.set(tileId, { positions, mag, ci });
-    while (state.tileData.size > TILE_CPU_KEEP) {
-        const oldest = state.tileData.keys().next().value;
-        state.tileData.delete(oldest);
+    if (targetState.tileData.has(tileId)) targetState.tileData.delete(tileId);
+    targetState.tileData.set(tileId, { positions, mag, ci });
+    while (targetState.tileData.size > TILE_CPU_KEEP) {
+        const oldest = targetState.tileData.keys().next().value;
+        targetState.tileData.delete(oldest);
     }
 }
 
-function resolveTilePromise(tileId, ok) {
-    const resolvers = state.tilePromises.get(tileId);
+function resolveTilePromise(targetState, tileId, ok) {
+    const resolvers = targetState.tilePromises.get(tileId);
     if (!resolvers) return;
-    state.tilePromises.delete(tileId);
+    targetState.tilePromises.delete(tileId);
     for (const resolve of resolvers) resolve(ok);
 }
 
 // Used both when the worker itself fails to start and when it crashes mid-run
 // (worker.onerror above) so already-requested tiles aren't silently dropped.
-async function retryPendingOnMainThread() {
-    if (!state) return;
-    runMainThreadFetchQueue(Array.from(state.pending));
+async function retryPendingOnMainThread(targetState) {
+    if (!targetState) return;
+    runMainThreadFetchQueue(targetState, Array.from(targetState.pending));
 }
 
-async function fetchOneOnMainThread(tileId) {
-    const entry = state.manifest.tiles[tileId];
-    if (!entry) { onTileError(tileId, `no manifest entry for tile ${tileId}`); return; }
+async function fetchOneOnMainThread(targetState, tileId) {
+    const entry = targetState.manifest.tiles[tileId];
+    if (!entry) { onTileError(targetState, tileId, `no manifest entry for tile ${tileId}`); return; }
     const [byteOffset, count] = entry;
     try {
-        const decoded = await loadAndDecodeTile(tileId, byteOffset, count, state.binUrl, state.manifest.recordBytes);
-        onTileLoaded(tileId, decoded);
+        const decoded = await loadAndDecodeTile(tileId, byteOffset, count, targetState.binUrl, targetState.manifest.recordBytes);
+        onTileLoaded(targetState, tileId, decoded);
     } catch (err) {
-        onTileError(tileId, err?.message || String(err));
+        onTileError(targetState, tileId, err?.message || String(err));
     }
 }
 
-async function refetchTileCpuData(tileId) {
-    if (state.cpuPending.has(tileId)) return;
-    const entry = state.manifest.tiles[tileId];
-    if (!entry) { onTileError(tileId, `no manifest entry for tile ${tileId}`); return; }
+async function refetchTileCpuData(targetState, tileId) {
+    if (targetState.cpuPending.has(tileId)) return;
+    const entry = targetState.manifest.tiles[tileId];
+    if (!entry) { onTileError(targetState, tileId, `no manifest entry for tile ${tileId}`); return; }
     const [byteOffset, count] = entry;
-    state.cpuPending.add(tileId);
+    targetState.cpuPending.add(tileId);
     try {
-        const decoded = await loadAndDecodeTile(tileId, byteOffset, count, state.binUrl, state.manifest.recordBytes);
-        retainTileData(tileId, decoded);
-        resolveTilePromise(tileId, true);
+        const decoded = await loadAndDecodeTile(tileId, byteOffset, count, targetState.binUrl, targetState.manifest.recordBytes);
+        retainTileData(targetState, tileId, decoded);
+        resolveTilePromise(targetState, tileId, true);
     } catch (err) {
-        onTileError(tileId, err?.message || String(err));
+        onTileError(targetState, tileId, err?.message || String(err));
     } finally {
-        state.cpuPending.delete(tileId);
+        targetState.cpuPending.delete(tileId);
     }
 }
 
@@ -210,31 +213,31 @@ async function refetchTileCpuData(tileId) {
 // this). A shared cursor across a small pool of self-relaunching workers is
 // simpler than tracking a live "N in flight" counter and needs no per-tile
 // bookkeeping beyond the index.
-async function runMainThreadFetchQueue(tileIds) {
+async function runMainThreadFetchQueue(targetState, tileIds) {
     let next = 0;
     const worker = async () => {
         while (next < tileIds.length) {
             const tileId = tileIds[next++];
-            await fetchOneOnMainThread(tileId);
+            await fetchOneOnMainThread(targetState, tileId);
         }
     };
     const poolSize = Math.min(MAIN_THREAD_FETCH_CONCURRENCY, tileIds.length);
     await Promise.all(Array.from({ length: poolSize }, worker));
 }
 
-function requestTiles(tileIds) {
+function requestTiles(targetState, tileIds) {
     if (!tileIds.length) return;
     const fresh = [];
     for (const t of tileIds) {
-        if (state.loaded[t] || state.pending.has(t)) continue;
-        state.pending.add(t);
+        if (targetState.loaded[t] || targetState.pending.has(t)) continue;
+        targetState.pending.add(t);
         fresh.push(t);
     }
     if (!fresh.length) return;
-    if (state.worker && !state.workerFailed) {
-        state.worker.postMessage({ type: "loadTiles", tiles: fresh, binUrl: state.binUrl, manifest: state.manifest });
+    if (targetState.worker && !targetState.workerFailed) {
+        targetState.worker.postMessage({ type: "loadTiles", tiles: fresh, binUrl: targetState.binUrl, manifest: targetState.manifest });
     } else {
-        runMainThreadFetchQueue(fresh);
+        runMainThreadFetchQueue(targetState, fresh);
     }
 }
 
@@ -245,18 +248,26 @@ function requestTiles(tileIds) {
  * wires anything up. Idempotent — a second call while already initialized
  * just returns the existing state.
  */
-export async function initTier1({ scene, manifestUrl = DEFAULT_MANIFEST_URL, binUrl = DEFAULT_BIN_URL, tilesPerFrame = DEFAULT_TILES_PER_FRAME } = {}) {
-    if (tier1DisabledByUrl()) return null;
-    if (state) return state;
+async function initStreamingState({
+    scene,
+    manifestUrl,
+    binUrl,
+    tilesPerFrame,
+    groupOptions,
+    assign,
+    current,
+    label,
+}) {
+    if (current) return current;
     if (!scene) throw new Error("initTier1 requires a scene/parent Object3D to attach star groups to");
 
     const res = await fetch(manifestUrl);
-    if (!res.ok) throw new Error(`Tier-1 manifest fetch failed: HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`${label} manifest fetch failed: HTTP ${res.status}`);
     const manifest = await res.json();
     const absBinUrl = new URL(binUrl, new URL(manifestUrl, location.href)).href;
 
-    const groups = createTileGroups(scene, manifest);
-    state = {
+    const groups = createTileGroups(scene, manifest, GROUP_TILE_SPAN, groupOptions);
+    const nextState = {
         manifest,
         binUrl: absBinUrl,
         parent: scene, // kept so disposeTier1 can remove group meshes from the scene graph
@@ -275,8 +286,36 @@ export async function initTier1({ scene, manifestUrl = DEFAULT_MANIFEST_URL, bin
         residualCursor: { groupIndex: 0 },
         residualDirtyGroups: 0,
     };
-    startWorker();
-    return state;
+    assign(nextState);
+    startWorker(nextState);
+    return nextState;
+}
+
+export async function initTier1({ scene, manifestUrl = DEFAULT_MANIFEST_URL, binUrl = DEFAULT_BIN_URL, tilesPerFrame = DEFAULT_TILES_PER_FRAME } = {}) {
+    if (tier1DisabledByUrl()) return null;
+    return initStreamingState({
+        scene,
+        manifestUrl,
+        binUrl,
+        tilesPerFrame,
+        groupOptions: {},
+        current: state,
+        assign: s => { state = s; },
+        label: "Tier-1",
+    });
+}
+
+export async function initEstimated({ scene, manifestUrl = DEFAULT_EST_MANIFEST_URL, binUrl = DEFAULT_EST_BIN_URL, tilesPerFrame = DEFAULT_TILES_PER_FRAME } = {}) {
+    return initStreamingState({
+        scene,
+        manifestUrl,
+        binUrl,
+        tilesPerFrame,
+        groupOptions: { dim: 0.45, magPenalty: 0.75, name: "athygTier1EstimatedGroup" },
+        current: estimatedState,
+        assign: s => { estimatedState = s; },
+        label: "Tier-1 estimated",
+    });
 }
 
 /**
@@ -297,33 +336,41 @@ export async function initTier1({ scene, manifestUrl = DEFAULT_MANIFEST_URL, bin
  * pending (the common steady state) — see the early return below.
  */
 export function updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, cameraDirOrFrustum, simTSeconds) {
-    if (!state) return;
-    if (state.residualDirtyGroups > 0) pumpResidualRefresh();
-    if (state.stats.tilesLoaded >= state.manifest.npix) return; // steady state: nothing left to stream, no per-frame work or allocation.
+    updateStreamingState(state, cameraDirOrFrustum);
+}
+
+export function updateEstimated(camWorldKmX, camWorldKmY, camWorldKmZ, cameraDirOrFrustum, simTSeconds) {
+    updateStreamingState(estimatedState, cameraDirOrFrustum);
+}
+
+function updateStreamingState(targetState, cameraDirOrFrustum) {
+    if (!targetState) return;
+    if (targetState.residualDirtyGroups > 0) pumpResidualRefreshFor(targetState);
+    if (targetState.stats.tilesLoaded >= targetState.manifest.npix) return; // steady state: nothing left to stream, no per-frame work or allocation.
 
     const toRequest = [];
     const dir = normalizeCameraDir(cameraDirOrFrustum);
     if (dir) {
         const radec = dirToRaDec(dir.x, dir.y, dir.z);
         if (radec) {
-            const viewTiles = queryDisc(state.manifest.order, radec.raDeg, radec.decDeg, VIEW_CONE_DEG);
-            for (let i = 0; i < viewTiles.length && toRequest.length < state.tilesPerFrame; i++) {
+            const viewTiles = queryDisc(targetState.manifest.order, radec.raDeg, radec.decDeg, VIEW_CONE_DEG);
+            for (let i = 0; i < viewTiles.length && toRequest.length < targetState.tilesPerFrame; i++) {
                 const t = viewTiles[i];
-                if (!state.loaded[t] && !state.pending.has(t)) toRequest.push(t);
+                if (!targetState.loaded[t] && !targetState.pending.has(t)) toRequest.push(t);
             }
         }
     }
 
-    const order = state.priorityOrder;
+    const order = targetState.priorityOrder;
     let scanned = 0;
-    while (toRequest.length < state.tilesPerFrame && scanned < order.length) {
-        const t = order[state.sweepCursor];
-        state.sweepCursor = (state.sweepCursor + 1) % order.length;
+    while (toRequest.length < targetState.tilesPerFrame && scanned < order.length) {
+        const t = order[targetState.sweepCursor];
+        targetState.sweepCursor = (targetState.sweepCursor + 1) % order.length;
         scanned++;
-        if (!state.loaded[t] && !state.pending.has(t)) toRequest.push(t);
+        if (!targetState.loaded[t] && !targetState.pending.has(t)) toRequest.push(t);
     }
 
-    if (toRequest.length) requestTiles(toRequest);
+    if (toRequest.length) requestTiles(targetState, toRequest);
 }
 
 /**
@@ -336,10 +383,18 @@ export function updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, cameraDirOrFr
  * A no-op if Tier-1 hasn't been initialized (or was disabled via ?tier1=0).
  */
 export function refreshResiduals() {
-    if (!state) return;
-    markResidualsDirty(state.groups);
-    state.residualCursor.groupIndex = 0;
-    state.residualDirtyGroups = state.groups.reduce((n, g) => n + (g.residualDirty ? 1 : 0), 0);
+    refreshResidualsFor(state);
+}
+
+export function refreshEstimatedResiduals() {
+    refreshResidualsFor(estimatedState);
+}
+
+function refreshResidualsFor(targetState) {
+    if (!targetState) return;
+    markResidualsDirty(targetState.groups);
+    targetState.residualCursor.groupIndex = 0;
+    targetState.residualDirtyGroups = targetState.groups.reduce((n, g) => n + (g.residualDirty ? 1 : 0), 0);
 }
 
 /**
@@ -352,9 +407,17 @@ export function refreshResiduals() {
  * been initialized or nothing is dirty.
  */
 export function pumpResidualRefresh(maxStarsPerCall = DEFAULT_RESIDUAL_STARS_PER_CALL) {
-    if (!state || state.residualDirtyGroups === 0) return { done: true, dirtyGroups: 0 };
-    const result = pumpGroupResiduals(state.groups, state.residualCursor, maxStarsPerCall);
-    state.residualDirtyGroups = result.dirtyGroups;
+    return pumpResidualRefreshFor(state, maxStarsPerCall);
+}
+
+export function pumpEstimatedResidualRefresh(maxStarsPerCall = DEFAULT_RESIDUAL_STARS_PER_CALL) {
+    return pumpResidualRefreshFor(estimatedState, maxStarsPerCall);
+}
+
+function pumpResidualRefreshFor(targetState, maxStarsPerCall = DEFAULT_RESIDUAL_STARS_PER_CALL) {
+    if (!targetState || targetState.residualDirtyGroups === 0) return { done: true, dirtyGroups: 0 };
+    const result = pumpGroupResiduals(targetState.groups, targetState.residualCursor, maxStarsPerCall);
+    targetState.residualDirtyGroups = result.dirtyGroups;
     return result;
 }
 
@@ -383,6 +446,13 @@ export function disposeTier1() {
     state = null;
 }
 
+export function disposeEstimated() {
+    if (!estimatedState) return;
+    if (estimatedState.worker) estimatedState.worker.terminate();
+    disposeGroups(estimatedState.groups, estimatedState.parent);
+    estimatedState = null;
+}
+
 export function tier1MassFor(tileId, idx) {
     if (!state || tier1DisabledByUrl()) return null;
     const data = state.tileData.get(tileId);
@@ -409,9 +479,9 @@ export async function ensureTier1Tile(tileId) {
         else state.tilePromises.set(tileId, [resolve]);
     });
     if (state.loaded[tileId]) {
-        refetchTileCpuData(tileId);
+        refetchTileCpuData(state, tileId);
     } else {
-        requestTiles([tileId]);
+        requestTiles(state, [tileId]);
     }
     return promise;
 }
@@ -430,9 +500,9 @@ function insertNearestTier1(result, limit) {
 
 function prefetchTier1Tile(tileId) {
     if (state.loaded[tileId]) {
-        refetchTileCpuData(tileId);
+        refetchTileCpuData(state, tileId);
     } else {
-        requestTiles([tileId]);
+        requestTiles(state, [tileId]);
     }
 }
 
