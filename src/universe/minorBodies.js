@@ -238,7 +238,7 @@ function keplerInit3Local(a, e, inc, om, varpi, m0, mu, out) {
     return out;
 }
 
-export function propagateInto(swarm, simT, outWorldKmFloat64, sunWorld = [0, 0, 0], startIdx = 0, count = Infinity) {
+export function propagateInto(swarm, simT, outWorldKmFloat64, sunWorld = [0, 0, 0], startIdx = 0, count = Infinity, result = null) {
     const n = Math.floor(swarm.length / MINOR_STRIDE);
     const start = clamp(startIdx | 0, 0, n);
     const span = Number.isFinite(count) ? Math.max(0, count | 0) : n - start;
@@ -254,7 +254,11 @@ export function propagateInto(swarm, simT, outWorldKmFloat64, sunWorld = [0, 0, 
         outWorldKmFloat64[j + 1] = _state.y + sunWorld[1];
         outWorldKmFloat64[j + 2] = _state.z + sunWorld[2];
     }
-    return { start, count: end - start, nextIdx: end >= n ? 0 : end };
+    const out = result || {};
+    out.start = start;
+    out.count = end - start;
+    out.nextIdx = end >= n ? 0 : end;
+    return out;
 }
 
 export function propagateOne(elementArray, idx, simT, sunWorld = [0, 0, 0], out = {}) {

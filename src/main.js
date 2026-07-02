@@ -2,7 +2,7 @@ import * as THREE from "three";
 import {
     R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS, PC_KM,
-    OMEGA_EARTH, FUEL_DV0, warpLabel,
+    OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM,
 } from "./constants.js";
 import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
 import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
@@ -65,7 +65,10 @@ import {
 import { equatorialKmToGal, setSunGalAnchor } from "./universe/coords.js";
 import { solarGalacticStateAt } from "./universe/solarOrbit.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
-import { getOrigin, maybeRebase } from "./universe/renderOrigin.js";
+import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
+import { getSeed } from "./universe/galaxy.js";
+import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
+import { createCometTailPair, createMinorBodyRenderers, updateCometTail } from "./render/minorBodiesRender.js";
 import { PERF, markPerf, sampleRendererInfo, sampleMemory } from "./perf.js";
 import { initXrPerf, tickXrPerf, shouldGateBloom } from "./render/xrPerf.js";
 import { initMobileControls, updateMobileControls } from "./mobileControls.js";
@@ -348,6 +351,12 @@ perfEnd("startup.initCosmicLayer", cosmicInitT0);
 // it every tick via updateTier1 below. Exposed for the live gate probe.
 initTier1({ scene: farTierGroup }).catch(err => console.error("athygTier1: init failed:", err?.message || err));
 window.__tier1Stats = tier1Stats; // debug/testing handle
+const minorSwarms = generateSwarms(getSeed());
+const minorRenderers = createMinorBodyRenderers({ scene, farTierGroup, swarms: minorSwarms });
+const minorTailPairs = [
+    createCometTailPair(scene),
+    createCometTailPair(scene),
+];
 // hook the live instrument textures onto the cockpit MFD screens
 mfdScreens.forEach((scr, i) => {
     scr.material.map = mfdTextures[i];
@@ -1085,6 +1094,13 @@ const tier1CamDirScene = new THREE.Vector3();
 const tier1CamDirWorld = { x: 0, y: 0, z: 1 };
 let camPrevFocus = null;
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
+const minorSunWorld = [0, 0, 0];
+const minorTailBody = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+const minorBeltStep = { start: 0, count: 0, nextIdx: 0 };
+const minorKuiperStep = { start: 0, count: 0, nextIdx: 0 };
+const minorCuratedStep = { start: 0, count: 0, nextIdx: 0 };
+const minorOortStep = { start: 0, count: 0, nextIdx: 0 };
+let beltCursor = 0, kuiperCursor = 0;
 const arrC = [0, 0, 0];
 const fv = [0, 0, 0];
 let placed = false, frameNo = 0, grB = 0, exAcc = 0, exAnyAlive = false, hudReady = false, nearLabelsReady = false, nearVisualReady = false;
@@ -1112,6 +1128,31 @@ function sceneVecFromKm(x, y, z, out) {
     out[1] = z * K;
     out[2] = -y * K;
     return out;
+}
+function uploadMinorResiduals(group, startIdx, count) {
+    const start = Math.max(0, startIdx | 0);
+    const end = Math.min(group.capacity, start + Math.max(0, count | 0));
+    const pos = group.geometry.attributes.position;
+    for (let i = start; i < end; i++) {
+        const j = i * 3;
+        worldToResidualArr(group.worldKm[j], group.worldKm[j + 1], group.worldKm[j + 2], pos.array, j, K);
+    }
+    if (end <= start) return;
+    pos.addUpdateRange(start * 3, (end - start) * 3);
+    pos.needsUpdate = true;
+    group.geometry.setDrawRange(0, Math.max(group.geometry.drawRange.count || 0, end));
+}
+function advanceMinorSwarm(swarm, group, cursor, chunk, res) {
+    propagateInto(swarm, G.t, group.worldKm, minorSunWorld, cursor, chunk, res);
+    uploadMinorResiduals(group, res.start, res.count);
+    return res.nextIdx;
+}
+function setMinorVisible(solarDistAu) {
+    const nearSystem = !WORLD.sunDestroyed && solarDistAu >= 0.35 && solarDistAu <= 1600;
+    minorRenderers.belt.mesh.visible = nearSystem;
+    minorRenderers.kuiper.mesh.visible = nearSystem && solarDistAu >= 5;
+    minorRenderers.curated.mesh.visible = nearSystem;
+    minorRenderers.oort.mesh.visible = !WORLD.sunDestroyed && solarDistAu >= 500 && cam.dist < LY_SCENE * .2;
 }
 const cosmoDEVec = [0, 0, 0];
 const cosmoDMVec = [0, 0, 0];
@@ -1539,7 +1580,19 @@ function frame() {
         }
         const bhVisualDue = BH.n > 0 || isBHPlacementMode() || !nearVisualReady || frameNo % 12 === 0;
         if (bhVisualDue) updateBHVisuals(dtR, earthX, earthZ);
+        minorSunWorld[0] = eph.earthX + eph.sunX;
+        minorSunWorld[1] = eph.earthY + eph.sunY;
+        minorSunWorld[2] = eph.sunZ || 0;
+        beltCursor = advanceMinorSwarm(minorSwarms.belt, minorRenderers.belt, beltCursor, Math.ceil(minorRenderers.belt.capacity / 6), minorBeltStep);
+        kuiperCursor = advanceMinorSwarm(minorSwarms.kuiper, minorRenderers.kuiper, kuiperCursor, Math.ceil(minorRenderers.kuiper.capacity / 6), minorKuiperStep);
+        propagateInto(minorSwarms.curated, G.t, minorRenderers.curated.worldKm, minorSunWorld, 0, minorRenderers.curated.capacity, minorCuratedStep);
+        uploadMinorResiduals(minorRenderers.curated, 0, minorRenderers.curated.capacity);
+        for (let i = 0; i < minorTailPairs.length; i++) {
+            propagateOne(minorSwarms.curated, i + 3, G.t, minorSunWorld, minorTailBody);
+            updateCometTail(minorTailPairs[i], minorTailBody, minorSunWorld, minorTailBody);
+        }
     }
+    setMinorVisible(cam.dist / K / AU_KM);
     if (nearVisualDue) nearVisualReady = true;
     perfEnd("scene.bodies", sceneBodiesT0, PERF.enabled ? { nearFieldDue, nearVisualDue, cosmicView } : null);
     const sceneFocusT0 = perfStart();
@@ -1664,6 +1717,13 @@ function frame() {
         tier1CamDirWorld.y = -tier1CamDirScene.z;
         tier1CamDirWorld.z = tier1CamDirScene.y;
         updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, tier1CamDirWorld, G.t);
+        if (minorRenderers.oort.mesh.visible && (nearFieldDue || !minorRenderers.oort.geometry.drawRange.count)) {
+            minorSunWorld[0] = eph.earthX + eph.sunX;
+            minorSunWorld[1] = eph.earthY + eph.sunY;
+            minorSunWorld[2] = eph.sunZ || 0;
+            propagateInto(minorSwarms.oort, G.t, minorRenderers.oort.worldKm, minorSunWorld, 0, minorRenderers.oort.capacity, minorOortStep);
+            uploadMinorResiduals(minorRenderers.oort, 0, minorRenderers.oort.capacity);
+        }
         // Dissolve the near-Sun tier-1 field before galactic scale: past a few
         // thousand ly its ~2.5M points additively stack into a white ball that
         // outshines the galactic core, and the disk cloud already carries the
@@ -1672,7 +1732,10 @@ function frame() {
         setTier1Fade(1 - smooth01(LY_SCENE * 1500, LY_SCENE * 15000, cam.dist));
         if (tier1RebaseEnabled) {
             const rebaseThresholdKm = Math.max(1e6, (cam.dist / K) * .5);
-            if (maybeRebase(camWorldKmX, camWorldKmY, camWorldKmZ, rebaseThresholdKm)) refreshTier1Residuals();
+            if (maybeRebase(camWorldKmX, camWorldKmY, camWorldKmZ, rebaseThresholdKm)) {
+                refreshTier1Residuals();
+                uploadMinorResiduals(minorRenderers.oort, 0, minorRenderers.oort.capacity);
+            }
         }
     }
     const bodyLodT0 = perfStart();
