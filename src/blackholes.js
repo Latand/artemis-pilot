@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, K } from "./constants.js";
+import { tidalRadiusKm, mostBoundEnergy, fallbackTimeSec, circularizationKm, iscoKm, tdeLuminosityW, boundFraction, L_EDD_PER_MSUN } from "./tde.js";
 import { G, BH, WORLD, EPHT, bhRegister, bhMuAt, gsPull, addPhantom } from "./state.js";
 import { eph, setLiveGuard } from "./ephemeris.js";
 import { fmtAccel, fmtDist, fmtKm, mulberry32 } from "./format.js";
@@ -15,6 +16,7 @@ let H = {
 export function initBHHooks(hooks) { H = { ...H, ...hooks }; }
 
 const SOLAR_MASS_KG = 1.98847e30;
+const G_KM = 6.674e-20;
 export function bhMassLabel(rs) {
     const msun = rs * C_LIGHT * C_LIGHT / 2 / MU_S;
     if (msun >= 100) return Math.round(msun).toLocaleString("en-US") + " M☉";
@@ -566,7 +568,10 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, ev
     disk.rotation.x = -Math.PI / 2;
     g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.group, coreMask);
     scene.add(g);
-    BH_META.push({ g, disk, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0 });
+    BH_META.push({
+        g, disk, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0,
+        tde: { active: false, t0Sim: 0, tFbSec: 0, LpeakW: 0, LnowW: 0, LEddW: L_EDD_PER_MSUN * (rsKm * C_LIGHT * C_LIGHT / 2 / MU_S) },
+    });
     BH.n++;
     if (quiet) return i;
     H.toast("⚫ Black hole: r_s " + fmtKm(rsKm) + " · " + bhMassLabel(rsKm) + " · " + bhHawkingLabel(rsKm));
@@ -806,14 +811,16 @@ function targetDisruptionColor(target) {
     if (typeof target === "number" && PL[target]) return PL[target].color;
     return 0x9b8068;
 }
-function disruptionDuration(radius, dist, muBH, muBody, rel) {
+function disruptionDuration(radius, dist, muBH, muBody, rel, tFbSec) {
     const r = Math.max(1, dist);
     const tidalAcc = 2 * muBH * radius / (r * r * r);
     const selfAcc = muBody / Math.max(1, radius * radius);
     const stress = Math.max(.02, tidalAcc / Math.max(1e-12, selfAcc));
     const dyn = Math.sqrt(radius / Math.max(1e-9, tidalAcc));
     const crossing = radius / Math.max(.05, rel);
-    return clamp(Math.max(21600, dyn * 6, crossing * 10) / Math.sqrt(Math.min(60, stress)), 21600, 86400 * 90);
+    const floor = clamp(Math.max(21600, dyn * 6, crossing * 10) / Math.sqrt(Math.min(60, stress)), 21600, 86400 * 90);
+    // Slow-motion viewing now tracks fallback: stretch, stream, then peak near t_fb.
+    return clamp(floor, Math.max(21600, tFbSec * .15), Math.min(86400 * 90, tFbSec * 3));
 }
 function disruptionBodyState(d) {
     if (d.phantom) {
@@ -839,11 +846,20 @@ function disruptionBodyState(d) {
 function beginDisruption(i, target, x, y, vx, vy, radius, muBody, dist, limit) {
     if (isDisrupting(target) || i < 0 || i >= BH.n) return;
     const rel = Math.hypot(vx - BH.vx[i], vy - BH.vy[i]);
-    const duration = disruptionDuration(radius, Math.max(dist, BH.rs[i] * 1.2), BH.mu[i], muBody, rel);
+    const muBH = BH.mu[i];
+    const tFb = fallbackTimeSec(radius, muBH, muBody);
+    const eMb = mostBoundEnergy(radius, muBH, muBody);
+    const rCirc = circularizationKm(radius, muBH, muBody);
+    const rIsco = iscoKm(BH.rs[i]);
+    const mBhMsun = muBH / MU_S;
+    const mStarKg = muBody / G_KM;
+    const duration = disruptionDuration(radius, Math.max(dist, BH.rs[i] * 1.2), muBH, muBody, rel, tFb);
     const name = H.disrupt(target, BH.rs[i], "tidal disruption", i) || targetLabel(target);
     DISRUPT.push({
         bh: i, target, name, x, y, vx, vy, radius, muBody,
         age: 0, visual: 0, duration,
+        tFb, eMb, rCirc, rIsco, mBhMsun, mStarKg,
+        boundFrac: boundFraction(), tPeak: null, t0Sim: EPHT.t,
         color: targetDisruptionColor(target),
         limit: Math.max(limit, radius), bornRt: performance.now(),
         // the doomed body's mass keeps gravitating as frozen debris until the
