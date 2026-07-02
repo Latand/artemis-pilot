@@ -50,6 +50,7 @@ import {
 } from "./hud.js";
 import { initInput, setFocus, blackHoleFocusIndex, starFocusIndex } from "./input.js";
 import { initNavigator, openNavigator } from "./navigator.js";
+import { initLog, noteBody, noteNotable, noteStar, updateRecords as updateDiscoveryRecords } from "./discoveryLog.js";
 import * as cinematic from "./cinematic.js";
 import { initQuickControls } from "./quickControls.js";
 import { initScenarios } from "./scenarios.js";
@@ -241,6 +242,7 @@ initMobileControls({
     openNavigator,
 });
 initNavigator({ flyTo: flyFocus });
+initLog();
 cinematic.bindCinematic({ camera, cam, G, renderer, setCamRoll, applyCameraRoll });
 cinematic.initCine();
 initQuickControls();
@@ -1481,6 +1483,16 @@ function frame() {
     checkBodyContacts();
     // achievements
     if (!G.dead) {
+        if (oi.domMoon) noteBody("moon", 0, "THE MOON");
+        if (oi.domSun) noteBody("sun", 0, "THE SUN");
+        if (oi.domPl && oi.pNear >= 0 && oi.pNearD < PL[oi.pNear].soi) noteBody("planet", oi.pNear, PL[oi.pNear].name);
+        if (G.landed) noteBody(G.landed.body, G.landed.i ?? 0, oi.body || String(G.landed.body).toUpperCase());
+        if (oi.domStar && oi.starId) noteStar(oi.starId, oi.star?.name || oi.starId);
+        const notableStar = oi.star || oi.starNear;
+        if (notableStar?.bh) noteNotable("bh", notableStar.name || "BLACK HOLE");
+        if (notableStar?.pulsar) noteNotable("pulsar", notableStar.name || "PULSAR");
+        if (G.leftHome) noteNotable("earthlike", "EARTH-LIKE WORLD: EARTH");
+        if (frameNo % 30 === 0) updateDiscoveryRecords();
         if (!oi.domMoon && oi.E < 0 && oi.ra > 100000 + R_EARTH) award("highE");
         if (oi.rE > 400171) award("record");
         if (oi.rM < SOI_M) award("soi");

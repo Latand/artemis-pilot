@@ -20,6 +20,7 @@ import { planetFocusIndex, planetFocusValue } from "./universe/planetarySystem.j
 import { setConstellationsVisible } from "./realSky.js";
 import { requestPlanetTexture, requestRealSkyLoad } from "./bodies.js";
 import { toggleCine } from "./cinematic.js";
+import { toggleLog } from "./discoveryLog.js";
 
 export function setFocus(f) {
     G.focus = f;
@@ -131,6 +132,10 @@ function onKeyDown(e) {
                 setConstellationsVisible(G.constellations);
                 toast(G.constellations ? "Constellation guides ON" : "Constellation guides OFF");
             } else G.gr = !G.gr;
+            break;
+        case "KeyE":
+            toggleLog();
+            toast("Expedition log");
             break;
         case "KeyO":
             if (e.shiftKey) {

@@ -1,4 +1,4 @@
-// WP12: save-format v9 round-trip. Runs against a real page (localStorage,
+// WP12: save-format v10 round-trip. Runs against a real page (localStorage,
 // toast/banner DOM) rather than a bare-Node import, since src/saves.js pulls
 // in src/achievements.js and src/hud.js, both of which touch document at
 // module load — the same reason scripts/smoke-stellar-live.mjs drives a
@@ -55,22 +55,26 @@ try {
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => window.__G && window.__cam);
 
-  const saved = await runSaveV9(page);
+  const saved = await runSaveV10(page);
   assert(saved.ok, "saveState should succeed", saved);
-  assert(saved.blob.v === 9, "quicksave should be schema v9", saved.blob.v);
+  assert(saved.blob.v === 10, "quicksave should be schema v10", saved.blob.v);
   assert(saved.blob.galaxySeed === TEST_SEED, "quicksave should persist the live procedural galaxy seed", saved);
   assert(saved.blob.procStars.includes(saved.pickedId), "quicksave should persist the pinned procedural star id", saved);
   assert(saved.blob.focusProcedural?.id === saved.pickedId, "quicksave should persist the procedural focus id", saved);
+  assert(saved.blob.log?.entries?.some(e => e.kind === "notable" && e.id === "smoke-discovery"),
+    "quicksave should persist the discovery log", saved.blob.log);
   assert(saved.blob.epochMs === null || Number.isFinite(saved.blob.epochMs),
     "quicksave epochMs should be null (epoch.js not landed) or a finite ms timestamp (epoch.js landed)", saved.blob.epochMs);
 
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => window.__G && window.__cam);
-  const loaded = await runLoadAfterSaveV9(page);
-  assert(loaded.ok, "loadState should succeed restoring a v9 save", loaded);
+  const loaded = await runLoadAfterSaveV10(page);
+  assert(loaded.ok, "loadState should succeed restoring a v10 save", loaded);
   assert(loaded.seed === TEST_SEED, "loadState should restore the saved galaxy seed before touching procedural stars", loaded);
   assert(loaded.focus === saved.focus, "loadState should restore the procedural focus", { loaded, saved });
   assert(loaded.pinned.includes(saved.pickedId), "loadState should re-pin the saved procedural star", loaded);
+  assert(JSON.stringify(loaded.log) === JSON.stringify(saved.blob.log),
+    "loadState should restore the discovery log", { loaded: loaded.log, saved: saved.blob.log });
 
   await page.reload({ waitUntil: "networkidle" });
   await page.waitForFunction(() => window.__G && window.__cam);
@@ -85,6 +89,7 @@ try {
   assert(v9fwd.threw === null, "restoring a v9 blob with unknown/future fields should not throw", v9fwd);
   assert(v9fwd.ok, "restoring a v9 blob with unknown/future fields should report success", v9fwd);
   assert(v9fwd.seedAfter === TEST_SEED2, "forward-compat restore should still apply the recognized fields", v9fwd);
+  assert(v9fwd.log.entries.length === 0, "restoring a v9 blob should default the discovery log to empty", v9fwd.log);
 
   if (errors.length) throw new Error("console errors: " + errors.join(" | "));
 
@@ -97,15 +102,18 @@ try {
 
 // Sets a known seed, pins a procedural star deterministic to that seed, and
 // quicksaves. Returns the raw persisted blob so the caller can assert on the
-// on-disk v9 shape directly.
-async function runSaveV9(page) {
+// on-disk v10 shape directly.
+async function runSaveV10(page) {
   return await page.evaluate(async (testSeed) => {
     const { G } = await import("/src/state.js");
     const { setSeed, getSeed, localStarsInCell } = await import("/src/universe/galaxy.js");
     const { pinProceduralStarById, proceduralFocusValue } = await import("/src/universe/activeStars.js");
+    const { clearLog, noteNotable } = await import("/src/discoveryLog.js");
     const { saveState } = await import("/src/saves.js");
 
     setSeed(testSeed);
+    clearLog();
+    noteNotable("smoke-discovery", "Smoke Discovery");
     const cellStars = localStarsInCell(0, 0, 0); // uses the current (testSeed) global seed
     if (!cellStars.length) throw new Error("test cell 0,0,0 produced no procedural stars for seed " + testSeed);
     const pick = cellStars[0];
@@ -120,17 +128,18 @@ async function runSaveV9(page) {
 }
 
 // Fresh page (module state reset by reload), poisons the live seed, then
-// loads the save from runSaveV9 to prove setSeed(saved) actually restores it
+// loads the save from runSaveV10 to prove setSeed(saved) actually restores it
 // (rather than the seed merely matching by coincidence).
-async function runLoadAfterSaveV9(page) {
+async function runLoadAfterSaveV10(page) {
   return await page.evaluate(async () => {
     const { G } = await import("/src/state.js");
     const { setSeed, getSeed } = await import("/src/universe/galaxy.js");
     const { serializePinnedProceduralStars } = await import("/src/universe/activeStars.js");
+    const { serializeLog } = await import("/src/discoveryLog.js");
     const { loadState } = await import("/src/saves.js");
     setSeed(0xdeadbeef);
     const ok = await loadState();
-    return { ok, seed: getSeed(), focus: G.focus, pinned: serializePinnedProceduralStars() };
+    return { ok, seed: getSeed(), focus: G.focus, pinned: serializePinnedProceduralStars(), log: serializeLog() };
   });
 }
 
@@ -166,13 +175,14 @@ async function runV8Fallback(page) {
   });
 }
 
-// Saves a real v9 blob, then stamps in fields no shipped version writes yet
+// Saves a real blob, stamps it back to v9, then adds fields no shipped v9 writes
 // (an arbitrary future top-level/nested key, plus WP13's z/vz ephemeris
 // fields) to prove a NEWER save restores on THIS code without throwing.
 async function runV9ForwardCompat(page) {
   return await page.evaluate(async (testSeed2) => {
     const { G } = await import("/src/state.js");
     const { setSeed, getSeed } = await import("/src/universe/galaxy.js");
+    const { serializeLog } = await import("/src/discoveryLog.js");
     const { saveState, loadState } = await import("/src/saves.js");
 
     setSeed(testSeed2);
@@ -180,6 +190,8 @@ async function runV9ForwardCompat(page) {
     await saveState();
     const blob = JSON.parse(localStorage.getItem("artemis.quicksave.v1"));
 
+    blob.v = 9;
+    delete blob.log;
     blob.wpFutureFeature = { anything: true };
     blob.g.someFutureGField = 42;
     blob.eph.someFutureArray = [1, 2, 3];
@@ -193,6 +205,6 @@ async function runV9ForwardCompat(page) {
     setSeed(0xdeadbeef);
     let ok = false, threw = null;
     try { ok = await loadState(); } catch (e) { threw = e.message; }
-    return { ok, threw, seedAfter: getSeed(), gFuture: G.someFutureGField };
+    return { ok, threw, seedAfter: getSeed(), gFuture: G.someFutureGField, log: serializeLog() };
   }, TEST_SEED2);
 }

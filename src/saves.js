@@ -3,6 +3,7 @@
 import { C_LIGHT, INITIAL_STAR_COUNT, STARS } from "./constants.js";
 import { G, WORLD, BH, GS } from "./state.js";
 import { snapshotEphem, loadEphemSnapshot } from "./ephemeris.js";
+import { serializeLog, restoreLog } from "./discoveryLog.js";
 import { addBlackHole, clearBlackHoles } from "./blackholes.js";
 import { clearTrail, pushTrail, computePrediction } from "./trails.js";
 import { hideBanner, showBanner } from "./hud.js";
@@ -65,7 +66,7 @@ export function saveState() {
     const procStars = Array.from(new Set(serializePinnedProceduralStars().concat(focusProcId ? [focusProcId] : [])));
     const epochMs = readEpochMs();
     const data = {
-        v: 9,
+        v: 10,
         galaxySeed: getSeed(),
         epochMs,
         g: Object.fromEntries(G_FIELDS.map(k => [k, G[k]])),
@@ -80,6 +81,7 @@ export function saveState() {
             earth: WORLD.earthDestroyed, moon: WORLD.moonDestroyed, sun: WORLD.sunDestroyed,
             pl: Array.from(WORLD.plDestroyed),
         },
+        log: serializeLog(),
         eph: {
             x: Array.from(ephSt.x), y: Array.from(ephSt.y),
             vx: Array.from(ephSt.vx), vy: Array.from(ephSt.vy),
@@ -112,7 +114,7 @@ export function saveState() {
 export async function loadState() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
-    if (!data || (data.v < 1 || data.v > 9)) { toast("No saved state · K to save one"); return false; }
+    if (!data || (data.v < 1 || data.v > 10)) { toast("No saved state · K to save one"); return false; }
     // The procedural galaxy is a pure function of (seed, cell coords), so the
     // seed must land before any procedural star is regenerated from a saved id.
     setSeed(data.v >= 9 && Number.isFinite(data.galaxySeed) ? (data.galaxySeed >>> 0) : DEFAULT_SEED);
@@ -120,6 +122,8 @@ export async function loadState() {
     const restoredStars = data.v >= 5 ? await restorePromotedCatalogStars(data.hygStars) : [];
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     Object.assign(G, data.g);
+    if (data.v >= 10 && data.log) restoreLog(data.log);
+    else restoreLog(null);
     if (data.focusCatalog && Number.isFinite(Number(data.focusCatalog.hygIndex))) {
         const focusIndex = STARS.findIndex(star => star.hygIndex === Number(data.focusCatalog.hygIndex));
         if (focusIndex >= 0) G.focus = "star:" + focusIndex;
