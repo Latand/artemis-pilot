@@ -3,7 +3,7 @@ import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { fmtKm, fmtDist, fmtMET, fmtCivilDate, escapeKmS, accelMs2, fmtAccel } from "./format.js";
 import { getEpochMs } from "./epoch.js";
-import { bhHawkingLabel, bhMassLabel, pwAccelMs2 } from "./blackholes.js";
+import { activeTde, bhHawkingLabel, bhMassLabel, pwAccelMs2 } from "./blackholes.js";
 import { clockRateAtShip, clockRateLabel } from "./relativity.js";
 import { darkEnergyAccelerationKmS2, darkMatterRelativeAccel } from "./cosmology.js";
 
@@ -20,6 +20,7 @@ export const fFlow = $("fFlow"), fDark = $("fDark"), fHalo = $("fHalo"), fShip =
 export const flowPanelEl = $("flowPanel"), bannerEl = $("banner"), helpEl = $("help");
 export const lblE = $("lblE"), lblM = $("lblM"), lblO = $("lblO"), lblS = $("lblS");
 const bhLineEl = $("bhLine");
+const tdeEl = $("tdeLine");
 const textCache = new WeakMap(), htmlCache = new WeakMap(), classCache = new WeakMap(), styleCache = new WeakMap();
 export function setText(el, value) {
     if (!el || textCache.get(el) === value) return;
@@ -114,6 +115,13 @@ escToggleEl.onclick = () => {
 };
 applyEscOpen();
 const fmtV = v => v >= 1000 ? Math.round(v).toLocaleString("en-US") : v >= 100 ? v.toFixed(1) : v.toFixed(2);
+function sci(v) {
+    if (!isFinite(v) || v <= 0) return "0";
+    if (v >= .01 && v < 1000) return v >= 100 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toPrecision(2);
+    const e = Math.floor(Math.log10(v));
+    const m = v / Math.pow(10, e);
+    return m.toFixed(2) + "e" + e;
+}
 export function updateEscapeTracker(oi) {
     if (!escOpen) return;
     const v = Math.hypot(G.vx, G.vy, G.vz);
@@ -211,6 +219,12 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     // the right-side BLACK HOLE SELECTOR carries this data — only surface the left-deck
     // line once a hole actually exists or is focused, to keep the flight deck uncluttered
     setStyle(bhLineEl, "display", (BH.n > 0 || focusBH >= 0) ? "block" : "none");
+    const tde = activeTde();
+    if (tde) {
+        const ratio = tde.ageSec / Math.max(1e-9, tde.tFbSec);
+        setText(tdeEl, "◉ TDE " + tde.targetName + " · L " + sci(tde.LnowW) + " W · t/t_fb " + ratio.toFixed(2) + " · " + (tde.pastPeak ? "t^-5/3 decay" : "rising"));
+    }
+    setStyle(tdeEl, "display", tde ? "block" : "none");
     if (fB > .25) {
         const clock = clockRateAtShip();
         setText(fShip, kVLoc.toFixed(2) + " km/s");

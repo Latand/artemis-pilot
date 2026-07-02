@@ -600,7 +600,7 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, ev
     scene.add(g);
     BH_META.push({
         g, disk, diskBaseRs: rsKm, jet, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0,
-        tde: { active: false, t0Sim: 0, tFbSec: 0, LpeakW: 0, LnowW: 0, LEddW: L_EDD_PER_MSUN * (rsKm * C_LIGHT * C_LIGHT / 2 / MU_S), mStarKg: 0, mBhMsun: 0, rCirc: 0 },
+        tde: { active: false, targetName: "", t0Sim: 0, tFbSec: 0, LpeakW: 0, LnowW: 0, LEddW: L_EDD_PER_MSUN * (rsKm * C_LIGHT * C_LIGHT / 2 / MU_S), mStarKg: 0, mBhMsun: 0, rCirc: 0 },
     });
     BH.n++;
     if (quiet) return i;
@@ -804,12 +804,42 @@ function removePhantomSource(ph) {
     const idx = GS.indexOf(ph);
     if (idx >= 0) GS.splice(idx, 1);
 }
-function activateTdeMeta(i, t0Sim, tFbSec, mStarKg, mBhMsun, rCirc = 0) {
+function refreshTdeLuminosity(tde) {
+    if (!tde?.active) return 0;
+    const age = Math.max(0, EPHT.t - tde.t0Sim);
+    const LnowW = tdeLuminosityW(age, tde.tFbSec, tde.mStarKg, tde.mBhMsun);
+    tde.LnowW = LnowW;
+    return LnowW;
+}
+export function activeTde() {
+    let best = null;
+    for (let i = 0; i < BH_META.length; i++) {
+        const tde = BH_META[i]?.tde;
+        if (!tde?.active) continue;
+        refreshTdeLuminosity(tde);
+        if (!best || tde.LnowW > best.LnowW) {
+            const ageSec = Math.max(0, EPHT.t - tde.t0Sim);
+            best = {
+                bh: i,
+                targetName: tde.targetName || "Body",
+                LnowW: tde.LnowW,
+                LpeakW: tde.LpeakW,
+                LEddW: tde.LEddW,
+                ageSec,
+                tFbSec: tde.tFbSec,
+                pastPeak: ageSec >= tde.tFbSec,
+            };
+        }
+    }
+    return best;
+}
+function activateTdeMeta(i, targetName, t0Sim, tFbSec, mStarKg, mBhMsun, rCirc = 0) {
     const m = BH_META[i];
     if (!m) return;
     const LEddW = L_EDD_PER_MSUN * mBhMsun;
     m.tde = {
         active: true,
+        targetName,
         t0Sim,
         tFbSec,
         LpeakW: tdeLuminosityW(tFbSec, tFbSec, mStarKg, mBhMsun),
@@ -825,7 +855,7 @@ function resolveTdeInstant(i, target, x, y, vx, vy, radius, muBody) {
     const tFb = fallbackTimeSec(radius, muBH, muBody);
     const mBhMsun = muBH / MU_S;
     const mStarKg = muBody / G_KM;
-    activateTdeMeta(i, EPHT.t, tFb, mStarKg, mBhMsun, circularizationKm(radius, muBH, muBody));
+    activateTdeMeta(i, targetLabel(target), EPHT.t, tFb, mStarKg, mBhMsun, circularizationKm(radius, muBH, muBody));
     absorbBody(i, target, x, y, vx, vy, muBody);
 }
 function bhBodyLimit(rs, radius, muBody, muBH) {
@@ -959,7 +989,7 @@ function advanceDisruptions(dt) {
             const x = BH.x[d.bh] + dx / r * horizon;
             const y = BH.y[d.bh] + dy / r * horizon;
             d.tPeak = d.t0Sim + d.tFb;
-            activateTdeMeta(d.bh, d.t0Sim, d.tFb, d.mStarKg, d.mBhMsun, d.rCirc);
+            activateTdeMeta(d.bh, d.name || targetLabel(d.target), d.t0Sim, d.tFb, d.mStarKg, d.mBhMsun, d.rCirc);
             absorbBody(d.bh, d.target, x, y, d.vx, d.vy, d.muBody);
             if (d.phantom) {
                 // phantom → ghost: outside the expanding front the old debris
@@ -1243,8 +1273,7 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         const diskVis = smooth01(50, 100000, m.rs);
         let lum = 0;
         if (m.tde?.active) {
-            const LnowW = tdeLuminosityW(EPHT.t - m.tde.t0Sim, m.tde.tFbSec, m.tde.mStarKg, m.tde.mBhMsun);
-            m.tde.LnowW = LnowW;
+            const LnowW = refreshTdeLuminosity(m.tde);
             lum = clamp(LnowW / Math.max(1e-30, m.tde.LEddW), 0, 1);
         }
         const screenRing = dBH * (.0026 + .002 * massVis);
