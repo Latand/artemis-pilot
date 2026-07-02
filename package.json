@@ -29,6 +29,7 @@
     "smoke:reverse": "node scripts/smoke-reverse.mjs",
     "smoke:relview": "node scripts/smoke-relview.mjs",
     "smoke:scaleladder": "node scripts/smoke-scaleladder.mjs",
+    "smoke:ambient": "node scripts/smoke-ambient.mjs",
     "smoke:physics3d": "node scripts/smoke-physics3d.mjs",
     "smoke:xrperf": "node scripts/smoke-xrperf.mjs",
     "smoke:river-deeptime": "node scripts/smoke-river-deeptime.mjs",

@@ -3,6 +3,7 @@ import { MOONS, moonFocusIndex } from "./moons.js";
 import { G, keys, BH } from "./state.js";
 import { cam } from "./scene.js";
 import { initAudio, thrustGain } from "./audio.js";
+import { initAmbient, resumeAmbient, suspendAmbient } from "./ambientAudio.js";
 import { toast } from "./achievements.js";
 import { cancelBHPlacementMode, isBHPlacementMode, removeLastBH, toggleBHPlacementMode } from "./blackholes.js";
 import { computePrediction } from "./trails.js";
@@ -76,6 +77,7 @@ export function initInput(hooks) {
 function onKeyDown(e) {
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
     initAudio();
+    if (thrustGain?.context) { initAmbient(thrustGain.context); resumeAmbient(); }
     keys.add(e.code);
     if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code) && help.shown) hideHelp();
     if (e.code === "KeyZ" && !e.shiftKey) G.throttle = Math.max(.05, G.throttle / 1.3);
@@ -145,7 +147,17 @@ function onKeyDown(e) {
             }
             break;
         case "KeyI": G.infinite = !G.infinite; toast(G.infinite ? "Infinite propellant ON" : "Infinite propellant OFF"); break;
-        case "KeyM": G.muted = !G.muted; if (thrustGain) thrustGain.gain.value = 0; break;
+        case "KeyM":
+            if (e.shiftKey) {
+                G.ambientAudio = G.ambientAudio === false;
+                if (G.ambientAudio) resumeAmbient(); else suspendAmbient();
+                toast("Ambient audio " + (G.ambientAudio ? "on" : "off"));
+            } else {
+                G.muted = !G.muted;
+                if (thrustGain) thrustGain.gain.value = 0;
+                if (G.muted) suspendAmbient(); else resumeAmbient();
+            }
+            break;
         case "KeyR": H.restart(); break;
         case "KeyK": saveState(); break;
         case "KeyL": loadState().catch(err => toast(err?.message || String(err))); break;

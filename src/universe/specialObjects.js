@@ -65,7 +65,7 @@ function blackHole(name, distPc, raDeg, decDeg, color, massSolar) {
 // flag, so the shared finalizeStar() flowSink falls back to `R` (the NS
 // radius) rather than a Schwarzschild radius.
 function neutronStar(name, distPc, raDeg, decDeg, color, massSolar = 1.4) {
-    return specialStar(name, distPc * PC_LY, raDeg, decDeg, color, massSolar, NS_RADIUS_KM / R_SUN);
+    return specialStar(name, distPc * PC_LY, raDeg, decDeg, color, massSolar, NS_RADIUS_KM / R_SUN, { pulsar: true });
 }
 
 const BH_COLOR = 0xd9c8ff;   // same accretion-glow hue used for Sgr A* in constants.js

@@ -41,6 +41,7 @@ import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from ".
 import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale } from "./cosmic.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
+import { initAmbient, updateAmbient } from "./ambientAudio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
 import {
     showBanner, hideBanner, updateHUD, updateEscapeTracker, updateScaleLadder, hideHelp,
@@ -67,15 +68,16 @@ import { solarGalacticStateAt } from "./universe/solarOrbit.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
 import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
 import { getSeed } from "./universe/galaxy.js";
-import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
 import { createCometTailPair, createMinorBodyRenderers, updateCometTail } from "./render/minorBodiesRender.js";
 import { PERF, markPerf, sampleRendererInfo, sampleMemory } from "./perf.js";
 import { initXrPerf, tickXrPerf, shouldGateBloom } from "./render/xrPerf.js";
 import { initMobileControls, updateMobileControls } from "./mobileControls.js";
 import { initAttitude, drawAttitude } from "./attitude.js";
 import { updateRelView, initRelViewOverride } from "./relView.js";
+import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
 
 // ============================ WIRING ============================
+const ambientPos = { wx: 0, wy: 0, wz: 0 };
 const query = new URLSearchParams(location.search);
 const bloomParam = query.get("bloom");
 const bloomRequested = bloomParam !== "0" && (bloomParam === "1" || bloomParam === "legacy" || query.get("fastbloom") === "0");
@@ -2034,6 +2036,13 @@ function frame() {
     if (thrustGain) {
         const target = (aMag > 0 && !G.muted) ? Math.min(.22, .04 + .12 * G.throttle * (G.boost ? 1.8 : 1)) : 0;
         thrustGain.gain.value += (target - thrustGain.gain.value) * Math.min(1, dtR * 12);
+    }
+    if (frameNo % 20 === 0) {
+        ambientPos.wx = eph.earthX + G.x;
+        ambientPos.wy = eph.earthY + G.y;
+        ambientPos.wz = G.z;
+        if (thrustGain?.context) initAmbient(thrustGain.context);
+        updateAmbient(ambientPos, dtR, G.muted, G.warp);
     }
     // ---- HUD & labels ----
     const hudT0 = perfStart();

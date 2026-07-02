@@ -20,7 +20,7 @@ const DEFAULT_SEED = 0x9e3779b9;
 const G_FIELDS = [
     "t", "x", "y", "z", "vx", "vy", "vz", "heading", "pitch", "throttle", "warp", "paused",
     "fuel", "infinite", "dvUsed", "hold", "landed", "dead", "deadReason",
-    "deathT", "leftHome", "maxRE", "gr", "predict", "constellations", "darkEnergy", "darkMatter", "muted", "focus",
+    "deathT", "leftHome", "maxRE", "gr", "predict", "constellations", "darkEnergy", "darkMatter", "muted", "ambientAudio", "focus",
     "cabin",
 ];
 const SERIAL_STAR_FIELDS = [
