@@ -23,6 +23,9 @@ export const WORLD = {
     moonDestroyed: false,
     sunDestroyed: false,
     plDestroyed: new Uint8Array(PL.length),
+    irreversibleFloorT: -Infinity,
+    reverseBlocked: false,
+    tdeInProgress: false,
 };
 window.__WORLD = WORLD;
 
@@ -31,6 +34,9 @@ export function resetWorld() {
     WORLD.moonDestroyed = false;
     WORLD.sunDestroyed = false;
     WORLD.plDestroyed.fill(0);
+    WORLD.irreversibleFloorT = -Infinity;
+    WORLD.reverseBlocked = false;
+    WORLD.tdeInProgress = false;
     GS.length = 0;
 }
 
@@ -86,6 +92,7 @@ export function isBodyDestroyed(target) {
 }
 
 export function destroyBody(target) {
+    WORLD.irreversibleFloorT = Math.max(WORLD.irreversibleFloorT, G.t);
     if (target === "earth") WORLD.earthDestroyed = true;
     else if (target === "moon") WORLD.moonDestroyed = true;
     else if (target === "sun") WORLD.sunDestroyed = true;

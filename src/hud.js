@@ -155,9 +155,12 @@ export function updateEscapeTracker(oi) {
 export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     setText(metEl, "T+ " + fmtMET(G.t));
     setText(civilDateEl, fmtCivilDate(getEpochMs(), G.t));
-    setText(warpEl, "⏩ " + warpLabel(G.warp) +
-        (aMag > 0 && G.warp > 600 ? " · ⚠ THRUST AT HIGH WARP" : "") + (G.paused ? " · ❚❚ PAUSED" : ""));
-    setClass(warpEl, G.paused ? "warn" : "");
+    const reverseBlocked = WORLD.reverseBlocked
+        ? " · ⏪ REVERSE BLOCKED — irreversible event at " + fmtCivilDate(getEpochMs(), WORLD.irreversibleFloorT)
+        : "";
+    setText(warpEl, (G.warp < 0 ? "⏪ REVERSE " : "⏩ ") + warpLabel(G.warp) +
+        reverseBlocked + (aMag > 0 && G.warp > 600 ? " · ⚠ THRUST AT HIGH WARP" : "") + (G.paused ? " · ❚❚ PAUSED" : ""));
+    setClass(warpEl, G.paused || WORLD.reverseBlocked ? "warn" : "");
     if (G.dead) setText(engineEl, "VEHICLE LOST — " + G.deadReason);
     else if (G.landed) setText(engineEl, G.landed.body === "earth" ? "ON THE SURFACE — SHIFT+W TO LIFT OFF" :
         G.landed.body === "planet" ? "ON " + PL[G.landed.i].name + " — W TO LIFT OFF (SHIFT HELPS)" : "ON THE LUNAR SURFACE — W TO LIFT OFF");

@@ -766,6 +766,7 @@ function tryMerge() {
                 if (muLoss > 0) ev.push({ x, y, z: 0, t: EPHT.t, dmu: -muLoss });
                 removeBHIndex(j); removeBHIndex(i);
                 addBlackHole(x, y, rs, vx, vy, false, ev);
+                WORLD.irreversibleFloorT = Math.max(WORLD.irreversibleFloorT, EPHT.t);
                 H.toast("⚫ Black-hole merger → r_s " + fmtKm(rs) + " · GW loss " + (gwLossFrac * 100).toFixed(1) + "%");
                 return true;
             }
@@ -797,6 +798,7 @@ function absorbBody(i, target, x, y, vx, vy, muBody) {
     BH.sz[i] = -BH.y[i] * K;
     refreshBHSize(i, BH.rs[i]);
     if (BH_META[i]) BH_META[i].flare = 1;
+    WORLD.irreversibleFloorT = Math.max(WORLD.irreversibleFloorT, EPHT.t);
     H.absorbed(target, BH.rs[i], i);
 }
 function removePhantomSource(ph) {
@@ -892,6 +894,12 @@ function sameTarget(a, b) { return a === b; }
 function isDisrupting(target) {
     return DISRUPT.some(d => sameTarget(d.target, target));
 }
+function syncDisruptionFlag() {
+    WORLD.tdeInProgress = DISRUPT.length > 0;
+}
+export function tdeInProgress() {
+    return DISRUPT.length > 0;
+}
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function targetDisruptionColor(target) {
     if (target === "earth") return 0x4d78a8;
@@ -961,6 +969,7 @@ function beginDisruption(i, target, x, y, vx, vy, radius, muBody, dist, limit) {
         // in a single step and scattered everything
         phantom: addPhantom(x, y, 0, vx, vy, 0, muBody, radius),
     });
+    syncDisruptionFlag();
     const m = BH_META[i];
     if (m) m.flare = Math.max(m.flare, .55);
     H.toast(name + " spaghettifying · mass transfer forming");
@@ -968,7 +977,7 @@ function beginDisruption(i, target, x, y, vx, vy, radius, muBody, dist, limit) {
 function advanceDisruptions(dt) {
     for (let k = DISRUPT.length - 1; k >= 0; k--) {
         const d = DISRUPT[k];
-        if (d.bh < 0 || d.bh >= BH.n) { DISRUPT.splice(k, 1); continue; }
+        if (d.bh < 0 || d.bh >= BH.n) { DISRUPT.splice(k, 1); syncDisruptionFlag(); continue; }
         disruptionBodyState(d);
         d.age += dt;
         const p = clamp(d.age / Math.max(1e-9, d.duration), 0, 1);
@@ -978,6 +987,7 @@ function advanceDisruptions(dt) {
             d.phantom = null;
             resolveTdeInstant(d.bh, d.target, d.x, d.y, d.vx, d.vy, d.radius, d.muBody);
             DISRUPT.splice(k, 1);
+            syncDisruptionFlag();
             continue;
         }
         const simDone = d.age >= d.duration;
@@ -1000,6 +1010,7 @@ function advanceDisruptions(dt) {
                 d.phantom = null;
             }
             DISRUPT.splice(k, 1);
+            syncDisruptionFlag();
         }
     }
 }
@@ -1027,7 +1038,7 @@ function checkBHBodyBoundaries() {
         }
     }
 }
-setLiveGuard(checkBHBodyBoundaries);
+queueMicrotask(() => setLiveGuard(checkBHBodyBoundaries));
 export function bhAdvance(dtTotal, _tEnd) {
     if (!BH.n) return;
     while (tryMerge()) { }

@@ -632,7 +632,17 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         dtMax: 0,
         jump: "none",
     } : null;
-    if (simAdv < 0) { atx = 0; aty = 0; atz = 0; aMag = 0; }
+    WORLD.reverseBlocked = false;
+    if (simAdv < 0) {
+        atx = 0; aty = 0; atz = 0; aMag = 0;
+        if (GS.length > 0 || WORLD.tdeInProgress) {
+            simAdv = 0;
+            WORLD.reverseBlocked = true;
+        } else if (G.t + simAdv < WORLD.irreversibleFloorT) {
+            simAdv = WORLD.irreversibleFloorT - G.t;
+            WORLD.reverseBlocked = true;
+        }
+    }
     let adv = simAdv, steps = 0, lag = 0;
     const s = _gs;
     s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
