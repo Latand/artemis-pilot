@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { K } from "../constants.js";
-import { planetTextureProc, ringTextureProc } from "../textures.js";
-import { moonOffsetKm, planetMoonFocusIndex, planetOffsetKm } from "../universe/planetarySystem.js";
+import { K, LY_SCENE } from "../constants.js";
+import { dotTexture, planetTextureProc, ringTextureProc } from "../textures.js";
+import { moonOffsetKm, planetFocusIndex, planetMoonFocusIndex, planetOffsetKm } from "../universe/planetarySystem.js";
 import { worldToResidual } from "../universe/renderOrigin.js";
 
 export const SYS_MAX_PLANETS = 8;
@@ -14,6 +14,7 @@ const moonOffsets = Array.from({ length: SYS_MAX_PLANETS }, () => Array.from({ l
 const pos = new THREE.Vector3();
 const starPos = new THREE.Vector3();
 let sceneRef = null, renderedStarId = "";
+let gateOpen = false;
 
 function labelTexture(text, color) {
     const cv = document.createElement("canvas");
@@ -45,7 +46,7 @@ export function initSystemRender(scene) {
     for (let i = 0; i < SYS_MAX_PLANETS; i++) {
         const group = new THREE.Group();
         const mesh = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), new THREE.MeshStandardMaterial({ color: 0xffffff }));
-        const glow = new THREE.Sprite(new THREE.SpriteMaterial({ color: 0xffffff, transparent: true, opacity: .28, depthWrite: false }));
+        const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,255,255,1)", "rgba(255,255,255,0)"), color: 0xffffff, transparent: true, opacity: .28, depthWrite: false }));
         const orbit = new THREE.LineLoop(orbitGeometry(), new THREE.LineBasicMaterial({ color: 0x6f9bd8, transparent: true, opacity: .22, depthWrite: false }));
         const label = new THREE.Sprite(new THREE.SpriteMaterial({ transparent: true, depthWrite: false }));
         const moons = [];
@@ -69,6 +70,7 @@ export function initSystemRender(scene) {
 }
 
 function rebuild(system) {
+    gateOpen = false;
     renderedStarId = system?.starId || "";
     for (let i = 0; i < SYS_MAX_PLANETS; i++) {
         const slot = groups[i], p = system?.planets?.[i] || null;
@@ -141,6 +143,25 @@ export function updateSystemRender(system, simT, camera, focus = "") {
     }
     if (renderedStarId !== system.starId) rebuild(system);
     worldToResidual(system.hostStar.x, system.hostStar.y, system.hostStar.z || 0, starPos, K);
+    // Beacon gate: a system's planets/glows/labels only render when the
+    // camera is plausibly near that system (or explicitly flying to one of
+    // its planets). Without this, the nearest OTHER star's synthetic planets
+    // rendered as permanent sky-fixed min-size beacons from inside Sol —
+    // the owner's "gray square with a circle". 15% hysteresis so the
+    // boundary doesn't flicker.
+    const maxA = system.planets.reduce((m, p) => Math.max(m, p?.a || 0), 0);
+    const gateR = Math.max(maxA * 149597870.7 * K * 60, LY_SCENE * 0.01);
+    const dHost = camera.position.distanceTo(starPos);
+    if (!gateOpen && dHost < gateR) gateOpen = true;
+    else if (gateOpen && dHost > gateR * 1.15) gateOpen = false;
+    const focusTargets = planetFocusIndex(focus) >= 0 || !!planetMoonFocusIndex(focus);
+    if (!gateOpen && !focusTargets) {
+        for (const slot of groups) {
+            slot.group.visible = false; slot.orbit.visible = false;
+            for (const moon of slot.moons) moon.visible = false;
+        }
+        return;
+    }
     const focusedMoon = planetMoonFocusIndex(focus);
     for (let i = 0; i < SYS_MAX_PLANETS; i++) {
         const slot = groups[i], p = slot.planet;
