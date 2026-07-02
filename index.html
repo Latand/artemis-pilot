@@ -23,6 +23,21 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Orbitron:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/src/style.css" />
+  <style>
+    #cinePanel { position: absolute; right: 18px; top: 166px; width: 260px; display: none; z-index: 7; padding: 12px; }
+    #cinePanel .cineGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    #cinePanel .cineWide { grid-column: 1 / -1; }
+    #cinePanel button { font-family: var(--font-ui); font-size: 10px; letter-spacing: .08em; color: var(--ink); background: rgba(8,12,18,.78); border: 1px solid var(--line-2); border-radius: var(--r-sm); padding: 8px; cursor: pointer; }
+    #cinePanel button:hover { color: #fff; border-color: var(--cyan); }
+    #cinePanel label { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-family: var(--font-ui); font-size: 10px; letter-spacing: .08em; color: var(--ink-2); }
+    #cineCountLine { margin-top: 8px; font-family: var(--font-mono); font-size: 10px; color: var(--ice); }
+    body.mode-clean #hudTL, body.mode-clean #hudTR, body.mode-clean #hudBot,
+    body.mode-clean #flowPanel, body.mode-clean #hint, body.mode-clean #help,
+    body.mode-clean #simsBtn, body.mode-clean #simsMenu, body.mode-clean #navBtn,
+    body.mode-clean #navPanel, body.mode-clean #hygSearch, body.mode-clean #cinePanel,
+    body.mode-clean #mobileUI, body.mode-clean .lbl, body.mode-clean #cosmicScale,
+    body.mode-clean #banner, body.mode-clean #toasts, body.mode-clean #navBall { display: none !important; }
+  </style>
 </head>
 <body>
   <div id="root">
@@ -116,6 +131,19 @@
       <div id="navHead" class="panel__head"><span>GO TO · NAVIGATOR</span><button id="navClose" type="button">×</button></div>
       <input id="navQuery" autocomplete="off" spellcheck="false" placeholder="FILTER PLANETS / MOONS / STARS" />
       <div id="navList"></div>
+    </div>
+
+    <div id="cinePanel" class="panel panel--cyan" aria-live="polite">
+      <div class="panel__head"><span>DIRECTOR</span></div>
+      <div class="cineGrid">
+        <button id="cineAdd" type="button">ADD KEYFRAME</button>
+        <button id="cineDelete" type="button">DELETE LAST</button>
+        <button id="cinePlay" type="button">PLAY</button>
+        <button id="cineStop" type="button">STOP</button>
+        <button id="cineClear" class="cineWide" type="button">CLEAR</button>
+      </div>
+      <label><input id="cineClean" type="checkbox" /> CLEAN RENDER</label>
+      <div id="cineCountLine">KEYFRAMES <span id="cineCount">0</span></div>
     </div>
 
     <!-- star catalog: sibling of the rails so it can also surface as a mobile overlay -->

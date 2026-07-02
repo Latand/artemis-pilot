@@ -19,6 +19,7 @@ import { getCachedFocusedSystem } from "./universe/activeStars.js";
 import { planetFocusIndex, planetFocusValue } from "./universe/planetarySystem.js";
 import { setConstellationsVisible } from "./realSky.js";
 import { requestPlanetTexture, requestRealSkyLoad } from "./bodies.js";
+import { toggleCine } from "./cinematic.js";
 
 export function setFocus(f) {
     G.focus = f;
@@ -114,7 +115,15 @@ function onKeyDown(e) {
             }
             break;
         case "Digit0": setFocus("ship"); break;
-        case "KeyP": G.predict = !G.predict; computePrediction(); break;
+        case "KeyP":
+            if (e.shiftKey) {
+                toggleCine();
+                toast("Director panel");
+            } else {
+                G.predict = !G.predict;
+                computePrediction();
+            }
+            break;
         case "KeyG":
             if (e.shiftKey) {
                 G.constellations = !G.constellations;

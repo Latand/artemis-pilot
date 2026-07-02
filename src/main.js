@@ -12,7 +12,7 @@ import { loadAllMaps } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
     renderQuality, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
-    farTierGroup, renderSceneTiered, registerNearTierOnly,
+    farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll,
 } from "./scene.js";
 import {
     buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
@@ -50,6 +50,7 @@ import {
 } from "./hud.js";
 import { initInput, setFocus, blackHoleFocusIndex, starFocusIndex } from "./input.js";
 import { initNavigator, openNavigator } from "./navigator.js";
+import * as cinematic from "./cinematic.js";
 import { initQuickControls } from "./quickControls.js";
 import { initScenarios } from "./scenarios.js";
 import { initHints, hintTick } from "./hints.js";
@@ -240,6 +241,8 @@ initMobileControls({
     openNavigator,
 });
 initNavigator({ flyTo: flyFocus });
+cinematic.bindCinematic({ camera, cam, G, renderer, setCamRoll, applyCameraRoll });
+cinematic.initCine();
 initQuickControls();
 
 // Camera/share-state must be applied before renderer warmup; otherwise startup
@@ -1698,6 +1701,8 @@ function frame() {
         cabinLook.set(oriX + Math.cos(a) * cp, oriY + .03 + Math.sin(look.pitch), oriZ - Math.sin(a) * cp);
         camera.position.copy(cabinEye);
         camera.lookAt(cabinLook);
+    } else if (cinematic.isPlaying()) {
+        cinematic.tick(dtR);
     } else applyCamera();
     updateRelView(camera);
     perfEnd("scene.camera", sceneCameraT0, PERF.enabled ? { cabin: cabinActive, vr: VR.active, focus: String(G.focus) } : null);
@@ -1826,7 +1831,7 @@ function frame() {
     updateLensingLazy(camera, camera.aspect);
     const bloomLoadShed = renderQuality.mobile || shouldGateBloom() ||
         (!bloomForced && G.warp > 86400 && G.gr && grB > .18 && cam.dist > LY_SCENE * .05);
-    bloomPass.enabled = !bloomDisabled && (bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
+    bloomPass.enabled = !bloomDisabled && (cinematic.isPlaying() || bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
     if (bloomPass.enabled && !composer) ensurePostProcessing(lensingPass);
     updateBodyShaders(camera, G.t);
     const starsT0 = perfStart();

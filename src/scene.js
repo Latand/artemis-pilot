@@ -240,6 +240,13 @@ window.__gl = {
 }; // debug/testing handle
 if (bloomRequested) await ensurePostProcessing();
 const tmpV = new THREE.Vector3();
+let camRoll = 0;
+export function setCamRoll(r) {
+    camRoll = Number.isFinite(r) ? r : 0;
+}
+export function applyCameraRoll() {
+    if (camRoll) camera.rotateZ(camRoll);
+}
 export function applyCamera() {
     const cp = Math.cos(cam.pitch), spc = Math.sin(cam.pitch);
     camera.position.set(
@@ -247,6 +254,7 @@ export function applyCamera() {
         cam.tgt.y + cam.dist * spc,
         cam.tgt.z + cam.dist * cp * Math.sin(cam.yaw));
     camera.lookAt(cam.tgt);
+    applyCameraRoll();
 }
 const ptrs = new Map();
 let pinchD = 0;
