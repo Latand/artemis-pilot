@@ -110,16 +110,40 @@ export function sampleBDMass(rng) {
 }
 
 // --- Eker 2018 mass→luminosity (main sequence): log L = a·log M + b ---------
+const EKER_SEGMENTS = [
+    { lo: 0.08, hi: 0.45, a: 2.028, b: -0.976 },
+    { lo: 0.45, hi: 0.72, a: 4.572, b: -0.102 },
+    { lo: 0.72, hi: 1.05, a: 5.743, b: -0.007 },
+    { lo: 1.05, hi: 2.40, a: 4.329, b: 0.010 },
+    { lo: 2.40, hi: 7.00, a: 3.967, b: 0.093 },
+    { lo: 7.00, hi: 120.0, a: 2.865, b: 1.105 },
+];
+
 function ekerLogL(M) {
     const x = Math.log10(M);
     // Segment boundaries are half-open [lo, hi) to match build-hyg-catalog.mjs
     // EKER_MLR exactly (M = 0.45 falls in the second segment).
-    if (M < 0.45) return 2.028 * x - 0.976;
-    if (M <= 0.72) return 4.572 * x - 0.102;
-    if (M <= 1.05) return 5.743 * x - 0.007;
-    if (M <= 2.40) return 4.329 * x + 0.010;
-    if (M <= 7.00) return 3.967 * x + 0.093;
-    return 2.865 * x + 1.105; // 7–31 M⊙; extrapolated above 31 (rare)
+    if (M < 0.45) return EKER_SEGMENTS[0].a * x + EKER_SEGMENTS[0].b;
+    if (M <= 0.72) return EKER_SEGMENTS[1].a * x + EKER_SEGMENTS[1].b;
+    if (M <= 1.05) return EKER_SEGMENTS[2].a * x + EKER_SEGMENTS[2].b;
+    if (M <= 2.40) return EKER_SEGMENTS[3].a * x + EKER_SEGMENTS[3].b;
+    if (M <= 7.00) return EKER_SEGMENTS[4].a * x + EKER_SEGMENTS[4].b;
+    return EKER_SEGMENTS[5].a * x + EKER_SEGMENTS[5].b; // 7–31 M⊙; extrapolated above 31 (rare)
+}
+
+export function ekerMassForL(L) {
+    if (!(L > 0)) return 0.08;
+    const logL = Math.log10(L);
+    for (const seg of EKER_SEGMENTS) {
+        const mass = Math.pow(10, (logL - seg.b) / seg.a);
+        if (mass >= seg.lo && mass <= seg.hi) return Math.max(0.08, Math.min(120, mass));
+    }
+    const faint = EKER_SEGMENTS[0];
+    const bright = EKER_SEGMENTS[EKER_SEGMENTS.length - 1];
+    const faintMass = Math.pow(10, (logL - faint.b) / faint.a);
+    if (faintMass < faint.lo) return 0.08;
+    const brightMass = Math.pow(10, (logL - bright.b) / bright.a);
+    return Math.max(0.08, Math.min(120, brightMass));
 }
 
 function deriveMainSequence(M, out) {

@@ -25,6 +25,8 @@
 import { ORDER, NPIX, queryDisc, pix2ang_nest } from "./healpix.js";
 import { createTileGroups, ingestTile, markResidualsDirty, pumpGroupResiduals, disposeGroups, groupStats } from "../render/athygStars.js";
 import { loadAndDecodeTile } from "../workers/athygTileWorker.js";
+import { PC_KM } from "./coords.js";
+import { deriveStar, deriveStarVisualInto, ekerMassForL } from "./stellar.js";
 
 const DEFAULT_MANIFEST_URL = "/data/athyg-tier1-manifest.json";
 const DEFAULT_BIN_URL = "/data/athyg-tier1.bin";
@@ -35,6 +37,7 @@ const DEFAULT_TILES_PER_FRAME = 8;
 // pumpGroupResiduals doc comment for the worst-case stale-offset math this
 // number feeds into (2.37M stars / 300k per call = 8 frames worst case).
 const DEFAULT_RESIDUAL_STARS_PER_CALL = 300_000;
+const TILE_CPU_KEEP = 2048;
 // Cap on simultaneously in-flight main-thread fallback fetches (used only
 // when the tile Worker itself couldn't start or crashed) — an unbounded
 // Promise.all-style fan-out of hundreds/thousands of Range requests at once
@@ -44,6 +47,7 @@ const DEFAULT_RESIDUAL_STARS_PER_CALL = 300_000;
 const MAIN_THREAD_FETCH_CONCURRENCY = 4;
 
 let state = null;
+const nearestScratch = [];
 
 function tier1DisabledByUrl() {
     if (typeof location === "undefined") return false;
@@ -121,7 +125,9 @@ function onTileLoaded(tileId, msg) {
     state.loaded[tileId] = 1;
     state.stats.tilesLoaded++;
     state.stats.starsLoaded += msg.count || 0;
+    retainTileData(tileId, msg);
     ingestTile(state.groups, tileId, msg);
+    resolveTilePromise(tileId, true);
 }
 
 function onTileError(tileId, error) {
@@ -132,6 +138,33 @@ function onTileError(tileId, error) {
     // Deliberately NOT marked loaded — the next global-sweep wraparound in
     // updateTier1 will retry it, so a transient failure self-heals instead of
     // leaving a permanent gap in the sky.
+    resolveTilePromise(tileId, false);
+}
+
+function retainTileData(tileId, msg) {
+    const count = msg.count || 0;
+    if (!count) return;
+    const positions = new Float32Array(msg.positions);
+    const mag = new Float32Array(count);
+    const ci = new Float32Array(count);
+    const magCi = msg.magCi;
+    for (let i = 0; i < count; i++) {
+        mag[i] = magCi[i * 2] / 100;
+        ci[i] = magCi[i * 2 + 1] / 1000;
+    }
+    if (state.tileData.has(tileId)) state.tileData.delete(tileId);
+    state.tileData.set(tileId, { positions, mag, ci });
+    while (state.tileData.size > TILE_CPU_KEEP) {
+        const oldest = state.tileData.keys().next().value;
+        state.tileData.delete(oldest);
+    }
+}
+
+function resolveTilePromise(tileId, ok) {
+    const resolvers = state.tilePromises.get(tileId);
+    if (!resolvers) return;
+    state.tilePromises.delete(tileId);
+    for (const resolve of resolvers) resolve(ok);
 }
 
 // Used both when the worker itself fails to start and when it crashes mid-run
@@ -150,6 +183,23 @@ async function fetchOneOnMainThread(tileId) {
         onTileLoaded(tileId, decoded);
     } catch (err) {
         onTileError(tileId, err?.message || String(err));
+    }
+}
+
+async function refetchTileCpuData(tileId) {
+    if (state.cpuPending.has(tileId)) return;
+    const entry = state.manifest.tiles[tileId];
+    if (!entry) { onTileError(tileId, `no manifest entry for tile ${tileId}`); return; }
+    const [byteOffset, count] = entry;
+    state.cpuPending.add(tileId);
+    try {
+        const decoded = await loadAndDecodeTile(tileId, byteOffset, count, state.binUrl, state.manifest.recordBytes);
+        retainTileData(tileId, decoded);
+        resolveTilePromise(tileId, true);
+    } catch (err) {
+        onTileError(tileId, err?.message || String(err));
+    } finally {
+        state.cpuPending.delete(tileId);
     }
 }
 
@@ -213,6 +263,9 @@ export async function initTier1({ scene, manifestUrl = DEFAULT_MANIFEST_URL, bin
         groups,
         loaded: new Uint8Array(manifest.npix),
         pending: new Set(),
+        cpuPending: new Set(),
+        tileData: new Map(),
+        tilePromises: new Map(),
         priorityOrder: computeGlobalPriorityOrder(manifest.order),
         sweepCursor: 0,
         worker: null,
@@ -330,6 +383,86 @@ export function disposeTier1() {
     state = null;
 }
 
+export function tier1MassFor(tileId, idx) {
+    if (!state || tier1DisabledByUrl()) return null;
+    const data = state.tileData.get(tileId);
+    if (!data || idx < 0 || idx >= data.mag.length) return null;
+    const p = idx * 3;
+    const x = data.positions[p], y = data.positions[p + 1], z = data.positions[p + 2];
+    const mag = data.mag[idx];
+    const distPc = Math.hypot(x, y, z);
+    if (!(distPc > 0) || !Number.isFinite(mag)) return null;
+    const absMag = mag - 5 * Math.log10(distPc / 10);
+    const observedL = Math.pow(10, -0.4 * (absMag - 4.74));
+    const mass = ekerMassForL(observedL);
+    const visual = deriveStarVisualInto(mass, {});
+    const full = deriveStar(mass);
+    return { mass, L: visual.L, R: full.R, Teff: full.Teff, absMag, distPc };
+}
+
+export async function ensureTier1Tile(tileId) {
+    if (!state || tier1DisabledByUrl()) return false;
+    if (state.tileData.has(tileId)) return true;
+    const promise = new Promise(resolve => {
+        const existing = state.tilePromises.get(tileId);
+        if (existing) existing.push(resolve);
+        else state.tilePromises.set(tileId, [resolve]);
+    });
+    if (state.loaded[tileId]) {
+        refetchTileCpuData(tileId);
+    } else {
+        requestTiles([tileId]);
+    }
+    return promise;
+}
+
+function insertNearestTier1(result, limit) {
+    let i = nearestScratch.length;
+    if (i >= limit && result.distFromCamPc >= nearestScratch[i - 1].distFromCamPc) return;
+    if (i < limit) nearestScratch.push(result);
+    i = Math.min(i, limit - 1);
+    while (i > 0 && result.distFromCamPc < nearestScratch[i - 1].distFromCamPc) {
+        nearestScratch[i] = nearestScratch[i - 1];
+        i--;
+    }
+    nearestScratch[i] = result;
+}
+
+function prefetchTier1Tile(tileId) {
+    if (state.loaded[tileId]) {
+        refetchTileCpuData(tileId);
+    } else {
+        requestTiles([tileId]);
+    }
+}
+
+export function nearestTier1(camWorldKm, coneDeg = 12, maxResults = 8) {
+    nearestScratch.length = 0;
+    if (!state || tier1DisabledByUrl() || !(maxResults > 0)) return nearestScratch;
+    const cx = (camWorldKm?.x ?? camWorldKm?.[0] ?? 0) / PC_KM;
+    const cy = (camWorldKm?.y ?? camWorldKm?.[1] ?? 0) / PC_KM;
+    const cz = (camWorldKm?.z ?? camWorldKm?.[2] ?? 0) / PC_KM;
+    const radec = dirToRaDec(cx, cy, cz);
+    if (!radec) return nearestScratch;
+    const tiles = queryDisc(state.manifest.order, radec.raDeg, radec.decDeg, coneDeg);
+    for (const tileId of tiles) {
+        const data = state.tileData.get(tileId);
+        if (!data) { prefetchTier1Tile(tileId); continue; }
+        for (let idx = 0; idx < data.mag.length; idx++) {
+            const p = idx * 3;
+            const x = data.positions[p], y = data.positions[p + 1], z = data.positions[p + 2];
+            const d = Math.hypot(x - cx, y - cy, z - cz);
+            insertNearestTier1({ tileId, idx, x, y, z, distFromCamPc: d, mag: data.mag[idx], ci: data.ci[idx] }, maxResults);
+        }
+    }
+    return nearestScratch;
+}
+
+export function tier1PromotedDedupKey(tileId, idx) {
+    if (tier1DisabledByUrl()) return null;
+    return "t1:" + tileId + ":" + idx;
+}
+
 export function tier1Stats() {
     if (!state) return { initialized: false };
     const gs = groupStats(state.groups);
@@ -340,6 +473,7 @@ export function tier1Stats() {
         tilesLoaded: state.stats.tilesLoaded,
         starsLoaded: state.stats.starsLoaded,
         tileErrors: state.stats.tileErrors,
+        cpuTiles: state.tileData.size,
         pending: state.pending.size,
         drawCalls: gs.drawCalls,
         workerFallback: state.workerFailed,

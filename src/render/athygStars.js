@@ -98,6 +98,7 @@ export const TIER1_MAG_LIMIT = BRIGHTNESS_CURVE.magLimit;
 const VERT = /* glsl */`
 attribute vec3 color;
 attribute float absMag;
+attribute float hidden;
 varying vec3 vColor;
 varying float vHdr;
 uniform float uBasePx;
@@ -112,7 +113,7 @@ void main() {
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     float camDistPc = length(mvPosition.xyz) / uPcScene;
     float mag = obmApparentMagAt(absMag, camDistPc);
-    gl_PointSize = obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
+    gl_PointSize = hidden > 0.5 ? 0.0 : obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
     vHdr = obmHdrIntensity(mag, uMagLimit);
     gl_Position = projectionMatrix * mvPosition;
 }
@@ -159,6 +160,7 @@ function makeTier1Material() {
 }
 
 // --- THREE-backed groups -----------------------------------------------------
+let activeGroups = null;
 
 /**
  * Build the (up to) 48 group meshes and add them to `parent`. Groups whose
@@ -167,19 +169,22 @@ function makeTier1Material() {
  */
 export function createTileGroups(parent, manifest, span = GROUP_TILE_SPAN) {
     const capacities = computeGroupCapacities(manifest.tiles, span);
-    return capacities.map(capacity => {
+    const groups = capacities.map(capacity => {
         if (capacity === 0) return { capacity: 0, layout: createGroupLayout(0), mesh: null, geometry: null, worldKm: null, pm: null };
         const layout = createGroupLayout(capacity);
         const geometry = new THREE.BufferGeometry();
         const posAttr = new THREE.BufferAttribute(new Float32Array(capacity * 3), 3);
         const colAttr = new THREE.BufferAttribute(new Float32Array(capacity * 3), 3);
         const magAttr = new THREE.BufferAttribute(new Float32Array(capacity), 1);
+        const hiddenAttr = new THREE.BufferAttribute(new Float32Array(capacity), 1);
         posAttr.setUsage(THREE.DynamicDrawUsage);
         colAttr.setUsage(THREE.DynamicDrawUsage);
         magAttr.setUsage(THREE.DynamicDrawUsage);
+        hiddenAttr.setUsage(THREE.DynamicDrawUsage);
         geometry.setAttribute("position", posAttr);
         geometry.setAttribute("color", colAttr);
         geometry.setAttribute("absMag", magAttr);
+        geometry.setAttribute("hidden", hiddenAttr);
         geometry.setDrawRange(0, 0);
         const mesh = new THREE.Points(geometry, makeTier1Material());
         mesh.frustumCulled = false;
@@ -188,6 +193,8 @@ export function createTileGroups(parent, manifest, span = GROUP_TILE_SPAN) {
         parent.add(mesh);
         return { capacity, layout, mesh, geometry, worldKm: new Float64Array(capacity * 3), pm: new Int16Array(capacity * 2) };
     });
+    activeGroups = groups;
+    return groups;
 }
 
 const _tmpColor = [1, 1, 1];
@@ -351,15 +358,41 @@ export function disposeGroups(groups, parent) {
         group.geometry.dispose();
         group.mesh.material.dispose();
     }
+    if (activeGroups === groups) activeGroups = null;
 }
 
 export function groupStats(groups) {
-    let drawCalls = 0, starsLoaded = 0, tilesLoaded = 0;
+    let drawCalls = 0, starsLoaded = 0, tilesLoaded = 0, hiddenStars = 0;
     for (const group of groups) {
         if (!group.mesh) continue;
         if (group.layout.filledCount > 0) drawCalls++;
         starsLoaded += group.layout.filledCount;
         tilesLoaded += group.layout.tileOffsets.size;
+        const hidden = group.geometry.attributes.hidden?.array;
+        if (hidden) {
+            for (let i = 0; i < group.layout.filledCount; i++) if (hidden[i] > 0.5) hiddenStars++;
+        }
     }
-    return { drawCalls, starsLoaded, tilesLoaded, groupCount: groups.length };
+    return { drawCalls, starsLoaded, tilesLoaded, hiddenStars, groupCount: groups.length };
+}
+
+function setTier1Hidden(tileId, idx, hidden) {
+    if (!activeGroups || idx < 0) return false;
+    const group = activeGroups[groupIndexForTile(tileId)];
+    const slot = group?.layout?.tileOffsets.get(tileId);
+    if (!group?.mesh || !slot || idx >= slot.count) return false;
+    const si = slot.offset + idx;
+    const attr = group.geometry.attributes.hidden;
+    attr.array[si] = hidden ? 1 : 0;
+    attr.addUpdateRange(si, 1);
+    attr.needsUpdate = true;
+    return true;
+}
+
+export function hideTier1Star(tileId, idx) {
+    return setTier1Hidden(tileId, idx, true);
+}
+
+export function unhideTier1Star(tileId, idx) {
+    return setTier1Hidden(tileId, idx, false);
 }
