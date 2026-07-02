@@ -5,7 +5,9 @@ import { G, BH, WORLD, EPHT, bhRegister, bhMuAt, gsPull, addPhantom, GS } from "
 import { eph, setLiveGuard } from "./ephemeris.js";
 import { fmtAccel, fmtDist, fmtKm, mulberry32 } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
-import { scene, camera, cam, cvHost, lastPtr, renderer } from "./scene.js";
+import { scene, camera, cam, cvHost, lastPtr, renderer, renderQuality } from "./scene.js";
+import { noteNotable } from "./discoveryLog.js";
+import { hashInts, splitSeed } from "./universe/prng.js";
 
 export const BH_META = []; // visual groups, parallel to the data arrays
 
@@ -18,6 +20,17 @@ export function initBHHooks(hooks) { H = { ...H, ...hooks }; }
 const SOLAR_MASS_KG = 1.98847e30;
 const G_KM = 6.674e-20;
 const TDE_WATCH_WARP = 600;
+const AU_KM = 149597870.7;
+const EXO_PRESETS = {
+    1: [{ label: "10⁸ M☉", rsKm: 2.9532e8 }, { label: "10⁹ M☉", rsKm: 2.9532e9 }],
+    2: [{ label: "CRAB 33 ms", rsKm: 4.1345, period: 0.0334 }, { label: "VELA 89 ms", rsKm: 4.1345, period: 0.0893 }, { label: "B1919 1.34 s", rsKm: 4.1345, period: 1.3373 }],
+};
+const EXO_KINDS = [
+    { label: "HOLE", kind: 0 },
+    { label: "QUASAR", kind: 1 },
+    { label: "PULSAR", kind: 2 },
+    { label: "NEBULA", kind: 3, disabled: true, title: "WP-X3" },
+];
 export function bhMassLabel(rs) {
     const msun = rs * C_LIGHT * C_LIGHT / 2 / MU_S;
     if (msun >= 100) return Math.round(msun).toLocaleString("en-US") + " M☉";
@@ -252,6 +265,9 @@ const BH_PLACE = {
     yKm: 0,
     uiReady: false,
     uiKey: "",
+    sizeRailKey: "",
+    kind: 0,
+    presetIdx: 0,
     bodyMode: null,
     hintKey: "",
     hintText: "",
@@ -261,6 +277,12 @@ const BH_PLACE = {
     ctx: null,
     canvas: null,
 };
+function activePreset() {
+    if (BH_PLACE.kind === 0) return { label: bhSizeShort(BH_SIZES[BH.sizeIdx]), rsKm: BH_SIZES[BH.sizeIdx], period: 0 };
+    const rows = EXO_PRESETS[BH_PLACE.kind] || [];
+    const idx = Math.max(0, Math.min(BH_PLACE.presetIdx, rows.length - 1));
+    return rows[idx] || { label: "", rsKm: BH_SIZES[BH.sizeIdx], period: 0 };
+}
 const placeRaycaster = new THREE.Raycaster();
 const placeNdc = new THREE.Vector2();
 const placeHit = new THREE.Vector3();
@@ -330,7 +352,8 @@ function updateBHPlacementPreview(dtR = 0) {
         BH_PLACE.valid = false;
         return;
     }
-    const rs = BH_SIZES[BH.sizeIdx];
+    const preset = activePreset();
+    const rs = preset.rsKm;
     const dCam = camera.position.distanceTo(hit);
     const massVis = smooth01(.5, 5000, rs);
     const diskVis = smooth01(50, 100000, rs);
@@ -357,22 +380,58 @@ function ensureBHPanel() {
     BH_PLACE.canvas = document.getElementById("bhPreviewCanvas");
     BH_PLACE.ctx = BH_PLACE.canvas?.getContext("2d") || null;
     const rail = document.getElementById("bhSizeRail");
-    if (rail) {
-        rail.textContent = "";
-        for (let i = 0; i < BH_SIZES.length; i++) {
+    if (rail && !document.getElementById("bhKindRail")) {
+        const kindRail = document.createElement("div");
+        kindRail.id = "bhKindRail";
+        kindRail.setAttribute("aria-label", "Exotic object kind selector");
+        kindRail.style.display = "grid";
+        kindRail.style.gridTemplateColumns = "repeat(4, minmax(0, 1fr))";
+        kindRail.style.gap = "5px";
+        kindRail.style.marginTop = "11px";
+        for (const row of EXO_KINDS) {
             const b = document.createElement("button");
             b.type = "button";
-            b.className = "bhSizeBtn";
-            b.textContent = bhSizeShort(BH_SIZES[i]);
-            b.title = "Schwarzschild radius " + fmtKm(BH_SIZES[i]);
+            b.className = "bhKindBtn bhSizeBtn";
+            b.textContent = row.label;
+            b.disabled = !!row.disabled;
+            if (row.title) b.title = row.title;
             b.onclick = e => {
                 e.preventDefault();
-                BH.sizeIdx = i;
+                BH_PLACE.kind = row.kind;
+                BH_PLACE.presetIdx = 0;
                 setBHPlacementMode(true);
                 updateBHPlacementUI(true);
             };
-            rail.appendChild(b);
+            kindRail.appendChild(b);
         }
+        rail.before(kindRail);
+    }
+}
+function renderBHSizeRail() {
+    const rail = document.getElementById("bhSizeRail");
+    if (!rail) return;
+    const railKey = BH_PLACE.kind + ":" + BH_SIZES.length + ":" + (EXO_PRESETS[BH_PLACE.kind]?.length || 0);
+    if (railKey === BH_PLACE.sizeRailKey) return;
+    BH_PLACE.sizeRailKey = railKey;
+    rail.textContent = "";
+    const rows = BH_PLACE.kind === 0
+        ? BH_SIZES.map((rsKm, i) => ({ label: bhSizeShort(rsKm), rsKm, index: i }))
+        : EXO_PRESETS[BH_PLACE.kind] || [];
+    for (let i = 0; i < rows.length; i++) {
+        const preset = rows[i];
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "bhSizeBtn";
+        b.textContent = preset.label;
+        b.title = "Schwarzschild radius " + fmtKm(preset.rsKm);
+        b.onclick = e => {
+            e.preventDefault();
+            if (BH_PLACE.kind === 0) BH.sizeIdx = preset.index;
+            else BH_PLACE.presetIdx = i;
+            setBHPlacementMode(true);
+            updateBHPlacementUI(true);
+        };
+        rail.appendChild(b);
     }
 }
 function drawBHPanelPreview(rs, active, force = false) {
@@ -435,12 +494,15 @@ function drawBHPanelPreview(rs, active, force = false) {
 }
 function updateBHPlacementUI(force = false) {
     ensureBHPanel();
+    renderBHSizeRail();
     if (BH_PLACE.bodyMode !== BH_PLACE.active) {
         document.body.classList.toggle("bh-place-mode", BH_PLACE.active);
         BH_PLACE.bodyMode = BH_PLACE.active;
     }
-    const rs = BH_SIZES[BH.sizeIdx];
+    const preset = activePreset();
+    const rs = preset.rsKm;
     const mu = rs * C_LIGHT * C_LIGHT / 2;
+    const msun = mu / MU_S;
     const hint = document.getElementById("bhPlaceHint");
     const updateHint = () => {
         if (!hint) return;
@@ -471,8 +533,11 @@ function updateBHPlacementUI(force = false) {
     const key = [
         BH_PLACE.active ? 1 : 0,
         BH_PLACE.valid ? 1 : 0,
+        BH_PLACE.kind,
+        BH_PLACE.presetIdx,
         BH.sizeIdx,
         BH.n,
+        Array.from({ length: BH.n }, (_, i) => BH.kind[i]).join(","),
         Array.from({ length: BH.n }, (_, i) => Math.round(BH.rs[i] * 1000)).join(","),
     ].join(":");
     if (!force && key === BH_PLACE.uiKey) {
@@ -486,12 +551,16 @@ function updateBHPlacementUI(force = false) {
     const massEl = document.getElementById("bhMassVal");
     const gravEl = document.getElementById("bhGravityVal");
     if (pill) pill.textContent = BH_PLACE.active ? "ARMED" : "B ARM";
-    if (rsEl) rsEl.textContent = fmtKm(rs);
+    if (rsEl) rsEl.textContent = BH_PLACE.kind === 1 ? (rs / AU_KM).toFixed(2) + " AU" : fmtKm(rs);
     if (massEl) massEl.textContent = bhMassLabel(rs);
-    if (gravEl) gravEl.textContent = gravityPanelLabel(pwAccelMs2(mu, rs * 3, rs));
+    if (gravEl) gravEl.textContent = BH_PLACE.kind === 1
+        ? "L_bol ≈ L_Edd = " + (L_EDD_PER_MSUN * msun).toExponential(2) + " W"
+        : gravityPanelLabel(pwAccelMs2(mu, rs * 3, rs));
     updateHint();
-    const buttons = document.querySelectorAll(".bhSizeBtn");
-    buttons.forEach((b, i) => b.classList.toggle("active", i === BH.sizeIdx));
+    const kindButtons = document.querySelectorAll("#bhKindRail .bhKindBtn");
+    kindButtons.forEach((b, i) => b.classList.toggle("active", EXO_KINDS[i]?.kind === BH_PLACE.kind));
+    const buttons = document.querySelectorAll("#bhSizeRail .bhSizeBtn");
+    buttons.forEach((b, i) => b.classList.toggle("active", BH_PLACE.kind === 0 ? i === BH.sizeIdx : i === BH_PLACE.presetIdx));
     const list = document.getElementById("bhActiveList");
     if (list) {
         list.textContent = "";
@@ -503,7 +572,8 @@ function updateBHPlacementUI(force = false) {
             const row = document.createElement("button");
             row.type = "button";
             row.className = "bhActiveRow";
-            row.innerHTML = "<span>BH " + (i + 1) + "</span><strong>r<sub>s</sub> " + fmtKm(BH.rs[i]) + "</strong>";
+            const label = BH.kind[i] === 1 ? "QUASAR " : BH.kind[i] === 2 ? "PULSAR " : "BH ";
+            row.innerHTML = "<span>" + label + (i + 1) + "</span><strong>r<sub>s</sub> " + fmtKm(BH.rs[i]) + "</strong>";
             row.onclick = e => {
                 e.preventDefault();
                 G.focus = "bh:" + i;
@@ -540,7 +610,9 @@ function commitBHPlacement(clientX, clientY) {
         H.toast("Aim the cursor at the orbital plane");
         return;
     }
-    addBlackHole(hit.x / K - eph.earthX, -hit.z / K - eph.earthY, BH_SIZES[BH.sizeIdx]);
+    const preset = activePreset();
+    splitSeed(hashInts(0x45584f21, BH.placeCount++), BH_PLACE.kind);
+    addBlackHole(hit.x / K - eph.earthX, -hit.z / K - eph.earthY, preset.rsKm, 0, 0, false, null, BH_PLACE.kind, preset.period || 0);
     if (BH.n >= BH_MAX) BH_PLACE.active = false;
     updateBHPlacementPreview();
     updateBHPlacementUI(true);
@@ -552,10 +624,10 @@ renderer.domElement.addEventListener("pointerdown", e => {
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     commitBHPlacement(e.clientX, e.clientY);
 }, true);
-export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, events = null) {
+export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, events = null, kind = 0, period = 0) {
     if (BH.n >= BH_MAX) { if (!quiet) H.toast("Maximum " + BH_MAX + " black holes"); return -1; }
     const i = BH.n;
-    bhRegister(i, xKm, yKm, rsKm, vx0, vy0, events);
+    bhRegister(i, xKm, yKm, rsKm, vx0, vy0, events, kind, period);
     const g = new THREE.Group();
     g.position.set(BH.sx[i], 0, BH.sz[i]);
     const horizon = new THREE.Mesh(new THREE.SphereGeometry(rsKm * K, 128, 96), new THREE.MeshBasicMaterial({ color: 0x000000 }));
@@ -596,14 +668,26 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, ev
     const disk = new THREE.Mesh(new THREE.PlaneGeometry(rsKm * K * 13, rsKm * K * 13), new THREE.MeshBasicMaterial({ map: diskTex, transparent: true, opacity: .82, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
     disk.rotation.x = -Math.PI / 2;
     const jet = makeTdeJet();
+    const quasarLights = BH_META.reduce((n, m) => n + (m?.quasarLight ? 1 : 0), 0);
+    let quasarLight = null;
+    if (kind === 1) {
+        disk.scale.setScalar(2.2);
+        jet.scale.set(rsKm * K * .45, rsKm * K * 30, rsKm * K * .45);
+        // Cap quasar point lights at two on desktop; mobile uses the additive sprites only.
+        if (!renderQuality.mobile && quasarLights < 2) {
+            quasarLight = new THREE.PointLight(0xcfe0ff, 4.0, BH.sinkS[i] * 600, 2);
+            g.add(quasarLight);
+        }
+    }
     g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.group, jet, coreMask);
     scene.add(g);
     BH_META.push({
-        g, disk, diskBaseRs: rsKm, jet, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0,
+        g, disk, diskBaseRs: rsKm, jet, quasarLight, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0,
         tde: { active: false, targetName: "", t0Sim: 0, tFbSec: 0, LpeakW: 0, LnowW: 0, LEddW: L_EDD_PER_MSUN * (rsKm * C_LIGHT * C_LIGHT / 2 / MU_S), mStarKg: 0, mBhMsun: 0, rCirc: 0 },
     });
     BH.n++;
     if (quiet) return i;
+    if (kind === 1) noteNotable("quasar", "QUASAR " + bhMassLabel(rsKm));
     H.toast("⚫ Black hole: r_s " + fmtKm(rsKm) + " · " + bhMassLabel(rsKm) + " · " + bhHawkingLabel(rsKm));
     H.predict();
     return i;
@@ -626,9 +710,11 @@ function removeBHIndex(i) {
         BH.sx[k] = BH.sx[k + 1]; BH.sz[k] = BH.sz[k + 1];
         BH.c[k] = BH.c[k + 1]; BH.sinkS[k] = BH.sinkS[k + 1];
         BH.obsT[k] = BH.obsT[k + 1];
+        BH.kind[k] = BH.kind[k + 1]; BH.period[k] = BH.period[k + 1];
         BH.ev[k] = BH.ev[k + 1];
     }
     BH.ev[BH.n - 1] = null;
+    BH.kind[BH.n - 1] = 0; BH.period[BH.n - 1] = 0;
     BH.n--;
 }
 export function removeLastBH() {
@@ -1087,7 +1173,9 @@ export function bhAdvance(dtTotal, _tEnd) {
 export function placeBHAtCursor() {
     const p = cursorPlaneHit();
     if (!p) { H.toast("Aim the cursor at the orbital plane"); return; }
-    addBlackHole(p.x / K - eph.earthX, -p.z / K - eph.earthY, BH_SIZES[BH.sizeIdx]);
+    const preset = activePreset();
+    splitSeed(hashInts(0x45584f21, BH.placeCount++), BH_PLACE.kind);
+    addBlackHole(p.x / K - eph.earthX, -p.z / K - eph.earthY, preset.rsKm, 0, 0, false, null, BH_PLACE.kind, preset.period || 0);
 }
 window.__addBH = addBlackHole; // debug/testing handle
 
@@ -1265,7 +1353,8 @@ function fadeSpagVisual(m, dtR) {
     spag.fragments.material.opacity = Math.max(0, spag.fragments.material.opacity - dtR * .75);
     spag.remnantUniforms.uAlpha.value = Math.max(0, spag.remnantUniforms.uAlpha.value - dtR * .9);
     spag.remnant.visible = spag.remnantUniforms.uAlpha.value > .01;
-    if (m.jet) m.jet.material.opacity = Math.max(0, m.jet.material.opacity - dtR * .9);
+    const bi = BH_META.indexOf(m);
+    if (m.jet) m.jet.material.opacity = Math.max(BH.kind[bi] === 1 ? 0.55 : 0, m.jet.material.opacity - dtR * .9);
     if (m.tde?.active && m.tde.LnowW > 0 && m.tde.LnowW < m.tde.LEddW * 1e-4) {
         m.tde.active = false;
         m.tde.LnowW = 0;
@@ -1299,8 +1388,10 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         const circScale = m.tde?.active && m.tde.rCirc > 0
             ? clamp((m.tde.rCirc * K * .5) / Math.max(1e-9, m.diskBaseRs * K * 6.5), baseDiskScale, baseDiskScale * 8)
             : baseDiskScale;
-        m.disk.scale.setScalar(circScale * (1 + lum * .38));
-        m.disk.material.opacity = .045 + diskVis * .6 + lum * .5 + (m.tde?.active ? 0 : flare * .28);
+        m.disk.scale.setScalar(circScale * (BH.kind[bi] === 1 ? 2.2 : 1) * (1 + lum * .38));
+        let targetOpacity = .045 + diskVis * .6 + lum * .5 + (m.tde?.active ? 0 : flare * .28);
+        if (BH.kind[bi] === 1) targetOpacity = Math.max(targetOpacity, 0.85);
+        m.disk.material.opacity = targetOpacity;
         m.glow.material.opacity = .025 + hot * (.025 + .075 * massVis) + flare * .24 + lum * .4;
         const hVis = Math.max(m.rs * K * 5.5, dBH * (.0015 + .0018 * massVis));
         m.hawk.scale.setScalar(hVis);
@@ -1311,9 +1402,9 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         m.hawkGlow.scale.setScalar(Math.max(m.rs * K * (4.6 + tdeFlare * 5), dBH * (.0022 + .0035 * massVis + tdeFlare * .004)));
         m.hawkGlow.material.opacity = .015 + hot * (.018 + .052 * massVis) * (0.65 + 0.35 * Math.sin(performance.now() * .004 + bi)) + flare * .22 + lum * .4;
         if (m.jet) {
-            const jetOp = lum > .8 ? .3 * (lum - .8) / .2 : 0;
+            const jetOp = BH.kind[bi] === 1 ? 0.55 : lum > .8 ? .3 * (lum - .8) / .2 : 0;
             m.jet.material.opacity = jetOp;
-            const jetLen = Math.max(m.rs * K * 7, dBH * (.02 + .04 * lum));
+            const jetLen = BH.kind[bi] === 1 ? m.rs * K * 30 : Math.max(m.rs * K * 7, dBH * (.02 + .04 * lum));
             const jetRad = Math.max(m.rs * K * .45, dBH * .0012);
             m.jet.scale.set(jetRad, jetLen, jetRad);
             m.jet.visible = jetOp > .001;

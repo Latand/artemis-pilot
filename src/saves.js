@@ -66,7 +66,7 @@ export function saveState() {
     const procStars = Array.from(new Set(serializePinnedProceduralStars().concat(focusProcId ? [focusProcId] : [])));
     const epochMs = readEpochMs();
     const data = {
-        v: 10,
+        v: 11,
         galaxySeed: getSeed(),
         epochMs,
         g: Object.fromEntries(G_FIELDS.map(k => [k, G[k]])),
@@ -94,7 +94,7 @@ export function saveState() {
             ...(Number.isFinite(ephSt.earthZ) ? { earthZ: ephSt.earthZ } : {}),
             ...(Number.isFinite(ephSt.earthVz) ? { earthVz: ephSt.earthVz } : {}),
         },
-        bh: Array.from({ length: BH.n }, (_, i) => [BH.x[i], BH.y[i], BH.vx[i], BH.vy[i], BH.rs[i]]),
+        bh: Array.from({ length: BH.n }, (_, i) => [BH.x[i], BH.y[i], BH.vx[i], BH.vy[i], BH.rs[i], BH.kind[i], BH.period[i]]),
         // gravity-front bookkeeping: per-hole mass-gain events, plus the
         // phantom/ghost sources (Infinity survives JSON as null)
         bhEv: Array.from({ length: BH.n }, (_, i) => (BH.ev[i] || []).map(e => [e.x, e.y, e.z || 0, e.t, e.dmu])),
@@ -114,7 +114,7 @@ export function saveState() {
 export async function loadState() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
-    if (!data || (data.v < 1 || data.v > 10)) { toast("No saved state · K to save one"); return false; }
+    if (!data || (data.v < 1 || data.v > 11)) { toast("No saved state · K to save one"); return false; }
     // The procedural galaxy is a pure function of (seed, cell coords), so the
     // seed must land before any procedural star is regenerated from a saved id.
     setSeed(data.v >= 9 && Number.isFinite(data.galaxySeed) ? (data.galaxySeed >>> 0) : DEFAULT_SEED);
@@ -173,13 +173,13 @@ export async function loadState() {
         GS.push({ x, y, z, vx, vy, vz, mu, R, t0, t: t === null ? Infinity : t });
     }
     clearBlackHoles();
-    data.bh.forEach(([x, y, vx, vy, rs], i) => {
+    data.bh.forEach(([x, y, vx, vy, rs, kind, period], i) => {
         const raw = data.bhEv && data.bhEv[i];
         const ev = raw && raw.length ? raw.map(row => row.length >= 5
             ? { x: row[0], y: row[1], z: row[2], t: row[3], dmu: row[4] }
             : { x: row[0], y: row[1], z: 0, t: row[2], dmu: row[3] })
             : [{ x, y, z: 0, t: -1e18, dmu: rs * C_LIGHT * C_LIGHT / 2 }]; // v1 saves: field counts as long-established
-        addBlackHole(x, y, rs, vx, vy, true, ev);
+        addBlackHole(x, y, rs, vx, vy, true, ev, kind ?? 0, period ?? 0);
     });
     if (typeof data.bhSizeIdx === "number") BH.sizeIdx = data.bhSizeIdx;
     hideBanner();

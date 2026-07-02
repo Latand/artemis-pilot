@@ -128,12 +128,15 @@ export const BH = {
     sx: new Float64Array(BH_MAX), sz: new Float64Array(BH_MAX),
     c: new Float64Array(BH_MAX), sinkS: new Float64Array(BH_MAX),
     obsT: new Float64Array(BH_MAX),
+    kind: new Uint8Array(BH_MAX),      // 0 hole, 1 quasar, 2 pulsar (WP-X1 rail)
+    period: new Float64Array(BH_MAX),  // pulsar spin period, s (0 otherwise)
+    placeCount: 0,                     // user-action counter -> deterministic placement seeds
     // per-hole mass-gain events {x, y, z, t, dmu}: birth, absorptions, and
     // merger inheritance — each delta's influence expands at c from that point
     ev: new Array(BH_MAX).fill(null),
 };
 window.__BH = BH;
-export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0, events = null) {
+export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0, events = null, kind = 0, period = 0) {
     BH.x[i] = xKm; BH.y[i] = yKm; BH.rs[i] = rsKm;
     BH.vx[i] = vx0; BH.vy[i] = vy0;
     BH.mu[i] = rsKm * C_LIGHT * C_LIGHT / 2;
@@ -143,6 +146,9 @@ export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0, events = null) {
     BH.obsT[i] = 1;
     BH.ev[i] = events && events.length ? events.map(e => ({ z: 0, ...e }))
         : [{ x: xKm, y: yKm, z: 0, t: -1e18, dmu: BH.mu[i] }];
+    BH.kind[i] = kind;
+    BH.period[i] = period;
+    if (kind === 2) BH.sinkS[i] = 12 * K; // neutron star captures at its ~12 km surface
 }
 // hole i's gravitational parameter as felt at (x, y, z): only the mass deltas
 // whose light fronts have reached the point contribute

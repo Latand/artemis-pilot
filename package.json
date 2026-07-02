@@ -44,7 +44,8 @@
     "smoke:river-visual": "node scripts/smoke-river-visual.mjs",
     "build": "vite build",
     "preview": "vite preview",
-    "smoke:determinism": "node scripts/smoke-determinism.mjs"
+    "smoke:determinism": "node scripts/smoke-determinism.mjs",
+    "smoke:exotic": "node scripts/smoke-exotic.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

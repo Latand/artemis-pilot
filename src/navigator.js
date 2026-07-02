@@ -60,7 +60,10 @@ function rebuild() {
         }
     }
 
-    for (let i = 0; i < BH.n; i++) if (has("BLACK HOLE") || has("BH")) add("BLACK HOLE " + (i + 1), "r_s " + fmtKm(BH.rs[i]), "bh:" + i, 0, "#c9b6ff");
+    for (let i = 0; i < BH.n; i++) {
+        const label = BH.kind[i] === 1 ? "QUASAR " : BH.kind[i] === 2 ? "PULSAR " : "BLACK HOLE ";
+        if (has("BLACK HOLE") || has("BH") || has(label.trim())) add(label + (i + 1), "r_s " + fmtKm(BH.rs[i]), "bh:" + i, 0, "#c9b6ff");
+    }
 
     let starHdr = false;
     for (const o of CURATED) if (has(o.s.name)) {

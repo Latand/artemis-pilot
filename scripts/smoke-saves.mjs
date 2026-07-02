@@ -57,7 +57,7 @@ try {
 
   const saved = await runSaveV10(page);
   assert(saved.ok, "saveState should succeed", saved);
-  assert(saved.blob.v === 10, "quicksave should be schema v10", saved.blob.v);
+  assert(saved.blob.v === 11, "quicksave should be schema v11 (bh tuples carry kind+period)", saved.blob.v);
   assert(saved.blob.galaxySeed === TEST_SEED, "quicksave should persist the live procedural galaxy seed", saved);
   assert(saved.blob.procStars.includes(saved.pickedId), "quicksave should persist the pinned procedural star id", saved);
   assert(saved.blob.focusProcedural?.id === saved.pickedId, "quicksave should persist the procedural focus id", saved);
