@@ -24,6 +24,7 @@
     "smoke:epoch": "node scripts/smoke-epoch.mjs",
     "smoke:lunar-elp": "node scripts/smoke-lunar-elp.mjs",
     "smoke:minor": "node scripts/smoke-minor.mjs",
+    "smoke:tde": "node scripts/smoke-tde.mjs",
     "smoke:physics3d": "node scripts/smoke-physics3d.mjs",
     "smoke:xrperf": "node scripts/smoke-xrperf.mjs",
     "smoke:river-deeptime": "node scripts/smoke-river-deeptime.mjs",
