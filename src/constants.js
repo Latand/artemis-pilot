@@ -197,6 +197,7 @@ for (const p of PL) {
 export const SOI_M = 66100;          // lunar dominance radius, km
 export const SOI_E = 924000;         // Earth's heliocentric SOI, km
 export const C_LIGHT = 299792.458;   // km/s
+export const G_ACCEL_KMS2 = 9.80665e-3;
 export const J2_E = 1.08262668e-3;   // Earth oblateness (equatorial-plane radial term)
 export const OMEGA_EARTH = 7.2921159e-5; // rad/s sidereal surface rotation
 export const DRAG_CD = 0.55, DRAG_H = 8.5, ATM_TOP = 160;
