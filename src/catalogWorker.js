@@ -8,6 +8,10 @@ function starColor(tempK, bv, out) {
     return teffToRGB(teff, out);
 }
 
+function starTeff(tempK, bv) {
+    return tempK > 0 ? tempK : bvToTeff(bv);
+}
+
 // Absolute magnitude (and from it, solar luminosity) for a catalog row: prefer
 self.onmessage = async e => {
     try {
@@ -61,6 +65,7 @@ self.onmessage = async e => {
         // Sol into the color gain" scheme (that's the root cause of the
         // near-Sun brightness bubble at galaxy zoom: WP16 a1).
         const absMag = new Float32Array(kept);
+        const teffK = new Float32Array(kept);
         const c = [1, 1, 1];
         const stats = {
             sourceCount: count,
@@ -81,6 +86,7 @@ self.onmessage = async e => {
             const radius = iRadius === null ? NaN : vals[j + iRadius];
             const lum = iLum === null ? NaN : vals[j + iLum];
             const temp = iTemp === null ? NaN : vals[j + iTemp];
+            const bv = vals[j + iBv];
             const absMagField = iAbsMag === null ? NaN : vals[j + iAbsMag];
             const mag = vals[j + iMag];
             const distPc = Math.sqrt(xPc * xPc + yPc * yPc + zPc * zPc);
@@ -89,7 +95,8 @@ self.onmessage = async e => {
                 : Number.isFinite(absMagField)
                     ? absMagField
                     : absMagFromApparent(mag, distPc);
-            starColor(temp, vals[j + iBv], c);
+            teffK[out] = starTeff(temp, bv);
+            starColor(temp, bv, c);
             col[out * 3] = c[0];
             col[out * 3 + 1] = c[1];
             col[out * 3 + 2] = c[2];
@@ -109,8 +116,9 @@ self.onmessage = async e => {
             pos: pos.buffer,
             col: col.buffer,
             absMag: absMag.buffer,
+            teffK: teffK.buffer,
         };
-        const transfer = [pos.buffer, col.buffer, absMag.buffer];
+        const transfer = [pos.buffer, col.buffer, absMag.buffer, teffK.buffer];
         if (fetched) {
             msg.vals = vals.buffer;
             transfer.push(vals.buffer);

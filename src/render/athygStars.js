@@ -36,7 +36,8 @@
 import * as THREE from "three";
 import { PC_KM, K } from "../constants.js";
 import { worldToResidualArr } from "../universe/renderOrigin.js";
-import { BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, bvToTeff, teffToRGB, absMagFromApparent } from "./viewBrightness.js";
+import { relUniforms } from "../relView.js";
+import { BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, RELATIVISTIC_VIEW_GLSL, bvToTeff, teffToRGB, absMagFromApparent } from "./viewBrightness.js";
 
 export const GROUP_TILE_SPAN = 256;
 
@@ -99,8 +100,10 @@ const VERT = /* glsl */`
 attribute vec3 color;
 attribute float absMag;
 attribute float hidden;
+attribute float teffK;
 varying vec3 vColor;
 varying float vHdr;
+varying float vDoppler;
 uniform float uBasePx;
 uniform float uMagRef;
 uniform float uMinPx;
@@ -109,14 +112,18 @@ uniform float uMagLimit;
 uniform float uPcScene;
 uniform float uMagPenalty;
 ${VIEW_BRIGHTNESS_GLSL}
+${RELATIVISTIC_VIEW_GLSL}
 void main() {
-    vColor = color;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    float camDistPc = length(mvPosition.xyz) / uPcScene;
+    float dopplerD;
+    vec3 abPos = relApplyView(mvPosition.xyz, teffK, dopplerD);
+    vDoppler = dopplerD;
+    vColor = uBeta > 0.0 ? relTeffToRGB(teffK * dopplerD) : color;
+    float camDistPc = length(abPos) / uPcScene;
     float mag = obmApparentMagAt(absMag + uMagPenalty, camDistPc);
     gl_PointSize = hidden > 0.5 ? 0.0 : obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
-    vHdr = obmHdrIntensity(mag, uMagLimit);
-    gl_Position = projectionMatrix * mvPosition;
+    vHdr = obmHdrIntensity(mag, uMagLimit) * pow(dopplerD, 4.0);
+    gl_Position = projectionMatrix * vec4(abPos, 1.0);
 }
 `;
 
@@ -153,6 +160,8 @@ function makeTier1Material({ dim = 1, magPenalty = 0 } = {}) {
             uFade: { value: 1 },
             uDim: { value: dim },
             uMagPenalty: { value: magPenalty },
+            uBeta: relUniforms.uBeta,
+            uBoostDirView: relUniforms.uBoostDirView,
         },
         vertexShader: VERT,
         fragmentShader: FRAG,
@@ -181,14 +190,17 @@ export function createTileGroups(parent, manifest, span = GROUP_TILE_SPAN, optio
         const colAttr = new THREE.BufferAttribute(new Float32Array(capacity * 3), 3);
         const magAttr = new THREE.BufferAttribute(new Float32Array(capacity), 1);
         const hiddenAttr = new THREE.BufferAttribute(new Float32Array(capacity), 1);
+        const teffAttr = new THREE.BufferAttribute(new Float32Array(capacity), 1);
         posAttr.setUsage(THREE.DynamicDrawUsage);
         colAttr.setUsage(THREE.DynamicDrawUsage);
         magAttr.setUsage(THREE.DynamicDrawUsage);
         hiddenAttr.setUsage(THREE.DynamicDrawUsage);
+        teffAttr.setUsage(THREE.DynamicDrawUsage);
         geometry.setAttribute("position", posAttr);
         geometry.setAttribute("color", colAttr);
         geometry.setAttribute("absMag", magAttr);
         geometry.setAttribute("hidden", hiddenAttr);
+        geometry.setAttribute("teffK", teffAttr);
         geometry.setDrawRange(0, 0);
         const mesh = new THREE.Points(geometry, makeTier1Material(options));
         mesh.frustumCulled = false;
@@ -223,6 +235,7 @@ export function ingestTile(groups, tileId, tileData, span = GROUP_TILE_SPAN) {
     const posArr = group.geometry.attributes.position.array;
     const colArr = group.geometry.attributes.color.array;
     const magArr = group.geometry.attributes.absMag.array;
+    const teffArr = group.geometry.attributes.teffK.array;
     for (let i = 0; i < count; i++) {
         const si = offset + i;
         const pcX = positions[i * 3], pcY = positions[i * 3 + 1], pcZ = positions[i * 3 + 2];
@@ -231,6 +244,7 @@ export function ingestTile(groups, tileId, tileData, span = GROUP_TILE_SPAN) {
         worldToResidualArr(wx, wy, wz, posArr, si * 3, K);
         const mag = magCi[i * 2] / 100;
         const ci = magCi[i * 2 + 1] / 1000;
+        teffArr[si] = bvToTeff(ci);
         ciColor(ci, _tmpColor);
         colArr[si * 3] = _tmpColor[0]; colArr[si * 3 + 1] = _tmpColor[1]; colArr[si * 3 + 2] = _tmpColor[2];
         // Absolute magnitude derived once at ingest from AT-HYG's apparent
@@ -245,9 +259,11 @@ export function ingestTile(groups, tileId, tileData, span = GROUP_TILE_SPAN) {
     const posAttr = group.geometry.attributes.position;
     const colAttr = group.geometry.attributes.color;
     const magAttr = group.geometry.attributes.absMag;
+    const teffAttr = group.geometry.attributes.teffK;
     posAttr.addUpdateRange(offset * 3, count * 3); posAttr.needsUpdate = true;
     colAttr.addUpdateRange(offset * 3, count * 3); colAttr.needsUpdate = true;
     magAttr.addUpdateRange(offset, count); magAttr.needsUpdate = true;
+    teffAttr.addUpdateRange(offset, count); teffAttr.needsUpdate = true;
     group.geometry.setDrawRange(0, group.layout.filledCount);
     return { offset, count };
 }

@@ -11,8 +11,9 @@ import { GALACTIC_ORBIT_PERIOD_S } from "./universe/solarOrbit.js";
 import { eraModulation, setMergerEpochGyr } from "./universe/cosmicEra.js";
 import { registerHygCatalog } from "./universe/hygActiveCatalog.js";
 import { PERF, markPerf } from "./perf.js";
+import { relUniforms } from "./relView.js";
 import {
-    BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, bvToTeff, teffToRGB, absMagFromApparent,
+    BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, RELATIVISTIC_VIEW_GLSL, bvToTeff, teffToRGB, absMagFromApparent,
 } from "./render/viewBrightness.js";
 
 // Galactic-centre position in scene units (toward Sgr A*, ~26,000 ly). The
@@ -345,14 +346,18 @@ function starColor(tempK, bv, out) {
     return teffToRGB(tempK > 0 ? tempK : bvToTeff(bv), out);
 }
 
+function starTeff(tempK, bv) {
+    return tempK > 0 ? tempK : bvToTeff(bv);
+}
+
 function starAbsMag(lum, absMagField, mag, distPc) {
     if (lum > 0) return -2.5 * Math.log10(lum) + 4.74;
     if (Number.isFinite(absMagField)) return absMagField;
     return absMagFromApparent(mag, distPc);
 }
 
-function installCatalogObject(pos, col, absMag, count, stats) {
-    const obj = viewBrightPoints(pos, col, absMag, { basePx: 1.7, maxPx: 8.5, magLimit: 8.4, opacity: .62 });
+function installCatalogObject(pos, col, absMag, teffK, count, stats) {
+    const obj = viewBrightPoints(pos, col, absMag, teffK, { basePx: 1.7, maxPx: 8.5, magLimit: 8.4, opacity: .62 });
     obj.name = "HYG v4.1 catalog";
     catalogRoot.add(obj);
     catalogCount = count;
@@ -398,6 +403,7 @@ async function loadCatalogStarsFallback(reason) {
         const pos = new Float32Array(kept * 3);
         const col = new Float32Array(kept * 3);
         const absMag = new Float32Array(kept);
+        const teffK = new Float32Array(kept);
         const c = [1, 1, 1];
         const stats = {
             sourceCount: count,
@@ -418,10 +424,12 @@ async function loadCatalogStarsFallback(reason) {
             const radius = iRadius === null ? NaN : vals[j + iRadius];
             const lum = iLum === null ? NaN : vals[j + iLum];
             const temp = iTemp === null ? NaN : vals[j + iTemp];
+            const bv = vals[j + iBv];
             const absMagField = iAbsMagField === null ? NaN : vals[j + iAbsMagField];
             const distPc = Math.sqrt(xPc * xPc + yPc * yPc + zPc * zPc);
             absMag[out] = starAbsMag(lum, absMagField, vals[j + iMag], distPc);
-            starColor(temp, vals[j + iBv], c);
+            teffK[out] = starTeff(temp, bv);
+            starColor(temp, bv, c);
             col[out * 3] = c[0];
             col[out * 3 + 1] = c[1];
             col[out * 3 + 2] = c[2];
@@ -431,7 +439,7 @@ async function loadCatalogStarsFallback(reason) {
             if (temp > 0) stats.tempEstimated++;
             out++;
         }
-        installCatalogObject(pos, col, absMag, kept, stats);
+        installCatalogObject(pos, col, absMag, teffK, kept, stats);
     } catch (err) {
         console.warn("HYG catalog layer unavailable", err);
         catalogLoading = false;
@@ -470,6 +478,7 @@ async function loadCatalogStars() {
                     new Float32Array(msg.pos),
                     new Float32Array(msg.col),
                     new Float32Array(msg.absMag),
+                    new Float32Array(msg.teffK),
                     msg.count,
                     msg.stats,
                 );
@@ -514,6 +523,7 @@ function makeLocalStars() {
     const pos = new Float32Array(count * 3);
     const col = new Float32Array(count * 3);
     const absMag = new Float32Array(count);
+    const teffK = new Float32Array(count);
     let n = 0;
     for (const star of STARS) {
         pos[n * 3] = star.x * K;
@@ -526,9 +536,10 @@ function makeLocalStars() {
         absMag[n] = Number.isFinite(star.absMag)
             ? star.absMag
             : starAbsMag(star.lumSolar, NaN, star.mag ?? 7, dPc);
+        teffK[n] = starTeff(star.tempK, star.bv);
         n++;
     }
-    return { pos, col, absMag };
+    return { pos, col, absMag, teffK };
 }
 
 // Observer-relative-brightness point cloud: unlike `points()` (plain
@@ -539,13 +550,14 @@ function makeLocalStars() {
 // procedural star at the same camera distance instead of staying anchored to
 // "distance from Sol" — the fix for the near-Sun bubble at galaxy zoom.
 const PC_SCENE_UNITS = PC_SCENE;
-function viewBrightPoints(pos, col, absMag, opts = {}) {
+function viewBrightPoints(pos, col, absMag, teffK, opts = {}) {
     const curve = { ...BRIGHTNESS_CURVE, ...opts };
     const count = pos.length / 3;
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
     geom.setAttribute("absMag", new THREE.BufferAttribute(absMag, 1));
+    geom.setAttribute("teffK", new THREE.BufferAttribute(teffK, 1));
     const solDistPc = new Float32Array(count);
     for (let i = 0; i < count; i++) {
         const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
@@ -561,24 +573,33 @@ function viewBrightPoints(pos, col, absMag, opts = {}) {
             uMagLimit: { value: curve.magLimit },
             uPcScene: { value: PC_SCENE_UNITS },
             uOpacity: { value: curve.opacity ?? 1 },
+            uBeta: relUniforms.uBeta,
+            uBoostDirView: relUniforms.uBoostDirView,
         },
         vertexShader: /* glsl */`
             attribute float absMag;
             attribute float solDistPc;
+            attribute float teffK;
             varying vec3 vColor;
             varying float vHdr;
+            varying float vDoppler;
             varying float vDensity;
             uniform float uBasePx, uMagRef, uMinPx, uMaxPx, uMagLimit, uPcScene;
             ${VIEW_BRIGHTNESS_GLSL}
+            ${RELATIVISTIC_VIEW_GLSL}
             void main() {
-                vColor = color;
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                float camDistPc = length(mvPosition.xyz) / uPcScene;
+                float dopplerD;
+                vec3 abPos = relApplyView(mvPosition.xyz, teffK, dopplerD);
+                vDoppler = dopplerD;
+                vColor = uBeta > 0.0 ? relTeffToRGB(teffK * dopplerD) : color;
+                float camDistPc = length(abPos) / uPcScene;
                 float mag = obmApparentMagAt(absMag, camDistPc);
                 gl_PointSize = obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
-                vHdr = min(obmHdrIntensity(mag, uMagLimit), 2.2);
+                float hb = obmHdrIntensity(mag, uMagLimit) * (uBeta > 0.0 ? pow(dopplerD, 4.0) : 1.0);
+                vHdr = min(hb, 2.2);
                 vDensity = mix(0.08, 1.0, smoothstep(18.0, 90.0, solDistPc));
-                gl_Position = projectionMatrix * mvPosition;
+                gl_Position = projectionMatrix * vec4(abPos, 1.0);
             }`,
         fragmentShader: /* glsl */`
             varying vec3 vColor;
@@ -1040,7 +1061,7 @@ async function buildCosmicLayer() {
         catalogRoot.frustumCulled = false;
         await idleSlice();
         const localStars = makeLocalStars();
-        nearStarRoot.add(viewBrightPoints(localStars.pos, localStars.col, localStars.absMag, { basePx: 1.3, maxPx: 5.0, magLimit: 7.8, opacity: .34 }));
+        nearStarRoot.add(viewBrightPoints(localStars.pos, localStars.col, localStars.absMag, localStars.teffK, { basePx: 1.3, maxPx: 5.0, magLimit: 7.8, opacity: .34 }));
         await idleSlice();
         buildLocalGroup();
         await idleSlice();

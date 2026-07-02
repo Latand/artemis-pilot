@@ -70,6 +70,7 @@ import { PERF, markPerf, sampleRendererInfo, sampleMemory } from "./perf.js";
 import { initXrPerf, tickXrPerf, shouldGateBloom } from "./render/xrPerf.js";
 import { initMobileControls, updateMobileControls } from "./mobileControls.js";
 import { initAttitude, drawAttitude } from "./attitude.js";
+import { updateRelView, initRelViewOverride } from "./relView.js";
 
 // ============================ WIRING ============================
 const query = new URLSearchParams(location.search);
@@ -244,6 +245,7 @@ function applyStartupCameraState() {
     } catch (e) { }
 
     const q = new URLSearchParams(location.search);
+    initRelViewOverride(q);
     if (q.get("bh")) for (const s of q.get("bh").split(";")) {
         const [bx, by, brs] = s.split(":").map(Number);
         if (isFinite(bx) && isFinite(by) && brs > 0) addBlackHole(bx, by, brs);
@@ -1626,6 +1628,7 @@ function frame() {
         camera.position.copy(cabinEye);
         camera.lookAt(cabinLook);
     } else applyCamera();
+    updateRelView(camera);
     perfEnd("scene.camera", sceneCameraT0, PERF.enabled ? { cabin: cabinActive, vr: VR.active, focus: String(G.focus) } : null);
     // ---- Tier-1 streaming star field (WP10) ----
     // Runs every frame, deliberately ahead of the cosmicView early-return

@@ -158,3 +158,66 @@ float obmHdrIntensity(float mag, float magLimit) {
     return pow(10.0, -0.4 * (mag - magLimit));
 }
 `;
+
+// --- relativistic star-field view (WP-J3) ----------------------------------
+// Convention: mu = dot(dirToStar, boost), where dirToStar points from the
+// observer toward the star and boost is the unit velocity direction.
+// The JS formulas below and the GLSL formulas in RELATIVISTIC_VIEW_GLSL use the
+// same expressions; smoke-relview.mjs guards both the JS behavior and the GLSL
+// literal formulas.
+
+// Apparent cos(angle-to-boost) of a star seen from a ship moving at beta.
+// Forward stars (mu -> +1) stay forward; side stars bunch toward the forward
+// direction. Identity at beta=0.
+export function relAberrateCos(mu, beta) {
+    return (mu + beta) / (1 + beta * mu);
+}
+
+// Relativistic Doppler factor D = nu_obs / nu_emit for a source at mu.
+// D > 1 is blueshift ahead. Identity at beta=0.
+export function relDopplerFactor(mu, beta) {
+    const gamma = 1 / Math.sqrt(1 - beta * beta);
+    return 1 / (gamma * (1 - beta * mu));
+}
+
+export const RELATIVISTIC_VIEW_GLSL = /* glsl */`
+uniform float uBeta;
+uniform vec3  uBoostDirView;      // unit, view space
+// GLSL port of teffToRGB (Tanner Helland), matched to the JS LUT.
+vec3 relTeffToRGB(float teffK) {
+    float t = clamp(teffK, 1000.0, 40000.0) / 100.0;
+    float r, g, b;
+    if (t <= 66.0) r = 255.0; else r = 329.698727446 * pow(t - 60.0, -0.1332047592);
+    if (t <= 66.0) g = 99.4708025861 * log(t) - 161.1195681661;
+    else           g = 288.1221695283 * pow(t - 60.0, -0.0755148492);
+    if (t >= 66.0) b = 255.0; else if (t <= 19.0) b = 0.0;
+    else           b = 138.5177312231 * log(t - 10.0) - 305.0447927307;
+    return clamp(vec3(r, g, b) / 255.0, 0.0, 1.0);
+}
+float relAberrateCos(float mu, float beta) { return (mu + beta) / (1.0 + beta * mu); }
+float relDopplerFactor(float mu, float beta) {
+    float gamma = 1.0 / sqrt(1.0 - beta * beta);
+    return 1.0 / (gamma * (1.0 - beta * mu));
+}
+// Given the view-space vertex position of a point star, return the aberrated
+// view-space position at the same radius and expose Doppler through out param.
+// Identity when uBeta==0.
+// Consumers apply headlight beaming with pow(dopplerD, 4.0).
+vec3 relApplyView(vec3 viewPos, float teffK, out float dopplerD) {
+    dopplerD = 1.0;
+    if (uBeta <= 0.0) return viewPos;
+    float dist = length(viewPos);
+    vec3 dir = viewPos / dist;              // observer -> star, view space
+    float mu = dot(dir, uBoostDirView);
+    dopplerD = relDopplerFactor(mu, uBeta);
+    float muP = relAberrateCos(mu, uBeta);
+    // Rotate dir in the plane (dir, boost) so its cos-to-boost becomes muP.
+    vec3 perp = dir - mu * uBoostDirView;
+    float pl = length(perp);
+    if (pl < 1e-6) return viewPos;          // exactly along the axis: unchanged
+    perp /= pl;
+    float sinP = sqrt(max(0.0, 1.0 - muP * muP));
+    vec3 dirP = muP * uBoostDirView + sinP * perp;
+    return dirP * dist;
+}
+`;

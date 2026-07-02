@@ -1,32 +1,37 @@
-import { REL } from "./relTravel.js";
+import * as THREE from "three";
+import { REL } from "./relState.js";
 
-let betaOverride = null;
+let _betaOverride = null;
 
 export function initRelViewOverride(searchParams) {
     const b = searchParams?.get?.("beta");
-    if (b == null) return;
-    const v = +b;
-    if (Number.isFinite(v)) betaOverride = Math.max(0, Math.min(0.999, v));
+    if (b != null) {
+        const v = +b;
+        if (isFinite(v)) _betaOverride = Math.max(0, Math.min(0.999, v));
+    }
+}
+
+export const relUniforms = {
+    uBeta: { value: 0 },
+    uBoostDirView: { value: new THREE.Vector3(0, 0, -1) },
+};
+
+const _boostWorld = new THREE.Vector3();
+
+export function updateRelView(camera) {
+    const beta = _betaOverride != null ? _betaOverride : REL.beta;
+    relUniforms.uBeta.value = beta;
+    if (beta <= 0) return;
+    if (_betaOverride != null && !REL.active) {
+        relUniforms.uBoostDirView.value.set(0, 0, -1);
+        return;
+    }
+    _boostWorld.set(REL.boostX, REL.boostZ, -REL.boostY).normalize();
+    relUniforms.uBoostDirView.value.copy(_boostWorld)
+        .transformDirection(camera.matrixWorldInverse)
+        .normalize();
 }
 
 export function relViewState() {
-    const beta = betaOverride != null ? betaOverride : REL.beta;
-    if (betaOverride != null) {
-        return {
-            beta,
-            gamma: 1 / Math.sqrt(1 - beta * beta),
-            boostX: 1,
-            boostY: 0,
-            boostZ: 0,
-            override: true,
-        };
-    }
-    return {
-        beta,
-        gamma: REL.gamma,
-        boostX: REL.boostX,
-        boostY: REL.boostY,
-        boostZ: REL.boostZ,
-        override: false,
-    };
+    return relUniforms;
 }
