@@ -28,7 +28,8 @@
     "smoke:bound-systems": "node scripts/smoke-bound-systems.mjs",
     "smoke:sun-evolution": "node scripts/smoke-sun-evolution.mjs",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "smoke:determinism": "node scripts/smoke-determinism.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

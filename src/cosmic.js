@@ -8,7 +8,7 @@ import { hygCatalogMetaUrl, loadHygCatalogData, rememberHygCatalogData } from ".
 import { makeGalaxyCloudAsync, galacticCenterScene, galacticRingPositions, applyEraToCloud } from "./universe/starfield.js";
 import { galToSceneUnitsInto } from "./universe/coords.js";
 import { GALACTIC_ORBIT_PERIOD_S } from "./universe/solarOrbit.js";
-import { eraModulation } from "./universe/cosmicEra.js";
+import { eraModulation, setMergerEpochGyr } from "./universe/cosmicEra.js";
 import { registerHygCatalog } from "./universe/hygActiveCatalog.js";
 import { PERF, markPerf } from "./perf.js";
 import {
@@ -180,8 +180,15 @@ function buildMergerTable() {
 }
 
 function getMergerTable() {
-    if (!mergerTable) mergerTable = buildMergerTable();
+    if (!mergerTable) {
+        mergerTable = buildMergerTable();
+        setMergerEpochGyr(mergerTable.mergedSec / GYR_SEC);
+    }
     return mergerTable;
+}
+
+export function mergerEpochGyr() {
+    return getMergerTable().mergedSec / GYR_SEC;
 }
 
 function mergerRelativeKmAt(simTSeconds) {

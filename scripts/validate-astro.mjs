@@ -1,5 +1,5 @@
 // Automated scientific validation of the procedural Milky Way / stellar
-// population model against the 12-point checklist in
+// population model against the 16-check checklist in
 // research/astro-population-model.md §9 (the WP4 exit gate for Wave 2).
 //
 // Bootstraps the same way scripts/smoke-universe.mjs does: stub `window` and
@@ -488,7 +488,7 @@ const sunSample = sampleStarsNear(R0_PC, 0, Z_SUN_PC, SUN_SAMPLE_RADIUS_PC);
 
 // ── Report ──────────────────────────────────────────────────────────────
 console.log("\n" + "=".repeat(78));
-console.log("  validate:astro — 12-point checklist (astro-population-model.md §9)");
+console.log("  validate:astro — 16-check checklist (astro-population-model.md §9)");
 console.log("=".repeat(78));
 let unexpectedFail = false;
 for (const r of results) {

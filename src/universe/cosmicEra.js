@@ -14,9 +14,13 @@
 
 const GYR_S = 3.15576e16; // 1 Julian Gyr = 1e9 * 365.25 * 86400 s
 
-// Merger timing anchored to WP23a's smoke:merger contract: first passage
-// ~4.5 Gyr, merged/relaxed "Milkomeda" elliptical state flagged by ~7 Gyr.
-const T_MERGER_GYR = 7;
+// Merger timing defaults to WP23a's smoke:merger contract. cosmic.js updates
+// it from the lazily integrated MW-M31 trajectory table after that table exists.
+let tMergerGyr = 7;
+
+export function setMergerEpochGyr(gyr) {
+    if (Number.isFinite(gyr) && gyr > 0) tMergerGyr = gyr;
+}
 // Post-merger gas-exhaustion e-folding time. A "wet" major merger drives a
 // starburst that rapidly consumes the remaining gas reservoir, after which
 // the remnant quenches on a few-Gyr timescale (Hopkins et al. 2008, ApJS 175,
@@ -79,7 +83,7 @@ function toGyr(simTSeconds) {
 // non-increasing in t.
 function sfrAt(tGyr) {
     const secular = Math.exp(-tGyr / TAU_SECULAR_GYR);
-    const postMerger = tGyr <= T_MERGER_GYR ? 1 : Math.exp(-(tGyr - T_MERGER_GYR) / TAU_QUENCH_GYR);
+    const postMerger = tGyr <= tMergerGyr ? 1 : Math.exp(-(tGyr - tMergerGyr) / TAU_QUENCH_GYR);
     return clamp01(secular * postMerger);
 }
 
