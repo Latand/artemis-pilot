@@ -4,7 +4,7 @@ import {
     PL, SOI_M, SOI_E, DRAG_CD, DRAG_H, ATM_TOP, MAX_STEPS_FRAME, EPH_CHUNK,
 } from "./constants.js";
 import {
-    eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance, keplerAdvance3,
+    eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance3,
     gravityStarsFor, currentGravityStars, STELLAR_GRAVITY_MIN_R,
 } from "./ephemeris.js";
 import { G, BH, WORLD, GS, EPHT, bhMuAt } from "./state.js";
@@ -55,13 +55,13 @@ export function deriv(x, y, z, vx, vy, vz, tau, atx, aty, atz, out) {
         }
     }
     if (!WORLD.sunDestroyed) {
-        const sx = eph.sunX + eph.sunVx * tau, sy = eph.sunY + eph.sunVy * tau;
-        const dx = x - sx, dy = y - sy, dz = z;
+        const sx = eph.sunX + eph.sunVx * tau, sy = eph.sunY + eph.sunVy * tau, sz = eph.sunZ + eph.sunVz * tau;
+        const dx = x - sx, dy = y - sy, dz = z - sz;
         const r2 = dx * dx + dy * dy + dz * dz;
         if (r2 < PN_R2_MAX && r2 > 1e-12) {
             // first post-Newtonian Sun term: Mercury-style perihelion precession
             const r = Math.sqrt(r2);
-            const rvx = vx - eph.sunVx, rvy = vy - eph.sunVy, rvz = vz;
+            const rvx = vx - eph.sunVx, rvy = vy - eph.sunVy, rvz = vz - eph.sunVz;
             const v2 = rvx * rvx + rvy * rvy + rvz * rvz;
             const rv = dx * rvx + dy * rvy + dz * rvz;
             const k = MU_S / (C_LIGHT * C_LIGHT * r2 * r);
@@ -73,15 +73,15 @@ export function deriv(x, y, z, vx, vy, vz, tau, atx, aty, atz, out) {
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];
         if (!p.atmH || WORLD.plDestroyed[i]) continue;
-        const px = eph.plX[i] + eph.plVx[i] * tau, py = eph.plY[i] + eph.plVy[i] * tau;
-        const dx = x - px, dy = y - py, dz = z;
+        const px = eph.plX[i] + eph.plVx[i] * tau, py = eph.plY[i] + eph.plVy[i] * tau, pz = eph.plZ[i] + eph.plVz[i] * tau;
+        const dx = x - px, dy = y - py, dz = z - pz;
         const lim = p.R + p.atmTop;
         if (dx > lim || dx < -lim || dy > lim || dy < -lim || dz > lim || dz < -lim) continue;
         const h = Math.sqrt(dx * dx + dy * dy + dz * dz) - p.R;
         if (h >= p.atmTop) continue;
         // drag opposes the planet-relative velocity → aerobraking works
         const rho = p.atmD0 * Math.exp(-Math.max(0, h) / p.atmH);
-        const rvx = vx - eph.plVx[i], rvy = vy - eph.plVy[i], rvz = vz;
+        const rvx = vx - eph.plVx[i], rvy = vy - eph.plVy[i], rvz = vz - eph.plVz[i];
         const f = -DRAG_CD * rho * Math.sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
         ax += f * rvx; ay += f * rvy; az += f * rvz;
     }
@@ -118,7 +118,7 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 
     }
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];
-        const dx = x - eph.plX[i], dy = y - eph.plY[i], dz = z;
+        const dx = x - eph.plX[i], dy = y - eph.plY[i], dz = z - eph.plZ[i];
         const d2 = dx * dx + dy * dy + dz * dz;
         if (d2 < p.soi * p.soi * 9) {
             const d = Math.sqrt(d2);
@@ -128,7 +128,7 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 
             if (gap < 60000) dt = Math.min(dt, Math.max(.5, .2 * Math.max(200, gap) / Math.max(.01, vTot)));
             if (p.atmH && !WORLD.plDestroyed[i] && gap < p.atmTop + 60) {
                 dt = Math.min(dt, .9);
-                const rvx = vx - eph.plVx[i], rvy = vy - eph.plVy[i], rvz = vz;
+                const rvx = vx - eph.plVx[i], rvy = vy - eph.plVy[i], rvz = vz - eph.plVz[i];
                 const aD = DRAG_CD * p.atmD0 * Math.exp(-Math.max(0, gap) / p.atmH) * Math.sqrt(rvx * rvx + rvy * rvy + rvz * rvz);
                 if (aD > 1e-6) dt = Math.min(dt, .05 / aD);
             }
@@ -169,15 +169,15 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 
 export function orbitInfo() {
     moonState(G.t, _m);
     const rE = Math.hypot(G.x, G.y, G.z);
-    const dxm = G.x - _m.mx, dym = G.y - _m.my, dzm = G.z;
+    const dxm = G.x - _m.mx, dym = G.y - _m.my, dzm = G.z - eph.moonZ;
     const rM = Math.hypot(dxm, dym, dzm);
     updEphem(G.t);
-    const sdx = G.x - eph.sunX, sdy = G.y - eph.sunY, sdz = G.z;
+    const sdx = G.x - eph.sunX, sdy = G.y - eph.sunY, sdz = G.z - eph.sunZ;
     const rS = Math.hypot(sdx, sdy, sdz);
     let pNear = -1, pNearD = Infinity;
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) continue;
-        const d = Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i], G.z);
+        const d = Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i], G.z - eph.plZ[i]);
         if (d < pNearD) { pNearD = d; pNear = i; }
     }
     let domMoon = !WORLD.moonDestroyed && rM < SOI_M;
@@ -185,14 +185,16 @@ export function orbitInfo() {
     let domSun = !WORLD.sunDestroyed && !domMoon && !domPl && (WORLD.earthDestroyed || rE > SOI_E);
     let domStar = false, star = null, bh = false, rs = 0;
     let mu, rx, ry, rz, rvx, rvy, rvz, R, body;
-    if (domMoon) { mu = MU_M; rx = dxm; ry = dym; rz = dzm; rvx = G.vx - _m.vmx; rvy = G.vy - _m.vmy; rvz = G.vz; R = R_MOON; body = "MOON"; }
+    // moonState/planetVel are 2-D-only helpers (ephemeris.js, read-only this
+    // wave); Vz for the Moon/planets/Sun comes straight off eph.*Vz instead.
+    if (domMoon) { mu = MU_M; rx = dxm; ry = dym; rz = dzm; rvx = G.vx - _m.vmx; rvy = G.vy - _m.vmy; rvz = G.vz - eph.moonVz; R = R_MOON; body = "MOON"; }
     else if (domPl) {
         const p = PL[pNear];
         planetVel(pNear, G.t, _pv);
-        mu = p.mu; rx = G.x - eph.plX[pNear]; ry = G.y - eph.plY[pNear]; rz = G.z;
-        rvx = G.vx - _pv.vx; rvy = G.vy - _pv.vy; rvz = G.vz; R = p.R; body = p.name;
+        mu = p.mu; rx = G.x - eph.plX[pNear]; ry = G.y - eph.plY[pNear]; rz = G.z - eph.plZ[pNear];
+        rvx = G.vx - _pv.vx; rvy = G.vy - _pv.vy; rvz = G.vz - eph.plVz[pNear]; R = p.R; body = p.name;
     }
-    else if (domSun) { mu = MU_S; rx = sdx; ry = sdy; rz = sdz; rvx = G.vx - eph.sunVx; rvy = G.vy - eph.sunVy; rvz = G.vz; R = R_SUN; body = "SUN"; }
+    else if (domSun) { mu = MU_S; rx = sdx; ry = sdy; rz = sdz; rvx = G.vx - eph.sunVx; rvy = G.vy - eph.sunVy; rvz = G.vz - eph.sunVz; R = R_SUN; body = "SUN"; }
     else if (!WORLD.earthDestroyed) { mu = MU_E; rx = G.x; ry = G.y; rz = G.z; rvx = G.vx; rvy = G.vy; rvz = G.vz; R = R_EARTH; body = "EARTH"; }
     else { mu = 1; rx = G.x; ry = G.y; rz = G.z; rvx = G.vx; rvy = G.vy; rvz = G.vz; R = 0; body = "DRIFT"; }
     const baseAcc = mu / Math.max(1, rx * rx + ry * ry + rz * rz);
@@ -250,28 +252,28 @@ function handleEarthContact(s) {
 }
 function handleMoonContact(s) {
     moonState(G.t, _m);
-    let dx = s[0] - _m.mx, dy = s[1] - _m.my, dz = s[2];
+    let dx = s[0] - _m.mx, dy = s[1] - _m.my, dz = s[2] - eph.moonZ;
     const r = Math.hypot(dx, dy, dz), f = (R_MOON + 0.003) / r;
     dx *= f; dy *= f; dz *= f;
-    s[0] = _m.mx + dx; s[1] = _m.my + dy; s[2] = dz;
-    const relSpd = Math.hypot(s[3] - _m.vmx, s[4] - _m.vmy, s[5]);
+    s[0] = _m.mx + dx; s[1] = _m.my + dy; s[2] = eph.moonZ + dz;
+    const relSpd = Math.hypot(s[3] - _m.vmx, s[4] - _m.vmy, s[5] - eph.moonVz);
     if (relSpd < 0.12) {
         G.landed = { body: "moon", ang: Math.atan2(dy, dx) - _m.ang };
         G.heading = Math.atan2(dy, dx);
         G.pitch = 0;
-        s[2] = 0; s[3] = _m.vmx; s[4] = _m.vmy; s[5] = 0;
+        s[2] = eph.moonZ; s[3] = _m.vmx; s[4] = _m.vmy; s[5] = eph.moonVz;
         H.award("landM");
         H.banner("LUNAR LANDING", "Touched down at " + (relSpd * 1000).toFixed(0) + " m/s · MET " + fmtMET(G.t), "W TO LIFT OFF · R TO RESTART");
     } else H.die("Hit the Moon at " + relSpd.toFixed(2) + " km/s");
 }
 function handlePlanetContact(s, i) {
     const p = PL[i];
-    let dx = s[0] - eph.plX[i], dy = s[1] - eph.plY[i], dz = s[2];
+    let dx = s[0] - eph.plX[i], dy = s[1] - eph.plY[i], dz = s[2] - eph.plZ[i];
     const r = Math.hypot(dx, dy, dz), f = (p.R + 0.01) / r;
     dx *= f; dy *= f; dz *= f;
-    s[0] = eph.plX[i] + dx; s[1] = eph.plY[i] + dy; s[2] = dz;
+    s[0] = eph.plX[i] + dx; s[1] = eph.plY[i] + dy; s[2] = eph.plZ[i] + dz;
     planetVel(i, G.t, _pv);
-    const rel = Math.hypot(s[3] - _pv.vx, s[4] - _pv.vy, s[5]);
+    const rel = Math.hypot(s[3] - _pv.vx, s[4] - _pv.vy, s[5] - eph.plVz[i]);
     if (p.gas) {
         G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
         H.die("Crushed in " + p.name + "'s atmosphere at " + rel.toFixed(1) + " km/s");
@@ -281,7 +283,7 @@ function handlePlanetContact(s, i) {
         G.landed = { body: "planet", i, ang: Math.atan2(dy, dx) };
         G.heading = Math.atan2(dy, dx);
         G.pitch = 0;
-        s[2] = 0; s[3] = _pv.vx; s[4] = _pv.vy; s[5] = 0;
+        s[2] = eph.plZ[i]; s[3] = _pv.vx; s[4] = _pv.vy; s[5] = eph.plVz[i];
         if (p.name === "MARS") H.award("mars");
         H.banner("LANDED ON " + p.name, "Touchdown at " + (rel * 1000).toFixed(0) + " m/s · MET " + fmtMET(G.t), "W TO LIFT OFF · R TO RESTART");
     } else H.die("Hit " + p.name + " at " + rel.toFixed(2) + " km/s");
@@ -297,15 +299,15 @@ export function snapLanded() {
         const i = G.landed.i, r = PL[i].R + 0.01;
         updEphem(G.t);
         G.x = eph.plX[i] + r * Math.cos(G.landed.ang);
-        G.y = eph.plY[i] + r * Math.sin(G.landed.ang); G.z = 0;
+        G.y = eph.plY[i] + r * Math.sin(G.landed.ang); G.z = eph.plZ[i];
         planetVel(i, G.t, _pv);
-        G.vx = _pv.vx; G.vy = _pv.vy; G.vz = 0;
+        G.vx = _pv.vx; G.vy = _pv.vy; G.vz = eph.plVz[i];
     } else {
         moonState(G.t, _m);
         const th = _m.ang + G.landed.ang, r = R_MOON + 0.003;
-        G.x = _m.mx + r * Math.cos(th); G.y = _m.my + r * Math.sin(th); G.z = 0;
+        G.x = _m.mx + r * Math.cos(th); G.y = _m.my + r * Math.sin(th); G.z = eph.moonZ;
         G.vx = _m.vmx - r * _m.om * Math.sin(th);
-        G.vy = _m.vmy + r * _m.om * Math.cos(th); G.vz = 0;
+        G.vy = _m.vmy + r * _m.om * Math.cos(th); G.vz = eph.moonVz;
     }
 }
 
@@ -429,16 +431,16 @@ function shipCosmologyJump(dt) {
 // positions and the n-body system advances in EPH_CHUNK batches.
 function bodiesNeedFlush(x, y, z, lag) {
     if (!WORLD.moonDestroyed) {
-        const dx = x - (eph.moonX + eph.moonVx * lag), dy = y - (eph.moonY + eph.moonVy * lag), dz = z;
+        const dx = x - (eph.moonX + eph.moonVx * lag), dy = y - (eph.moonY + eph.moonVy * lag), dz = z - (eph.moonZ + eph.moonVz * lag);
         if (dx * dx + dy * dy + dz * dz < SOI_M * SOI_M) return true;
     }
     if (!WORLD.sunDestroyed) {
-        const dx = x - (eph.sunX + eph.sunVx * lag), dy = y - (eph.sunY + eph.sunVy * lag), dz = z;
+        const dx = x - (eph.sunX + eph.sunVx * lag), dy = y - (eph.sunY + eph.sunVy * lag), dz = z - (eph.sunZ + eph.sunVz * lag);
         if (dx * dx + dy * dy + dz * dz < 9 * R_SUN * R_SUN) return true;
     }
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) continue;
-        const dx = x - (eph.plX[i] + eph.plVx[i] * lag), dy = y - (eph.plY[i] + eph.plVy[i] * lag), dz = z;
+        const dx = x - (eph.plX[i] + eph.plVx[i] * lag), dy = y - (eph.plY[i] + eph.plVy[i] * lag), dz = z - (eph.plZ[i] + eph.plVz[i] * lag);
         if (dx * dx + dy * dy + dz * dz < PL[i].soi * PL[i].soi) return true;
     }
     for (let i = 0; i < BH.n; i++) {
@@ -484,8 +486,8 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     if (!G.dead && !G.landed && aMag === 0 && GS.length === 0 &&
         !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
         const rE0 = Math.hypot(s[0], s[1], s[2]);
-        const dm0 = Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY, s[2]);
-        const ds0 = Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2]);
+        const dm0 = Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY, s[2] - eph.moonZ);
+        const ds0 = Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2] - eph.sunZ);
         const dt0 = stepSize(rE0, dm0, ds0, rE0 - R_EARTH, Math.hypot(s[3], s[4], s[5]), s[0], s[1], s[2], s[3], s[4], s[5]);
         if (perfStats) perfStats.dtMax = Math.max(perfStats.dtMax, dt0);
         const frameBridge = G.warp > 600 && simAdv > Math.max(18, dt0 * 8);
@@ -509,9 +511,9 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     }
     while (adv > 1e-9 && steps < MAX_STEPS_FRAME && !G.dead && !G.landed) {
         const rE = Math.sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
-        const dmx = s[0] - (eph.moonX + eph.moonVx * lag), dmy = s[1] - (eph.moonY + eph.moonVy * lag), dmz = s[2];
+        const dmx = s[0] - (eph.moonX + eph.moonVx * lag), dmy = s[1] - (eph.moonY + eph.moonVy * lag), dmz = s[2] - (eph.moonZ + eph.moonVz * lag);
         const rM = Math.sqrt(dmx * dmx + dmy * dmy + dmz * dmz);
-        const dsx = s[0] - (eph.sunX + eph.sunVx * lag), dsy = s[1] - (eph.sunY + eph.sunVy * lag), dsz = s[2];
+        const dsx = s[0] - (eph.sunX + eph.sunVx * lag), dsy = s[1] - (eph.sunY + eph.sunVy * lag), dsz = s[2] - (eph.sunZ + eph.sunVz * lag);
         const rS = Math.sqrt(dsx * dsx + dsy * dsy + dsz * dsz);
         const vTot = Math.sqrt(s[3] * s[3] + s[4] * s[4] + s[5] * s[5]);
         const dt = Math.min(stepSize(rE, rM, rS, rE - R_EARTH, vTot, s[0], s[1], s[2], s[3], s[4], s[5]), adv);
@@ -563,15 +565,15 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         // every other surface lies deep inside a flush zone, so these checks
         // only need to run when the ephemeris is fresh
         if (lag > 0) continue;
-        if (!WORLD.moonDestroyed && Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY, s[2]) <= R_MOON) { handleMoonContact(s); break; }
-        if (!WORLD.sunDestroyed && Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2]) <= R_SUN) {
+        if (!WORLD.moonDestroyed && Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY, s[2] - eph.moonZ) <= R_MOON) { handleMoonContact(s); break; }
+        if (!WORLD.sunDestroyed && Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2] - eph.sunZ) <= R_SUN) {
             G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
             H.die("Vaporized in the solar photosphere");
             break;
         }
         let hitP = -1;
         for (let i = 0; i < PL.length; i++)
-            if (!WORLD.plDestroyed[i] && Math.hypot(s[0] - eph.plX[i], s[1] - eph.plY[i], s[2]) <= PL[i].R) { hitP = i; break; }
+            if (!WORLD.plDestroyed[i] && Math.hypot(s[0] - eph.plX[i], s[1] - eph.plY[i], s[2] - eph.plZ[i]) <= PL[i].R) { hitP = i; break; }
         if (hitP >= 0) { handlePlanetContact(s, hitP); break; }
         for (let i = 0; i < BH.n; i++) {
             const dBH = Math.hypot(s[0] - BH.x[i], s[1] - BH.y[i], s[2]);
@@ -754,21 +756,23 @@ export function shipDeepJump(dt) {
         G.t += dt;
         return dt;
     }
-    if (Math.abs(G.z) > 1e-6 || Math.abs(G.vz) > 1e-9) return 0;
     const atmTop = oi.body === "EARTH" ? ATM_TOP : oi.domPl ? (PL[oi.pNear].atmTop || 0) : 0;
     if (oi.r - oi.R < atmTop) return 0;     // inside the drag shell: integrate it
     if (oi.rp < oi.R + atmTop) return 0;    // orbit dips into it: let the decay/impact play out
     if (Math.abs(oi.e - 1) < 1e-4) return 0;
     if (starAcc > domAcc * .02) return 0;
-    keplerAdvance(oi.rx, oi.ry, oi.rvx, oi.rvy, oi.mu, dt, _dj);
+    keplerAdvance3(oi.rx, oi.ry, oi.rz || 0, oi.rvx, oi.rvy, oi.rvz || 0, oi.mu, dt, _dj);
     if (!_dj.ok) return 0;
     advanceEphem(dt);
-    let bx = 0, by = 0, bvx = 0, bvy = 0;
-    if (oi.domMoon) { bx = eph.moonX; by = eph.moonY; bvx = eph.moonVx; bvy = eph.moonVy; }
-    else if (oi.domPl) { bx = eph.plX[oi.pNear]; by = eph.plY[oi.pNear]; bvx = eph.plVx[oi.pNear]; bvy = eph.plVy[oi.pNear]; }
-    else if (oi.domSun) { bx = eph.sunX; by = eph.sunY; bvx = eph.sunVx; bvy = eph.sunVy; }
-    G.x = bx + _dj.x; G.y = by + _dj.y; G.z = 0;
-    G.vx = bvx + _dj.vx; G.vy = bvy + _dj.vy; G.vz = 0;
+    // bx/by/bz default to 0 (world origin): EARTH/DRIFT domination has no
+    // separate body offset since Earth's own world z is permanently 0 (see
+    // ephemeris.js's earthZ note) and the ship state is already Earth-relative.
+    let bx = 0, by = 0, bz = 0, bvx = 0, bvy = 0, bvz = 0;
+    if (oi.domMoon) { bx = eph.moonX; by = eph.moonY; bz = eph.moonZ; bvx = eph.moonVx; bvy = eph.moonVy; bvz = eph.moonVz; }
+    else if (oi.domPl) { bx = eph.plX[oi.pNear]; by = eph.plY[oi.pNear]; bz = eph.plZ[oi.pNear]; bvx = eph.plVx[oi.pNear]; bvy = eph.plVy[oi.pNear]; bvz = eph.plVz[oi.pNear]; }
+    else if (oi.domSun) { bx = eph.sunX; by = eph.sunY; bz = eph.sunZ; bvx = eph.sunVx; bvy = eph.sunVy; bvz = eph.sunVz; }
+    G.x = bx + _dj.x; G.y = by + _dj.y; G.z = bz + _dj.z;
+    G.vx = bvx + _dj.vx; G.vy = bvy + _dj.vy; G.vz = bvz + _dj.vz;
     G.t += dt;
     return dt;
 }
@@ -793,12 +797,12 @@ export function sampleAero() {
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];
         if (!p.atmH || WORLD.plDestroyed[i]) continue;
-        const dx = G.x - eph.plX[i], dy = G.y - eph.plY[i], dz = G.z;
+        const dx = G.x - eph.plX[i], dy = G.y - eph.plY[i], dz = G.z - eph.plZ[i];
         const lim = p.R + p.atmTop;
         if (dx > lim || dx < -lim || dy > lim || dy < -lim || dz > lim || dz < -lim) continue;
         const h = Math.sqrt(dx * dx + dy * dy + dz * dz) - p.R;
         if (h >= p.atmTop) continue;
-        const rvx = G.vx - eph.plVx[i], rvy = G.vy - eph.plVy[i], rvz = G.vz;
+        const rvx = G.vx - eph.plVx[i], rvy = G.vy - eph.plVy[i], rvz = G.vz - eph.plVz[i];
         const aD = DRAG_CD * p.atmD0 * Math.exp(-Math.max(0, h) / p.atmH) * (rvx * rvx + rvy * rvy + rvz * rvz);
         if (aD > best) { best = aD; AERO.vx = rvx; AERO.vy = rvy; AERO.vz = rvz; }
     }

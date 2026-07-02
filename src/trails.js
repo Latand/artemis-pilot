@@ -1,13 +1,13 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, R_SUN, PL, K, SOI_M, STARS, LY_KM } from "./constants.js";
+import { R_EARTH, R_MOON, R_SUN, PL, K, SOI_M, STARS, LY_KM, MU_E, MU_M, MU_S } from "./constants.js";
 import {
     eph, moonState,
     snapshotEphem, loadEphemSnapshot, advanceEphemSnapshot, advanceEphemSnapshotKepler,
-    bodyStateForTarget,
+    bodyStateForTarget, IDX_MOON, IDX_SUN, IDX_PLANETS,
     beginPredictionBH, endPredictionBH, predBHX, predBHY,
     beginPredictionStars, endPredictionStars,
 } from "./ephemeris.js";
-import { G, BH } from "./state.js";
+import { G, BH, WORLD } from "./state.js";
 import { speedColor } from "./format.js";
 import { rk4Step, stepSize } from "./physics.js";
 import { dotTexture, ringTexture } from "./textures.js";
@@ -17,6 +17,12 @@ import { PERF, markPerf } from "./perf.js";
 import { ACTIVE_STARS, activeStarForFocus } from "./universe/activeStars.js";
 
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
+// Shared curvature gate for every sampled polyline in this file: a segment is
+// only worth its own vertex once the heading has turned enough to be visible
+// as a corner. 5-6 deg keeps ellipses smooth at any zoom without needing more
+// points than the fixed-time sampling it replaces.
+const TURN_DEG = 5.5;
+const TURN_COS = Math.cos(TURN_DEG * Math.PI / 180);
 
 // ---- detailed trail (recent path, fine resolution near bodies) ----
 const TRN = 8000;
@@ -52,10 +58,21 @@ export function pushTrail(force) {
     if (trN > 0 && !force) {
         const lx = trPos[(trN - 1) * 3], ly = trPos[(trN - 1) * 3 + 1], lz = trPos[(trN - 1) * 3 + 2];
         moonState(G.t, _m);
-        let rNear = Math.min(Math.hypot(G.x, G.y, G.z), Math.hypot(G.x - _m.mx, G.y - _m.my, G.z) * 2.5, Math.hypot(G.x - eph.sunX, G.y - eph.sunY, G.z));
-        for (let i = 0; i < PL.length; i++) rNear = Math.min(rNear, Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i], G.z));
+        let rNear = Math.min(Math.hypot(G.x, G.y, G.z), Math.hypot(G.x - _m.mx, G.y - _m.my, G.z - eph.moonZ) * 2.5, Math.hypot(G.x - eph.sunX, G.y - eph.sunY, G.z - eph.sunZ));
+        for (let i = 0; i < PL.length; i++) rNear = Math.min(rNear, Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i], G.z - eph.plZ[i]));
         const thr = Math.max(.012, Math.min(400, rNear * K * .02));
-        if (Math.hypot(sx - lx, sy - ly, sz - lz) < thr) {
+        const ddx = sx - lx, ddy = sy - ly, ddz = sz - lz;
+        const segLen = Math.hypot(ddx, ddy, ddz);
+        // a sharp heading change is committed as a real vertex even while
+        // still under the distance threshold, so turns never round off into
+        // a polygon corner just because the ship hasn't moved far yet
+        let sharpTurn = false;
+        if (segLen > 1e-9 && trN > 1) {
+            const px = lx - trPos[(trN - 2) * 3], py = ly - trPos[(trN - 2) * 3 + 1], pz = lz - trPos[(trN - 2) * 3 + 2];
+            const pLen = Math.hypot(px, py, pz);
+            if (pLen > 1e-9) sharpTurn = (ddx * px + ddy * py + ddz * pz) / (segLen * pLen) < TURN_COS;
+        }
+        if (segLen < thr && !sharpTurn) {
             // refresh last point so the line always touches the ship
             trPos[(trN - 1) * 3] = sx; trPos[(trN - 1) * 3 + 1] = sy; trPos[(trN - 1) * 3 + 2] = sz;
             markAttrRange(trPosAttr, trN - 1, 1);
@@ -109,7 +126,15 @@ export function pushJourney() {
         // spacing scales with distance from Earth: fine in cislunar space,
         // coarse on interplanetary arcs — 6000 points cover ~10 AU of path
         const thr = Math.max(1.2, Math.hypot(sx, sz) * .01);
-        if (Math.hypot(sx - lx, sy - ly, sz - lz) < thr) {
+        const ddx = sx - lx, ddy = sy - ly, ddz = sz - lz;
+        const segLen = Math.hypot(ddx, ddy, ddz);
+        let sharpTurn = false;
+        if (segLen > 1e-9 && jrN > 1) {
+            const px = lx - jrPos[(jrN - 2) * 3], py = ly - jrPos[(jrN - 2) * 3 + 1], pz = lz - jrPos[(jrN - 2) * 3 + 2];
+            const pLen = Math.hypot(px, py, pz);
+            if (pLen > 1e-9) sharpTurn = (ddx * px + ddy * py + ddz * pz) / (segLen * pLen) < TURN_COS;
+        }
+        if (segLen < thr && !sharpTurn) {
             jrPos[(jrN - 1) * 3] = sx; jrPos[(jrN - 1) * 3 + 1] = sy; jrPos[(jrN - 1) * 3 + 2] = sz;
             markAttrRange(jrPosAttr, jrN - 1, 1);
             return;
@@ -244,12 +269,31 @@ function predictionStars(wx, wy, wz) {
 // (a cold, un-JITed first call can be slow enough to truncate otherwise)
 const PRED_BUDGET_MS_DESKTOP = 1.1, PRED_BUDGET_MS_MOBILE = 0.75;
 const PRED_MIN_STEPS_DESKTOP = 64, PRED_MIN_STEPS_MOBILE = 48;
+// The predicted path is always a coast (rk4Step below is always called with
+// zero thrust), but it's a full N-body field, not a clean two-body conic, so
+// there's no single analytic ellipse to hand it off to. Instead the physics
+// substep (fine, budgeted, unchanged — impact/chord tests still see every
+// step) is decoupled from what gets stored in prPos: a vertex is only kept
+// once the heading has turned past TURN_COS or the segment has grown past
+// the arc-length cap, so long near-straight coasts don't waste the buffer
+// and tight curves near a body still render as a smooth arc, not a polygon.
+const PRED_MAX_ARC_SCENE = 60; // ~60,000 km — a generous safety net, not the primary gate
+function predShouldEmit(cx, cy, cz, hasEmitted, lastX, lastY, lastZ, hasDir, dirX, dirY, dirZ) {
+    if (!hasEmitted) return { emit: true, dx: 0, dy: 0, dz: 0, len: 0 };
+    const dx = cx - lastX, dy = cy - lastY, dz = cz - lastZ;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-9) return { emit: false, dx, dy, dz, len };
+    if (!hasDir) return { emit: true, dx, dy, dz, len };
+    const cosAng = (dx * dirX + dy * dirY + dz * dirZ) / len;
+    return { emit: cosAng < TURN_COS || len > PRED_MAX_ARC_SCENE, dx, dy, dz, len };
+}
 export function computePrediction() {
     if (!G.predict || G.dead || G.landed) { prGeom.setDrawRange(0, 0); impactSpr.visible = false; ghostMoon.visible = false; caDot.visible = false; return; }
     const liveEphem = snapshotEphem(predictionLiveEphem);
     const predEphem = snapshotEphem(predictionEphem);
     _ps[0] = G.x; _ps[1] = G.y; _ps[2] = G.z; _ps[3] = G.vx; _ps[4] = G.vy; _ps[5] = G.vz;
-    let pt = G.t, n = 0, minRM = Infinity, caT = 0, caX = 0, caY = 0, caZ = 0, caMX = 0, caMY = 0, caEX = 0, caEY = 0, impact = 0;
+    let pt = G.t, n = 0, steps = 0, minRM = Infinity, caT = 0, caX = 0, caY = 0, caZ = 0, caMX = 0, caMY = 0, caMZ = 0, caEX = 0, caEY = 0, caEZ = 0, impact = 0;
+    let hasEmitted = false, lastEx = 0, lastEy = 0, lastEz = 0, hasDir = false, dirX = 0, dirY = 0, dirZ = 0;
     const t0 = performance.now();
     const predBudgetMs = renderQuality.mobile ? PRED_BUDGET_MS_MOBILE : PRED_BUDGET_MS_DESKTOP;
     const predMinSteps = renderQuality.mobile ? PRED_MIN_STEPS_MOBILE : PRED_MIN_STEPS_DESKTOP;
@@ -263,50 +307,70 @@ export function computePrediction() {
         const tMax = G.t + 86400 * (far ? 160 : 8);
         let pmx = 0, pmy = 0, pmz = 0, pex = 0, pey = 0, pez = 0, hasPrev = false, plNear = false;
         while (n < PRN && pt < tMax) {
-            prPos[n * 3] = (predEphem.earthX + _ps[0]) * K; prPos[n * 3 + 1] = _ps[2] * K; prPos[n * 3 + 2] = -(predEphem.earthY + _ps[1]) * K;
-            n++;
-            if (n > predMinSteps && (n & 31) === 0 && performance.now() - t0 > predBudgetMs) {
+            const cx = (predEphem.earthX + _ps[0]) * K, cy = _ps[2] * K, cz = -(predEphem.earthY + _ps[1]) * K;
+            const decision = predShouldEmit(cx, cy, cz, hasEmitted, lastEx, lastEy, lastEz, hasDir, dirX, dirY, dirZ);
+            if (decision.emit && n < PRN) {
+                prPos[n * 3] = cx; prPos[n * 3 + 1] = cy; prPos[n * 3 + 2] = cz;
+                if (decision.len > 1e-9) { dirX = decision.dx / decision.len; dirY = decision.dy / decision.len; dirZ = decision.dz / decision.len; hasDir = true; }
+                lastEx = cx; lastEy = cy; lastEz = cz; hasEmitted = true;
+                n++;
+            }
+            steps++;
+            if (steps > predMinSteps && (steps & 63) === 0 && performance.now() - t0 > predBudgetMs) {
                 truncated = true;
                 break;
             }
             const rE = Math.sqrt(_ps[0] * _ps[0] + _ps[1] * _ps[1] + _ps[2] * _ps[2]);
             moonState(pt, _m);
-            const dmx = _ps[0] - _m.mx, dmy = _ps[1] - _m.my, dmz = _ps[2];
+            const dmx = _ps[0] - _m.mx, dmy = _ps[1] - _m.my, dmz = _ps[2] - eph.moonZ;
             const rM = Math.sqrt(dmx * dmx + dmy * dmy + dmz * dmz);
-            if (rM < minRM) { minRM = rM; caT = pt; caX = _ps[0]; caY = _ps[1]; caZ = _ps[2]; caMX = _m.mx; caMY = _m.my; caEX = predEphem.earthX; caEY = predEphem.earthY; }
-            const dsx = _ps[0] - eph.sunX, dsy = _ps[1] - eph.sunY, dsz = _ps[2];
+            if (rM < minRM) { minRM = rM; caT = pt; caX = _ps[0]; caY = _ps[1]; caZ = _ps[2]; caMX = _m.mx; caMY = _m.my; caMZ = eph.moonZ; caEX = predEphem.earthX; caEY = predEphem.earthY; caEZ = predEphem.earthZ; }
+            const dsx = _ps[0] - eph.sunX, dsy = _ps[1] - eph.sunY, dsz = _ps[2] - eph.sunZ;
             const rSp = Math.sqrt(dsx * dsx + dsy * dsy + dsz * dsz);
-            if (rE < R_EARTH) { impact = 1; break; }
-            if (rM < R_MOON) { impact = 2; break; }
+            if (rE < R_EARTH) { impact = 1; }
+            else if (rM < R_MOON) { impact = 2; }
             // grazing chords: a step can jump across a body between samples, so
             // near Earth/Moon also test the closest approach along the segment
-            if (hasPrev) {
-                if (rM < SOI_M && segmentSphereHit(pmx, pmy, pmz, dmx, dmy, dmz, R_MOON)) { impact = 2; break; }
-                if (rE < 60000 && segmentSphereHit(pex, pey, pez, _ps[0], _ps[1], _ps[2], R_EARTH)) { impact = 1; break; }
+            else if (hasPrev && rM < SOI_M && segmentSphereHit(pmx, pmy, pmz, dmx, dmy, dmz, R_MOON)) { impact = 2; }
+            else if (hasPrev && rE < 60000 && segmentSphereHit(pex, pey, pez, _ps[0], _ps[1], _ps[2], R_EARTH)) { impact = 1; }
+            if (!impact) {
+                pmx = dmx; pmy = dmy; pmz = dmz; pex = _ps[0]; pey = _ps[1]; pez = _ps[2]; hasPrev = true;
+                if (rSp < R_SUN) impact = 3;
             }
-            pmx = dmx; pmy = dmy; pmz = dmz; pex = _ps[0]; pey = _ps[1]; pez = _ps[2]; hasPrev = true;
-            if (rSp < R_SUN) { impact = 3; break; }
-            plNear = false;
-            for (let pi = 0; pi < PL.length; pi++) {
-                const dx = _ps[0] - eph.plX[pi], dy = _ps[1] - eph.plY[pi], dz = _ps[2];
-                const d2 = dx * dx + dy * dy + dz * dz;
-                if (d2 <= PL[pi].R * PL[pi].R) { impact = 5; break; }
-                if (d2 < PL[pi].soi * PL[pi].soi * .25) plNear = true;
+            if (!impact) {
+                plNear = false;
+                for (let pi = 0; pi < PL.length; pi++) {
+                    const dx = _ps[0] - eph.plX[pi], dy = _ps[1] - eph.plY[pi], dz = _ps[2] - eph.plZ[pi];
+                    const d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 <= PL[pi].R * PL[pi].R) { impact = 5; break; }
+                    if (d2 < PL[pi].soi * PL[pi].soi * .25) plNear = true;
+                }
             }
-            if (impact) break;
-            const wx = predEphem.earthX + _ps[0], wy = predEphem.earthY + _ps[1], wz = _ps[2];
-            for (let si = 0; si < predStars.length; si++) {
-                const st = predStars[si];
-                const dx = wx - st.x, dy = wy - st.y, dz = wz - (st.z || 0);
-                if (dx * dx + dy * dy + dz * dz <= st.R * st.R) { impact = 6; break; }
+            if (!impact) {
+                const wx = predEphem.earthX + _ps[0], wy = predEphem.earthY + _ps[1], wz = _ps[2];
+                for (let si = 0; si < predStars.length; si++) {
+                    const st = predStars[si];
+                    const dx = wx - st.x, dy = wy - st.y, dz = wz - (st.z || 0);
+                    if (dx * dx + dy * dy + dz * dz <= st.R * st.R) { impact = 6; break; }
+                }
             }
-            if (impact) break;
-            for (let bi = 0; bi < BH.n; bi++) {
-                const dx = _ps[0] - predBHX(bi, pt), dy = _ps[1] - predBHY(bi, pt), dz = _ps[2];
-                const lim = BH.rs[bi] * 1.5;
-                if (dx * dx + dy * dy + dz * dz <= lim * lim) { impact = 4; break; }
+            if (!impact) {
+                for (let bi = 0; bi < BH.n; bi++) {
+                    const dx = _ps[0] - predBHX(bi, pt), dy = _ps[1] - predBHY(bi, pt), dz = _ps[2];
+                    const lim = BH.rs[bi] * 1.5;
+                    if (dx * dx + dy * dy + dz * dz <= lim * lim) { impact = 4; break; }
+                }
             }
-            if (impact) break;
+            if (impact) {
+                // the impact-adjacent point must be the actual last rendered
+                // vertex regardless of whether the curvature gate would have
+                // skipped it, so the impact marker sits exactly on the line
+                if (!hasEmitted || cx !== lastEx || cy !== lastEy || cz !== lastEz) {
+                    const idx = n < PRN ? n++ : PRN - 1;
+                    prPos[idx * 3] = cx; prPos[idx * 3 + 1] = cy; prPos[idx * 3 + 2] = cz;
+                }
+                break;
+            }
             // full fidelity through flybys: the post-encounter path is too
             // sensitive for coarsened steps near the Moon or a planet
             const mult = (rM < SOI_M * 1.5 || plNear) ? 1 : far ? 14 : 3;
@@ -323,7 +387,8 @@ export function computePrediction() {
     }
     if (PERF.enabled) {
         markPerf("prediction", performance.now() - t0, {
-            steps: n,
+            steps,
+            points: n,
             activeStars: ACTIVE_STARS.length,
             gravityStars: predStars.length,
             truncated,
@@ -340,7 +405,7 @@ export function computePrediction() {
     } else impactSpr.visible = false;
     if (minRM < 120000 && caT > G.t + 30) {
         ghostMoon.visible = true;
-        ghostMoon.position.set((caEX + caMX) * K, 0, -(caEY + caMY) * K);
+        ghostMoon.position.set((caEX + caMX) * K, (caEZ + caMZ) * K, -(caEY + caMY) * K);
         caDot.visible = true;
         caDot.position.set((caEX + caX) * K, caZ * K, -(caEY + caY) * K);
     } else { ghostMoon.visible = false; caDot.visible = false; }
@@ -362,7 +427,7 @@ bodyPredDots.frustumCulled = false;
 bodyPredDots.renderOrder = 0;
 bodyPredDots.visible = false;
 scene.add(bodyPredLine, bodyPredDots);
-const _bs = { x: 0, y: 0, vx: 0, vy: 0 };
+const _bs = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 function bodyPredStep(target) {
     if (target === -3) return 86400;
     if (target === -2) return 1800;
@@ -376,25 +441,119 @@ export function clearBodyPrediction() {
     bodyPredLine.visible = false;
     bodyPredDots.visible = false;
 }
+// zeroed mu for a destroyed body, mirroring ephemeris.js's private
+// activeBodyMu/activeEarthMu (not exported — trails.js only reads WORLD's
+// flags, it never mutates them)
+function activeMuE() { return WORLD.earthDestroyed ? 0 : MU_E; }
+function activeMuM() { return WORLD.moonDestroyed ? 0 : MU_M; }
+function activeMuS() { return WORLD.sunDestroyed ? 0 : MU_S; }
+function activeMuPl(i) { return WORLD.plDestroyed[i] ? 0 : PL[i].mu; }
+// Osculating two-body elements (relative to whichever body target orbits)
+// from a state vector, via the same Laplace-Runge-Lenz construction
+// ephemeris.js's keplerAdvance3 uses internally to build its perifocal frame
+// — duplicated here because that construction isn't exposed on its own, and
+// this file needs it to sample the ellipse directly by eccentric anomaly
+// rather than by re-deriving it from a mean-anomaly time step each call.
+function ellipseElements(rx, ry, rz, rvx, rvy, rvz, mu, out) {
+    out.ok = false;
+    const r = Math.hypot(rx, ry, rz);
+    if (!(mu > 0) || !(r > 1e-6)) return out;
+    const v2 = rvx * rvx + rvy * rvy + rvz * rvz;
+    const en = v2 / 2 - mu / r;
+    if (!(en < -1e-12)) return out; // parabolic/hyperbolic: no closed ellipse to draw
+    const a = -mu / (2 * en);
+    const hx = ry * rvz - rz * rvy, hy = rz * rvx - rx * rvz, hz = rx * rvy - ry * rvx;
+    const h = Math.hypot(hx, hy, hz);
+    if (!(h > 1e-9)) return out; // radial (degenerate) orbit
+    const ihx = hx / h, ihy = hy / h, ihz = hz / h;
+    const vchx = rvy * hz - rvz * hy, vchy = rvz * hx - rvx * hz, vchz = rvx * hy - rvy * hx;
+    let px = vchx / mu - rx / r, py = vchy / mu - ry / r, pz = vchz / mu - rz / r;
+    let e = Math.hypot(px, py, pz);
+    if (e < 1e-9) { px = rx / r; py = ry / r; pz = rz / r; e = 0; } // circular: any periapsis direction works
+    else { px /= e; py /= e; pz /= e; }
+    const qx = ihy * pz - ihz * py, qy = ihz * px - ihx * pz, qz = ihx * py - ihy * px;
+    out.a = a; out.e = e;
+    out.px = px; out.py = py; out.pz = pz;
+    out.qx = qx; out.qy = qy; out.qz = qz;
+    out.ok = true;
+    return out;
+}
+function ellipsePointAt(el, E, out) {
+    const x2 = el.a * (Math.cos(E) - el.e);
+    const y2 = el.a * Math.sqrt(Math.max(0, 1 - el.e * el.e)) * Math.sin(E);
+    out.x = el.px * x2 + el.qx * y2;
+    out.y = el.py * x2 + el.qy * y2;
+    out.z = el.pz * x2 + el.qz * y2;
+    return out;
+}
+// N grows with eccentricity (periapsis still needs finer angular resolution
+// per unit turn even when sampled uniform-in-E) but 90 already keeps the max
+// turn per segment under ~4 deg for a circular orbit; capped at the buffer.
+function ellipseSampleCount(e, cap) {
+    return Math.max(2, Math.min(cap, Math.round(90 * (1 + 1.4 * Math.min(e, 0.95)))));
+}
+const _ell = { ok: false, a: 0, e: 0, px: 0, py: 0, pz: 0, qx: 0, qy: 0, qz: 0 };
+const _ellP = { x: 0, y: 0, z: 0 };
 export function computeBodyPrediction(target, locked = false) {
     if (target < -3 || target >= PL.length) { clearBodyPrediction(); return; }
     const t0 = PERF.enabled ? performance.now() : 0;
-    const predEphem = snapshotEphem(bodyPredictionEphem);
-    const step = bodyPredStep(target);
-    const nMax = target === -2 ? 420 : target === -1 ? 520 : BPN;
-    let n = 0;
-    try {
-        beginPredictionBH(); // holes coast linearly from their snapshot state
-        while (n < nMax) {
-            bodyStateForTarget(target, _bs, predEphem);
-            bpPos[n * 3] = _bs.x * K;
-            bpPos[n * 3 + 1] = 0;
-            bpPos[n * 3 + 2] = -_bs.y * K;
-            n++;
-            advanceEphemSnapshotKepler(predEphem, step, false);
+    const st = snapshotEphem(bodyPredictionEphem);
+    let n = 0, analytic = false;
+    // Every target here (Earth around the Sun, Moon around Earth, Sun as
+    // seen from Earth, a planet around the Sun) is exactly the two-body pair
+    // ephemeris.js's own Kepler-jump decomposition uses, so — unlike the
+    // ship's multi-body coast — this IS a clean conic: sample it directly by
+    // eccentric anomaly instead of stepping fixed time increments (which is
+    // what produced the visible polygon at Moon-orbit zoom).
+    let rx, ry, rz, rvx, rvy, rvz, mu, ox, oy, oz;
+    if (target === -3) {
+        rx = st.earthX; ry = st.earthY; rz = st.earthZ;
+        rvx = st.earthVx; rvy = st.earthVy; rvz = st.earthVz;
+        mu = activeMuS() + activeMuE(); ox = 0; oy = 0; oz = 0;
+    } else if (target === -2) {
+        rx = st.x[IDX_MOON]; ry = st.y[IDX_MOON]; rz = st.z[IDX_MOON];
+        rvx = st.vx[IDX_MOON]; rvy = st.vy[IDX_MOON]; rvz = st.vz[IDX_MOON];
+        mu = activeMuE() + activeMuM(); ox = st.earthX; oy = st.earthY; oz = st.earthZ;
+    } else if (target === -1) {
+        rx = st.x[IDX_SUN]; ry = st.y[IDX_SUN]; rz = st.z[IDX_SUN];
+        rvx = st.vx[IDX_SUN]; rvy = st.vy[IDX_SUN]; rvz = st.vz[IDX_SUN];
+        mu = activeMuS() + activeMuE(); ox = st.earthX; oy = st.earthY; oz = st.earthZ;
+    } else {
+        const k = IDX_PLANETS + target;
+        rx = st.x[k] - st.x[IDX_SUN]; ry = st.y[k] - st.y[IDX_SUN]; rz = st.z[k] - st.z[IDX_SUN];
+        rvx = st.vx[k] - st.vx[IDX_SUN]; rvy = st.vy[k] - st.vy[IDX_SUN]; rvz = st.vz[k] - st.vz[IDX_SUN];
+        mu = activeMuS() + activeMuPl(target);
+        ox = st.earthX + st.x[IDX_SUN]; oy = st.earthY + st.y[IDX_SUN]; oz = st.earthZ + st.z[IDX_SUN];
+    }
+    ellipseElements(rx, ry, rz, rvx, rvy, rvz, mu, _ell);
+    if (_ell.ok) {
+        analytic = true;
+        const nMax = ellipseSampleCount(_ell.e, BPN);
+        for (n = 0; n < nMax; n++) {
+            const E = (n / (nMax - 1)) * Math.PI * 2; // inclusive 0..2π: closes the loop visually
+            ellipsePointAt(_ell, E, _ellP);
+            bpPos[n * 3] = (ox + _ellP.x) * K;
+            bpPos[n * 3 + 1] = (oz + _ellP.z) * K;
+            bpPos[n * 3 + 2] = -(oy + _ellP.y) * K;
         }
-    } finally {
-        endPredictionBH();
+    } else {
+        // open/degenerate conic (e.g. mid-disruption): fall back to the old
+        // fixed-time Kepler-jump stepping, bounded to the buffer's real size
+        const predEphem = st;
+        const step = bodyPredStep(target);
+        try {
+            beginPredictionBH(); // holes coast linearly from their snapshot state
+            while (n < BPN) {
+                bodyStateForTarget(target, _bs, predEphem);
+                bpPos[n * 3] = _bs.x * K;
+                bpPos[n * 3 + 1] = _bs.z * K;
+                bpPos[n * 3 + 2] = -_bs.y * K;
+                n++;
+                advanceEphemSnapshotKepler(predEphem, step, false);
+            }
+        } finally {
+            endPredictionBH();
+        }
     }
     const col = locked ? 0x5f7f98 : target === -2 ? 0xb7d8ff : target === -1 ? 0xffdc8a : 0xf1d36b;
     bodyPredLine.material.opacity = locked ? .18 : .28;
@@ -405,7 +564,7 @@ export function computeBodyPrediction(target, locked = false) {
     bodyPredDots.visible = n > 1;
     markAttrFull(bpPosAttr, n);
     bpGeom.setDrawRange(0, n);
-    if (PERF.enabled) markPerf("bodyPrediction", performance.now() - t0, { target, steps: n, locked });
+    if (PERF.enabled) markPerf("bodyPrediction", performance.now() - t0, { target, steps: n, analytic, locked });
 }
 
 // ---- velocity & flow arrows ----

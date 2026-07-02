@@ -44,7 +44,20 @@ const catalogStar = row => skyStar(
 );
 export const A_MOON = 384400;        // lunar semi-major axis, km (27.32-day month)
 export const E_MOON = 0.0549;        // lunar eccentricity
-export const OMEGA = Math.sqrt((MU_E + MU_M) / (A_MOON * A_MOON * A_MOON));
+// OMEGA is the Moon's MEAN-MOTION BOOKKEEPING rate used to advance its mean
+// anomaly from the J2000 epoch to "now" (ephemeris.js's resetEphem). It is
+// deliberately NOT sqrt((MU_E+MU_M)/A_MOON^3): that naive two-body Kepler
+// rate gives a 27.2872-day period, but the Moon's real (observed) sidereal
+// month is 27.321661 days — 0.126% longer, because the Sun's perturbation
+// raises the Moon's effective period beyond the unperturbed two-body value.
+// That 0.126% is invisible over a few months but compounds secularly over
+// decades (~354 lunar orbits from J2000 to 2026): it was throwing the sim's
+// simulated lunar phase off by nearly half a synodic month by 2026, enough
+// to miss real eclipses entirely (see smoke:physics3d's eclipse check). The
+// orbit's SHAPE (a, e, i) and instantaneous dynamics still come from
+// MU_E+MU_M via keplerInit3/vis-viva as before — only the epoch-phase
+// bookkeeping rate is swapped for the empirically observed one.
+export const OMEGA = 2 * Math.PI / (27.321661 * 86400);
 export const AM3 = A_MOON * A_MOON * A_MOON;
 // Moon's inclination to the ecliptic (radians, same convention as PL[].i).
 export const I_MOON = 5.145 * DEG;
@@ -223,7 +236,7 @@ export const SEC_YEAR = 31557600;
 export const WARPS = [1, 60, 600, 3600, 21600, 86400, 604800, 2592000, SEC_YEAR, 30 * SEC_YEAR, 1000 * SEC_YEAR, 1000000 * SEC_YEAR, 1000000000 * SEC_YEAR];
 export const WARP_MAX = 1000000000 * SEC_YEAR;
 export const MAX_STEPS_FRAME = 2400;
-export const MOON_ANG0 = 2.2; // Moon's initial mean anomaly (varpi = 0, arbitrary epoch)
+export const MOON_ANG0 = 2.2; // Moon's J2000 initial mean anomaly (varpi = 0)
 export const warpLabel = w => {
     const f = x => +(Math.round(x * 10) / 10);
     if (w >= SEC_YEAR) {
