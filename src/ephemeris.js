@@ -7,7 +7,7 @@ import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
 import { GRAVITY_STARS } from "./universe/activeStars.js";
 import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
 import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
-import { moonGeocentricCartesian } from "./universe/lunarElp.js";
+import { moonGeocentricCartesian, sunEclipticLongitude } from "./universe/lunarElp.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -140,13 +140,6 @@ export function resetEphem() {
     EPHT.t = 0;
     const epochOffsetSec = safeEpochOffsetSeconds();
 
-    moonGeocentricCartesian(epochOffsetSec, _kp);
-    bodyX[IDX_MOON] = _kp.x; bodyY[IDX_MOON] = _kp.y; bodyZ[IDX_MOON] = _kp.z;
-    moonGeocentricCartesian(epochOffsetSec + 60, _kp);
-    bodyVx[IDX_MOON] = (_kp.x - bodyX[IDX_MOON]) / 60;
-    bodyVy[IDX_MOON] = (_kp.y - bodyY[IDX_MOON]) / 60;
-    bodyVz[IDX_MOON] = (_kp.z - bodyZ[IDX_MOON]) / 60;
-
     // Earth's heliocentric state from elements, with the initial true anomaly
     // chosen so the Earth→Sun direction stays exactly at SUN_TH0 at J2000,
     // then epoch-advanced like every other body; the Sun's Earth-relative
@@ -170,6 +163,26 @@ export function resetEphem() {
     bodyVy[IDX_SUN] = -_kp.vy;
     bodyVz[IDX_SUN] = -_kp.vz;
     const svx = bodyVx[IDX_SUN], svy = bodyVy[IDX_SUN], svz = bodyVz[IDX_SUN];
+
+    const simSunLon = Math.atan2(bodyY[IDX_SUN], bodyX[IDX_SUN]);
+    const delta = simSunLon - sunEclipticLongitude(epochOffsetSec);
+    const dC = Math.cos(delta), dS = Math.sin(delta);
+    moonGeocentricCartesian(epochOffsetSec, _kp);
+    {
+        const x = _kp.x, y = _kp.y;
+        _kp.x = x * dC - y * dS;
+        _kp.y = x * dS + y * dC;
+    }
+    bodyX[IDX_MOON] = _kp.x; bodyY[IDX_MOON] = _kp.y; bodyZ[IDX_MOON] = _kp.z;
+    moonGeocentricCartesian(epochOffsetSec + 60, _kp);
+    {
+        const x = _kp.x, y = _kp.y;
+        _kp.x = x * dC - y * dS;
+        _kp.y = x * dS + y * dC;
+    }
+    bodyVx[IDX_MOON] = (_kp.x - bodyX[IDX_MOON]) / 60;
+    bodyVy[IDX_MOON] = (_kp.y - bodyY[IDX_MOON]) / 60;
+    bodyVz[IDX_MOON] = (_kp.z - bodyZ[IDX_MOON]) / 60;
 
     // planets stored Earth-relative: Sun's Earth-relative state + heliocentric
     // state from J2000 elements (p.phase is the J2000 mean anomaly, advanced
