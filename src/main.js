@@ -711,7 +711,7 @@ const bhLabels = Array.from({ length: BH_MAX }, (_, i) => {
     return el;
 });
 const starLabels = [];
-let starLabelsVisible = false, starLabelCursor = 0;
+let starLabelsVisible = false;
 function ensureStarLabel(i) {
     if (starLabels[i]) return starLabels[i];
     const star = STARS[i];
@@ -729,41 +729,94 @@ function hideStarLabels() {
     if (!starLabelsVisible) return;
     for (let i = 0; i < starLabels.length; i++) if (starLabels[i]) hideLabel(starLabels[i]);
     starLabelsVisible = false;
-    starLabelCursor = 0;
 }
 // Star labels persist through the cosmic-mode transition (the old code hid
 // them wholesale in the cosmicView branch, causing the orphaned glyph cliff at
 // 1.89e9): full to 40 ly, faded out by 140 ly, where the named-star sprites
 // stop reading as markers and become ordinary star-field content.
+// WP-L2 declutter: each cadence tick walks ALL named stars (81 at boot, hard
+// cap 209 with runtime promotions — a full pass costs less than one sprite
+// blit) in a static nearest-first order, and each visible label claims a
+// 72 px screen bin, blocking ±2 bins sideways / ±1 vertically (name tags are
+// wide, not tall). The static order means the same star wins its bin every
+// frame — no round-robin flicker. Past 1 ly at most STAR_LABEL_MAX labels
+// survive; the navigator stays the find-anything tool, and the focused star
+// is placed first so it never loses the cap lottery.
+const STAR_BIN_PX = 72;
+const STAR_LABEL_MAX = 14;
+const starBins = new Set();
+const _starBinP = [0, 0];
+let starOrder = [];
+function starOrderSorted() {
+    if (starOrder.length !== STARS.length) {
+        starOrder = STARS.map((_, i) => i).sort((a, b) =>
+            (STARS[a].dLy - STARS[b].dLy) ||
+            (STARS[a].name < STARS[b].name ? -1 : STARS[a].name > STARS[b].name ? 1 : 0));
+    }
+    return starOrder;
+}
+function claimStarBin(x, y) {
+    const bx = Math.floor(x / STAR_BIN_PX), by = Math.floor(y / STAR_BIN_PX);
+    for (let dx = -2; dx <= 2; dx++)
+        for (let dy = -1; dy <= 1; dy++)
+            if (starBins.has((bx + dx) * 4096 + by + dy)) return false;
+    starBins.add(bx * 4096 + by);
+    return true;
+}
+let starLabelsFarClass = false;
 function updateStarLabels(w, h) {
     const focusStar = targetStarIndex(G.focus);
     const activeStarFocus = focusStar >= 0 && focusStar < STARS.length;
     const starLabelFade = 1 - smooth01(LY_SCENE * 40, LY_SCENE * 140, cam.dist);
     const showStarLabels = !renderQuality.mobile && starLabelFade > 0.05 &&
         (cam.dist > LY_SCENE * .001 || activeStarFocus);
+    const farLabels = cam.dist > LY_SCENE;
+    if (starLabelsFarClass !== farLabels) {
+        document.body.classList.toggle("star-labels-far", farLabels);
+        starLabelsFarClass = farLabels;
+    }
     if (!showStarLabels) { hideStarLabels(); return { showStarLabels, starLabelsDue: false, starLabelBatch: 0 }; }
     const starLabelsDue = !starLabelsVisible || frameNo % starLabelCadence() === 0;
     let starLabelBatch = 0;
     if (starLabelsDue) {
-        const fadeStr = starLabelFade >= 0.999 ? "1" : starLabelFade.toFixed(2);
-        const batch = Math.min(STARS.length, starLabelBatchSize());
-        for (let n = 0; n < batch; n++) {
-            const i = (starLabelCursor + n) % STARS.length;
+        // names step back to half strength across the 0.2 -> 1 ly transition
+        // so at interstellar zoom text sits below the star dots it names
+        const dim = 1 - .5 * smooth01(LY_SCENE * .2, LY_SCENE, cam.dist);
+        // dot-alpha model mirrored from stars.js updateStars (local + skyBeacon
+        // ramps) — a label may never be more opaque than its star's dot; keep
+        // these constants in sync with src/stars.js if they move there.
+        const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, camera.position.length());
+        const maxLabels = farLabels ? STAR_LABEL_MAX : Infinity;
+        starBins.clear();
+        const tryPlace = i => {
+            const star = STARS[i];
             // companion components (ALPHA CEN B, GUNIIBUU B...) overprint their
             // primary at survey zoom and made the pair's label appear to rename
             // itself; past 3e8 (sub-~15 px separation) only the primary labels.
             // Built-in companions carry a `companion` field; runtime-promoted
             // binary components (GUNIIBUU B) only carry the " B" name suffix.
-            if ((STARS[i].companion || / B$/.test(STARS[i].name)) && cam.dist > 3e8) {
-                if (starLabels[i]) hideLabel(starLabels[i]);
-                starLabelBatch++;
-                continue;
-            }
-            const starLabel = ensureStarLabel(i);
-            if (starLabel) put(starLabel, starScenePos(i, _starLabelPos), -8, w, h, fadeStr);
+            if ((star.companion || / B$/.test(star.name)) && cam.dist > 3e8) return false;
+            const pos = starScenePos(i, _starLabelPos);
+            const p = projectTo(pos, w, h, _starBinP);
+            if (!p || p[0] < 0 || p[0] > w || p[1] < 0 || p[1] > h) return false;
+            if (starLabelBatch >= maxLabels || !claimStarBin(p[0], p[1])) return false;
+            const d = camera.position.distanceTo(pos);
+            const dotAlpha = Math.max(.82 * (1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d)), skyBeacon);
+            const op = Math.min(starLabelFade * dim, dotAlpha);
+            if (op < .02) return false;
+            const el = ensureStarLabel(i);
+            if (!el) return false;
+            put(el, pos, -8, w, h, op >= .995 ? "1" : op.toFixed(2));
             starLabelBatch++;
+            return true;
+        };
+        if (activeStarFocus && !tryPlace(focusStar) && starLabels[focusStar]) hideLabel(starLabels[focusStar]);
+        const order = starOrderSorted();
+        for (let n = 0; n < order.length; n++) {
+            const i = order[n];
+            if (activeStarFocus && i === focusStar) continue;
+            if (!tryPlace(i) && starLabels[i]) hideLabel(starLabels[i]);
         }
-        starLabelCursor = (starLabelCursor + batch) % STARS.length;
         starLabelsVisible = true;
     }
     return { showStarLabels, starLabelsDue, starLabelBatch };
@@ -787,11 +840,6 @@ function putUnlessCrowded(el, v3, dy, w, h) {
 function starLabelCadence() {
     if (renderQuality.mobile) return 8;
     return G.warp > 600 ? 6 : G.warp > 60 ? 3 : 2;
-}
-function starLabelBatchSize() {
-    if (G.warp > 600) return 12;
-    if (G.warp > 60) return 28;
-    return 36;
 }
 catalogSearchHooks = {
     toast,

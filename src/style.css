@@ -139,7 +139,13 @@ body.bh-place-mode #gl canvas { cursor: crosshair; }
   text-shadow: 0 1px 4px #000; transition: opacity .2s, color .15s; z-index: 3; }
 .lbl:hover { color: #fff; }
 .starLbl { font-size: 14px; font-weight: 700; letter-spacing: .14em; filter: brightness(1.55);
-  text-shadow: 0 0 20px rgba(255,236,200,.95), 0 0 9px currentColor, 0 0 3px currentColor, 0 1px 3px #000; }
+  text-shadow: 0 0 20px rgba(255,236,200,.95), 0 0 9px currentColor, 0 0 3px currentColor, 0 1px 3px #000;
+  transition: opacity .2s, color .15s, font-size .25s, filter .25s, text-shadow .25s; }
+/* interstellar zoom (cam.dist > 1 ly, body class set by updateStarLabels):
+   names step back behind the star dots — smaller, no luminous glow, dark halo
+   only for legibility */
+body.star-labels-far .starLbl { font-size: 11px; filter: none;
+  text-shadow: 0 0 4px rgba(0,0,0,.9), 0 1px 2px #000; }
 .moonLbl { font-size: 8px; font-weight: 500; letter-spacing: .1em; color: #b9c4cf; opacity: .9; }
 
 #hoverTip { position: absolute; display: none; pointer-events: none; z-index: 7;
