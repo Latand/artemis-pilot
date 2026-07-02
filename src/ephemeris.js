@@ -7,6 +7,7 @@ import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
 import { GRAVITY_STARS } from "./universe/activeStars.js";
 import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
 import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
+import { moonGeocentricCartesian } from "./universe/lunarElp.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -139,15 +140,12 @@ export function resetEphem() {
     EPHT.t = 0;
     const epochOffsetSec = safeEpochOffsetSeconds();
 
-    // Moon from elements; MOON_ANG0 is its J2000 initial mean anomaly (varpi
-    // = 0), advanced to the current epoch. The ascending node regresses
-    // (18.6-yr nodal precession): Om(t) = OM_MOON0 + rate·daysSinceJ2000.
-    const moonPeriod = 2 * Math.PI / OMEGA;
-    const moonM0 = MOON_ANG0 + meanAnomalyAdvance(epochOffsetSec, moonPeriod);
-    const moonOm = OM_MOON0 + OM_MOON_RATE * (epochOffsetSec / SEC_PER_DAY);
-    keplerInit3(A_MOON, E_MOON, I_MOON, moonOm, 0, moonM0, MU_E + MU_M, _kp);
+    moonGeocentricCartesian(epochOffsetSec, _kp);
     bodyX[IDX_MOON] = _kp.x; bodyY[IDX_MOON] = _kp.y; bodyZ[IDX_MOON] = _kp.z;
-    bodyVx[IDX_MOON] = _kp.vx; bodyVy[IDX_MOON] = _kp.vy; bodyVz[IDX_MOON] = _kp.vz;
+    moonGeocentricCartesian(epochOffsetSec + 60, _kp);
+    bodyVx[IDX_MOON] = (_kp.x - bodyX[IDX_MOON]) / 60;
+    bodyVy[IDX_MOON] = (_kp.y - bodyY[IDX_MOON]) / 60;
+    bodyVz[IDX_MOON] = (_kp.z - bodyZ[IDX_MOON]) / 60;
 
     // Earth's heliocentric state from elements, with the initial true anomaly
     // chosen so the Earth→Sun direction stays exactly at SUN_TH0 at J2000,
