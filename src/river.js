@@ -7,7 +7,7 @@ import { scene, renderer, camera, cam, renderQuality } from "./scene.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
-import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW, shipFrameW, frameVelToScene, RIVER_VIS } from "./riverMath.js";
+import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW, shipFrameW, frameVelToScene, scaleFade, RIVER_VIS } from "./riverMath.js";
 import { eph } from "./ephemeris.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
@@ -326,6 +326,8 @@ void main() {
     float holeCrowd = 0.0;
     float holeHalo = 0.0;
     vec3 localColor = vec3(0.32, 0.58, 0.9);
+    float localSink = 1.0;
+    vec3 localPos = vec3(1.0e9);
     for (int i = 0; i < ${MAXB}; i++) {
         if (i >= uNB) break;
         float dSrc = distance(p, uBody[i].xyz);
@@ -341,6 +343,8 @@ void main() {
         if (i != 2 && uHole[i] < 0.5 && gSrc > localBest) {
             localBest = gSrc;
             localColor = uColor[i];
+            localSink = uSink[i];
+            localPos = uBody[i].xyz;
         }
         if (i != 2 && uHole[i] < 0.5) {
             vec3 toBody = uBody[i].xyz - p;
@@ -360,6 +364,13 @@ void main() {
     }
     float lapseInk = smoothstep(0.000001, 0.08, curv);
     float localInk = max(smoothstep(0.08, 0.42, localBest / max(localPull, 1e-18)), localFunnel * 0.82);
+    // Halo ink recedes as the dominant body's apparent size shrinks: full
+    // within ~8 sink radii of the camera, ~1/3 past ~120 radii — survey-zoom
+    // planet halos and mid-range views stop reading as explosions while the
+    // wake/halo geometry stays. Focus views are exempt (uLocalFocus; WP-R7
+    // governs those).
+    float camBodyR = distance(uCam, localPos) / max(localSink, 1e-6);
+    localInk *= mix(0.35, 1.0, max(1.0 - smoothstep(8.0, 120.0, camBodyR), uLocalFocus));
     float holeInk = smoothstep(0.08, 0.92, clamp(holePart / spd, 0.0, 1.0));
     float localViewInk = max(localInk, uLocalFocus * mix(0.20, 0.46, timeInk));
     tVis = max(max(tVis, holeInk * 0.62), max(localInk * 0.86, uLocalFocus * 0.22));
@@ -652,7 +663,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // zoomed-out frames cost nothing. The river stays fully on through the whole
     // solar-system survey and whenever the camera is near a star/system.
     const zoomFade = 1 - smooth01(LY_SCENE * 0.004, LY_SCENE * 0.02, cam.dist);
-    const fEff = fB * zoomFade;
+    const fEff = fB * zoomFade * scaleFade(cam.dist);
     lines.visible = fEff > .01;
     if (!lines.visible) {
         river.computeEvery = 1;
@@ -662,26 +673,27 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const planeBias = smooth01(6000, 420000, cam.dist);
     let localFocus = 0;
     let frameKind = -1, frameIdx = -1;  // 0 earth, 1 moon, 2 sun, 3 planet i, 4 hole i, 5 ship
+    let surfaceProx = 0;
     const earthCamD = WORLD.earthDestroyed ? Infinity : camera.position.distanceTo(earthV);
     const earthClear = Math.max(0, earthCamD - R_EARTH * K);
     if (!WORLD.earthDestroyed) {
         const orbitalView = 1 - smooth01(0.06, 9.5, earthClear);
         const lowOrbitView = 1 - smooth01(0.18, 80, earthClear);
-        const cand = Math.max(orbitalView, lowOrbitView * .92); if (cand > localFocus) { localFocus = cand; frameKind = 0; }
+        const cand = Math.max(orbitalView, lowOrbitView * .92); surfaceProx = Math.max(surfaceProx, 1 - smooth01(R_EARTH * K * 0.25, R_EARTH * K * 1.2, earthClear)); if (cand > localFocus) { localFocus = cand; frameKind = 0; }
     }
     if (!WORLD.moonDestroyed) {
         const clear = Math.max(0, camera.position.distanceTo(moonV) - R_MOON * K);
-        const cand = 0.82 * (1 - smooth01(16, 180, clear)); if (cand > localFocus) { localFocus = cand; frameKind = 1; }
+        const cand = 0.82 * (1 - smooth01(16, 180, clear)); surfaceProx = Math.max(surfaceProx, 1 - smooth01(R_MOON * K * 0.25, R_MOON * K * 1.2, clear)); if (cand > localFocus) { localFocus = cand; frameKind = 1; }
     }
     if (!WORLD.sunDestroyed) {
         const clear = Math.max(0, camera.position.distanceTo(sunPosV) - SUN_RADIUS);
-        const cand = 0.96 * (1 - smooth01(SUN_RADIUS * 0.18, SUN_RADIUS * 7.5, clear)); if (cand > localFocus) { localFocus = cand; frameKind = 2; }
+        const cand = 0.96 * (1 - smooth01(SUN_RADIUS * 0.18, SUN_RADIUS * 7.5, clear)); surfaceProx = Math.max(surfaceProx, 1 - smooth01(SUN_RADIUS * 0.25, SUN_RADIUS * 1.2, clear)); if (cand > localFocus) { localFocus = cand; frameKind = 2; }
     }
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) continue;
         const sink = PL[i].R * K;
         const clear = Math.max(0, camera.position.distanceTo(plPos[i]) - sink);
-        const cand = 0.95 * (1 - smooth01(Math.max(8, sink * 1.5), Math.max(90, sink * 34), clear)); if (cand > localFocus) { localFocus = cand; frameKind = 3; frameIdx = i; }
+        const cand = 0.95 * (1 - smooth01(Math.max(8, sink * 1.5), Math.max(90, sink * 34), clear)); surfaceProx = Math.max(surfaceProx, 1 - smooth01(sink * 0.25, sink * 1.2, clear)); if (cand > localFocus) { localFocus = cand; frameKind = 3; frameIdx = i; }
     }
     for (let i = 0; i < BH.n; i++) {
         bhRiverPos.set(earthV.x + BH.sx[i], earthV.y, earthV.z + BH.sz[i]);
@@ -716,6 +728,12 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const zoomShed = smooth01(2.0e7, LY_SCENE * .18, cam.dist) * (1 - localFocus * .72);
     const renderShed = Math.max(loadShed, zoomShed);
     uniformsShared.uLoadShed.value = loadShed;
+    // Streaks are additive glow drawn without depth by design, but at surface
+    // level (camera within ~1.2 radii of a body) they must be occluded by the
+    // terrain instead of drawing over it (zoom-ladder earth-5). Toggling the
+    // GL depth test needs no shader rebuild and leaves every other view
+    // byte-identical.
+    lineMat.depthTest = surfaceProx > 0.5;
     uniformsShared.uLocalFocus.value = localFocus;
     const mobileOpacity = renderQuality.mobile ? 1.08 : 1;
     uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + localFocus * .7) * (1 - loadShed * .12);

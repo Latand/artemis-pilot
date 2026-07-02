@@ -90,6 +90,10 @@ assert(rm.shellDotSize(680, 100) <= 680 * 0.05 * V.SHELL_NEAR_FRAC + 1e-12,
   "camera inside the shell sphere must shrink dots, not explode them");
 assert(rm.shellDotSize(1, 10) === V.SHELL_DOT_MIN, "sub-pixel absolute floor");
 assert(V.SHELL_DOT_MIN === 0.05 && V.SHELL_NEAR_FRAC === 0.02, "WP-R8 constants pinned");
+assert(V.SCALE_FADE0 === 8e6 && V.SCALE_FADE1 === 4e7, "WP-R9 scale-fade thresholds pinned");
+assert(rm.scaleFade(2.6e6) === 1, "survey anchor (2.6e6) must be untouched by the scale fade");
+assert(rm.scaleFade(4e7) === 0 && rm.scaleFade(1e8) === 0, "river gone past ~270 AU");
+assert(rm.scaleFade(1e7) > 0.95, "fade must be gentle at the system's edge framings");
 
 // 6) relative-frame blend + velocity-mapping handedness
 assert(rm.frameBlendW(0) === 0 && rm.frameBlendW(1) === 1, "frameBlendW endpoints");
@@ -139,6 +143,7 @@ const GLSL_SYNC = [
   "- uFrameVel * uFrameW",
   "localViewInk * mix(1.15, 0.8, uLocalFocus)",
   "localInk * mix(1.7, 1.0, uLocalFocus) + uLocalFocus * 0.4",
+  "mix(0.35, 1.0, max(1.0 - smoothstep(8.0, 120.0, camBodyR), uLocalFocus))",
 ];
 for (const lit of GLSL_SYNC) {
   assert(src.includes(lit), "river.js GLSL out of sync with riverMath, missing literal: " + lit);

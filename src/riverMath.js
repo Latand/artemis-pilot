@@ -44,6 +44,8 @@ export const RIVER_VIS = {
     SHELL_VIS_CAMDIST: 24,   // shells drawn only when cam.dist < rOut·24
     FRAME_SHIP_W: 0.85,      // max relative-frame weight in ship focus
     FRAME_EASE: 3,           // frame-weight easing rate, 1/s of real time
+    SCALE_FADE0: 8e6,        // river ink starts receding past ~1.8x Neptune's orbit (scene units)
+    SCALE_FADE1: 4e7,        // gone by ~270 AU — hands over to the interstellar zoomFade smoothly
 };
 
 export const smoothstepJs = (e0, e1, x) => {
@@ -80,6 +82,12 @@ export const lenSpeedMod = tVis =>
 
 // ---- color (P5) ----
 export const goldNearSunFade = dSun => 1 - smoothstepJs(RIVER_VIS.GOLD_R0, RIVER_VIS.GOLD_R1, dSun);
+
+// The river's volume tracks the camera and its streak lengths are camera-
+// normalized, so without this the survey starburst keeps a CONSTANT screen
+// footprint while the solar system shrinks (zoom-ladder audit). Fade the
+// whole layer once the view is a few times the system's extent.
+export const scaleFade = camDist => 1 - smoothstepJs(RIVER_VIS.SCALE_FADE0, RIVER_VIS.SCALE_FADE1, camDist);
 
 // ---- universal contracting shells (P2-A): the law itself, dr/dt = -C/√r,
 // instantiated around whichever source locally dominates. ----
