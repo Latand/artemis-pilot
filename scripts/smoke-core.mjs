@@ -70,13 +70,16 @@ assert(
   "warpLabel should format the slow-mo presets without trailing zeros",
 );
 assert(
-  warpStepDown(1) === 0.5 && warpStepDown(0.5) === 0.1 && warpStepDown(0.1) === 0.01 && warpStepDown(0.01) === 0.01,
-  "warpStepDown should walk 1 -> 0.5 -> 0.1 -> 0.01 and floor there",
+  warpStepDown(1) === 0.5 && warpStepDown(0.5) === 0.1 && warpStepDown(0.1) === 0.01 &&
+    warpStepDown(0.01) === -0.01 && warpStepDown(-0.01) === -0.1 &&
+    warpStepDown(-0.1) === -0.5 && warpStepDown(-0.5) === -1 && warpStepDown(-1) === -2,
+  "warpStepDown should walk 1 -> 0.5 -> 0.1 -> 0.01 -> -0.01 -> -0.1 -> -0.5 -> -1 -> -2",
 );
 assert(
   warpStepUp(0.01) === 0.1 && warpStepUp(0.1) === 0.5 && warpStepUp(0.5) === 1 && warpStepUp(1) === 2,
   "warpStepUp should walk 0.01 -> 0.1 -> 0.5 -> 1, then resume doubling",
 );
+assert(warpStepUp(-0.01) === 0.01 && warpStepUp(-2) === -1, "warpStepUp should cross from -0.01 to 0.01 and halve reverse warp toward -1");
 assert(warpStepDown(3600) === 1800 && warpStepUp(3600) === 7200, "above 1x, ,/. should keep the original continuous halving/doubling");
 
 const blackholesSrc = readFileSync(new URL("../src/blackholes.js", import.meta.url), "utf8");

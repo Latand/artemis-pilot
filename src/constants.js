@@ -240,20 +240,38 @@ export const SEC_YEAR = 31557600;
 export const WARP_SUBS = [0.01, 0.1, 0.5];
 export const WARPS = [...WARP_SUBS, 1, 60, 600, 3600, 21600, 86400, 604800, 2592000, SEC_YEAR, 30 * SEC_YEAR, 1000 * SEC_YEAR, 1000000 * SEC_YEAR, 1000000000 * SEC_YEAR];
 export const WARP_MAX = 1000000000 * SEC_YEAR;
+export const WARP_MIN = -WARP_MAX;
 export const WARP_DIGIT_OFFSET = WARP_SUBS.length;
-// ,/. step through the slow-mo ladder below 1×; at/above 1× they keep the
-// original continuous halving/doubling for fine control across the huge
-// (1× .. 1e9 yr/s) dynamic range.
-export const warpStepDown = w => w > 1 ? Math.max(1, w / 2)
-    : w > 0.5 ? 0.5
-    : w > 0.1 ? 0.1
-    : w > 0.01 ? 0.01
-    : 0.01;
-export const warpStepUp = w => w < 1 ? (w < 0.01 ? 0.01 : w < 0.1 ? 0.1 : w < 0.5 ? 0.5 : 1)
-    : Math.min(WARP_MAX, w * 2);
+export const warpStepDown = w => {
+    if (w > 1) return Math.max(1, w / 2);
+    if (w > 0.5) return 0.5;
+    if (w > 0.1) return 0.1;
+    if (w > 0.01) return 0.01;
+    if (w >= 0) return -0.01;
+    if (w >= -0.01) return -0.1;
+    if (w >= -0.1) return -0.5;
+    if (w > -1) return -1;
+    return Math.max(WARP_MIN, w * 2);
+};
+export const warpStepUp = w => {
+    if (w < -1) return w / 2;
+    if (w < -0.5) return -0.5;
+    if (w < -0.1) return -0.1;
+    if (w < -0.01) return -0.01;
+    if (w < 0) return 0.01;
+    if (w < 0.1) return 0.1;
+    if (w < 0.5) return 0.5;
+    if (w < 1) return 1;
+    return Math.min(WARP_MAX, w * 2);
+};
 export const MAX_STEPS_FRAME = 2400;
 export const MOON_ANG0 = 2.2; // Moon's J2000 initial mean anomaly (varpi = 0)
 export const warpLabel = w => {
+    if (w < 0) {
+        const mag = Math.abs(w);
+        const label = warpLabel(mag);
+        return mag < 1 ? "⏪ −" + label + " (reverse)" : "⏪ −" + label;
+    }
     const f = x => +(Math.round(x * 10) / 10);
     if (w >= SEC_YEAR) {
         const yr = w / SEC_YEAR;

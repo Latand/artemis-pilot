@@ -857,16 +857,17 @@ function advanceState(st, dtTotal, maxStep = 3600, live = false) {
     // holes, gravity ghosts, and a destroyed Sun or Earth all break the
     // two-body decomposition, so those fall through to the integrator
     if (live && BH.n === 0 && GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed &&
-        dtTotal > bodyStepSize(st, dtTotal, maxStep) * 150) {
+        Math.abs(dtTotal) > bodyStepSize(st, Math.abs(dtTotal), maxStep) * 150) {
         keplerJumpState(st, dtTotal);
         st.t += dtTotal;
         return;
     }
     let rem = dtTotal, guard = 0;
-    while (rem > 1e-9 && guard++ < 2000) {
+    while (Math.abs(rem) > 1e-9 && guard++ < 2000) {
         // if the step collapses near a deep well, spend the remaining budget
         // anyway: bounded local error beats bodies silently losing time
-        const dt = Math.min(rem, Math.max(bodyStepSize(st, rem, maxStep), rem / (2001 - guard)));
+        const mag = Math.min(Math.abs(rem), Math.max(bodyStepSize(st, Math.abs(rem), maxStep), Math.abs(rem) / (2001 - guard)));
+        const dt = Math.sign(rem) * mag;
         leapfrogBodies(st, dt);
         rem -= dt;
         if (live && liveGuard && BH.n) {
@@ -877,7 +878,7 @@ function advanceState(st, dtTotal, maxStep = 3600, live = false) {
 }
 const _adv = makeState(); // persistent scratch: advanceEphem runs every flush, allocation-free
 export function advanceEphem(dtTotal) {
-    if (dtTotal <= 0) return;
+    if (Math.abs(dtTotal) <= 1e-9) return;
     copyLiveToState(_adv);
     advanceState(_adv, dtTotal, 3600, true);
     copyStateToLive(_adv);

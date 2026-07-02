@@ -1032,35 +1032,37 @@ export function bhAdvance(dtTotal, _tEnd) {
     if (!BH.n) return;
     while (tryMerge()) { }
     let rem = dtTotal, guard = 0;
-    while (rem > 1e-9 && guard++ < 200 && BH.n) {
+    while (Math.abs(rem) > 1e-9 && guard++ < 200 && BH.n) {
         // step: a fraction of the tightest orbital timescale in play
-        let dt = Math.min(rem, 21600);
+        let mag = Math.min(Math.abs(rem), 21600);
         for (let i = 0; i < BH.n; i++) {
             const mu = BH.mu[i];
             if (!WORLD.sunDestroyed) {
                 const dx = BH.x[i] - eph.sunX, dy = BH.y[i] - eph.sunY, d2 = dx * dx + dy * dy;
-                dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (MU_S + mu)) / 40);
+                mag = Math.min(mag, Math.sqrt(d2 * Math.sqrt(d2) / (MU_S + mu)) / 40);
             }
             const r2 = BH.x[i] * BH.x[i] + BH.y[i] * BH.y[i];
-            dt = Math.min(dt, Math.sqrt(r2 * Math.sqrt(r2) / (MU_E + mu)) / 40); // infall toward Earth
+            mag = Math.min(mag, Math.sqrt(r2 * Math.sqrt(r2) / (MU_E + mu)) / 40); // infall toward Earth
             if (!WORLD.moonDestroyed) {
                 const dx = BH.x[i] - eph.moonX, dy = BH.y[i] - eph.moonY, d2 = dx * dx + dy * dy;
-                dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (MU_M + mu)) / 40);
+                mag = Math.min(mag, Math.sqrt(d2 * Math.sqrt(d2) / (MU_M + mu)) / 40);
             }
             for (let p = 0; p < PL.length; p++) {
                 if (WORLD.plDestroyed[p]) continue;
                 const dx = BH.x[i] - eph.plX[p], dy = BH.y[i] - eph.plY[p], d2 = dx * dx + dy * dy;
-                dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (PL[p].mu + mu)) / 40);
+                mag = Math.min(mag, Math.sqrt(d2 * Math.sqrt(d2) / (PL[p].mu + mu)) / 40);
             }
             for (let j = i + 1; j < BH.n; j++) {
                 const dx = BH.x[i] - BH.x[j], dy = BH.y[i] - BH.y[j], d2 = dx * dx + dy * dy;
-                dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (mu + BH.mu[j])) / 40);
+                mag = Math.min(mag, Math.sqrt(d2 * Math.sqrt(d2) / (mu + BH.mu[j])) / 40);
             }
         }
-        dt = Math.max(dt, rem / (200 - guard + 1), 1e-3);
-        dt = Math.min(dt, rem);
+        mag = Math.max(mag, Math.abs(rem) / (200 - guard + 1), 1e-3);
+        mag = Math.min(mag, Math.abs(rem));
+        const dt = Math.sign(rem) * mag;
         // the ephemeris is already at the end of the interval: holes catch up
         // through it, sampling bodies interpolated backward from now
+        // REV-3 blocks reverse across disruption or merge floors; signed RK4 is pure orbital motion here.
         bhRk4(-rem, dt);
         rem -= dt;
         advanceDisruptions(dt);

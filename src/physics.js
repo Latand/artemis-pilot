@@ -632,6 +632,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         dtMax: 0,
         jump: "none",
     } : null;
+    if (simAdv < 0) { atx = 0; aty = 0; atz = 0; aMag = 0; }
     let adv = simAdv, steps = 0, lag = 0;
     const s = _gs;
     s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
@@ -655,8 +656,9 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         const ds0 = Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2] - eph.sunZ);
         const dt0 = stepSize(rE0, dm0, ds0, rE0 - R_EARTH, Math.hypot(s[3], s[4], s[5]), s[0], s[1], s[2], s[3], s[4], s[5]);
         if (perfStats) perfStats.dtMax = Math.max(perfStats.dtMax, dt0);
-        const frameBridge = G.warp > 600 && simAdv > Math.max(18, dt0 * 8);
-        if (frameBridge || simAdv > MAX_STEPS_FRAME * dt0) {
+        const frameBridge = Math.abs(G.warp) > 600 && Math.abs(simAdv) > Math.max(18, dt0 * 8);
+        // reverse uses the reversible stepped/Kepler path only; deep-time analytic jumps are forward-only.
+        if (simAdv > 0 && (frameBridge || Math.abs(simAdv) > MAX_STEPS_FRAME * dt0)) {
             if (BH.n === 0 && shipCosmologyJump(simAdv) > 0) {
                 if (perfStats) perfStats.jump = frameBridge ? "cosmology-frame" : "cosmology-full";
                 return markAdvancePerf(perfT0, simAdv, simAdv, perfStats || {});
@@ -674,17 +676,18 @@ export function advance(simAdv, atx, aty, atz, aMag) {
             }
         }
     }
-    while (adv > 1e-9 && steps < MAX_STEPS_FRAME && !G.dead && !G.landed) {
+    while (Math.abs(adv) > 1e-9 && steps < MAX_STEPS_FRAME && !G.dead && !G.landed) {
         const rE = Math.sqrt(s[0] * s[0] + s[1] * s[1] + s[2] * s[2]);
         const dmx = s[0] - (eph.moonX + eph.moonVx * lag), dmy = s[1] - (eph.moonY + eph.moonVy * lag), dmz = s[2] - (eph.moonZ + eph.moonVz * lag);
         const rM = Math.sqrt(dmx * dmx + dmy * dmy + dmz * dmz);
         const dsx = s[0] - (eph.sunX + eph.sunVx * lag), dsy = s[1] - (eph.sunY + eph.sunVy * lag), dsz = s[2] - (eph.sunZ + eph.sunVz * lag);
         const rS = Math.sqrt(dsx * dsx + dsy * dsy + dsz * dsz);
         const vTot = Math.sqrt(s[3] * s[3] + s[4] * s[4] + s[5] * s[5]);
-        const dt = Math.min(stepSize(rE, rM, rS, rE - R_EARTH, vTot, s[0], s[1], s[2], s[3], s[4], s[5]), adv);
+        const mag = Math.min(stepSize(rE, rM, rS, rE - R_EARTH, vTot, s[0], s[1], s[2], s[3], s[4], s[5]), Math.abs(adv));
+        const dt = Math.sign(adv) * mag;
         if (perfStats) {
-            perfStats.dtMin = Math.min(perfStats.dtMin, dt);
-            perfStats.dtMax = Math.max(perfStats.dtMax, dt);
+            perfStats.dtMin = Math.min(perfStats.dtMin, mag);
+            perfStats.dtMax = Math.max(perfStats.dtMax, mag);
         }
         rk4Step(s, lag, dt, atx, aty, atz);
         G.t += dt; adv -= dt; lag += dt; steps++;
@@ -696,7 +699,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
                 if (G.fuel <= 0) { G.fuel = 0; atx = 0; aty = 0; atz = 0; aMag = 0; }
             }
         }
-        let shouldFlush = lag >= EPH_CHUNK || adv <= 1e-9 || steps >= MAX_STEPS_FRAME;
+        let shouldFlush = Math.abs(lag) >= EPH_CHUNK || Math.abs(adv) <= 1e-9 || steps >= MAX_STEPS_FRAME;
         if (!shouldFlush) {
             if (perfStats) perfStats.flushChecks++;
             shouldFlush = bodiesNeedFlush(s[0], s[1], s[2], lag);
@@ -729,7 +732,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         }
         // every other surface lies deep inside a flush zone, so these checks
         // only need to run when the ephemeris is fresh
-        if (lag > 0) continue;
+        if (Math.abs(lag) > 0) continue;
         if (!WORLD.moonDestroyed && Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY, s[2] - eph.moonZ) <= R_MOON) { handleMoonContact(s); break; }
         if (!WORLD.sunDestroyed && Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2] - eph.sunZ) <= sunRKmLive) {
             G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
@@ -768,7 +771,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         if (G.dead) break;
     }
     if (perfStats) perfStats.steps = steps;
-    if (lag > 0) { advanceEphem(lag); bhAdvance(lag, G.t); }
+    if (Math.abs(lag) > 0) { advanceEphem(lag); bhAdvance(lag, G.t); }
     G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
     // deep-time remainder: at warps the per-frame RK4 budget cannot cover,
     // the ship rides its osculating two-body orbit while the ephemeris
