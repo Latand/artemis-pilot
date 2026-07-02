@@ -20,5 +20,15 @@ assert(BH.period[1] === 0.0334, "period stored");
 // placement seeds: deterministic, distinct per counter and kind
 const s1 = splitSeed(hashInts(0x45584f21, 0), 1), s2 = splitSeed(hashInts(0x45584f21, 1), 1);
 assert(s1 === splitSeed(hashInts(0x45584f21, 0), 1) && s1 !== s2, "placement seed determinism");
+// pulsar sweep aliasing policy: Crab aliased at real time, visible in slow-mo;
+// slow pulsars sweep live at warp 1
+const aliased = (warp, period) => (warp / 60) > (period / 8);
+assert(aliased(1, 0.0334) && !aliased(0.01, 0.0334), "Crab: time-avg at 1x, sweeps at 0.01x");
+assert(!aliased(1, 1.3373) && aliased(60, 1.3373), "B1919: sweeps at 1x, time-avg at 60x");
+// spin angle is pure sim time (deterministic)
+const ang = (t, p) => (t % p) / p * 2 * Math.PI;
+// periodicity is checked by adding exactly one PERIOD (the plan's +1.0 s is
+// not an integer number of Crab periods: 1/0.0334 = 29.94)
+assert(Math.abs(ang(0.777, 0.0334) - ang(0.777 + 0.0334, 0.0334)) < 1e-6, "spin angle periodic in sim time");
 BH.n = 0; // leave state clean
 console.log("exotic smoke passed");

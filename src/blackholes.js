@@ -8,6 +8,7 @@ import { dotTexture, ringTexture } from "./textures.js";
 import { scene, camera, cam, cvHost, lastPtr, renderer, renderQuality } from "./scene.js";
 import { noteNotable } from "./discoveryLog.js";
 import { hashInts, splitSeed } from "./universe/prng.js";
+import { registerPlacedPulsar, unregisterPlacedPulsar } from "./ambientAudio.js";
 
 export const BH_META = []; // visual groups, parallel to the data arrays
 
@@ -21,6 +22,7 @@ const SOLAR_MASS_KG = 1.98847e30;
 const G_KM = 6.674e-20;
 const TDE_WATCH_WARP = 600;
 const AU_KM = 149597870.7;
+const PULSAR_ALIAS_SHIMMER_HZ = 2;
 const EXO_PRESETS = {
     1: [{ label: "10⁸ M☉", rsKm: 2.9532e8 }, { label: "10⁹ M☉", rsKm: 2.9532e9 }],
     2: [{ label: "CRAB 33 ms", rsKm: 4.1345, period: 0.0334 }, { label: "VELA 89 ms", rsKm: 4.1345, period: 0.0893 }, { label: "B1919 1.34 s", rsKm: 4.1345, period: 1.3373 }],
@@ -68,6 +70,16 @@ function bhSizeShort(rsKm) {
 }
 function gravityPanelLabel(ms2) {
     return ms2 >= 1e5 ? sci(ms2, "m/s²") : fmtAccel(ms2);
+}
+function pulsarAliased(period) {
+    return period > 0 && (G.warp / 60) > (period / 8);
+}
+function pulsarAliasLabel(period) {
+    return pulsarAliased(period) ? "TIME-AVG" : "SWEEP";
+}
+function pulsarFactsLabel(period) {
+    const p = Math.max(1e-9, period || 0);
+    return "P " + p.toFixed(p < 0.1 ? 4 : 3) + " s · f " + (1 / p).toFixed(p < 0.1 ? 1 : 2) + " Hz · " + pulsarAliasLabel(p);
 }
 export function pwAccelMs2(mu, rKm, rsKm) {
     const eff = Math.max(rKm - rsKm, rsKm * .02);
@@ -127,6 +139,29 @@ function makeTdeJet() {
     jet.frustumCulled = false;
     jet.renderOrder = 9;
     return jet;
+}
+function makePulsarVisuals(rsKm, period) {
+    const spin = new THREE.Group();
+    const magnetic = new THREE.Group();
+    const star = new THREE.Mesh(
+        new THREE.SphereGeometry(12 * K, 24, 16),
+        new THREE.MeshBasicMaterial({ color: 0xdfe9ff })
+    );
+    const beams = makeTdeJet();
+    const beamLen = rsKm * K * 2e5;
+    beams.material.opacity = 0.5;
+    beams.material.color.setHex(0x9fd7ff);
+    beams.scale.set(rsKm * K * 9000, beamLen, rsKm * K * 9000);
+    beams.rotation.z = 0.6109;
+    const emissionRing = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: ringTexture("rgba(159,215,255,0.72)", 512, 38),
+        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0.22,
+    }));
+    emissionRing.scale.setScalar(beamLen);
+    emissionRing.visible = false;
+    magnetic.add(beams);
+    spin.add(star, magnetic);
+    return { spin, magnetic, star, beams, beamLen, emissionRing, shimmerT: 0, period };
 }
 function makeSpaghettificationStream(seed) {
     const N = 920, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
@@ -551,10 +586,11 @@ function updateBHPlacementUI(force = false) {
     const massEl = document.getElementById("bhMassVal");
     const gravEl = document.getElementById("bhGravityVal");
     if (pill) pill.textContent = BH_PLACE.active ? "ARMED" : "B ARM";
-    if (rsEl) rsEl.textContent = BH_PLACE.kind === 1 ? (rs / AU_KM).toFixed(2) + " AU" : fmtKm(rs);
-    if (massEl) massEl.textContent = bhMassLabel(rs);
+    if (rsEl) rsEl.textContent = BH_PLACE.kind === 1 ? (rs / AU_KM).toFixed(2) + " AU" : BH_PLACE.kind === 2 ? "12 km surface" : fmtKm(rs);
+    if (massEl) massEl.textContent = BH_PLACE.kind === 2 ? bhMassLabel(rs) + " · " + pulsarFactsLabel(preset.period || 0) : bhMassLabel(rs);
     if (gravEl) gravEl.textContent = BH_PLACE.kind === 1
         ? "L_bol ≈ L_Edd = " + (L_EDD_PER_MSUN * msun).toExponential(2) + " W"
+        : BH_PLACE.kind === 2 ? "NS surface · " + pulsarAliasLabel(preset.period || 0)
         : gravityPanelLabel(pwAccelMs2(mu, rs * 3, rs));
     updateHint();
     const kindButtons = document.querySelectorAll("#bhKindRail .bhKindBtn");
@@ -668,6 +704,7 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, ev
     const disk = new THREE.Mesh(new THREE.PlaneGeometry(rsKm * K * 13, rsKm * K * 13), new THREE.MeshBasicMaterial({ map: diskTex, transparent: true, opacity: .82, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
     disk.rotation.x = -Math.PI / 2;
     const jet = makeTdeJet();
+    let pulsar = null, audioObj = null;
     const quasarLights = BH_META.reduce((n, m) => n + (m?.quasarLight ? 1 : 0), 0);
     let quasarLight = null;
     if (kind === 1) {
@@ -679,16 +716,29 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, ev
             g.add(quasarLight);
         }
     }
-    g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.group, jet, coreMask);
+    if (kind === 2) {
+        pulsar = makePulsarVisuals(rsKm, period);
+        glow.material.map = dotTexture("rgba(210,235,255,0.36)", "rgba(75,150,255,0.0)");
+        glow.material.opacity = .34;
+        audioObj = { x: 0, y: 0, z: 0, name: "PLACED PULSAR" };
+        registerPlacedPulsar(audioObj, period);
+        g.add(glow, pulsar.spin, pulsar.emissionRing);
+    } else {
+        g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.group, jet, coreMask);
+    }
     scene.add(g);
     BH_META.push({
-        g, disk, diskBaseRs: rsKm, jet, quasarLight, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0,
+        g, disk, diskBaseRs: rsKm, jet: kind === 2 ? null : jet, quasarLight, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0,
+        pulsar, audioObj,
         tde: { active: false, targetName: "", t0Sim: 0, tFbSec: 0, LpeakW: 0, LnowW: 0, LEddW: L_EDD_PER_MSUN * (rsKm * C_LIGHT * C_LIGHT / 2 / MU_S), mStarKg: 0, mBhMsun: 0, rCirc: 0 },
     });
     BH.n++;
     if (quiet) return i;
     if (kind === 1) noteNotable("quasar", "QUASAR " + bhMassLabel(rsKm));
-    H.toast("⚫ Black hole: r_s " + fmtKm(rsKm) + " · " + bhMassLabel(rsKm) + " · " + bhHawkingLabel(rsKm));
+    if (kind === 2) noteNotable("pulsar", "PULSAR " + pulsarFactsLabel(period));
+    H.toast(kind === 2
+        ? "PULSAR: " + pulsarFactsLabel(period) + " · 12 km surface · " + bhMassLabel(rsKm)
+        : "⚫ Black hole: r_s " + fmtKm(rsKm) + " · " + bhMassLabel(rsKm) + " · " + bhHawkingLabel(rsKm));
     H.predict();
     return i;
 }
@@ -698,6 +748,7 @@ function removeBHIndex(i) {
         else if (DISRUPT[k].bh > i) DISRUPT[k].bh--;
     }
     const m = BH_META.splice(i, 1)[0];
+    if (m?.audioObj) unregisterPlacedPulsar(m.audioObj);
     scene.remove(m.g);
     m.g.traverse(o => {
         if (o.geometry) o.geometry.dispose();
@@ -1366,6 +1417,11 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
     for (let bi = 0; bi < BH_META.length; bi++) {
         const m = BH_META[bi];
         m.g.position.set(earthScX + BH.sx[bi], 0, earthScZ + BH.sz[bi]);
+        if (m.audioObj) {
+            m.audioObj.x = eph.earthX + BH.x[bi];
+            m.audioObj.y = eph.earthY + BH.y[bi];
+            m.audioObj.z = 0;
+        }
         const dBH = camera.position.distanceTo(m.g.position);
         const obsRate = observerTimeScaleForBH(bi, m.g.position);
         BH.obsT[bi] = obsRate;
@@ -1373,6 +1429,22 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         m.flare = Math.max(0, m.flare - dtLocal * .55);
         const massVis = smooth01(.5, 5000, m.rs);
         const diskVis = smooth01(50, 100000, m.rs);
+        if (BH.kind[bi] === 2 && m.pulsar) {
+            const p = Math.max(1e-9, BH.period[bi]);
+            const spinAngle = (G.t % p) / p * Math.PI * 2;
+            const aliased = pulsarAliased(p);
+            m.pulsar.spin.rotation.y = spinAngle;
+            m.pulsar.beams.visible = !aliased;
+            m.pulsar.emissionRing.visible = aliased;
+            m.pulsar.shimmerT += dtR;
+            // Render-only 2 Hz shimmer marks time-average mode; it is not the real spin period.
+            const shimmer = 1 + 0.06 * Math.sin(m.pulsar.shimmerT * PULSAR_ALIAS_SHIMMER_HZ * Math.PI * 2);
+            m.pulsar.emissionRing.scale.setScalar(m.pulsar.beamLen * shimmer);
+            m.pulsar.emissionRing.material.opacity = aliased ? 0.22 * shimmer : 0;
+            m.glow.scale.setScalar(Math.max(12 * K * 24, dBH * .006));
+            m.glow.material.opacity = .24 * (aliased ? shimmer : 1);
+            continue;
+        }
         let lum = 0;
         if (m.tde?.active) {
             const LnowW = refreshTdeLuminosity(m.tde);

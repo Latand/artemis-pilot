@@ -30,6 +30,7 @@ let washOscs = [];
 let lastCellX = NaN, lastCellY = NaN, lastCellZ = NaN;
 let duckUntil = -Infinity;
 let nodeCount = 0;
+const placedPulsarObjects = []; // mutable {x,y,z,name} refs, world km - owner: blackholes.js
 
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 function distKm(a, wx, wy, wz) {
@@ -108,6 +109,26 @@ function schedulePulsar(slot, gain, now) {
         slot.scheduledIndex++;
         slot.nextClickTime += slot.period;
     }
+}
+
+export function registerPlacedPulsar(obj, period) {
+    if (!AC || pulsarSlots.length >= 6) return;
+    const slotGain = count(AC.createGain());
+    slotGain.gain.value = 0;
+    const clickGain = pulsarSlots[0]?.clickGain;
+    if (!clickGain) return;
+    connect(clickGain, slotGain); connect(slotGain, ambientMaster);
+    placedPulsarObjects.push(obj);
+    pulsarSlots.push({ object: obj, period, gain: slotGain, clickGain, nextClickTime: NaN, scheduledTimes: new Float64Array(32), scheduledIndex: 0 });
+}
+
+export function unregisterPlacedPulsar(obj) {
+    const oi = placedPulsarObjects.indexOf(obj);
+    if (oi >= 0) placedPulsarObjects.splice(oi, 1);
+    const si = pulsarSlots.findIndex(slot => slot.object === obj);
+    if (si < 0) return;
+    const slot = pulsarSlots.splice(si, 1)[0];
+    try { slot.gain.disconnect?.(); } catch (e) { }
 }
 
 export function initAmbient(ac) {
