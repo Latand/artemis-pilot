@@ -13,6 +13,8 @@ import { look } from "./cockpit.js";
 import { apTravelToFocus, apCircularize, apOff } from "./autopilot.js";
 import { toggleScenarioMenu } from "./scenarios.js";
 import { ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, proceduralFocusId } from "./universe/activeStars.js";
+import { getCachedFocusedSystem } from "./universe/activeStars.js";
+import { planetFocusIndex, planetFocusValue } from "./universe/planetarySystem.js";
 import { setConstellationsVisible } from "./realSky.js";
 import { requestPlanetTexture, requestRealSkyLoad } from "./bodies.js";
 
@@ -22,10 +24,13 @@ export function setFocus(f) {
     const bi = blackHoleFocusIndex(f);
     const si = starFocusIndex(f);
     const mi = moonFocusIndex(f);
+    const pi = planetFocusIndex(f);
+    const psys = getCachedFocusedSystem();
     const ps = activeStarForFocus(f);
     cam.dist = bi >= 0 && bi < BH.n ? Math.max(80, BH.rs[bi] * K * 12) :
         si >= 0 && si < STARS.length ? Math.max(STARS[si].R * K * (STARS[si].bh ? 30 : 12), 1) :
         mi >= 0 ? Math.max(MOONS[mi].R * K * 7, .25) :
+        pi >= 0 && psys?.planets?.[pi] ? Math.max(psys.planets[pi].radiusKm * K * 9, .25) :
         ps ? Math.max(ps.R * K * 12, 1) :
         typeof f === "number" ? Math.max(PL[f].R * K * 7, 2) :
         f === "earth" ? 34 : f === "moon" ? 10 : f === "sun" ? 2600 : 2.6;
@@ -93,8 +98,14 @@ function onKeyDown(e) {
             break;
         case "KeyF":
             if (e.shiftKey) { // cycle the planets
-                const cur = typeof G.focus === "number" ? G.focus : -1;
-                setFocus((cur + 1) % PL.length);
+                const sys = getCachedFocusedSystem();
+                if (sys?.planets?.length) {
+                    const cur = planetFocusIndex(G.focus);
+                    setFocus(planetFocusValue((cur + 1) % sys.planets.length));
+                } else {
+                    const cur = typeof G.focus === "number" ? G.focus : -1;
+                    setFocus((cur + 1) % PL.length);
+                }
             } else {
                 setFocus(G.focus === "ship" ? "moon" : G.focus === "moon" ? "earth" : G.focus === "earth" ? "sun" : "ship");
             }

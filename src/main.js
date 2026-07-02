@@ -44,7 +44,7 @@ import { award, toast, renderObjectives } from "./achievements.js";
 import {
     showBanner, hideBanner, updateHUD, updateEscapeTracker, hideHelp,
     fFlow, fDark, fHalo, lblE, lblM, lblO, lblS,
-    setText as setHudText,
+    setText as setHudText, systemSummary,
 } from "./hud.js";
 import { initInput, setFocus, blackHoleFocusIndex, starFocusIndex } from "./input.js";
 import { initNavigator, openNavigator } from "./navigator.js";
@@ -54,8 +54,10 @@ import { initHints, hintTick } from "./hints.js";
 import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
 import {
     ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId,
-    refreshActiveStars,
+    refreshActiveStars, getFocusedSystem,
 } from "./universe/activeStars.js";
+import { initSystemRender, updateSystemRender, planetScenePosition } from "./render/systemBodies.js";
+import { planetFocusIndex } from "./universe/planetarySystem.js";
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
@@ -306,6 +308,7 @@ const maps = await loadAllMaps();
 perfEnd("startup.loadMaps", mapsT0);
 const bodiesT0 = perfStart();
 buildBodies(maps);
+initSystemRender(scene);
 // WP17 multi-frustum tiering (scene.js): sky dome / star sprites / galaxy
 // backdrop are camera-attached, but their shell radii (sky ~4.0e6, skyStars
 // ~5.9e6, galaxyBackdrop ~3.3e6 units) sit well inside TIER_SPLIT_UNITS
@@ -875,6 +878,7 @@ function checkBodyContacts() {
 // ---- hover: body velocity readout + direction arrow ----
 const hoverTipEl = document.getElementById("hoverTip");
 const flModeEl = document.getElementById("flMode");
+const fSystem = document.getElementById("fSystem");
 const navReadEl = document.getElementById("navRead");
 initAttitude(document.getElementById("attCanvas"));
 const cabinHudEl = document.getElementById("cabinHud");
@@ -1019,6 +1023,7 @@ function updateHover(w, h) {
 function focusTargetValue() {
     const bi = blackHoleFocusIndex(G.focus);
     if (bi >= 0 && bi < BH.n) return G.focus;
+    if (planetFocusIndex(G.focus) >= 0) return G.focus;
     const si = starFocusIndex(G.focus);
     if (si >= 0 && si < STARS.length) return G.focus;
     if (activeStarForFocus(G.focus)) return G.focus;
@@ -1551,11 +1556,17 @@ function frame() {
     const activeStarFocus = focusStar >= 0 && focusStar < STARS.length;
     const activeMoonFocus = focusMoon >= 0;
     const activeDynamicFocus = activeStarForFocus(G.focus);
+    const systemHost = activeDynamicFocus || (activeStarFocus ? STARS[focusStar] : nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star);
+    const focusedSystem = systemHost ? getFocusedSystem(systemHost, G.t) : null;
+    const activePlanetFocus = planetFocusIndex(G.focus);
+    updateSystemRender(focusedSystem, G.t, camera);
     {
         const cp = Math.cos(G.pitch || 0);
         dirV.set(cp * Math.cos(G.heading), Math.sin(G.pitch || 0), -cp * Math.sin(G.heading));
     }
-    const tgt = activeBHFocus ? bhScenePos(focusBH) : activeStarFocus ? starScenePos(focusStar) :
+    const tgt = activeBHFocus ? bhScenePos(focusBH) :
+        activePlanetFocus >= 0 ? (planetScenePosition(focusedSystem, activePlanetFocus, G.t, _focusPos) || shipG.position) :
+        activeStarFocus ? starScenePos(focusStar) :
         activeMoonFocus ? moonGroups[focusMoon].position :
         activeDynamicFocus ? activeStarScenePos(activeDynamicFocus) :
         G.focus === "free" ? cam.tgt : typeof G.focus === "number" ? plGroups[G.focus].position :
@@ -1572,6 +1583,7 @@ function frame() {
         camPrevFocus = G.focus;
     } else camPrevFocus = null;
     const minD = activeBHFocus ? Math.max(.05, BH.rs[focusBH] * K * 1.3) :
+        activePlanetFocus >= 0 && focusedSystem?.planets?.[activePlanetFocus] ? focusedSystem.planets[activePlanetFocus].radiusKm * K * 1.8 :
         activeStarFocus ? STARS[focusStar].R * K * 1.8 :
         activeMoonFocus ? Math.max(.05, MOONS[focusMoon].R * K * 1.3) :
         activeDynamicFocus ? activeDynamicFocus.R * K * 1.8 :
@@ -1692,6 +1704,7 @@ function frame() {
             updateMobileControls(oi, cosmicSpeed, aMag);
             if (!renderQuality.mobile) {
                 updateHUD(oi, aMag, mainIn, cosmicSpeed, cosmicSpeed, 1);
+                if (fSystem) setHudText(fSystem, systemSummary(focusedSystem));
                 if (flModeEl) setHudText(flModeEl, "DETAIL");
                 if (fFlow) setHudText(fFlow, String(cosmicLod));
                 if (fDark) setHudText(fDark, G.darkEnergy ? expansionSpeedLabel(darkEnergySpeedKmS(Math.hypot(G.x, G.y, G.z))) : "OFF");
@@ -1929,6 +1942,7 @@ function frame() {
     if (hudDue) {
         if (!renderQuality.mobile) {
             updateHUD(oi, aMag, mainIn, sp, kVLoc, fRiver);
+            if (fSystem) setHudText(fSystem, systemSummary(focusedSystem));
             const va = Math.atan2(G.vy, G.vx);
             const moving = Math.hypot(G.vx, G.vy) > 1e-4;
             drawAttitude(G.heading, va, moving);

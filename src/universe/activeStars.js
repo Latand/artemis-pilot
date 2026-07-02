@@ -4,6 +4,8 @@ import { getSeed, localStarById, sampleLocalStarsNear, starPositionAt } from "./
 import {
     hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, hygStarById, sampleHygStarsNear,
 } from "./hygActiveCatalog.js";
+import { generateSystem, stableStarKey } from "./planetarySystem.js";
+import { tier1MassFor } from "./athygTier1.js";
 
 // --- Moving-star re-evaluation cadence (WP8) --------------------------------
 // Procedural stars carry epicyclic parameters (galaxy.js's starPositionAt);
@@ -70,6 +72,7 @@ const FAST_REFRESH = {
     wx: Infinity, wy: Infinity, wz: Infinity, focus: undefined,
     pins: -1, seed: undefined, hLoaded: false, hReady: false, hVersion: -1, hCount: -1, simTBucket: undefined,
 };
+let _focusSystem = { starId: "", system: null };
 
 function sameFastRefresh(wx, wy, wz, focus, hStats, simT) {
     if (ACTIVE_STARS.length === 0 || GRAVITY_STARS.length === 0) return false;
@@ -340,6 +343,46 @@ export function activeStarForFocus(focus) {
         if (primary) return companionActiveStar(primary);
     }
     return null;
+}
+
+export function getFocusedSystem(star, simT = 0) {
+    if (!star) return null;
+    const id = stableStarKey(star);
+    if (_focusSystem.starId !== id) {
+        const system = generateSystem(star);
+        system.hostStar = star;
+        _focusSystem = { starId: id, system };
+    } else if (_focusSystem.system) _focusSystem.system.hostStar = star;
+    return _focusSystem.system;
+}
+
+export function getCachedFocusedSystem() {
+    return _focusSystem.system;
+}
+
+export function promoteTier1Star(tileId, idx) {
+    const info = tier1MassFor(tileId, idx);
+    if (!info?.position) return null;
+    const star = {
+        id: "t1:" + tileId + ":" + idx,
+        name: "AT-HYG " + tileId + ":" + idx,
+        catalog: "athyg-tier1",
+        tier1: { tileId, idx },
+        x: info.position.x, y: info.position.y, z: info.position.z,
+        dLy: Math.hypot(info.position.x, info.position.y, info.position.z) / LY_KM,
+        mass: info.mass,
+        mu: MU_S * info.mass,
+        R: info.R * R_SUN,
+        radiusSolar: info.R,
+        lumSolar: info.L,
+        tempK: info.Teff,
+        color: 0xfff4dc,
+        kind: "MS",
+        flowC: .001 * Math.sqrt(2 * MU_S * info.mass / 1000),
+        flowSink: info.R * R_SUN * K,
+    };
+    pushActive(star, star.id, "catalog");
+    return star;
 }
 
 function cacheKey(gx, gy, gz, simT = 0) {

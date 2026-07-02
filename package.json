@@ -17,6 +17,7 @@
     "smoke:special-objects": "node scripts/smoke-special-objects.mjs",
     "smoke:tier1-runtime": "node scripts/smoke-tier1-runtime.mjs",
     "smoke:tier1-queryable": "node scripts/smoke-tier1-queryable.mjs",
+    "smoke:planetary-systems": "node scripts/smoke-planetary-systems.mjs",
     "smoke:local-tier": "node scripts/smoke-local-tier.mjs",
     "smoke:epoch": "node scripts/smoke-epoch.mjs",
     "smoke:physics3d": "node scripts/smoke-physics3d.mjs",

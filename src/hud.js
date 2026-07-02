@@ -222,3 +222,11 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     }
     setStyle(flowPanelEl, "display", fB > .25 ? "block" : "none");
 }
+
+export function systemSummary(system) {
+    if (!system) return "";
+    if (!system.planets?.length) return "SYSTEM · no detected planets";
+    const hz = system.hzInnerAU.toFixed(2) + "-" + system.hzOuterAU.toFixed(2) + " AU";
+    const types = system.planets.map((p, i) => "P" + (i + 1) + " " + p.type + " " + p.a.toFixed(p.a < 1 ? 2 : 1) + " AU" + (p.inHZ ? " HZ" : ""));
+    return "SYSTEM · " + system.planets.length + " planets · HZ " + hz + " · " + types.join(" · ");
+}

@@ -180,3 +180,63 @@ export function completeness(cls, dPc) {
         default: return 0;
     }
 }
+
+// --- Planet occurrence model (Phase 2 destinations WP-D2) ------------------
+// Occurrence/multiplicity: Dressing & Charbonneau 2015; Hardegree-Ullman+2019;
+// Zhu & Dong 2021; Kunimoto & Matthews 2020. Architectures: Weiss+2018,
+// Millholland+2017, Fabrycky+2014. Giant rates: Wright+2012, Johnson+2010,
+// Fischer & Valenti 2005. HZ: Kopparapu+2013. Mass-radius: Chen & Kipping 2017.
+export const PLANET_OCCURRENCE = {
+    lambdaM: 2.5,
+    lambdaFGK: 1.6,
+    lambdaAB: 0.8,
+    hotJupiterFGK: 0.01,
+    hotJupiterM: 0.005,
+    giantBase: 0.07,
+    giantFehPower: 1.2,
+    giantMax: 0.4,
+    wdSystemFrac: 0.15,
+    hzInnerFlux: 1.10,
+    hzOuterFlux: 0.35,
+};
+
+export const FORECASTER = {
+    terranBreakMe: 2.04,
+    terranBreakRe: 1.23,
+    terranK: 1.008,
+    terranExp: 0.279,
+    neptunianExp: 0.589,
+    jovianExp: -0.044,
+    neptunianK: 1.23 / Math.pow(2.04, 0.589),
+};
+
+export const PLANET_TYPE_COLOR = {
+    rocky: 0x8a8478,
+    ocean: 0x3d6fa0,
+    desert: 0xc7a76a,
+    ice: 0xdfe9f0,
+    "sub-neptune": 0x9fc0d8,
+    gas: 0xc9a47a,
+    "hot-jupiter": 0xd88a5a,
+};
+
+export function occurrenceLambda(massSolar) {
+    if (massSolar < 0.6) return PLANET_OCCURRENCE.lambdaM;
+    if (massSolar < 1.4) return PLANET_OCCURRENCE.lambdaFGK;
+    return PLANET_OCCURRENCE.lambdaAB;
+}
+
+export function hzEdgesAU(lumSolar) {
+    const L = Math.max(0, lumSolar || 0);
+    return {
+        inner: Math.sqrt(L / PLANET_OCCURRENCE.hzInnerFlux),
+        outer: Math.sqrt(L / PLANET_OCCURRENCE.hzOuterFlux),
+    };
+}
+
+export function massMeFromRadiusRe(radiusRe) {
+    if (radiusRe < FORECASTER.terranBreakRe) {
+        return Math.pow(radiusRe / FORECASTER.terranK, 1 / FORECASTER.terranExp);
+    }
+    return Math.pow(radiusRe / FORECASTER.neptunianK, 1 / FORECASTER.neptunianExp);
+}

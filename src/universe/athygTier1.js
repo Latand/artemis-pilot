@@ -397,7 +397,7 @@ export function tier1MassFor(tileId, idx) {
     const mass = ekerMassForL(observedL);
     const visual = deriveStarVisualInto(mass, {});
     const full = deriveStar(mass);
-    return { mass, L: visual.L, R: full.R, Teff: full.Teff, absMag, distPc };
+    return { mass, L: visual.L, R: full.R, Teff: full.Teff, absMag, distPc, position: { x: x * PC_KM, y: y * PC_KM, z: z * PC_KM } };
 }
 
 export async function ensureTier1Tile(tileId) {
