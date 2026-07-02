@@ -969,8 +969,17 @@ function updateLocalGalaxyMotion() {
         if (g.id === "m31") {
             ensureMergerAxes(g.base);
             const { mwOffset, m31Pos } = mergerScenePositions();
-            g.group.position.copy(m31Pos);
-            galaxyRoot.position.set(mwOffset.x - GC_SCENE[0], mwOffset.y - GC_SCENE[1], mwOffset.z - GC_SCENE[2]);
+            // Draw the pair in the Milky-Way-fixed frame. The Sun
+            // (camera/origin) rides inside the MW, so its own disk has to stay
+            // Sun-embedded. mwOffset is the MW's barycentric recoil, which grows
+            // past the disk radius as M31 falls in; applying it to galaxyRoot
+            // slid the whole disk off-origin into a detached arc. Keeping
+            // galaxyRoot at -GC_SCENE holds the disk on the Sun, while M31 keeps
+            // its correct closing geometry as the full relative separation
+            // (m31Pos - mwOffset). The merger still reads through M31's approach
+            // and the in-place disruption uniforms below.
+            g.group.position.copy(m31Pos).sub(mwOffset);
+            galaxyRoot.position.set(-GC_SCENE[0], -GC_SCENE[1], -GC_SCENE[2]);
             const disrupt = mergerDisruptFractionAt(t);
             setDisruptUniforms(g.mergeUniforms, disrupt, eraRed);
             setDisruptUniforms(mwDiskMergeUniforms, disrupt, eraRed);
