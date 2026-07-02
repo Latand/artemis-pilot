@@ -17,7 +17,7 @@ const _pv = { vx: 0, vy: 0 };
 const _pw = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 
 // target state in the ship's Earth-relative frame
-function targetState(t) {
+export function targetState(t) {
     if (t == null) return null;
     if (typeof t === "number") {
         if (!PL[t]) return null;

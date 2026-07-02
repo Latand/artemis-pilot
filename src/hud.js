@@ -1,4 +1,4 @@
-import { PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, warpLabel } from "./constants.js";
+import { PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, SEC_YEAR, warpLabel } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { fmtKm, fmtDist, fmtMET, fmtCivilDate, escapeKmS, accelMs2, fmtAccel } from "./format.js";
@@ -6,6 +6,7 @@ import { getEpochMs } from "./epoch.js";
 import { activeTde, bhHawkingLabel, bhMassLabel, pwAccelMs2 } from "./blackholes.js";
 import { clockRateAtShip, clockRateLabel } from "./relativity.js";
 import { darkEnergyAccelerationKmS2, darkMatterRelativeAccel } from "./cosmology.js";
+import { REL } from "./relTravel.js";
 
 const $ = id => document.getElementById(id);
 const bhFocusIndex = f => {
@@ -16,7 +17,7 @@ const bhFocusIndex = f => {
 export const metEl = $("met"), civilDateEl = $("civilDate"), warpEl = $("warpLine"), engineEl = $("engineLine"), throttleEl = $("throttleLine");
 export const fuelTxtEl = $("fuelTxt"), fuelFillEl = $("fuelFill");
 export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVel = $("cVel"), cApPe = $("cApPe"), cMoon = $("cMoon"), cSun = $("cSun"), cDv = $("cDv"), cGrav = $("cGrav");
-export const fFlow = $("fFlow"), fDark = $("fDark"), fHalo = $("fHalo"), fShip = $("fShip"), fClock = $("fClock"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
+export const fFlow = $("fFlow"), fDark = $("fDark"), fHalo = $("fHalo"), fShip = $("fShip"), fClock = $("fClock"), relLineEl = $("relLine"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
 export const flowPanelEl = $("flowPanel"), bannerEl = $("banner"), helpEl = $("help");
 export const lblE = $("lblE"), lblM = $("lblM"), lblO = $("lblO"), lblS = $("lblS");
 const bhLineEl = $("bhLine");
@@ -229,6 +230,16 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
         const clock = clockRateAtShip();
         setText(fShip, kVLoc.toFixed(2) + " km/s");
         setText(fClock, clockRateLabel(clock.rate));
+        if (REL.active) {
+            const shipYr = (G.tau - REL.startTauSec) / SEC_YEAR;
+            const earthYr = (G.t - REL.startCoordT) / SEC_YEAR;
+            const totYr = REL.plan.coordTotal / SEC_YEAR;
+            setText(relLineEl, "REL " + REL.phase.toUpperCase() +
+                " · β " + REL.beta.toFixed(4) + " · γ " + REL.gamma.toFixed(2) +
+                " · ship " + shipYr.toFixed(2) + " yr / Earth " + earthYr.toFixed(2) +
+                " yr of " + totYr.toFixed(2) + " yr");
+            setStyle(relLineEl, "display", "inline");
+        } else setStyle(relLineEl, "display", "none");
         setText(fEsc, escapeKmS(MU_E, Math.max(R_EARTH, oi.rE)).toFixed(2) + " km/s");
         setText(fEscM, escapeKmS(MU_M, Math.max(R_MOON, oi.rM)).toFixed(2) + " km/s");
         if (fHalo) setText(fHalo, G.darkMatter ? fmtAccel(aDM * 1000) : "OFF");

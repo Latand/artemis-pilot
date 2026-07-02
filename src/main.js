@@ -24,6 +24,7 @@ import { addStarVisual, buildStars, updateStars } from "./stars.js";
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff } from "./autopilot.js";
+import { REL, relTravelStep, relCancel } from "./relTravel.js";
 import {
     shipG, craft, dot, flame, plasma, updateHeadingArrow,
     EXN, exPos, exVel, exLife, exMax, exCol, exPosAttr, exColAttr, exMat, exhaust, spawnExhaust,
@@ -1349,6 +1350,7 @@ function frame() {
     G.boost = keys.has("ShiftLeft") || keys.has("ShiftRight") || vrIn.boost;
     // the pilot always outranks the flight computer
     if ((rotIn || mainIn || latIn) && AP.mode !== "off") apOff("pilot override", toast);
+    if ((rotIn || mainIn || latIn) && REL.active) relCancel("pilot override", toast);
     let atx = 0, aty = 0, atz = 0, aMag = 0;
     const canThrust = !G.dead && !G.paused && (G.infinite || G.fuel > 0);
     if (canThrust && AP.mode !== "off" && !mainIn && !latIn) {
@@ -1386,7 +1388,11 @@ function frame() {
     const physicsT0 = perfStart();
     let advanced = 0, activeStarsFresh = false;
     if (!G.paused) {
-        if (G.dead) {
+        if (REL.active) {
+            advanced = dtR * G.warp;
+            relTravelStep(advanced);
+            activeStarsFresh = false;
+        } else if (G.dead) {
             advanced = dtR * G.warp;
             advanceEphem(advanced);
             bhAdvance(advanced, G.t);

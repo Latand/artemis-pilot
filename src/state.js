@@ -2,7 +2,7 @@ import { R_EARTH, MU_E, FUEL_DV0, BH_MAX, C_LIGHT, K, PL } from "./constants.js"
 
 // ---- game state ----
 export const G = {
-    t: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
+    t: 0, tau: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
     heading: 0, pitch: 0, throttle: 1,
     warp: 60, paused: false,
     fuel: FUEL_DV0, infinite: true, dvUsed: 0,
@@ -99,7 +99,7 @@ export function resetShip() {
     resetWorld();
     const r0 = R_EARTH + 300, th0 = -0.6;
     const v0 = Math.sqrt(MU_E / r0);
-    G.t = 0;
+    G.t = 0; G.tau = 0;
     G.x = r0 * Math.cos(th0); G.y = r0 * Math.sin(th0); G.z = 0;
     G.vx = -v0 * Math.sin(th0); G.vy = v0 * Math.cos(th0); G.vz = 0;
     G.heading = Math.atan2(G.vy, G.vx);

@@ -11,6 +11,7 @@ import { help, hideHelp, toggleHelp } from "./hud.js";
 import { cycleCosmicScale } from "./cosmic.js";
 import { look } from "./cockpit.js";
 import { apTravelToFocus, apCircularize, apOff } from "./autopilot.js";
+import { relTravelToFocus } from "./relTravel.js";
 import { toggleScenarioMenu } from "./scenarios.js";
 import { ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, proceduralFocusId } from "./universe/activeStars.js";
 import { getCachedFocusedSystem } from "./universe/activeStars.js";
@@ -136,9 +137,12 @@ function onKeyDown(e) {
             else cycleCosmicScale();
             break;
         case "KeyJ":
-            G.cabin = !G.cabin;
-            look.yaw = 0; look.pitch = 0;
-            if (G.cabin) { G.focus = "ship"; toast("Cabin view · drag to look around"); } else toast("External view");
+            if (e.shiftKey) { relTravelToFocus(toast); }
+            else {
+                G.cabin = !G.cabin;
+                look.yaw = 0; look.pitch = 0;
+                if (G.cabin) { G.focus = "ship"; toast("Cabin view · drag to look around"); } else toast("External view");
+            }
             break;
         case "KeyI": G.infinite = !G.infinite; toast(G.infinite ? "Infinite propellant ON" : "Infinite propellant OFF"); break;
         case "KeyM": G.muted = !G.muted; if (thrustGain) thrustGain.gain.value = 0; break;
