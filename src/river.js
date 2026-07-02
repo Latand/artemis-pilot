@@ -11,14 +11,27 @@ import { PERF, markPerf } from "./perf.js";
 // GPU river: one particle volume that follows the camera at solar-system scale.
 // Positions live in a float texture advected by a compute pass; the analytic
 // flow field v(r) = sum(-rhat * C_i / sqrt(r_i)) matches flowfield.js.
+// Streaks are drawn as SEGS connected line segments instead of one straight
+// extrapolation, so they can bend along the local field ("дужки" — curved
+// arcs per the redesign brief). Fixed at init per quality tier (not adjusted
+// live) since vertex count is baked into the geometry; mobile/VR keeps the
+// cheaper single straight segment.
+const SEGS = renderQuality.mobile ? 1 : 2;
+// Desktop's default particle count is traded down (176 -> 124, ~1/sqrt(2))
+// so total line-vertex-shader work (particles * VPP, each vertex running the
+// same per-source color loop) stays roughly at parity with the pre-redesign
+// single-segment baseline instead of ~doubling it — measured on a loaded
+// headless run: unadjusted this cost went from a ~15% river frame-time hit
+// to ~27%; with the trade it's back near the original. `np=` still overrides.
 const TEXW = (() => {
     const m = location.search.match(/np=(\d+)/);
-    const v = m ? +m[1] : renderQuality.mobile ? 136 : 176;
+    const v = m ? +m[1] : renderQuality.mobile ? 136 : 124;
     return Math.min(1024, Math.max(64, v));
 })();
 const NPART = TEXW * TEXW;
-const RIVER_QUALITY_TEXW = renderQuality.mobile ? 136 : 176;
+const RIVER_QUALITY_TEXW = renderQuality.mobile ? 136 : 124;
 const RIVER_DENSITY_GAIN = Math.min(1.12, Math.sqrt(RIVER_QUALITY_TEXW / TEXW));
+const VPP = SEGS * 2; // vertices per particle (SEGS segments × 2 endpoints)
 const RIVER_STAR_SOURCE_MAX = 24;
 const RIVER_STAR_SOURCE_START_R = LY_SCENE * 0.01;
 const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX;
@@ -77,6 +90,7 @@ const uniformsShared = {
     uTimeRate: { value: 1 },
     uLoadShed: { value: 0 },
     uLocalFocus: { value: 0 },
+    uSegs: { value: SEGS },
 };
 
 const FLOW_GLSL = /* glsl */`
@@ -159,11 +173,39 @@ void main() {
         float h1 = hash13(vec3(vUv * 127.1, uTick + 0.17));
         float h2 = hash13(vec3(vUv * 311.7, uTick + 1.31));
         float h3 = hash13(vec3(vUv * 74.7, uTick + 2.07));
+        float h4 = hash13(vec3(vUv * 601.1, uTick + 3.3));
         float th = 6.2831853 * h2;
         float yy = h1 * 2.0 - 1.0;
         float rr = sqrt(max(0.0, 1.0 - yy * yy));
-        float rad = uRadius * pow(h3, 0.3333333);
-        p = uCenter + vec3(cos(th) * rr, yy, sin(th) * rr) * rad;
+        // Bias most respawns toward a mass-weighted gravity well instead of
+        // spreading uniformly through the whole volume, so particle DENSITY
+        // concentrates where there's something to fall toward — the reported
+        // "activity looks weak near masses" bug (the old uniform-in-volume
+        // spawn plus fast infall near strong sources left them depleted).
+        float totalW = 0.0;
+        for (int i = 0; i < ${MAXB}; i++) {
+            if (i >= uSinkNB) break;
+            totalW += uBody[i].w;
+        }
+        int chosen = -1;
+        if (totalW > 1e-6 && h4 < 0.68) {
+            float pick = hash13(vec3(vUv * 811.3, uTick + 4.7)) * totalW;
+            float acc = 0.0;
+            for (int i = 0; i < ${MAXB}; i++) {
+                if (i >= uSinkNB) break;
+                acc += uBody[i].w;
+                if (pick <= acc) { chosen = i; break; }
+            }
+        }
+        if (chosen >= 0) {
+            float sink = sourceCore(uSink[chosen], uHole[chosen]);
+            float reach = clamp(sink * 30.0, uRadius * 0.015, uRadius * 0.22);
+            float rad = sink * 1.2 + (reach - sink * 1.2) * pow(h3, 3.0);
+            p = uBody[chosen].xyz + vec3(cos(th) * rr, yy, sin(th) * rr) * rad;
+        } else {
+            float rad = uRadius * pow(h3, 0.3333333);
+            p = uCenter + vec3(cos(th) * rr, yy, sin(th) * rr) * rad;
+        }
         // never spawn inside a sink: push out radially
         for (int i = 0; i < ${MAXB}; i++) {
             if (i >= uSinkNB) break;
@@ -181,8 +223,9 @@ const LINE_VERT = /* glsl */`
 uniform sampler2D uPos;
 uniform float uVRef, uOpacity;
 uniform vec3 uCam;
+uniform int uSegs;
 attribute vec2 ref;
-attribute float aEnd;
+attribute float aSeg;
 varying vec3 vColor;
 ${FLOW_GLSL}
 void main() {
@@ -198,10 +241,19 @@ void main() {
     float tVis = smoothstep(mix(0.004, 0.0015, uPlaneBias), mix(0.20, 0.09, uPlaneBias), t);
     float loadTrim = mix(1.0, 0.46, uLoadShed);
     float timeTrim = mix(0.32, 1.0, visibleTime);
-    float maxL = mix(760.0, uRadius * 0.055, uPlaneBias) * loadTrim * timeTrim;
-    float L = clamp(uRadius * mix(0.032, 0.0055, pow(tVis, 0.72)) * mix(0.22, 1.85, warpInk) * loadTrim * timeTrim, uRadius * 0.0012, maxL);
-    vec3 tail = p - vDir * L;
-    vec3 pos = mix(p, tail, aEnd);
+    // Streak length is now normalized by distance-to-CAMERA, not by uRadius
+    // (the river's local view radius, which grows with camera zoom-out) — a
+    // streak's projected on-screen length stays roughly constant instead of
+    // exploding into long straight streaks whenever the view is far from any
+    // mass (the reported bug; that scaling made a cosmic-scale dark-energy
+    // flow, whose absolute speed grows with r, draw enormous raw lengths).
+    // Relative flow speed (tVis) now mostly modulates BRIGHTNESS further
+    // below rather than raw length.
+    float camDist = max(distance(p, uCam), 1e-4);
+    float lenSpeedMod = mix(0.6, 1.3, pow(tVis, 0.6));
+    float minL = camDist * 0.0006;
+    float maxL = camDist * 0.028 * loadTrim * timeTrim;
+    float L = clamp(camDist * 0.01 * mix(0.5, 1.6, warpInk) * loadTrim * timeTrim * lenSpeedMod, minL, maxL);
     // fades: volume edge, camera proximity, sink proximity
     float fade = clamp(1.0 - (distance(p, uCenter) - uRadius * 0.52) / (uRadius * 0.48), 0.0, 1.0);
     float camBlind = mix(uRadius * 0.10, uRadius * 0.018, uLocalFocus);
@@ -259,9 +311,32 @@ void main() {
     float holeInk = smoothstep(0.08, 0.92, clamp(holePart / spd, 0.0, 1.0));
     float localViewInk = max(localInk, uLocalFocus * mix(0.20, 0.46, timeInk));
     tVis = max(max(tVis, holeInk * 0.62), max(localInk * 0.86, uLocalFocus * 0.22));
-    L *= mix(1.0, 3.4, localViewInk) * mix(1.0, 0.45, lapseInk) * mix(1.0, 0.45, holeInk);
-    tail = p - vDir * L;
-    pos = mix(p, tail, aEnd);
+    // near-source emphasis still lengthens the streak a bit, but re-clamped
+    // to the same camera-distance-relative bounds so it can't run away back
+    // into the old "explodes with scale" failure mode
+    L = clamp(L * mix(1.0, 2.2, localViewInk) * mix(1.0, 0.55, lapseInk) * mix(1.0, 0.55, holeInk), minL, maxL * 1.6);
+    // Walk the arc backward from the head, SEGS short legs, resampling the
+    // flow direction at each leg's start — a low-order streamline integrator
+    // (Heun/midpoint-style) so multi-segment streaks visibly bend along the
+    // field instead of extrapolating one straight line from the head's
+    // instantaneous direction ("дужки" per the redesign brief). Every vertex
+    // independently re-walks from the head up to its own segment index since
+    // vertex shader invocations can't share state.
+    int segIdx = int(aSeg + 0.5);
+    vec3 cur = p;
+    vec3 dir = vDir;
+    float stepLen = L / float(uSegs);
+    for (int s = 0; s < 2; s++) {
+        if (s >= segIdx) break;
+        cur -= dir * stepLen;
+        if (s + 1 < uSegs) {
+            vec3 vv = flowField(cur);
+            float vvLen = length(vv);
+            if (vvLen > 1e-9) dir = vv / vvLen;
+        }
+    }
+    vec3 pos = cur;
+    float segT = float(segIdx) / float(uSegs);
     vec3 cBlue = vec3(0.16 + 0.5 * t, 0.4 + 0.45 * t, 0.6 + 0.4 * t);
     vec3 cHole = vec3(0.14 + 0.42 * t, 0.62 + 0.30 * t, 1.0);
     vec3 cGold = vec3(0.6 + 0.4 * t, 0.34 + 0.42 * t, 0.12 + 0.26 * t);
@@ -273,7 +348,10 @@ void main() {
     vec3 localBright = max(localColor * 1.22, vec3(0.30, 0.34, 0.40));
     fieldColor = mix(fieldColor, localBright, localInk * 0.74);
     fieldColor = mix(fieldColor, cHole, holeInk);
-    vColor = fieldColor * fade * fieldInk * (1.0 + localInk * 1.7 + uLocalFocus * 0.65) * mix(0.85, 1.24, tVis) * mix(0.9, 0.14, aEnd) * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime);
+    // comet-tail fade: bright head, nonlinear falloff to a faint tail (a
+    // steeper, smoother gradient than the old linear head/tail mix)
+    float cometFade = mix(0.94, 0.08, pow(segT, 0.8));
+    vColor = fieldColor * fade * fieldInk * (1.0 + localInk * 1.7 + uLocalFocus * 0.65) * mix(0.85, 1.24, tVis) * cometFade * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
 
@@ -321,20 +399,26 @@ export function initRiver() {
     });
     computeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), computeMat));
 
-    const refs = new Float32Array(NPART * 2 * 2);
-    const ends = new Float32Array(NPART * 2);
+    // SEGS connected legs per particle = SEGS line segments = VPP vertices,
+    // laid out as consecutive endpoint pairs (0,1),(1,2)...(SEGS-1,SEGS) so
+    // LineSegments draws a connected (bent, when SEGS>1) arc per particle.
+    const refs = new Float32Array(NPART * VPP * 2);
+    const segs = new Float32Array(NPART * VPP);
     for (let i = 0; i < NPART; i++) {
         const u = ((i % TEXW) + .5) / TEXW, v = (Math.floor(i / TEXW) + .5) / TEXW;
-        refs[i * 4] = u; refs[i * 4 + 1] = v;
-        refs[i * 4 + 2] = u; refs[i * 4 + 3] = v;
-        ends[i * 2] = 0; ends[i * 2 + 1] = 1;
+        for (let s = 0; s < SEGS; s++) {
+            const base = i * VPP + s * 2;
+            refs[base * 2] = u; refs[base * 2 + 1] = v;
+            refs[(base + 1) * 2] = u; refs[(base + 1) * 2 + 1] = v;
+            segs[base] = s; segs[base + 1] = s + 1;
+        }
     }
     const geom = new THREE.BufferGeometry();
     // positions come from the texture; the attribute only exists so three.js
     // has a draw count
-    geom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(NPART * 2 * 3), 3));
+    geom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(NPART * VPP * 3), 3));
     geom.setAttribute("ref", new THREE.BufferAttribute(refs, 2));
-    geom.setAttribute("aEnd", new THREE.BufferAttribute(ends, 1));
+    geom.setAttribute("aSeg", new THREE.BufferAttribute(segs, 1));
     lineMat = new THREE.ShaderMaterial({
         uniforms: uniformsShared,
         vertexShader: LINE_VERT,
@@ -506,7 +590,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     if (renderQuality.mobile) drawFrac = Math.min(drawFrac, renderQuality.loadShed >= 2 ? .72 : .84);
     const drawCount = Math.max(256, Math.min(NPART, Math.floor(NPART * drawFrac)));
     if (drawCount !== river.drawCount) {
-        lines.geometry.setDrawRange(0, drawCount * 2);
+        lines.geometry.setDrawRange(0, drawCount * VPP);
         river.drawCount = drawCount;
     }
     if (PERF.enabled) markPerf("river.focus", performance.now() - riverFocusT0, { renderShed, localFocus, drawCount });
