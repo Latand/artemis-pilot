@@ -7,7 +7,7 @@ import { scene, renderer, camera, cam, renderQuality } from "./scene.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
-import { pulsePhaseRate } from "./riverMath.js";
+import { pulsePhaseRate, shellStep, shellOuterRadius, RIVER_VIS } from "./riverMath.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
 // Positions live in a float texture advected by a compute pass; the analytic
@@ -531,6 +531,11 @@ export function riverDebugReadPositions(rows = 4) {
 }
 
 let lastR = 0, lastCx = 0, lastCz = 0;
+const shellAnchorPos = new THREE.Vector3();
+const shellAnchorColor = new THREE.Color();
+let shellAnchorC = 0, shellAnchorSink = 1, shellAnchorROut = 170;
+let shellAnchorIdx = -1, shellAnchorLive = false, shellAnchorSwitched = false;
+const shellRnd = mulberry32(20260702);
 const smoothCenter = new THREE.Vector3();
 // Absolute (scene-space, float64-as-JS-number) center from the previous
 // frame, used only to compute uCenterShift — never uploaded to the GPU
@@ -625,6 +630,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     river.dtVis = dtSim;
     if (!river.enabled) return;
     river.frame++;
+    shellAnchorLive = false;
     const riverFocusT0 = PERF.enabled ? performance.now() : 0;
     // Fade the river out as the camera zooms past the local system into
     // interstellar/cosmic scale. Out there every body's inflow collapses onto a
@@ -845,6 +851,32 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     river.starSources = flowCtx.starCount;
     river.starRefreshed = starUniformDirty;
     river.sinkSources = nb;
+    // Universal shell anchor: the source whose river dominates at the volume
+    // center (bodyVals are center-relative, and the center tracks cam.tgt).
+    // One dominance rule for Moon/Earth/planets/Sun/holes/stars — the shells
+    // are the law v = √(2μ/r) made visible around whatever wins locally.
+    let shellBest = -1, shellBestScore = 0;
+    for (let i = 0; i < nb; i++) {
+        const w = bodyVals[i].w;
+        if (w <= 0) continue;
+        const d2 = Math.max(sinkVals[i] * sinkVals[i], bodyVals[i].x * bodyVals[i].x + bodyVals[i].y * bodyVals[i].y + bodyVals[i].z * bodyVals[i].z);
+        const score = w * w / d2;
+        if (score > shellBestScore) { shellBestScore = score; shellBest = i; }
+    }
+    if (shellBest >= 0) {
+        const wx = bodyVals[shellBest].x + smoothCenter.x;
+        const wy = bodyVals[shellBest].y + smoothCenter.y;
+        const wz = bodyVals[shellBest].z + smoothCenter.z;
+        const moved = Math.abs(wx - shellAnchorPos.x) + Math.abs(wy - shellAnchorPos.y) + Math.abs(wz - shellAnchorPos.z);
+        shellAnchorSwitched = shellBest !== shellAnchorIdx || moved > shellAnchorROut * 4;
+        shellAnchorPos.set(wx, wy, wz);
+        shellAnchorC = bodyVals[shellBest].w;
+        shellAnchorSink = sinkVals[shellBest];
+        shellAnchorROut = shellOuterRadius(sinkVals[shellBest], soiVals[shellBest], smoothR);
+        shellAnchorColor.setRGB(colorVals[shellBest].x, colorVals[shellBest].y, colorVals[shellBest].z);
+        shellAnchorIdx = shellBest;
+        shellAnchorLive = true;
+    }
     const vRefCadence = renderQuality.mobile ? 4 : G.warp > 600 ? 3 : 1;
     const vRefMove = Math.max(
         Math.abs(smoothCenter.x - riverVRefCx),
@@ -938,28 +970,32 @@ function makeShellSet(n, rOut, color) {
     return set;
 }
 const shellsE = makeShellSet(4, 170, 0x5fb0e8);
-let shellAnchor = "earth";
+let shellAnchorWas = false;
 export function updateShells(dtSim, fB) {
-    const anchor = camera.position.length() < 2600 && cam.dist < 1800 ? "earth" : "none";
-    if (anchor !== shellAnchor) {
-        shellAnchor = anchor;
-        for (const sh of shellsE) sh.r = sh.rOut * (.3 + .7 * Math.random());
+    // Universal contracting shells: the SAME law the streaks show, made
+    // legible as whole fronts — space contracting at v = √(2μ/r) toward the
+    // locally dominant source (anchor chosen in updateRiver). Replaces the
+    // old Earth-only shells; deterministic through mulberry32.
+    const show = fB > .01 && shellAnchorLive && cam.dist < shellAnchorROut * RIVER_VIS.SHELL_VIS_CAMDIST;
+    if (show && (shellAnchorSwitched || !shellAnchorWas)) {
+        for (const sh of shellsE) sh.r = shellAnchorROut * (.3 + .7 * shellRnd());
     }
-    if (fB > .01 && anchor !== "none") {
-        const shC = FLOW.CE;
-        const shSink = R_EARTH * K + .6;
-        for (const sh of shellsE) {
-            const rOutEff = sh.rOut;
-            sh.r -= (shC / Math.sqrt(Math.max(1, sh.r))) * dtSim;
-            if (sh.r < shSink || sh.r > rOutEff * 1.2) sh.r = rOutEff * (0.86 + 0.26 * Math.random());
-            sh.obj.position.set(0, 0, 0);
-            sh.obj.scale.setScalar(sh.r);
-            sh.obj.material.size = .95;
-            sh.obj.visible = true;
-            const oo = fB * .42 * Math.min(1, (rOutEff - sh.r) / (rOutEff * .082)) * Math.min(1, (sh.r - shSink) / (rOutEff * .041));
-            sh.obj.material.opacity = Math.max(0, oo);
-        }
-    } else {
+    shellAnchorWas = show;
+    if (!show) {
         for (const sh of shellsE) sh.obj.visible = false;
+        return;
+    }
+    const rOut = shellAnchorROut;
+    const sink = Math.max(shellAnchorSink, 1e-6);
+    for (const sh of shellsE) {
+        sh.r = shellStep(sh.r, shellAnchorC, sink, dtSim);
+        if (sh.r < sink || sh.r > rOut * 1.2) sh.r = rOut * (0.86 + 0.26 * shellRnd());
+        sh.obj.position.copy(shellAnchorPos);
+        sh.obj.scale.setScalar(sh.r);
+        sh.obj.material.size = Math.max(.95, rOut * 0.012);
+        sh.obj.material.color.copy(shellAnchorColor);
+        sh.obj.visible = true;
+        const oo = fB * .42 * Math.min(1, (rOut - sh.r) / (rOut * .082)) * Math.min(1, (sh.r - sink) / (rOut * .041));
+        sh.obj.material.opacity = Math.max(0, oo);
     }
 }
