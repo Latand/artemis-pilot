@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, SUN_RADIUS } from "./constants.js";
+import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, SOI_E, SOI_M, SUN_RADIUS } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { dotTexture } from "./textures.js";
@@ -72,7 +72,7 @@ export const river = {
 if (typeof window !== "undefined") window.__river = river;
 
 let rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines;
-const bodyVals = [], sinkVals = new Array(MAXB).fill(0), rsVals = new Array(MAXB).fill(0), holeVals = new Array(MAXB).fill(0);
+const bodyVals = [], sinkVals = new Array(MAXB).fill(0), rsVals = new Array(MAXB).fill(0), holeVals = new Array(MAXB).fill(0), soiVals = new Array(MAXB).fill(0);
 const colorVals = [];
 for (let i = 0; i < MAXB; i++) bodyVals.push(new THREE.Vector4());
 for (let i = 0; i < MAXB; i++) colorVals.push(new THREE.Vector3(0.32, 0.58, 0.9));
@@ -105,6 +105,7 @@ const uniformsShared = {
     uLocalFocus: { value: 0 },
     uSegs: { value: SEGS },
     uPhase: { value: 0 },
+    uSoi: { value: soiVals },
 };
 
 const FLOW_GLSL = /* glsl */`
@@ -122,6 +123,7 @@ uniform float uPlaneBias;
 uniform float uTimeRate;
 uniform float uLoadShed;
 uniform float uLocalFocus;
+uniform float uSoi[${MAXB}];
 float sourceCore(float sink, float isHole) {
     // Tiny holes get a display core so their local flow direction stays visible.
     float visualBH = min(max(uRadius * 0.0008, 0.45), 64.0);
@@ -204,10 +206,13 @@ void main() {
         // concentrates where there's something to fall toward — the reported
         // "activity looks weak near masses" bug (the old uniform-in-volume
         // spawn plus fast infall near strong sources left them depleted).
+        // sqrt-weighted pick: linear C let the Sun hog ~94% of biased spawns
+        // (starved halos, empty inter-orbit space); sqrt gives ~62/11/8% for
+        // Sun/Jupiter/Saturn (see riverMath pickWeight + the smoke's table).
         float totalW = 0.0;
         for (int i = 0; i < ${MAXB}; i++) {
             if (i >= uSinkNB) break;
-            totalW += uBody[i].w;
+            totalW += sqrt(max(uBody[i].w, 0.0));
         }
         int chosen = -1;
         if (totalW > 1e-6 && h4 < 0.68) {
@@ -215,14 +220,22 @@ void main() {
             float acc = 0.0;
             for (int i = 0; i < ${MAXB}; i++) {
                 if (i >= uSinkNB) break;
-                acc += uBody[i].w;
+                acc += sqrt(max(uBody[i].w, 0.0));
                 if (pick <= acc) { chosen = i; break; }
             }
         }
         if (chosen >= 0) {
             float sink = sourceCore(uSink[chosen], uHole[chosen]);
-            float reach = clamp(sink * 30.0, uRadius * 0.015, uRadius * 0.22);
-            float rad = sink * 1.2 + (reach - sink * 1.2) * pow(h3, 3.0);
+            // Universal halo rule (one formula, every source): fill at most
+            // 1.5x the source's sphere of influence where one is defined
+            // (uSoi > 0); where none is (Sun, stars, holes: uSoi = 0) the
+            // volume-fraction cap governs. min/max instead of clamp: the lo
+            // floor can exceed the SOI cap at survey zoom, and GLSL clamp is
+            // undefined for minVal > maxVal.
+            float lo = uRadius * 0.02;
+            float hi = uSoi[chosen] > 0.0 ? min(uSoi[chosen] * 1.5, uRadius * 0.22) : uRadius * 0.22;
+            float reach = min(max(sink * 30.0, lo), max(hi, sink * 2.0));
+            float rad = sink * 1.2 + max(reach - sink * 1.2, 0.0) * pow(h3, 1.6);
             p = uBody[chosen].xyz + vec3(cos(th) * rr, yy, sin(th) * rr) * rad;
         } else {
             float rad = uRadius * pow(h3, 0.3333333);
@@ -739,22 +752,26 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     sinkVals[0] = R_EARTH * K + .6;
     rsVals[0] = rsScene(MU_E);
     holeVals[0] = 0;
+    soiVals[0] = SOI_E * K;
     colorVals[0].set(0.22, 0.48, 1.0);
     bodyVals[1].set(moonV.x - smoothCenter.x, moonV.y - smoothCenter.y, moonV.z - smoothCenter.z, WORLD.moonDestroyed ? 0 : FLOW.CM);
     sinkVals[1] = R_MOON * K + .5;
     rsVals[1] = rsScene(MU_M);
     holeVals[1] = 0;
+    soiVals[1] = SOI_M * K;
     colorVals[1].set(0.72, 0.76, 0.82);
     bodyVals[2].set(sunPosV.x - smoothCenter.x, sunPosV.y - smoothCenter.y, sunPosV.z - smoothCenter.z, WORLD.sunDestroyed ? 0 : FLOW.CS);
     sinkVals[2] = SUN_RADIUS * 1.08;
     rsVals[2] = rsScene(MU_S);
     holeVals[2] = 0;
+    soiVals[2] = 0;
     colorVals[2].set(1.0, 0.55, 0.13);
     for (let i = 0; i < PL.length; i++) {
         bodyVals[3 + i].set(plPos[i].x - smoothCenter.x, plPos[i].y - smoothCenter.y, plPos[i].z - smoothCenter.z, WORLD.plDestroyed[i] ? 0 : .001 * Math.sqrt(2 * PL[i].mu / 1000));
         sinkVals[3 + i] = PL[i].R * K;
         rsVals[3 + i] = rsScene(PL[i].mu);
         holeVals[3 + i] = 0;
+        soiVals[3 + i] = PL[i].soi * K;
         colorVals[3 + i].set(plColors[i].r, plColors[i].g, plColors[i].b);
     }
     let nb = 3 + PL.length;
@@ -763,6 +780,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         sinkVals[nb] = BH.sinkS[i];
         rsVals[nb] = BH.rs[i] * K;
         holeVals[nb] = 1;
+        soiVals[nb] = 0;
         colorVals[nb].set(0.5, 0.72, 1.0);
     }
     const sinkSourceCount = nb;
@@ -788,6 +806,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
             sinkVals[slot] = sink;
             rsVals[slot] = (s.bh ? s.rs : 2 * s.mu / C2) * K;
             holeVals[slot] = s.bh ? 1 : 0;
+            soiVals[slot] = 0;
             colorTmp.setHex(s.color);
             colorVals[slot].set(colorTmp.r, colorTmp.g, colorTmp.b);
             flowCtx.starX[flowStarCount] = sx;
