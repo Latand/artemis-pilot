@@ -1,10 +1,12 @@
 import {
     AU_KM, SUN_TH0, E_EARTH, VARPI_EARTH, PL, A_MOON, E_MOON, OMEGA, MOON_ANG0,
     MU_E, MU_M, MU_S, C_LIGHT, BH_MAX, LY_KM, PC_KM, DARK_ENERGY, DARK_MATTER,
+    I_EARTH, OM_EARTH, I_MOON, OM_MOON0, OM_MOON_RATE, OM_YEAR,
 } from "./constants.js";
 import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
 import { GRAVITY_STARS } from "./universe/activeStars.js";
 import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
+import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -24,34 +26,48 @@ function isBodyActive(i) {
 function activeBodyMu(i) { return isBodyActive(i) ? bodyMu[i] : 0; }
 function activeEarthMu() { return WORLD.earthDestroyed ? 0 : MU_E; }
 
-const bodyX = new Float64Array(NB), bodyY = new Float64Array(NB);
-const bodyVx = new Float64Array(NB), bodyVy = new Float64Array(NB);
+const bodyX = new Float64Array(NB), bodyY = new Float64Array(NB), bodyZ = new Float64Array(NB);
+const bodyVx = new Float64Array(NB), bodyVy = new Float64Array(NB), bodyVz = new Float64Array(NB);
+// Earth's own WORLD z/vz are permanently pinned at exactly 0 (never assigned
+// a nonzero value anywhere in this file): Earth's initial osculating orbit is
+// i=Om=0 BY CONSTRUCTION (constants.js), and this file treats that plane as a
+// fixed reference frame for the whole run rather than letting Earth's own
+// absolute trajectory precess under mutual perturbations. The Sun/Moon/planet
+// arrays (Earth-RELATIVE) are not pinned — they carry real z/vz and evolve
+// under full 3-D gravity, so an inclined planet genuinely perturbs the Sun's
+// and Moon's Earth-relative z over time; only Earth's own world-frame z stays
+// exactly 0, which is what keeps that frame usable as z=0 by every consumer
+// that hasn't been updated yet (WP14 is the wave that teaches physics.js/etc.
+// to read eph.*Z; until then this invariant keeps everything downstream sane).
 let earthX = 0, earthY = 0, earthVx = 0, earthVy = 0;
+const earthZ = 0, earthVz = 0;
 
 // Live ephemeris cache (km, km/s). Earth has an inertial world-state; the
 // other arrays are Earth-local relative states used by precision dynamics.
 export const eph = {
-    earthX: 0, earthY: 0, earthVx: 0, earthVy: 0,
-    sunX: 0, sunY: 0, sunVx: 0, sunVy: 0,
-    moonX: 0, moonY: 0, moonVx: 0, moonVy: 0,
-    plX: new Float64Array(PL.length), plY: new Float64Array(PL.length),
-    plVx: new Float64Array(PL.length), plVy: new Float64Array(PL.length),
+    earthX: 0, earthY: 0, earthZ: 0, earthVx: 0, earthVy: 0, earthVz: 0,
+    sunX: 0, sunY: 0, sunZ: 0, sunVx: 0, sunVy: 0, sunVz: 0,
+    moonX: 0, moonY: 0, moonZ: 0, moonVx: 0, moonVy: 0, moonVz: 0,
+    plX: new Float64Array(PL.length), plY: new Float64Array(PL.length), plZ: new Float64Array(PL.length),
+    plVx: new Float64Array(PL.length), plVy: new Float64Array(PL.length), plVz: new Float64Array(PL.length),
 };
 window.__eph = eph;
 
 function syncFromState(st = null) {
-    const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
-    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
+    const X = st ? st.x : bodyX, Y = st ? st.y : bodyY, Z = st ? st.z : bodyZ;
+    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy, VZ = st ? st.vz : bodyVz;
     eph.earthX = st ? st.earthX : earthX; eph.earthY = st ? st.earthY : earthY;
+    eph.earthZ = st ? (Number.isFinite(st.earthZ) ? st.earthZ : 0) : earthZ;
     eph.earthVx = st ? st.earthVx : earthVx; eph.earthVy = st ? st.earthVy : earthVy;
-    eph.moonX = X[IDX_MOON]; eph.moonY = Y[IDX_MOON];
-    eph.moonVx = VX[IDX_MOON]; eph.moonVy = VY[IDX_MOON];
-    eph.sunX = X[IDX_SUN]; eph.sunY = Y[IDX_SUN];
-    eph.sunVx = VX[IDX_SUN]; eph.sunVy = VY[IDX_SUN];
+    eph.earthVz = st ? (Number.isFinite(st.earthVz) ? st.earthVz : 0) : earthVz;
+    eph.moonX = X[IDX_MOON]; eph.moonY = Y[IDX_MOON]; eph.moonZ = Z ? Z[IDX_MOON] : 0;
+    eph.moonVx = VX[IDX_MOON]; eph.moonVy = VY[IDX_MOON]; eph.moonVz = VZ ? VZ[IDX_MOON] : 0;
+    eph.sunX = X[IDX_SUN]; eph.sunY = Y[IDX_SUN]; eph.sunZ = Z ? Z[IDX_SUN] : 0;
+    eph.sunVx = VX[IDX_SUN]; eph.sunVy = VY[IDX_SUN]; eph.sunVz = VZ ? VZ[IDX_SUN] : 0;
     for (let i = 0; i < PL.length; i++) {
         const k = IDX_PLANETS + i;
-        eph.plX[i] = X[k]; eph.plY[i] = Y[k];
-        eph.plVx[i] = VX[k]; eph.plVy[i] = VY[k];
+        eph.plX[i] = X[k]; eph.plY[i] = Y[k]; eph.plZ[i] = Z ? Z[k] : 0;
+        eph.plVx[i] = VX[k]; eph.plVy[i] = VY[k]; eph.plVz[i] = VZ ? VZ[k] : 0;
     }
 }
 
@@ -59,7 +75,10 @@ function syncFromState(st = null) {
 // M = E − e·sinE by Newton, then converts: r = a(1 − e·cosE), true anomaly ν
 // from E, heliocentric angle θ = varpi + ν, and radial/tangential speeds
 // vr = √(μ/p)·e·sinν, vt = √(μ/p)·(1 + e·cosν) with p = a(1 − e²). Used only
-// to set initial conditions — everything then evolves under full n-body RK4.
+// to set initial conditions — everything then evolves under full n-body
+// integration. Kept exactly as the pre-WP13 planar path (byte-for-byte) so
+// keplerInit3 below can build its 3-D bit-parity guarantee on top of it
+// rather than duplicating the Kepler solve.
 export function keplerInit(a, e, varpi, M0, mu, out) {
     let E = M0;
     for (let i = 0; i < 8; i++)
@@ -75,46 +94,103 @@ export function keplerInit(a, e, varpi, M0, mu, out) {
     return out;
 }
 
-const _kp = { x: 0, y: 0, vx: 0, vy: 0 };
+// Three-D orbital elements → Cartesian state (km, km/s). Builds the planar
+// state in the "argument of periapsis" frame (x-axis toward the ascending
+// node) via the UNCHANGED keplerInit above with argp = varpi − Om, then
+// rotates: about x by inclination i, then about z by the node Om (the
+// standard 3-1-3 perifocal→ecliptic sequence, with the first z-rotation by
+// argp already folded into keplerInit's own varpi-angle rotation).
+// Bit-parity guarantee: when i = Om = 0, cos(i)=cos(Om)=1 and sin(i)=sin(Om)=0
+// EXACTLY (IEEE754), so y1=yo, z1=yo·0=0, and the z-rotation reduces to
+// x2=x1·1−y1·0=x1, y2=x1·0+y1·1=y1 — i.e. out.{x,y,z,vx,vy,vz} equal
+// keplerInit's {x,y,0,vx,vy,0} bit-for-bit, with argp having reduced to varpi
+// (varpi−0 is exact). This is asserted by smoke:physics3d.
+const _k3p = { x: 0, y: 0, vx: 0, vy: 0 };
+export function keplerInit3(a, e, i, Om, varpi, M0, mu, out) {
+    const argp = varpi - Om;
+    keplerInit(a, e, argp, M0, mu, _k3p);
+    const ci = Math.cos(i), si = Math.sin(i);
+    const cO = Math.cos(Om), sO = Math.sin(Om);
+    const y1 = _k3p.y * ci, z1 = _k3p.y * si;
+    const vy1 = _k3p.vy * ci, vz1 = _k3p.vy * si;
+    const x1 = _k3p.x, vx1 = _k3p.vx;
+    out.x = x1 * cO - y1 * sO;
+    out.y = x1 * sO + y1 * cO;
+    out.z = z1;
+    out.vx = vx1 * cO - vy1 * sO;
+    out.vy = vx1 * sO + vy1 * cO;
+    out.vz = vz1;
+    return out;
+}
+
+// WP21 hook: seconds from J2000 to "now" (or the restored save's epoch).
+// Never throws — a missing/broken epoch module must not break the universe,
+// it just starts at J2000 (offset 0) instead of today's real date.
+function safeEpochOffsetSeconds() {
+    try {
+        const v = epochOffsetSeconds();
+        return Number.isFinite(v) ? v : 0;
+    } catch { return 0; }
+}
+
+const SEC_PER_DAY = 86400;
+const _kp = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 export function resetEphem() {
     EPHT.t = 0;
-    // Moon from elements; MOON_ANG0 is its initial mean anomaly, varpi = 0
-    keplerInit(A_MOON, E_MOON, 0, MOON_ANG0, MU_E + MU_M, _kp);
-    bodyX[IDX_MOON] = _kp.x;
-    bodyY[IDX_MOON] = _kp.y;
-    bodyVx[IDX_MOON] = _kp.vx;
-    bodyVy[IDX_MOON] = _kp.vy;
+    const epochOffsetSec = safeEpochOffsetSeconds();
+
+    // Moon from elements; MOON_ANG0 is its J2000 initial mean anomaly (varpi
+    // = 0), advanced to the current epoch. The ascending node regresses
+    // (18.6-yr nodal precession): Om(t) = OM_MOON0 + rate·daysSinceJ2000.
+    const moonPeriod = 2 * Math.PI / OMEGA;
+    const moonM0 = MOON_ANG0 + meanAnomalyAdvance(epochOffsetSec, moonPeriod);
+    const moonOm = OM_MOON0 + OM_MOON_RATE * (epochOffsetSec / SEC_PER_DAY);
+    keplerInit3(A_MOON, E_MOON, I_MOON, moonOm, 0, moonM0, MU_E + MU_M, _kp);
+    bodyX[IDX_MOON] = _kp.x; bodyY[IDX_MOON] = _kp.y; bodyZ[IDX_MOON] = _kp.z;
+    bodyVx[IDX_MOON] = _kp.vx; bodyVy[IDX_MOON] = _kp.vy; bodyVz[IDX_MOON] = _kp.vz;
 
     // Earth's heliocentric state from elements, with the initial true anomaly
-    // chosen so the Earth→Sun direction stays exactly at SUN_TH0; the Sun's
-    // Earth-relative state is its negative (Earth world-state matches it).
+    // chosen so the Earth→Sun direction stays exactly at SUN_TH0 at J2000,
+    // then epoch-advanced like every other body; the Sun's Earth-relative
+    // state is its negative (Earth world-state matches it). Earth's elements
+    // are i=Om=0 by construction (constants.js), so keplerInit3 reduces
+    // exactly to the old planar keplerInit here (see the bit-parity note
+    // above) — this call only differs from the pre-WP13 code in M0.
     const nu0 = SUN_TH0 + Math.PI - VARPI_EARTH;
     const E0 = 2 * Math.atan2(Math.sqrt(1 - E_EARTH) * Math.sin(nu0 / 2), Math.sqrt(1 + E_EARTH) * Math.cos(nu0 / 2));
-    keplerInit(AU_KM, E_EARTH, VARPI_EARTH, E0 - E_EARTH * Math.sin(E0), MU_S + MU_E, _kp);
+    const earthPeriod = 2 * Math.PI / OM_YEAR;
+    const earthM0 = (E0 - E_EARTH * Math.sin(E0)) + meanAnomalyAdvance(epochOffsetSec, earthPeriod);
+    keplerInit3(AU_KM, E_EARTH, I_EARTH, OM_EARTH, VARPI_EARTH, earthM0, MU_S + MU_E, _kp);
     earthX = _kp.x;
     earthY = _kp.y;
     earthVx = _kp.vx;
     earthVy = _kp.vy;
     bodyX[IDX_SUN] = -_kp.x;
     bodyY[IDX_SUN] = -_kp.y;
+    bodyZ[IDX_SUN] = -_kp.z; // exactly 0: Earth's elements are planar by construction
     bodyVx[IDX_SUN] = -_kp.vx;
     bodyVy[IDX_SUN] = -_kp.vy;
-    const svx = bodyVx[IDX_SUN], svy = bodyVy[IDX_SUN];
+    bodyVz[IDX_SUN] = -_kp.vz;
+    const svx = bodyVx[IDX_SUN], svy = bodyVy[IDX_SUN], svz = bodyVz[IDX_SUN];
 
     // planets stored Earth-relative: Sun's Earth-relative state + heliocentric
-    // state from J2000 elements (p.phase is the initial mean anomaly)
+    // state from J2000 elements (p.phase is the J2000 mean anomaly, advanced
+    // to the current epoch so planets start where they really are today)
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];
         const k = IDX_PLANETS + i;
-        keplerInit(p.a, p.e, p.varpi, p.phase, MU_S, _kp);
+        const period = 2 * Math.PI / p.n;
+        const M0 = p.phase + meanAnomalyAdvance(epochOffsetSec, period);
+        keplerInit3(p.a, p.e, p.i, p.Om, p.varpi, M0, MU_S, _kp);
         bodyX[k] = bodyX[IDX_SUN] + _kp.x;
         bodyY[k] = bodyY[IDX_SUN] + _kp.y;
+        bodyZ[k] = bodyZ[IDX_SUN] + _kp.z;
         bodyVx[k] = svx + _kp.vx;
         bodyVy[k] = svy + _kp.vy;
+        bodyVz[k] = svz + _kp.vz;
     }
     syncFromState();
 }
-
 export function updEphem() { syncFromState(); }
 export const sunAng = () => Math.atan2(eph.sunY, eph.sunX);
 export const moonAng = () => Math.atan2(eph.moonY, eph.moonX);
@@ -139,18 +215,25 @@ export function moonState(_t, out) {
 function bodyIndexFromTarget(target) {
     return target === -2 ? IDX_MOON : target === -1 ? IDX_SUN : IDX_PLANETS + target;
 }
+// out.z/out.vz are new (WP13): existing callers reading only x/y/vx/vy are
+// unaffected; WP15 (trails/prediction) is the intended first z consumer.
 export function bodyStateForTarget(target, out, st = null) {
     if (target === -3) {
         out.x = st ? st.earthX : earthX; out.y = st ? st.earthY : earthY;
+        out.z = st ? (Number.isFinite(st.earthZ) ? st.earthZ : 0) : earthZ;
         out.vx = st ? st.earthVx : earthVx; out.vy = st ? st.earthVy : earthVy;
+        out.vz = st ? (Number.isFinite(st.earthVz) ? st.earthVz : 0) : earthVz;
         return out;
     }
     const k = bodyIndexFromTarget(target);
-    const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
-    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
+    const X = st ? st.x : bodyX, Y = st ? st.y : bodyY, Z = st ? st.z : bodyZ;
+    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy, VZ = st ? st.vz : bodyVz;
     const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
+    const ez = st ? (Number.isFinite(st.earthZ) ? st.earthZ : 0) : earthZ;
     const evx = st ? st.earthVx : earthVx, evy = st ? st.earthVy : earthVy;
-    out.x = ex + X[k]; out.y = ey + Y[k]; out.vx = evx + VX[k]; out.vy = evy + VY[k];
+    const evz = st ? (Number.isFinite(st.earthVz) ? st.earthVz : 0) : earthVz;
+    out.x = ex + X[k]; out.y = ey + Y[k]; out.z = ez + (Z ? Z[k] : 0);
+    out.vx = evx + VX[k]; out.vy = evy + VY[k]; out.vz = evz + (VZ ? VZ[k] : 0);
     return out;
 }
 
@@ -158,7 +241,7 @@ export function bodyStateForTarget(target, out, st = null) {
 // days, but BH.x/BH.y only hold the holes' live positions. While a prediction
 // is active, gravity places hole i at snapX + snapVx·(tEval − t0) — a linear
 // coast from a snapshot taken at prediction start. Covers both the snapshot
-// path (advanceEphemSnapshot → derivAll) and the ship path (rk4Step calls
+// path (advanceEphemSnapshot → leapfrogBodies) and the ship path (rk4Step calls
 // relGravityAt with st = null while the live arrays hold the prediction
 // state). Live integration never sets the flag, so that path is untouched.
 const PRED_BH = {
@@ -207,19 +290,20 @@ const _dm = [0, 0, 0];
 export function indirectAccel(st, out, tau = 0) {
     // with Earth gone the origin coasts inertially: no frame correction at all
     if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; if (out.length > 2) out[2] = 0; return out; }
-    const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
-    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
+    const X = st ? st.x : bodyX, Y = st ? st.y : bodyY, Z = st ? st.z : bodyZ;
+    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy, VZ = st ? st.vz : bodyVz;
     const tEval = (st && st.t !== undefined ? st.t : EPHT.t) + tau;
     let ax = 0, ay = 0, az = 0;
     for (let i = 0; i < NB; i++) {
         const mu = activeBodyMu(i);
         if (mu <= 0) continue;
-        const bx = X[i] + VX[i] * tau, by = Y[i] + VY[i] * tau;
-        const r02 = bx * bx + by * by;
+        const bx = X[i] + VX[i] * tau, by = Y[i] + VY[i] * tau, bz = Z[i] + VZ[i] * tau;
+        const r02 = bx * bx + by * by + bz * bz;
         if (r02 > 1e-18) {
             const w = mu / (r02 * Math.sqrt(r02));
             ax -= w * bx;
             ay -= w * by;
+            az -= w * bz;
         }
     }
     const bhDt = PRED_BH.active ? tEval - PRED_BH.t0 : tau;
@@ -266,8 +350,8 @@ export function relGravityAt3(x, y, z, out, skipBody = -1, st = null, tau = 0, i
     return relGravityAtOpt(x, y, z, out, skipBody, st, tau, ind, true);
 }
 function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = null, includeDarkEnergy = true) {
-    const X = st ? st.x : bodyX, Y = st ? st.y : bodyY;
-    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy;
+    const X = st ? st.x : bodyX, Y = st ? st.y : bodyY, Z = st ? st.z : bodyZ;
+    const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy, VZ = st ? st.vz : bodyVz;
     const tEval = (st && st.t !== undefined ? st.t : EPHT.t) + tau;
     // inline indirect terms only while Earth anchors an accelerating frame
     const indir = ind === null && !WORLD.earthDestroyed;
@@ -285,9 +369,9 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
     for (let i = 0; i < NB; i++) {
         const mu = activeBodyMu(i);
         if (mu <= 0) continue;
-        const bx = X[i] + VX[i] * tau, by = Y[i] + VY[i] * tau;
+        const bx = X[i] + VX[i] * tau, by = Y[i] + VY[i] * tau, bz = Z[i] + VZ[i] * tau;
         if (i !== skipBody) {
-            const dx = x - bx, dy = y - by, dz = z;
+            const dx = x - bx, dy = y - by, dz = z - bz;
             const r2 = dx * dx + dy * dy + dz * dz;
             if (r2 > 1e-18) {
                 const w = mu / (r2 * Math.sqrt(r2));
@@ -297,11 +381,12 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
             }
         }
         if (indir) {
-            const r02 = bx * bx + by * by;
+            const r02 = bx * bx + by * by + bz * bz;
             if (r02 > 1e-18) {
                 const w0 = mu / (r02 * Math.sqrt(r02));
                 ax -= w0 * bx;
                 ay -= w0 * by;
+                az -= w0 * bz;
             }
         }
     }
@@ -383,124 +468,150 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
     return out;
 }
 
-const _a = [0, 0];
-const _pnBody = [0, 0], _pnEarth = [0, 0];
+const _pnBody3 = [0, 0, 0], _pnEarth3 = [0, 0, 0];
 const PN_R2_MAX = 7.5e7 * 7.5e7;
-function sun1PN(dx, dy, dvx, dvy, out) {
-    const r2 = dx * dx + dy * dy;
-    if (WORLD.sunDestroyed || r2 <= 1e-12 || r2 > PN_R2_MAX) { out[0] = 0; out[1] = 0; return out; }
+function sun1PN(dx, dy, dz, dvx, dvy, dvz, out) {
+    const r2 = dx * dx + dy * dy + dz * dz;
+    if (WORLD.sunDestroyed || r2 <= 1e-12 || r2 > PN_R2_MAX) { out[0] = 0; out[1] = 0; out[2] = 0; return out; }
     const r = Math.sqrt(r2);
-    const v2 = dvx * dvx + dvy * dvy;
-    const rv = dx * dvx + dy * dvy;
+    const v2 = dvx * dvx + dvy * dvy + dvz * dvz;
+    const rv = dx * dvx + dy * dvy + dz * dvz;
     const k = MU_S / (C_LIGHT * C_LIGHT * r2 * r);
     out[0] = k * ((4 * MU_S / r - v2) * dx + 4 * rv * dvx);
     out[1] = k * ((4 * MU_S / r - v2) * dy + 4 * rv * dvy);
+    out[2] = k * ((4 * MU_S / r - v2) * dz + 4 * rv * dvz);
     return out;
 }
-const _k = [];
-for (let i = 0; i < 4; i++)
-    _k.push({ x: new Float64Array(NB), y: new Float64Array(NB), vx: new Float64Array(NB), vy: new Float64Array(NB), earthX: 0, earthY: 0, earthVx: 0, earthVy: 0 });
-const _sx = new Float64Array(NB), _sy = new Float64Array(NB), _svx = new Float64Array(NB), _svy = new Float64Array(NB);
 
 function makeState() {
     return {
         x: new Float64Array(bodyX),
         y: new Float64Array(bodyY),
+        z: new Float64Array(bodyZ),
         vx: new Float64Array(bodyVx),
         vy: new Float64Array(bodyVy),
+        vz: new Float64Array(bodyVz),
         earthX,
         earthY,
+        earthZ,
         earthVx,
         earthVy,
+        earthVz,
         t: EPHT.t,
     };
 }
 function copyLiveToState(st) {
-    st.x.set(bodyX); st.y.set(bodyY); st.vx.set(bodyVx); st.vy.set(bodyVy);
-    st.earthX = earthX; st.earthY = earthY; st.earthVx = earthVx; st.earthVy = earthVy;
+    st.x.set(bodyX); st.y.set(bodyY); st.z.set(bodyZ);
+    st.vx.set(bodyVx); st.vy.set(bodyVy); st.vz.set(bodyVz);
+    st.earthX = earthX; st.earthY = earthY; st.earthZ = earthZ;
+    st.earthVx = earthVx; st.earthVy = earthVy; st.earthVz = earthVz;
     st.t = EPHT.t;
     return st;
 }
 function copyStateToLive(st) {
-    bodyX.set(st.x); bodyY.set(st.y); bodyVx.set(st.vx); bodyVy.set(st.vy);
-    earthX = st.earthX; earthY = st.earthY; earthVx = st.earthVx; earthVy = st.earthVy;
+    bodyX.set(st.x); bodyY.set(st.y);
+    if (st.z) bodyZ.set(st.z); else bodyZ.fill(0); // v ≤ 8 / pre-WP13 v9 saves: no z
+    bodyVx.set(st.vx); bodyVy.set(st.vy);
+    if (st.vz) bodyVz.set(st.vz); else bodyVz.fill(0);
+    earthX = st.earthX; earthY = st.earthY;
+    earthVx = st.earthVx; earthVy = st.earthVy;
+    // earthZ/earthVz are intentionally not read back: Earth's world z is a
+    // permanent 0 by this file's frame convention (see the `earthZ` const
+    // above), not a per-snapshot value.
     if (typeof st.t === "number") EPHT.t = st.t;
     syncFromState();
 }
-const _ind = [0, 0];
-function derivAll(st, K_) {
-    // the indirect frame term is identical for every body: compute it once
-    // (Earth's inertial acceleration is exactly its negative)
-    indirectAccel(st, _ind);
-    sun1PN(-st.x[IDX_SUN], -st.y[IDX_SUN], -st.vx[IDX_SUN], -st.vy[IDX_SUN], _pnEarth);
+
+// ---- KDK (velocity-Verlet) leapfrog for the body n-body ----
+// Symplectic at fixed step: unlike RK4 its energy error oscillates rather
+// than drifting secularly, so long warped runs stay bounded instead of
+// gaining/losing orbital energy over many periods (numerics report §4).
+// One step = half-kick (using the acceleration at the start of the step),
+// full drift, then a second half-kick using the acceleration at the END of
+// the step (new positions, new time — so time-dependent fields like a
+// black hole's gravity front see the right instant for each evaluation).
+const _lfAx = new Float64Array(NB), _lfAy = new Float64Array(NB), _lfAz = new Float64Array(NB);
+let _lfEarthAx = 0, _lfEarthAy = 0;
+const _a3 = [0, 0, 0];
+const _ind3 = [0, 0, 0];
+// the indirect frame term is identical for every body: compute it once
+function computeAccel(st) {
+    indirectAccel(st, _ind3);
+    sun1PN(-st.x[IDX_SUN], -st.y[IDX_SUN], -st.z[IDX_SUN], -st.vx[IDX_SUN], -st.vy[IDX_SUN], -st.vz[IDX_SUN], _pnEarth3);
     for (let i = 0; i < NB; i++) {
-        if (!isBodyActive(i)) {
-            K_.x[i] = 0; K_.y[i] = 0; K_.vx[i] = 0; K_.vy[i] = 0;
-            continue;
-        }
-        relGravityAtOpt(st.x[i], st.y[i], 0, _a, i, st, 0, _ind, false);
+        if (!isBodyActive(i)) { _lfAx[i] = 0; _lfAy[i] = 0; _lfAz[i] = 0; continue; }
+        relGravityAtOpt(st.x[i], st.y[i], st.z[i], _a3, i, st, 0, _ind3, false);
         if (!WORLD.sunDestroyed) {
-            if (i === IDX_SUN) { _a[0] -= _pnEarth[0]; _a[1] -= _pnEarth[1]; }
+            if (i === IDX_SUN) { _a3[0] -= _pnEarth3[0]; _a3[1] -= _pnEarth3[1]; _a3[2] -= _pnEarth3[2]; }
             else {
-                sun1PN(st.x[i] - st.x[IDX_SUN], st.y[i] - st.y[IDX_SUN], st.vx[i] - st.vx[IDX_SUN], st.vy[i] - st.vy[IDX_SUN], _pnBody);
-                _a[0] += _pnBody[0] - _pnEarth[0];
-                _a[1] += _pnBody[1] - _pnEarth[1];
+                sun1PN(st.x[i] - st.x[IDX_SUN], st.y[i] - st.y[IDX_SUN], st.z[i] - st.z[IDX_SUN],
+                    st.vx[i] - st.vx[IDX_SUN], st.vy[i] - st.vy[IDX_SUN], st.vz[i] - st.vz[IDX_SUN], _pnBody3);
+                _a3[0] += _pnBody3[0] - _pnEarth3[0];
+                _a3[1] += _pnBody3[1] - _pnEarth3[1];
+                _a3[2] += _pnBody3[2] - _pnEarth3[2];
             }
         }
-        K_.x[i] = st.vx[i]; K_.y[i] = st.vy[i];
-        K_.vx[i] = _a[0]; K_.vy[i] = _a[1];
+        _lfAx[i] = _a3[0]; _lfAy[i] = _a3[1]; _lfAz[i] = _a3[2];
     }
-    K_.earthX = st.earthVx; K_.earthY = st.earthVy;
-    if (WORLD.earthDestroyed) { K_.earthVx = 0; K_.earthVy = 0; }
-    else { K_.earthVx = -_ind[0] + _pnEarth[0]; K_.earthVy = -_ind[1] + _pnEarth[1]; }
+    // Earth's own world acceleration is X,Y only — see the `earthZ` note:
+    // its z is pinned to 0 for the whole run, so no z-acceleration is ever
+    // integrated into it even though _ind3[2]/_pnEarth3[2] may be nonzero
+    // (that nonzero z DOES correctly reach every other body via `_ind3`
+    // above, which is what lets the Sun/Moon/planets feel the real 3-D
+    // frame term; only Earth's own absolute trajectory stays flat).
+    if (WORLD.earthDestroyed) { _lfEarthAx = 0; _lfEarthAy = 0; }
+    else { _lfEarthAx = -_ind3[0] + _pnEarth3[0]; _lfEarthAy = -_ind3[1] + _pnEarth3[1]; }
 }
-function rk4Bodies(st, dt) {
-    derivAll(st, _k[0]);
-    for (const [f, prev, cur] of [[.5, 0, 1], [.5, 1, 2], [1, 2, 3]]) {
-        for (let i = 0; i < NB; i++) {
-            _sx[i] = st.x[i] + f * dt * _k[prev].x[i];
-            _sy[i] = st.y[i] + f * dt * _k[prev].y[i];
-            _svx[i] = st.vx[i] + f * dt * _k[prev].vx[i];
-            _svy[i] = st.vy[i] + f * dt * _k[prev].vy[i];
-        }
-        derivAll({
-            x: _sx, y: _sy, vx: _svx, vy: _svy,
-            earthX: st.earthX + f * dt * _k[prev].earthX,
-            earthY: st.earthY + f * dt * _k[prev].earthY,
-            earthVx: st.earthVx + f * dt * _k[prev].earthVx,
-            earthVy: st.earthVy + f * dt * _k[prev].earthVy,
-            t: st.t + f * dt,
-        }, _k[cur]);
-    }
+function leapfrogBodies(st, dt) {
+    const h = dt / 2;
+    computeAccel(st);
     for (let i = 0; i < NB; i++) {
-        st.x[i] += dt / 6 * (_k[0].x[i] + 2 * _k[1].x[i] + 2 * _k[2].x[i] + _k[3].x[i]);
-        st.y[i] += dt / 6 * (_k[0].y[i] + 2 * _k[1].y[i] + 2 * _k[2].y[i] + _k[3].y[i]);
-        st.vx[i] += dt / 6 * (_k[0].vx[i] + 2 * _k[1].vx[i] + 2 * _k[2].vx[i] + _k[3].vx[i]);
-        st.vy[i] += dt / 6 * (_k[0].vy[i] + 2 * _k[1].vy[i] + 2 * _k[2].vy[i] + _k[3].vy[i]);
+        if (!isBodyActive(i)) continue; // frozen: matches the old zero-derivative behavior
+        st.vx[i] += h * _lfAx[i]; st.vy[i] += h * _lfAy[i]; st.vz[i] += h * _lfAz[i];
     }
-    st.earthX += dt / 6 * (_k[0].earthX + 2 * _k[1].earthX + 2 * _k[2].earthX + _k[3].earthX);
-    st.earthY += dt / 6 * (_k[0].earthY + 2 * _k[1].earthY + 2 * _k[2].earthY + _k[3].earthY);
-    st.earthVx += dt / 6 * (_k[0].earthVx + 2 * _k[1].earthVx + 2 * _k[2].earthVx + _k[3].earthVx);
-    st.earthVy += dt / 6 * (_k[0].earthVy + 2 * _k[1].earthVy + 2 * _k[2].earthVy + _k[3].earthVy);
+    st.earthVx += h * _lfEarthAx; st.earthVy += h * _lfEarthAy;
+    for (let i = 0; i < NB; i++) {
+        if (!isBodyActive(i)) continue;
+        st.x[i] += dt * st.vx[i]; st.y[i] += dt * st.vy[i]; st.z[i] += dt * st.vz[i];
+    }
+    st.earthX += dt * st.earthVx; st.earthY += dt * st.earthVy; // earthZ stays 0
+    st.t += dt;
+    computeAccel(st);
+    for (let i = 0; i < NB; i++) {
+        if (!isBodyActive(i)) continue;
+        st.vx[i] += h * _lfAx[i]; st.vy[i] += h * _lfAy[i]; st.vz[i] += h * _lfAz[i];
+    }
+    st.earthVx += h * _lfEarthAx; st.earthVy += h * _lfEarthAy;
 }
+// Nominal nominal step ceiling: never step past 1/200 of the shortest
+// orbital period actually modeled (the Moon's, ~27.3 days) — small enough
+// that the KDK map stays close to symplectic-accurate for the fastest body,
+// while still being (much) larger than the existing 3600 s live-path cap, so
+// the common case is unaffected. `bodyStepSize` below clamps to this AND
+// still shrinks further for close encounters / black holes, so the ceiling
+// only actually binds when a caller raises `maxStep` past it (deep-time
+// Kepler-jump-ineligible warps, e.g. with a black hole present).
+const LUNAR_PERIOD_S = 2 * Math.PI * Math.sqrt((A_MOON * A_MOON * A_MOON) / (MU_E + MU_M));
+const LEAP_DT_MAX = LUNAR_PERIOD_S / 200;
+
 function bodyStepSize(st, rem, maxStep = 3600) {
-    let dt = Math.min(rem, maxStep);
+    let dt = Math.min(rem, maxStep, LEAP_DT_MAX);
     const muE = activeEarthMu();
     for (let i = 0; i < NB; i++) {
         const mui = activeBodyMu(i);
         if (mui <= 0) continue;
-        const rE2 = st.x[i] * st.x[i] + st.y[i] * st.y[i];
+        const rE2 = st.x[i] * st.x[i] + st.y[i] * st.y[i] + st.z[i] * st.z[i];
         if (muE > 0 && rE2 > 1) dt = Math.min(dt, Math.sqrt(rE2 * Math.sqrt(rE2) / (muE + mui)) / 55);
         for (let j = i + 1; j < NB; j++) {
             const muj = activeBodyMu(j);
             if (muj <= 0) continue;
-            const dx = st.x[i] - st.x[j], dy = st.y[i] - st.y[j];
-            const d2 = dx * dx + dy * dy;
+            const dx = st.x[i] - st.x[j], dy = st.y[i] - st.y[j], dz = st.z[i] - st.z[j];
+            const d2 = dx * dx + dy * dy + dz * dz;
             if (d2 > 1) dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (mui + muj)) / 55);
         }
         for (let b = 0; b < BH.n; b++) {
-            const dx = st.x[i] - BH.x[b], dy = st.y[i] - BH.y[b];
-            const d = Math.sqrt(dx * dx + dy * dy);
+            const dx = st.x[i] - BH.x[b], dy = st.y[i] - BH.y[b], dz = st.z[i];
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
             // free-fall timescale against the PW-softened pull; the floor keeps
             // it finite even with the body's center inside the horizon
             const eff = Math.max(d - BH.rs[b], BH.rs[b] * .02);
@@ -625,20 +736,25 @@ export function keplerAdvance3(x, y, z, vx, vy, vz, mu, dt, out) {
 // osculating two-body orbits instead: Earth and planets heliocentric, the
 // Moon geocentric, with the system barycenter coasting uniformly. Mutual
 // perturbations pause for the jump; periods, shapes, and phases stay right
-// at any warp.
-const _kjE = { x: 0, y: 0, vx: 0, vy: 0, ok: false };
-const _kjM = { x: 0, y: 0, vx: 0, vy: 0, ok: false };
-const _kjP = { x: 0, y: 0, vx: 0, vy: 0, ok: false };
-const _jx = new Float64Array(NB), _jy = new Float64Array(NB);
-const _jvx = new Float64Array(NB), _jvy = new Float64Array(NB);
+// at any warp. The barycenter/Earth-world-position recomposition below is
+// unchanged from the pre-WP13 2-D math (Earth's world z stays pinned at 0 —
+// see the `earthZ` note); only the per-body conics gained a z/vz component,
+// via keplerAdvance3 instead of keplerAdvance.
+const _kjE = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
+const _kjM = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
+const _kjP = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
+const _jx = new Float64Array(NB), _jy = new Float64Array(NB), _jz = new Float64Array(NB);
+const _jvx = new Float64Array(NB), _jvy = new Float64Array(NB), _jvz = new Float64Array(NB);
 function keplerJumpState(st, dt) {
     const muS = bodyMu[IDX_SUN], muE = activeEarthMu(), muM = activeBodyMu(IDX_MOON);
     const sk = IDX_SUN;
     // heliocentric pieces (earth-relative differences cancel the frame)
-    const eHx = -st.x[sk], eHy = -st.y[sk], eHvx = -st.vx[sk], eHvy = -st.vy[sk];
+    const eHx = -st.x[sk], eHy = -st.y[sk], eHz = -st.z[sk];
+    const eHvx = -st.vx[sk], eHvy = -st.vy[sk], eHvz = -st.vz[sk];
     const sWx = st.earthX + st.x[sk], sWy = st.earthY + st.y[sk];
     const sWvx = st.earthVx + st.vx[sk], sWvy = st.earthVy + st.vy[sk];
-    // barycenter offset from the Sun, mass(∝μ)-weighted
+    // barycenter offset from the Sun, mass(∝μ)-weighted (x,y only: this feeds
+    // only Earth's world position, whose z is permanently 0 — see `earthZ`)
     let M = muS + muE + muM;
     let ox = muE * eHx + muM * (eHx + st.x[IDX_MOON]), oy = muE * eHy + muM * (eHy + st.y[IDX_MOON]);
     let ovx = muE * eHvx + muM * (eHvx + st.vx[IDX_MOON]), ovy = muE * eHvy + muM * (eHvy + st.vy[IDX_MOON]);
@@ -652,13 +768,14 @@ function keplerJumpState(st, dt) {
     const rBx = sWx + ox / M, rBy = sWy + oy / M;
     const vBx = sWvx + ovx / M, vBy = sWvy + ovy / M;
     // advance every active piece on its own conic
-    keplerAdvance(eHx, eHy, eHvx, eHvy, muS + muE, dt, _kjE);
-    if (muM > 0) keplerAdvance(st.x[IDX_MOON], st.y[IDX_MOON], st.vx[IDX_MOON], st.vy[IDX_MOON], muE + bodyMu[IDX_MOON], dt, _kjM);
+    keplerAdvance3(eHx, eHy, eHz, eHvx, eHvy, eHvz, muS + muE, dt, _kjE);
+    if (muM > 0) keplerAdvance3(st.x[IDX_MOON], st.y[IDX_MOON], st.z[IDX_MOON], st.vx[IDX_MOON], st.vy[IDX_MOON], st.vz[IDX_MOON], muE + bodyMu[IDX_MOON], dt, _kjM);
     for (let i = 0; i < PL.length; i++) {
         const k = IDX_PLANETS + i;
         if (activeBodyMu(k) <= 0) continue;
-        keplerAdvance(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], muS + bodyMu[k], dt, _kjP);
-        _jx[k] = _kjP.x; _jy[k] = _kjP.y; _jvx[k] = _kjP.vx; _jvy[k] = _kjP.vy;
+        keplerAdvance3(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.z[k] - st.z[sk], st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], st.vz[k] - st.vz[sk], muS + bodyMu[k], dt, _kjP);
+        _jx[k] = _kjP.x; _jy[k] = _kjP.y; _jz[k] = _kjP.z;
+        _jvx[k] = _kjP.vx; _jvy[k] = _kjP.vy; _jvz[k] = _kjP.vz;
     }
     // recompose: the barycenter coasted, the Sun hangs off it
     let nox = muE * _kjE.x, noy = muE * _kjE.y, novx = muE * _kjE.vx, novy = muE * _kjE.vy;
@@ -674,19 +791,19 @@ function keplerJumpState(st, dt) {
     }
     const sWx1 = rBx + vBx * dt - nox / M, sWy1 = rBy + vBy * dt - noy / M;
     const sWvx1 = vBx - novx / M, sWvy1 = vBy - novy / M;
-    st.earthX = sWx1 + _kjE.x; st.earthY = sWy1 + _kjE.y;
+    st.earthX = sWx1 + _kjE.x; st.earthY = sWy1 + _kjE.y; // st.earthZ untouched: stays 0
     st.earthVx = sWvx1 + _kjE.vx; st.earthVy = sWvy1 + _kjE.vy;
-    st.x[sk] = -_kjE.x; st.y[sk] = -_kjE.y;
-    st.vx[sk] = -_kjE.vx; st.vy[sk] = -_kjE.vy;
+    st.x[sk] = -_kjE.x; st.y[sk] = -_kjE.y; st.z[sk] = -_kjE.z;
+    st.vx[sk] = -_kjE.vx; st.vy[sk] = -_kjE.vy; st.vz[sk] = -_kjE.vz;
     if (muM > 0) {
-        st.x[IDX_MOON] = _kjM.x; st.y[IDX_MOON] = _kjM.y;
-        st.vx[IDX_MOON] = _kjM.vx; st.vy[IDX_MOON] = _kjM.vy;
+        st.x[IDX_MOON] = _kjM.x; st.y[IDX_MOON] = _kjM.y; st.z[IDX_MOON] = _kjM.z;
+        st.vx[IDX_MOON] = _kjM.vx; st.vy[IDX_MOON] = _kjM.vy; st.vz[IDX_MOON] = _kjM.vz;
     }
     for (let i = 0; i < PL.length; i++) {
         const k = IDX_PLANETS + i;
         if (activeBodyMu(k) <= 0) continue;
-        st.x[k] = _jx[k] - _kjE.x; st.y[k] = _jy[k] - _kjE.y;
-        st.vx[k] = _jvx[k] - _kjE.vx; st.vy[k] = _jvy[k] - _kjE.vy;
+        st.x[k] = _jx[k] - _kjE.x; st.y[k] = _jy[k] - _kjE.y; st.z[k] = _jz[k] - _kjE.z;
+        st.vx[k] = _jvx[k] - _kjE.vx; st.vy[k] = _jvy[k] - _kjE.vy; st.vz[k] = _jvz[k] - _kjE.vz;
     }
 }
 
@@ -696,7 +813,7 @@ function keplerJumpState(st, dt) {
 let liveGuard = null;
 export function setLiveGuard(fn) { liveGuard = fn; }
 function advanceState(st, dtTotal, maxStep = 3600, live = false) {
-    // deep-time gate (live path only — predictions keep full RK4 fidelity):
+    // deep-time gate (live path only — predictions keep full leapfrog fidelity):
     // holes, gravity ghosts, and a destroyed Sun or Earth all break the
     // two-body decomposition, so those fall through to the integrator
     if (live && BH.n === 0 && GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed &&
@@ -710,8 +827,7 @@ function advanceState(st, dtTotal, maxStep = 3600, live = false) {
         // if the step collapses near a deep well, spend the remaining budget
         // anyway: bounded local error beats bodies silently losing time
         const dt = Math.min(rem, Math.max(bodyStepSize(st, rem, maxStep), rem / (2001 - guard)));
-        rk4Bodies(st, dt);
-        st.t += dt;
+        leapfrogBodies(st, dt);
         rem -= dt;
         if (live && liveGuard && BH.n) {
             syncFromState(st); // the guard reads current body positions via eph

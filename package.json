@@ -18,6 +18,7 @@
     "smoke:tier1-runtime": "node scripts/smoke-tier1-runtime.mjs",
     "smoke:local-tier": "node scripts/smoke-local-tier.mjs",
     "smoke:epoch": "node scripts/smoke-epoch.mjs",
+    "smoke:physics3d": "node scripts/smoke-physics3d.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },
