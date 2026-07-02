@@ -44,7 +44,15 @@ export function galacticCenterScene() {
 
 // Build a representative galaxy point cloud (positions + colors as Float32Arrays
 // ready for THREE.BufferAttribute). Deterministic in `seed`.
-export function makeGalaxyCloud(n = 160000, seed = 0x6d57) {
+//
+// `era` (optional, from cosmicEra.js's eraModulation()) thins the young-arm
+// blue-star population by `era.blueFrac` at generation time — this is the
+// only era effect baked into the buffer. Overall tint/luminosity are cheap
+// per-frame material uniforms applied afterward via applyEraToCloud(), not
+// baked here, so regenerating is only needed for a population-composition
+// change (a large `blueFrac` jump), not every frame. Passing no `era` (the
+// default) reproduces the exact pre-WP23c output byte-for-byte.
+export function makeGalaxyCloud(n = 160000, seed = 0x6d57, era = null) {
     const S = GALAXY_STRUCT;
     const TAN = Math.tan(S.ARM_PITCH);
     const rng = makeRNG(hashInts(seed, 0xa17));
@@ -54,12 +62,12 @@ export function makeGalaxyCloud(n = 160000, seed = 0x6d57) {
     const visual = { L: 1, color: 0xffffff };
 
     for (let i = 0; i < n; i++) {
-        writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual);
+        writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual, era);
     }
     return { pos, col };
 }
 
-export async function makeGalaxyCloudAsync(n = 160000, seed = 0x6d57, chunk = 8192, yieldFn = null) {
+export async function makeGalaxyCloudAsync(n = 160000, seed = 0x6d57, chunk = 8192, yieldFn = null, era = null) {
     const S = GALAXY_STRUCT;
     const TAN = Math.tan(S.ARM_PITCH);
     const rng = makeRNG(hashInts(seed, 0xa17));
@@ -69,13 +77,13 @@ export async function makeGalaxyCloudAsync(n = 160000, seed = 0x6d57, chunk = 81
     const visual = { L: 1, color: 0xffffff };
 
     for (let i = 0; i < n; i++) {
-        writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual);
+        writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual, era);
         if (yieldFn && chunk > 0 && (i + 1) % chunk === 0) await yieldFn();
     }
     return { pos, col };
 }
 
-function writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual) {
+function writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual, era) {
     const u = rng();
     let gx, gy, gz, kind;
     if (u < 0.70) {            // thin disc
@@ -104,7 +112,7 @@ function writeGalaxyPoint(rng, S, TAN, pos, col, i, d, visual) {
     }
 
     galPcToScene(gx, gy, gz, pos, i * 3);
-    starColor(rng, kind, col, i * 3, visual);
+    starColor(rng, kind, col, i * 3, visual, era);
 }
 
 // Disc position: optionally snap a fraction of stars onto a spiral arm so the
@@ -124,9 +132,14 @@ function discPosInto(rng, R, z, S, TAN, allowArm, out) {
 }
 
 // Assign a luminosity-weighted colour for a galaxy point of a given population.
-function starColor(rng, kind, col, o, visual) {
+// `era` (optional) scales down the young-hot-tracer draw probability by
+// era.blueFrac, so as star formation declines (post-Milkomeda-merger, see
+// cosmicEra.js) the arm population statistically shifts toward the older
+// field IMF instead of staying eternally blue.
+function starColor(rng, kind, col, o, visual, era) {
     let mass;
-    if (kind === "arm-disc" && rng() < 0.12) {
+    const blueFrac = era ? era.blueFrac : 1;
+    if (kind === "arm-disc" && rng() < 0.12 * blueFrac) {
         mass = 3 + rng() * 12;               // young hot tracer in spiral arms
     } else if (kind === "bulge") {
         mass = 0.5 + rng() * 0.8;            // old, cool bulge population
@@ -150,4 +163,42 @@ export function galacticRingPositions(Rpc, segs = 480) {
         galPcToScene(Rpc * Math.cos(a), Rpc * Math.sin(a), 0, pos, i * 3);
     }
     return pos;
+}
+
+// Cheap per-frame deep-time tint for an already-built galaxy cloud (a
+// THREE.Points/Group as produced by cosmic.js's `points()`/`milkyWayHalo()`
+// helpers around this module's cloud data), driven by cosmicEra.js's
+// eraModulation(). Mutates only material.color/opacity (a uniform-level
+// multiply against the baked vertex colors/alpha) — no buffer touch, no GPU
+// upload, safe to call every frame. Recurses into `.children` so a caller can
+// pass either a single Points object or the group that contains the cloud,
+// the halo, and the plane rings. Population-level effects (fewer young blue
+// stars as era.blueFrac falls) require a buffer rebuild — the caller triggers
+// that separately and rarely (see makeGalaxyCloudAsync's `era` argument),
+// throttled to large era changes since a full regenerate is comparatively
+// expensive.
+export function applyEraToCloud(cloud, era) {
+    if (!cloud || !era) return;
+    if (cloud.material) tintMaterial(cloud.material, era);
+    if (cloud.children && cloud.children.length) {
+        for (const child of cloud.children) applyEraToCloud(child, era);
+    }
+}
+
+function tintMaterial(mat, era) {
+    // Redden toward a cool ember as the aggregate population ages (F/G stars
+    // fading out, K/M dwarfs left dominating the light).
+    if (mat.color && typeof mat.color.setRGB === "function") {
+        mat.color.setRGB(1, 1 - era.redshiftTint * 0.55, 1 - era.redshiftTint * 0.85);
+    }
+    // Fold total field luminosity into opacity; a small floor keeps the
+    // degenerate-era field a sparse dim glow rather than a hard cut to zero.
+    const lum = Math.max(0.004, era.lumFactor);
+    if (mat.uniforms?.uOpacity) {
+        const base = mat.userData.baseOpacity ?? mat.uniforms.uOpacity.value;
+        mat.uniforms.uOpacity.value = base * lum;
+    } else if (typeof mat.opacity === "number") {
+        const base = mat.userData.baseOpacity ?? mat.opacity;
+        mat.opacity = base * lum;
+    }
 }

@@ -28,6 +28,23 @@ export const Z_SUN_PC = 20.8;  // Sun above the disc mid-plane
 // Sun sits at (R0, 0, Z_SUN); +Y is the direction of Galactic rotation.
 export const SUN_GAL = [R0_PC, 0, Z_SUN_PC];
 
+// --- Dynamic Sun anchor (WP23-EXTENSION) ----------------------------------
+// The Sun rides its own galactic orbit under deep time (src/universe/
+// solarOrbit.js solarGalacticStateAt) rather than sitting fixed at SUN_GAL
+// forever. This mutable anchor is what the equatorial<->galactic conversions
+// below actually use; it defaults to today's SUN_GAL so every conversion is
+// bit-identical until a caller starts moving it (main.js's frame loop calls
+// setSunGalAnchor(...solarGalacticStateAt(G.t)) once per frame). Kept
+// deliberately separate from the SUN_GAL export above: galaxy.js still reads
+// SUN_GAL directly as its own frozen density-normalization/catalog-
+// completeness reference, an unrelated purpose this anchor doesn't touch.
+const _sunAnchor = [R0_PC, 0, Z_SUN_PC];
+export function setSunGalAnchor(x, y, z) {
+    _sunAnchor[0] = x; _sunAnchor[1] = y; _sunAnchor[2] = z;
+}
+// Reused array — do not retain/mutate (matches renderOrigin.js's getOrigin()).
+export function getSunGalAnchor() { return _sunAnchor; }
+
 // Equatorial (ICRS) → Galactic rotation matrix, J2000 (ESA/Hipparcos vol.1 §1.5).
 // Rows map an equatorial unit vector into galactic axes [toward GC, toward
 // l=90°, toward NGP]. The transpose maps galactic → equatorial.
@@ -47,7 +64,7 @@ export function galacticToEquatorial(g) {
 }
 
 export function galToEquatorialPcInto(gx, gy, gz, out, o = 0) {
-    const hx = R0_PC - gx, hy = gy, hz = gz - Z_SUN_PC;
+    const hx = _sunAnchor[0] - gx, hy = gy - _sunAnchor[1], hz = gz - _sunAnchor[2];
     out[o] = EQ2GAL[0][0] * hx + EQ2GAL[1][0] * hy + EQ2GAL[2][0] * hz;
     out[o + 1] = EQ2GAL[0][1] * hx + EQ2GAL[1][1] * hy + EQ2GAL[2][1] * hz;
     out[o + 2] = EQ2GAL[0][2] * hx + EQ2GAL[1][2] * hy + EQ2GAL[2][2] * hz;
@@ -63,7 +80,7 @@ export function galToEquatorialKmInto(gx, gy, gz, out, o = 0) {
 }
 
 export function galToSceneUnitsInto(gx, gy, gz, out, o = 0, sceneScale = .001) {
-    const hx = R0_PC - gx, hy = gy, hz = gz - Z_SUN_PC;
+    const hx = _sunAnchor[0] - gx, hy = gy - _sunAnchor[1], hz = gz - _sunAnchor[2];
     const sx = PC_KM * sceneScale;
     const ex = EQ2GAL[0][0] * hx + EQ2GAL[1][0] * hy + EQ2GAL[2][0] * hz;
     const ey = EQ2GAL[0][1] * hx + EQ2GAL[1][1] * hy + EQ2GAL[2][1] * hz;
@@ -93,5 +110,5 @@ export function equatorialKmToGal(x, y, z) {
     const gRot = EQ2GAL[1][0] * ex + EQ2GAL[1][1] * ey + EQ2GAL[1][2] * ez;
     const gNGP = EQ2GAL[2][0] * ex + EQ2GAL[2][1] * ey + EQ2GAL[2][2] * ez;
     // heliocentric galactic [toward GC, rot, NGP] → galactocentric
-    return [R0_PC - gGC, gRot, gNGP + Z_SUN_PC];
+    return [_sunAnchor[0] - gGC, gRot + _sunAnchor[1], gNGP + _sunAnchor[2]];
 }

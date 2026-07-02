@@ -12,7 +12,8 @@ const {
   PL, MU_S, MU_E, MU_M, A_MOON, E_MOON, OMEGA, MOON_ANG0, I_MOON, VARPI_EARTH, E_EARTH,
 } = await import("../src/constants.js");
 const { setEpochMs, getEpochMs, epochOffsetSeconds, meanAnomalyAdvance, J2000_MS } = await import("../src/epoch.js");
-const { BH, GS } = await import("../src/state.js");
+const { BH, GS, G } = await import("../src/state.js");
+const { SEC_YEAR, AU_KM } = await import("../src/constants.js");
 
 function assert(cond, msg) {
   if (!cond) throw new Error("smoke-physics3d FAILED: " + msg);
@@ -409,6 +410,53 @@ function assert(cond, msg) {
   }
   console.log("(i) shipped-path energy sanity: |dE/E|max over 10 Moon orbits via production advanceEphem =", maxDE);
   assert(maxDE < 1e-4, `production advanceEphem should conserve the full-system Newtonian energy proxy to <1e-4 over 10 Moon orbits, got ${maxDE}`);
+
+  setEpochMs(J2000_MS);
+  resetEphem();
+}
+
+// ---------------------------------------------------------------------------
+// (j) deep-time boundedness: resetEphem used to leave the whole system's
+// total (x,y) momentum nonzero (the Sun's initial velocity only canceled
+// Earth's own momentum, ignoring the real reflex pull of Jupiter/Saturn/etc,
+// ~9 m/s residual with the real J2000 elements). Momentum is exactly
+// conserved by the n-body dynamics, so that residual coasted the whole
+// system's barycenter forever, and eph.earthX/Y (Earth's world position)
+// ran away linearly — ~1 AU to ~9.5e6 AU over just 5 Gyr with cosmology off
+// (user physics report 2026-07-02), fully reproducible with a SINGLE
+// advanceEphem(5 Gyr) call and independent of warp chunk size — i.e. an
+// initial-condition defect, not a Kepler-jump chaining artifact. Fixed by
+// zeroing the system's total momentum at reset (see the comment in
+// resetEphem). Guard: over a 1 Gyr headless warp with dark energy/matter
+// off, Earth's world distance from the origin and the Moon's distance from
+// Earth must both stay within their real bounded orbital ranges, not drift.
+// ---------------------------------------------------------------------------
+{
+  G.darkEnergy = false;
+  G.darkMatter = false;
+  resetEphem();
+  const stepSec = 0.1e9 * SEC_YEAR; // 0.1 Gyr chunks, matching real warp usage
+  const totalSec = 1e9 * SEC_YEAR;
+  let minEarthAU = Infinity, maxEarthAU = -Infinity;
+  let minMoonAU = Infinity, maxMoonAU = -Infinity;
+  let remaining = totalSec;
+  while (remaining > 1e-6) {
+    const dt = Math.min(stepSec, remaining);
+    advanceEphem(dt);
+    remaining -= dt;
+    const earthAU = Math.hypot(eph.earthX, eph.earthY, eph.earthZ) / AU_KM;
+    const moonAU = Math.hypot(eph.moonX, eph.moonY, eph.moonZ) / AU_KM;
+    if (earthAU < minEarthAU) minEarthAU = earthAU;
+    if (earthAU > maxEarthAU) maxEarthAU = earthAU;
+    if (moonAU < minMoonAU) minMoonAU = moonAU;
+    if (moonAU > maxMoonAU) maxMoonAU = moonAU;
+  }
+  console.log("(j) deep-time boundedness over 1 Gyr: earthWorld=[" + minEarthAU.toFixed(5) + "," + maxEarthAU.toFixed(5) +
+    "] AU, moonEarth=[" + minMoonAU.toFixed(6) + "," + maxMoonAU.toFixed(6) + "] AU");
+  assert(minEarthAU > 0.9 && maxEarthAU < 1.1,
+    `Earth-Sun separation must stay within [0.9, 1.1] AU across a 1 Gyr warp, got [${minEarthAU}, ${maxEarthAU}]`);
+  assert(minMoonAU > 0.0020 && maxMoonAU < 0.0030,
+    `Moon-Earth separation must stay within its real bounded range across a 1 Gyr warp, got [${minMoonAU}, ${maxMoonAU}]`);
 
   setEpochMs(J2000_MS);
   resetEphem();

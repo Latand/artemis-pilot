@@ -233,8 +233,23 @@ export const BOOST = 4;
 export const ROT_RATE = 2.0;         // rad/s of ship rotation, real-time
 export const FUEL_DV0 = 9000;        // m/s of Δv in the tank (challenge mode only)
 export const SEC_YEAR = 31557600;
-export const WARPS = [1, 60, 600, 3600, 21600, 86400, 604800, 2592000, SEC_YEAR, 30 * SEC_YEAR, 1000 * SEC_YEAR, 1000000 * SEC_YEAR, 1000000000 * SEC_YEAR];
+// Slow-motion presets below real time, for watching fast events (e.g. a
+// tidal disruption) frame by frame. Prepended to WARPS so digit-key presets
+// keep their existing speeds — offset their WARPS index by WARP_SUBS.length.
+export const WARP_SUBS = [0.01, 0.1, 0.5];
+export const WARPS = [...WARP_SUBS, 1, 60, 600, 3600, 21600, 86400, 604800, 2592000, SEC_YEAR, 30 * SEC_YEAR, 1000 * SEC_YEAR, 1000000 * SEC_YEAR, 1000000000 * SEC_YEAR];
 export const WARP_MAX = 1000000000 * SEC_YEAR;
+export const WARP_DIGIT_OFFSET = WARP_SUBS.length;
+// ,/. step through the slow-mo ladder below 1×; at/above 1× they keep the
+// original continuous halving/doubling for fine control across the huge
+// (1× .. 1e9 yr/s) dynamic range.
+export const warpStepDown = w => w > 1 ? Math.max(1, w / 2)
+    : w > 0.5 ? 0.5
+    : w > 0.1 ? 0.1
+    : w > 0.01 ? 0.01
+    : 0.01;
+export const warpStepUp = w => w < 1 ? (w < 0.01 ? 0.01 : w < 0.1 ? 0.1 : w < 0.5 ? 0.5 : 1)
+    : Math.min(WARP_MAX, w * 2);
 export const MAX_STEPS_FRAME = 2400;
 export const MOON_ANG0 = 2.2; // Moon's J2000 initial mean anomaly (varpi = 0)
 export const warpLabel = w => {
@@ -246,7 +261,12 @@ export const warpLabel = w => {
         if (yr >= 1000) return f(yr / 1000) + " kyr/s";
         return f(yr) + " yr/s";
     }
-    return w >= 86400 ? f(w / 86400) + " d/s" : w >= 3600 ? f(w / 3600) + " h/s" : w >= 60 ? f(w / 60) + " min/s" : w === 1 ? "real time" : f(w) + "×";
+    if (w >= 86400) return f(w / 86400) + " d/s";
+    if (w >= 3600) return f(w / 3600) + " h/s";
+    if (w >= 60) return f(w / 60) + " min/s";
+    if (w === 1) return "real time";
+    if (w > 0 && w < 1) return +w.toFixed(2) + "×"; // slow-mo: 0.01×/0.1×/0.5× (trailing zeros stripped by the Number cast)
+    return f(w) + "×";
 };
 // black holes: realistic point masses, μ = r_s·c²/2
 export const BH_MAX = 6;

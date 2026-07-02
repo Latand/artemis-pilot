@@ -21,7 +21,12 @@
     "smoke:physics3d": "node scripts/smoke-physics3d.mjs",
     "smoke:xrperf": "node scripts/smoke-xrperf.mjs",
     "smoke:river-deeptime": "node scripts/smoke-river-deeptime.mjs",
+    "smoke:merger": "node scripts/smoke-merger.mjs",
     "smoke:brightness": "node scripts/smoke-brightness.mjs",
+    "smoke:cosmic-era": "node scripts/smoke-cosmic-era.mjs",
+    "smoke:deepfield": "node scripts/smoke-deepfield.mjs",
+    "smoke:bound-systems": "node scripts/smoke-bound-systems.mjs",
+    "smoke:sun-evolution": "node scripts/smoke-sun-evolution.mjs",
     "build": "vite build",
     "preview": "vite preview"
   },

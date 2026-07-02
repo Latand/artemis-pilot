@@ -59,7 +59,8 @@ import {
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
-import { equatorialKmToGal } from "./universe/coords.js";
+import { equatorialKmToGal, setSunGalAnchor } from "./universe/coords.js";
+import { solarGalacticStateAt } from "./universe/solarOrbit.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats } from "./universe/athygTier1.js";
 import { getOrigin, maybeRebase } from "./universe/renderOrigin.js";
 import { PERF, markPerf, sampleRendererInfo, sampleMemory } from "./perf.js";
@@ -542,6 +543,7 @@ const _focusOrigin = new THREE.Vector3(), _focusPos = new THREE.Vector3();
 const _bhFocusPos = new THREE.Vector3(), _bhLabelPos = new THREE.Vector3();
 const _starFocusPos = new THREE.Vector3(), _starLabelPos = new THREE.Vector3();
 const _moonOff = { x: 0, y: 0 };
+const _sunOrbitState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 const bhFocusValue = i => "bh:" + i;
 const starFocusValue = i => "star:" + i;
 function bhScenePos(i, out = _bhFocusPos) {
@@ -1525,6 +1527,13 @@ function frame() {
     if (focusBH >= BH.n) setFocus("ship");
     const focusStar = starFocusIndex(G.focus);
     if (focusStar >= STARS.length) setFocus("ship");
+    // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time
+    // rather than sitting fixed at SUN_GAL forever — update the anchor every
+    // frame (cheap closed-form epicyclic math, zero-alloc via the reused
+    // scratch object) ahead of the active-star refresh below, which converts
+    // through this same anchor via equatorialKmToGal.
+    solarGalacticStateAt(G.t, _sunOrbitState);
+    setSunGalAnchor(_sunOrbitState.x, _sunOrbitState.y, _sunOrbitState.z);
     if (activeStarsDue) {
         if (proceduralFocusId(G.focus) && !activeStarForFocus(G.focus)) setFocus("ship");
         if (hygCatalogFocusId(G.focus) && hygCatalogStats().loaded && !activeStarForFocus(G.focus)) setFocus("ship");

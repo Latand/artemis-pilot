@@ -601,7 +601,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // false below, which short-circuits the expensive 64-source GPU compute — so
     // zoomed-out frames cost nothing. The river stays fully on through the whole
     // solar-system survey and whenever the camera is near a star/system.
-    const zoomFade = 1 - smooth01(LY_SCENE * 0.05, LY_SCENE * 0.9, cam.dist);
+    const zoomFade = 1 - smooth01(LY_SCENE * 0.004, LY_SCENE * 0.02, cam.dist);
     const fEff = fB * zoomFade;
     lines.visible = fEff > .01;
     if (!lines.visible) {

@@ -189,6 +189,35 @@ export function resetEphem() {
         bodyVy[k] = svy + _kp.vy;
         bodyVz[k] = svz + _kp.vz;
     }
+
+    // Zero the system's total (x,y) momentum. Above, the Sun's velocity was
+    // set purely from the reduced Earth-Sun two-body problem (bodyVx/Vy[SUN]
+    // cancels only Earth's momentum), so it omits the Sun's real reflex
+    // motion from Jupiter, Saturn, and the rest — the total system momentum
+    // (Sun + Earth + Moon + every planet) comes out nonzero (~9 m/s with the
+    // real J2000 elements). Nothing in the n-body dynamics can dissipate a
+    // nonzero total momentum, so the whole system's barycenter would coast
+    // at that residual velocity forever: harmless for short runs, but a
+    // deep-time warp integrates it into a multi-million-AU secular drift of
+    // eph.earthX/Y (confirmed: the drift rate exactly equals this residual
+    // momentum / total mass, independent of warp step size or Kepler-jump
+    // chaining — this is an initial-condition defect, not an integrator one).
+    // Every other body's velocity here is Earth-relative and so already
+    // invariant under a uniform boost of the whole system; only Earth's own
+    // world-frame velocity needs correcting to absorb it.
+    {
+        let Mtot = MU_S + MU_E + MU_M;
+        let Px = MU_S * (earthVx + bodyVx[IDX_SUN]) + MU_E * earthVx + MU_M * (earthVx + bodyVx[IDX_MOON]);
+        let Py = MU_S * (earthVy + bodyVy[IDX_SUN]) + MU_E * earthVy + MU_M * (earthVy + bodyVy[IDX_MOON]);
+        for (let i = 0; i < PL.length; i++) {
+            const k = IDX_PLANETS + i, mu = PL[i].mu;
+            Mtot += mu;
+            Px += mu * (earthVx + bodyVx[k]);
+            Py += mu * (earthVy + bodyVy[k]);
+        }
+        earthVx -= Px / Mtot;
+        earthVy -= Py / Mtot;
+    }
     syncFromState();
 }
 export function updEphem() { syncFromState(); }

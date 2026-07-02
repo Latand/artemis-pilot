@@ -8,10 +8,12 @@ import {
 } from "./textures.js";
 import { renderQuality, scene } from "./scene.js";
 import { initRealSky, realSkyReady, realSkyStatus, updateRealSkyFade } from "./realSky.js";
-import { BRIGHTNESS_CURVE, sunObservedMag, sizePxForMag, hdrIntensityForMag, teffToRGB, SUN_TEFF_K } from "./render/viewBrightness.js";
+import { BRIGHTNESS_CURVE, observedMag, sizePxForMag, hdrIntensityForMag, teffToRGB, SUN_TEFF_K } from "./render/viewBrightness.js";
+import { G } from "./state.js";
+import { sunStateAt, AGB_TIP_R_RSUN } from "./universe/sunEvolution.js";
 
 export const sunPos = new THREE.Vector3();
-export let sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, galaxyBackdrop;
+export let sunLight, sunCore, sunGlow, sunCorona, sunPN, sky, skyStars, galaxyBackdrop;
 export let earthG, earth, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing;
 export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], plLabels = [];
 // planetary moons: small textured-free spheres + always-on glow dot + label
@@ -168,7 +170,7 @@ function orbitEllipseGeometry(aKm, e, varpi = 0, segs = seg(720, 240)) {
 
 // shared shader uniforms updated once per frame from main.js
 export const sunDirW = new THREE.Vector3(1, 0, 0); // world-space Earth→Sun
-export const shaderTick = { earthUniforms: null, atmoUniforms: null, coronaUniforms: null, sunUniforms: null };
+export const shaderTick = { earthUniforms: null, atmoUniforms: null, coronaUniforms: null, sunUniforms: null, pnUniforms: null };
 // updates every sun-direction / camera-distance dependent uniform
 export function updateBodyShaders(camera, t) {
     const u = shaderTick;
@@ -183,6 +185,7 @@ export function updateBodyShaders(camera, t) {
     }
     if (u.coronaUniforms) u.coronaUniforms.uT.value = t;
     if (u.sunUniforms) u.sunUniforms.uT.value = t;
+    if (u.pnUniforms) u.pnUniforms.uT.value = t;
 }
 
 // The Sun's own Teff (5772 K) run through the same blackbody LUT every other
@@ -197,35 +200,83 @@ const SUN_TEFF_COLOR = teffToRGB(SUN_TEFF_K);
 // straight from the shared curve and don't depend on this constant.
 const SUN_NOMINAL_VIEWPORT_H = 900;
 
+const _sunTintScratch = [1, 1, 1];
+const _sunEvoTint = new THREE.Vector3(1, 1, 1);
+
 /**
  * Frozen contract (WP16 -> WP17): replaces the old inline sunGlow scale/
  * opacity block in main.js. Implements a true inverse-square falloff with NO
  * opacity floor and NO linear-with-distance size term (the old bugs that kept
  * the Sun a constant over-bright blob from any distance) — brightness comes
- * from the exact same observer-relative curve every other star uses,
- * evaluated with the Sun's L=1 Lsun/Teff=5772K. Because both the "near
- * corona glow" and "far star point" regimes are the SAME continuous function
- * of camDistPc, there is no discrete sprite->point handoff to seam — the
- * function is continuous by construction across the whole range (verified by
- * smoke:brightness). Also drives the realSky naked-eye dome's distance fade,
- * since "distance from the Sun" and "distance from Sol" are the same number.
+ * from the exact same observer-relative curve every other star uses. Because
+ * both the "near corona glow" and "far star point" regimes are the SAME
+ * continuous function of camDistPc, there is no discrete sprite->point
+ * handoff to seam — the function is continuous by construction across the
+ * whole range (verified by smoke:brightness). Also drives the realSky
+ * naked-eye dome's distance fade, since "distance from the Sun" and
+ * "distance from Sol" are the same number.
+ *
+ * WP23b: the Sun is no longer hardcoded to L=1 Lsun/Teff=5772K/R=1 Rsun —
+ * sunStateAt(G.t) supplies today's exact values on the main sequence and
+ * evolves them under warp, so every photometric/visual quantity below (glow
+ * magnitude, mesh radius, Teff tint, corona intensity, the planetary-nebula
+ * shell) is driven through the SAME live state and stays consistent by
+ * construction; nothing here re-derives brightness from a stale constant.
  */
 export function updateSunView(camera, camDistPc) {
+    const sun = sunStateAt(G.t);
     const d = Math.max(camDistPc, 1e-9);
-    const mag = sunObservedMag(d);
+    const mag = observedMag(sun.L_Lsun, d);
     const sizePx = sizePxForMag(mag, BRIGHTNESS_CURVE);
     const hdr = hdrIntensityForMag(mag, BRIGHTNESS_CURVE); // unclamped: feeds HDR bloom up close
     const pxScale = SUN_NOMINAL_VIEWPORT_H / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * .5));
     const distScene = d * PC_KM * K;
     const pointWorldScale = sizePx * distScene / Math.max(1e-6, pxScale);
-    // Size floor: never smaller than a sane multiple of the photosphere's own
-    // radius (a physical minimum for the corona-glow's footprint up close),
-    // NOT a brightness floor — opacity/color intensity below have none.
-    sunGlow.scale.setScalar(Math.max(SUN_RADIUS * 2.2, Math.min(SUN_RADIUS * 180, pointWorldScale)));
+    const sunRadiusScene = SUN_RADIUS * sun.R_Rsun; // evolving photosphere radius, scene units
+    // Size floor/ceiling scale with the CURRENT photosphere radius (not the
+    // fixed present-day SUN_RADIUS), so a red-giant Sun's glow footprint
+    // grows with it instead of staying pinned to today's tiny disk, and a
+    // white-dwarf Sun's glow shrinks down with its now-Earth-size core.
+    sunGlow.scale.setScalar(Math.max(sunRadiusScene * 2.2, Math.min(sunRadiusScene * 180, pointWorldScale)));
     sunGlow.material.opacity = Math.min(1, Math.max(0, hdr));
+    const teffColor = teffToRGB(sun.Teff, _sunTintScratch);
     const boost = Math.max(1, hdr); // >1 saturates the additive core toward white for bloom
-    sunGlow.material.color.setRGB(SUN_TEFF_COLOR[0] * boost, SUN_TEFF_COLOR[1] * boost, SUN_TEFF_COLOR[2] * boost);
+    sunGlow.material.color.setRGB(teffColor[0] * boost, teffColor[1] * boost, teffColor[2] * boost);
     updateRealSkyFade(d);
+
+    // Mesh photosphere/corona: radius follows R(t); color tint follows
+    // Teff(t) relative to today's 5772K baseline, so at t=0 the tint is
+    // exactly (1,1,1) — bit-for-bit today's look — and diverges smoothly
+    // as the star reddens (giant branch) or bleaches blue-white (WD).
+    if (sunCore) sunCore.scale.setScalar(sun.R_Rsun);
+    _sunEvoTint.set(
+        teffColor[0] / Math.max(1e-4, SUN_TEFF_COLOR[0]),
+        teffColor[1] / Math.max(1e-4, SUN_TEFF_COLOR[1]),
+        teffColor[2] / Math.max(1e-4, SUN_TEFF_COLOR[2]),
+    );
+    if (shaderTick.sunUniforms) shaderTick.sunUniforms.uTint.value.copy(_sunEvoTint);
+    if (sunCorona) sunCorona.scale.setScalar(sun.R_Rsun);
+    if (shaderTick.coronaUniforms) {
+        shaderTick.coronaUniforms.uTint.value.copy(_sunEvoTint);
+        // the WD has no extended chromosphere to speak of; the AGB/PN wind
+        // briefly brightens it before the envelope is gone entirely.
+        shaderTick.coronaUniforms.uIntensity.value = sun.phase === "WD" ? .2 : sun.phase === "AGB" ? 1.6 : 1;
+    }
+
+    // Planetary-nebula shell: only rendered during the brief 'PN' phase,
+    // expanding independently of the rapidly-shrinking exposed core (so it
+    // is scaled off the fixed AGB-tip radius, not sun.R_Rsun).
+    if (sunPN) {
+        if (sun.phase === "PN") {
+            const progress = Number.isFinite(sun.phaseDurationSec) && sun.phaseDurationSec > 0
+                ? Math.min(1, Math.max(0, sun.ageIntoPhaseSec / sun.phaseDurationSec)) : 0;
+            sunPN.visible = true;
+            sunPN.position.copy(sunPos);
+            sunPN.scale.setScalar(AGB_TIP_R_RSUN * (1.5 + 25 * progress));
+        } else {
+            sunPN.visible = false;
+        }
+    }
 }
 
 export function buildBodies(maps) {
@@ -240,6 +291,10 @@ export function buildBodies(maps) {
         map: { value: maps.sun },
         uHasMap: { value: maps.sun ? 1 : 0 },
         uT: { value: 0 },
+        // WP23b: multiplicative Teff tint, (1,1,1) at today's 5772K so the
+        // present-day look is bit-for-bit unchanged; updateSunView drives it
+        // toward red/orange on the giant branch and blue-white on the WD.
+        uTint: { value: new THREE.Vector3(1, 1, 1) },
     };
     shaderTick.sunUniforms = sunUniforms;
     const sunMat = new THREE.ShaderMaterial({
@@ -254,7 +309,7 @@ export function buildBodies(maps) {
                 gl_Position = projectionMatrix * mv;
             }`,
         fragmentShader: /* glsl */`
-            uniform sampler2D map; uniform float uHasMap; uniform float uT;
+            uniform sampler2D map; uniform float uHasMap; uniform float uT; uniform vec3 uTint;
             varying vec2 vUv; varying vec3 vNv; varying vec3 vPv;
             float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
             float noise(vec2 p){
@@ -283,13 +338,17 @@ export function buildBodies(maps) {
                 vec3 plasma = mix(vec3(.58, .12, .025), vec3(1.0, .62, .16), activeBand);
                 col = mix(col * texDetail, plasma * limb, .38);
                 col += vec3(1.0, .46, .10) * pow(mu, 3.1) * .025;
-                gl_FragColor = vec4(col, 1.0);
+                gl_FragColor = vec4(col * uTint, 1.0);
             }`,
     });
     sunCore = new THREE.Mesh(sphere(SUN_RADIUS, 96, 72, 48, 32), sunMat);
     scene.add(sunCore);
     // animated corona: fresnel rim shell with streamer noise
-    const coronaUniforms = { uT: { value: 0 } };
+    const coronaUniforms = {
+        uT: { value: 0 },
+        uTint: { value: new THREE.Vector3(1, 1, 1) },  // WP23b: same Teff tint as the photosphere
+        uIntensity: { value: 1 },                        // WP23b: dimmed on the WD (no extended chromosphere)
+    };
     shaderTick.coronaUniforms = coronaUniforms;
     sunCorona = new THREE.Mesh(sphere(SUN_RADIUS * 1.28, 96, 64, 48, 32), new THREE.ShaderMaterial({
         uniforms: coronaUniforms,
@@ -304,7 +363,8 @@ export function buildBodies(maps) {
                 gl_Position = projectionMatrix * mv;
             }`,
         fragmentShader: /* glsl */`
-            uniform float uT; varying float vF; varying vec3 vDir;
+            uniform float uT; uniform vec3 uTint; uniform float uIntensity;
+            varying float vF; varying vec3 vDir;
             void main(){
                 // slow smooth streamers drifting around the limb
                 float a = atan(vDir.z, vDir.x);
@@ -312,11 +372,44 @@ export function buildBodies(maps) {
                     + .16 * sin(a * 9.0 + uT * .10 + vDir.y * 2.2)
                     + .09 * sin(a * 17.0 - uT * .06)
                     + .08 * sin(vDir.y * 13.0 + uT * .07);
-                vec3 col = mix(vec3(1.0, .18, .025), vec3(1.0, .38, .08), vF) * vF * s * .016;
-                gl_FragColor = vec4(col, clamp(vF * s * .0075, 0.0, .032));
+                vec3 col = mix(vec3(1.0, .18, .025), vec3(1.0, .38, .08), vF) * vF * s * .016 * uTint * uIntensity;
+                gl_FragColor = vec4(col, clamp(vF * s * .0075, 0.0, .032) * uIntensity);
             }`,
     }));
     scene.add(sunCorona);
+    // WP23b: planetary-nebula shell, an expanding translucent gas shroud
+    // shown only during the Sun's brief 'PN' phase (envelope ejection right
+    // after the AGB tip, before the exposed core cools into a white dwarf).
+    // Built once at a nominal unit scale; updateSunView drives its real
+    // scale/opacity/color from sunStateAt's phase progress and hides it
+    // (scale 0) in every other phase.
+    const pnUniforms = { uT: { value: 0 } };
+    shaderTick.pnUniforms = pnUniforms;
+    sunPN = new THREE.Mesh(sphere(SUN_RADIUS, 64, 40, 32, 20), new THREE.ShaderMaterial({
+        uniforms: pnUniforms,
+        transparent: true, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false, depthTest: false,
+        vertexShader: /* glsl */`
+            varying float vF; varying vec3 vDir;
+            void main(){
+                vec3 n = normalize(normalMatrix * normal);
+                vec4 mv = modelViewMatrix * vec4(position, 1.0);
+                vF = pow(1.0 + dot(normalize(mv.xyz), n), 2.2);
+                vDir = normalize(position);
+                gl_Position = projectionMatrix * mv;
+            }`,
+        fragmentShader: /* glsl */`
+            uniform float uT; varying float vF; varying vec3 vDir;
+            void main(){
+                // wispy teal/magenta shell structure, classic planetary-nebula palette
+                float a = atan(vDir.z, vDir.x);
+                float wisp = .6 + .4 * sin(a * 6.0 + vDir.y * 4.0 + uT * .04);
+                vec3 col = mix(vec3(.15, .95, .85), vec3(.95, .35, .85), wisp * .5 + .5);
+                gl_FragColor = vec4(col * vF, vF * .09);
+            }`,
+    }));
+    sunPN.scale.setScalar(0); // hidden until updateSunView enters the 'PN' phase
+    sunPN.visible = false;
+    scene.add(sunPN);
     // soft glow only — no lens flare, it blocked the view ahead
     // PSF-style soft gaussian dot (no square sprite); the texture itself is
     // neutral white so the Sun's true Teff=5772K hue comes entirely from

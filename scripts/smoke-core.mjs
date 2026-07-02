@@ -7,7 +7,10 @@ function assert(ok, message) {
 }
 
 const { BH, GS, bhRegister, bhMuAt, addPhantom, gsPull } = await import("../src/state.js");
-const { C_LIGHT, PL, I_EARTH, OM_EARTH, I_MOON, OM_MOON0, OM_MOON_RATE } = await import("../src/constants.js");
+const {
+  C_LIGHT, PL, I_EARTH, OM_EARTH, I_MOON, OM_MOON0, OM_MOON_RATE,
+  WARPS, WARP_SUBS, WARP_DIGIT_OFFSET, SEC_YEAR, warpLabel, warpStepDown, warpStepUp,
+} = await import("../src/constants.js");
 const { segmentSphereHit } = await import("../src/geometry.js");
 const { hashInts, makeRNG, splitSeed, gaussian, randNormal, samplePoisson } = await import("../src/universe/prng.js");
 const {
@@ -44,6 +47,37 @@ assert(I_EARTH === 0 && OM_EARTH === 0, "Earth defines the ecliptic reference pl
 assert(I_MOON > 0 && I_MOON < 8 * DEG, "Moon inclination to the ecliptic should be a small positive angle (< 8°)");
 assert(OM_MOON0 >= 0 && OM_MOON0 < 360 * DEG, "Moon epoch node should be a longitude in [0, 360)°");
 assert(OM_MOON_RATE < 0, "Moon's node regresses (18.6-yr nodal precession), so its rate should be negative");
+
+// Slow-motion warp presets: WARPS gains 0.01/0.1/0.5 below real time; digit
+// keys 1-9 must keep indexing the same speeds they did before those were
+// prepended, and ,/. should step through the new sub-1 ladder.
+assert(
+  WARP_SUBS.length === 3 && WARP_SUBS[0] === 0.01 && WARP_SUBS[1] === 0.1 && WARP_SUBS[2] === 0.5,
+  "WARP_SUBS should be the three slow-mo presets in ascending order",
+);
+assert(
+  WARPS[0] === 0.01 && WARPS[1] === 0.1 && WARPS[2] === 0.5 && WARPS[3] === 1,
+  "WARPS should start with the slow-mo presets, then real time",
+);
+assert(WARP_DIGIT_OFFSET === WARP_SUBS.length, "digit-key offset should skip exactly the slow-mo presets");
+assert(
+  WARPS[0 + WARP_DIGIT_OFFSET] === 1 && WARPS[1 + WARP_DIGIT_OFFSET] === 60 && WARPS[7 + WARP_DIGIT_OFFSET] === 2592000 &&
+    WARPS[8 + WARP_DIGIT_OFFSET] === SEC_YEAR,
+  "digit keys 1-9 should still map to the same speeds as before slow-mo was added",
+);
+assert(
+  warpLabel(0.01) === "0.01×" && warpLabel(0.1) === "0.1×" && warpLabel(0.5) === "0.5×",
+  "warpLabel should format the slow-mo presets without trailing zeros",
+);
+assert(
+  warpStepDown(1) === 0.5 && warpStepDown(0.5) === 0.1 && warpStepDown(0.1) === 0.01 && warpStepDown(0.01) === 0.01,
+  "warpStepDown should walk 1 -> 0.5 -> 0.1 -> 0.01 and floor there",
+);
+assert(
+  warpStepUp(0.01) === 0.1 && warpStepUp(0.1) === 0.5 && warpStepUp(0.5) === 1 && warpStepUp(1) === 2,
+  "warpStepUp should walk 0.01 -> 0.1 -> 0.5 -> 1, then resume doubling",
+);
+assert(warpStepDown(3600) === 1800 && warpStepUp(3600) === 7200, "above 1x, ,/. should keep the original continuous halving/doubling");
 
 const blackholesSrc = readFileSync(new URL("../src/blackholes.js", import.meta.url), "utf8");
 const hudSrc = readFileSync(new URL("../src/hud.js", import.meta.url), "utf8");

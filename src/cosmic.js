@@ -1,11 +1,14 @@
 import * as THREE from "three";
-import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, SEC_YEAR, STARS } from "./constants.js";
+import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, PC_KM, SEC_YEAR, STARS } from "./constants.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
-import { cam, camera } from "./scene.js";
+import { cam, camera, farTierGroup } from "./scene.js";
 import { toast } from "./achievements.js";
 import { hygCatalogMetaUrl, loadHygCatalogData, rememberHygCatalogData } from "./universe/catalogData.js";
-import { makeGalaxyCloudAsync, galacticCenterScene, galacticRingPositions } from "./universe/starfield.js";
+import { makeGalaxyCloudAsync, galacticCenterScene, galacticRingPositions, applyEraToCloud } from "./universe/starfield.js";
+import { galToSceneUnitsInto } from "./universe/coords.js";
+import { GALACTIC_ORBIT_PERIOD_S } from "./universe/solarOrbit.js";
+import { eraModulation } from "./universe/cosmicEra.js";
 import { registerHygCatalog } from "./universe/hygActiveCatalog.js";
 import { PERF, markPerf } from "./perf.js";
 import {
@@ -32,13 +35,17 @@ let layerBuildScheduled = false;
 let layerBuildPromise = null;
 const root = new THREE.Group();
 const diskRoot = new THREE.Group();
+const galaxyMotionRoot = new THREE.Group();
 const galaxyRoot = new THREE.Group();
 const catalogRoot = new THREE.Group();
 const nearStarRoot = new THREE.Group();
 const localRoot = new THREE.Group();
 const deepRoot = new THREE.Group();
 const labelRoot = new THREE.Group();
-diskRoot.add(galaxyRoot, catalogRoot, nearStarRoot);
+galaxyMotionRoot.position.set(GC_SCENE[0], GC_SCENE[1], GC_SCENE[2]);
+galaxyRoot.position.set(-GC_SCENE[0], -GC_SCENE[1], -GC_SCENE[2]);
+galaxyMotionRoot.add(galaxyRoot);
+diskRoot.add(galaxyMotionRoot, catalogRoot, nearStarRoot);
 root.add(diskRoot, localRoot, deepRoot, labelRoot);
 root.visible = false;
 let pointMap = null;
@@ -50,8 +57,247 @@ let catalogLoadScheduled = false;
 const PC_SCENE = LY_SCENE * 3.261563777;
 const PC_LY = 3.261563777;
 const COSMIC_CATALOG_MIN_DIST = LY_SCENE * .002;
+const GALAXY_OMEGA0 = Math.PI * 2 / GALACTIC_ORBIT_PERIOD_S;
+const GALACTIC_NORTH_SCENE_AXIS = (() => {
+    const gc = [0, 0, 0], north = [0, 0, 0];
+    galToSceneUnitsInto(0, 0, 0, gc, 0, K);
+    galToSceneUnitsInto(0, 0, 1, north, 0, K);
+    return new THREE.Vector3(north[0] - gc[0], north[1] - gc[1], north[2] - gc[2]).normalize();
+})();
 const LOCAL_GALAXIES = [];
 let cosmicVisualBucket = "";
+
+// ---------------------------------------------------------------------------
+// WP23a - Milky Way / Andromeda approach, merger, and Local-Group dynamics.
+//
+// Initial conditions (van der Marel, Fardal, Besla et al. 2012, ApJ 753, 8,
+// "The M31 Velocity Vector II"): current 3-D separation ~770-785 kpc, radial
+// (closing) velocity ~-109 to -117 km/s, and a small, poorly-constrained
+// transverse component; 30 km/s is used here so the approach shows a visible
+// off-axis swing rather than a perfectly radial plunge. Halo-inclusive
+// virial masses (~1.3e12 Msun MW, ~1.5e12 Msun M31) follow the same paper's
+// Local Group mass budget.
+//
+// Model: the reduced two-body problem for the MW-M31 separation vector,
+// integrated once into a cached time -> position lookup table (no per-frame
+// integration - a deterministic KDK leapfrog runs once, lazily, on first
+// use). Gravity uses a Plummer-softened 1/r^2 law (softening ~15 kpc, a
+// stand-in halo-core scale) so the point-mass force never diverges as the
+// galaxies interpenetrate. A velocity-proportional drag switches on once the
+// halos are close enough to overlap - the qualitative signature of
+// dynamical friction (Chandrasekhar 1943, ApJ 97, 255: drag opposes the
+// relative velocity and grows with local density) WITHOUT evaluating the
+// literal Chandrasekhar formula (that needs a halo density profile + Coulomb
+// logarithm this sim doesn't carry); the drag's radial turn-on scale and
+// strength are tuned so the resulting timeline (first passage ~3.9 Gyr,
+// captured under 50 kpc by ~7 Gyr, effectively coalesced within ~10-15 Gyr)
+// matches the literature's ~4 Gyr first-passage / ~10 Gyr merger-completion
+// range (van der Marel+ 2012 Sec.1; Cox & Loeb 2008, MNRAS 386, 461).
+const G_SI = 6.674e-11;         // m^3 kg^-1 s^-2
+const MSUN_KG = 1.98892e30;
+const KPC_KM = PC_KM * 1000;
+const GYR_SEC = 1e9 * SEC_YEAR;
+
+const MERGER = {
+    massMWMsun: 1.3e12,
+    massM31Msun: 1.5e12,
+    r0Kpc: 785,
+    vr0KmS: -110,
+    vt0KmS: 30,
+    softenKpc: 15,
+    frictionEta0PerGyr: 0.5,
+    frictionScaleKpc: 85,
+    mergeKpc: 50,          // "coalesced" once separation drops (and stays) below this
+    mergeReleaseKpc: 75,   // hysteresis: only clears the "coalesced" state above this
+    disruptTailGyr: 1.5,   // extra ramp after permanent capture before disruptFrac reaches 1
+    tableMaxGyr: 100,
+    tableDtGyr: 0.002,     // integration step (~2 Myr)
+    tableSampleGyr: 0.01,  // stored-sample cadence (~10 Myr)
+};
+
+let mergerTable = null;
+
+// KDK leapfrog integration of the relative separation vector (x,y), run once
+// and cached. See the module comment above for the physical model.
+function buildMergerTable() {
+    const muTot = G_SI * 1e-9 * (MERGER.massMWMsun + MERGER.massM31Msun) * MSUN_KG; // km^3/s^2
+    const epsKm = MERGER.softenKpc * KPC_KM;
+    const etaScaleKm = MERGER.frictionScaleKpc * KPC_KM;
+    const eta0 = MERGER.frictionEta0PerGyr / GYR_SEC;
+    const dt = MERGER.tableDtGyr * GYR_SEC;
+    const tMax = MERGER.tableMaxGyr * GYR_SEC;
+    const sampleDt = MERGER.tableSampleGyr * GYR_SEC;
+    const nSamples = Math.floor(tMax / sampleDt) + 2;
+    const tSec = new Float64Array(nSamples);
+    const xKm = new Float64Array(nSamples);
+    const yKm = new Float64Array(nSamples);
+
+    let x = MERGER.r0Kpc * KPC_KM, y = 0;
+    let vx = MERGER.vr0KmS, vy = MERGER.vt0KmS;
+    let t = 0, si = 0, nextSampleT = 0;
+    let lastR = Math.hypot(x, y), prevDrDt = -1;
+    let firstPassageSec = null, mergedSec = null;
+
+    while (t <= tMax) {
+        if (t >= nextSampleT && si < nSamples) {
+            tSec[si] = t; xKm[si] = x; yKm[si] = y; si++;
+            nextSampleT += sampleDt;
+        }
+        let r2 = x * x + y * y;
+        let rSoft = Math.sqrt(r2 + epsKm * epsKm);
+        let g = -muTot / (rSoft * rSoft * rSoft);
+        let r = Math.sqrt(r2);
+        let eta = eta0 * Math.exp(-r / etaScaleKm);
+        const ax0 = g * x - eta * vx, ay0 = g * y - eta * vy;
+        const vxh = vx + ax0 * dt * 0.5, vyh = vy + ay0 * dt * 0.5;
+        x += vxh * dt; y += vyh * dt;
+        r2 = x * x + y * y;
+        rSoft = Math.sqrt(r2 + epsKm * epsKm);
+        g = -muTot / (rSoft * rSoft * rSoft);
+        r = Math.sqrt(r2);
+        eta = eta0 * Math.exp(-r / etaScaleKm);
+        const ax1 = g * x - eta * vxh, ay1 = g * y - eta * vyh;
+        vx = vxh + ax1 * dt * 0.5; vy = vyh + ay1 * dt * 0.5;
+        t += dt;
+
+        r = Math.hypot(x, y);
+        const drDt = r - lastR;
+        if (prevDrDt < 0 && drDt >= 0 && firstPassageSec === null) firstPassageSec = t;
+        prevDrDt = drDt; lastR = r;
+        const rKpc = r / KPC_KM;
+        if (rKpc < MERGER.mergeKpc && mergedSec === null) mergedSec = t;
+        else if (rKpc > MERGER.mergeReleaseKpc && mergedSec !== null) mergedSec = null;
+    }
+    if (si < nSamples) { tSec[si] = t; xKm[si] = x; yKm[si] = y; si++; }
+
+    return {
+        tSec: tSec.subarray(0, si),
+        xKm: xKm.subarray(0, si),
+        yKm: yKm.subarray(0, si),
+        firstPassageSec: firstPassageSec ?? tMax,
+        mergedSec: mergedSec ?? tMax,
+    };
+}
+
+function getMergerTable() {
+    if (!mergerTable) mergerTable = buildMergerTable();
+    return mergerTable;
+}
+
+function mergerRelativeKmAt(simTSeconds) {
+    const tbl = getMergerTable();
+    const t = Math.max(0, Number.isFinite(simTSeconds) ? simTSeconds : 0);
+    const arr = tbl.tSec, n = arr.length;
+    if (t <= arr[0]) return { x: tbl.xKm[0], y: tbl.yKm[0] };
+    if (t >= arr[n - 1]) return { x: tbl.xKm[n - 1], y: tbl.yKm[n - 1] };
+    let lo = 0, hi = n - 1;
+    while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (arr[mid] <= t) lo = mid; else hi = mid;
+    }
+    const t0 = arr[lo], t1 = arr[hi];
+    const f = t1 > t0 ? (t - t0) / (t1 - t0) : 0;
+    return {
+        x: tbl.xKm[lo] + (tbl.xKm[hi] - tbl.xKm[lo]) * f,
+        y: tbl.yKm[lo] + (tbl.yKm[hi] - tbl.yKm[lo]) * f,
+    };
+}
+
+// Pure, deterministic: MW-M31 3-D separation (kpc) at a given sim time
+// (seconds, matching G.t). Exported for smoke:merger.
+export function mergerSeparationKpcAt(simTSeconds) {
+    const { x, y } = mergerRelativeKmAt(simTSeconds);
+    return Math.hypot(x, y) / KPC_KM;
+}
+
+// 0..1 cumulative disk-disruption fraction, monotonically non-decreasing in
+// time (does not "heal" when the pair swings back out to a wide apoapsis
+// between passages) - ramps from the first close passage to a bit after the
+// pair is permanently captured under `mergeKpc`, feeding the disk->spheroid
+// visual and the color reddening.
+export function mergerDisruptFractionAt(simTSeconds) {
+    const tbl = getMergerTable();
+    const t = Math.max(0, Number.isFinite(simTSeconds) ? simTSeconds : 0);
+    const start = tbl.firstPassageSec;
+    const end = tbl.mergedSec + MERGER.disruptTailGyr * GYR_SEC;
+    if (end <= start) return t >= start ? 1 : 0;
+    return smooth01(start, end, t);
+}
+
+// Debug/test introspection - smoke:merger reads this rather than
+// re-deriving passage/merge timing with its own heuristics.
+export function mergerDebugState() {
+    const tbl = getMergerTable();
+    return {
+        r0Kpc: MERGER.r0Kpc,
+        firstPassageGyr: tbl.firstPassageSec / GYR_SEC,
+        mergedGyr: tbl.mergedSec / GYR_SEC,
+        mergeKpc: MERGER.mergeKpc,
+    };
+}
+
+export function isCosmicLayerBuilt() {
+    return layerBuilt;
+}
+
+// Orbital-plane axes for reconstructing the 3-D relative vector: u_hat is
+// the initial MW->M31 direction, w_hat is a perpendicular in-plane axis
+// carrying the (small) transverse velocity. Central forces (gravity + a
+// drag along the relative velocity) never produce an out-of-plane
+// component, so the whole trajectory stays in this fixed plane.
+const MERGER_U_HAT = new THREE.Vector3();
+const MERGER_W_HAT = new THREE.Vector3();
+let mergerAxesReady = false;
+const MERGER_TMP_MW = new THREE.Vector3();
+const MERGER_TMP_M31 = new THREE.Vector3();
+const MERGER_MW_FRAC = MERGER.massM31Msun / (MERGER.massMWMsun + MERGER.massM31Msun);
+
+function ensureMergerAxes(baseVec3) {
+    if (mergerAxesReady) return;
+    MERGER_U_HAT.copy(baseVec3).normalize();
+    const upGuess = Math.abs(MERGER_U_HAT.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+    MERGER_W_HAT.crossVectors(MERGER_U_HAT, upGuess).normalize();
+    mergerAxesReady = true;
+}
+
+// Barycentric two-body split: with the barycenter fixed and MW/M31 at their
+// t=0 scene positions (0 and the original base vector), MW recoils by the
+// mass-M31 fraction of the net relative displacement and M31 carries the
+// rest - standard two-body bookkeeping, applied "symmetrically" to the MW's
+// own backdrop group per WP23a's brief (the Sun/local-neighborhood frame
+// stays put; only the whole-Milky-Way visual wobbles).
+function mergerScenePositions() {
+    const rel = mergerRelativeKmAt(G.t);
+    const dx = rel.x - MERGER.r0Kpc * KPC_KM, dy = rel.y;
+    const mwU = -MERGER_MW_FRAC * dx, mwW = -MERGER_MW_FRAC * dy;
+    const m31U = mwU + rel.x, m31W = mwW + rel.y;
+    MERGER_TMP_MW.copy(MERGER_U_HAT).multiplyScalar(mwU * K).addScaledVector(MERGER_W_HAT, mwW * K);
+    MERGER_TMP_M31.copy(MERGER_U_HAT).multiplyScalar(m31U * K).addScaledVector(MERGER_W_HAT, m31W * K);
+    return { mwOffset: MERGER_TMP_MW, m31Pos: MERGER_TMP_M31 };
+}
+
+function setDisruptUniforms(uniforms, disrupt, eraRed) {
+    if (!uniforms) return;
+    if (uniforms.uDisrupt) uniforms.uDisrupt.value = disrupt;
+    if (uniforms.uEraRed) uniforms.uEraRed.value = eraRed;
+}
+
+let mwDiskMergeUniforms = null;
+
+// Hook for the WP24 parallel package (frozen contract, feature-detected so
+// cosmic.js works whether or not it has landed yet): universe/deepField.js +
+// render/deepFieldRender.js, a statistically-correct extragalactic field
+// beyond the Local Group, initialized into scene.js's farTierGroup and
+// updated every frame. (WP23c's cosmicEra.js is a confirmed-landed, tested
+// dependency - imported statically above, no feature-detect needed.)
+let deepFieldApi = null, deepFieldApiTried = false;
+async function ensureDeepFieldApi() {
+    if (deepFieldApiTried) return deepFieldApi;
+    deepFieldApiTried = true;
+    try { deepFieldApi = await import("./render/deepFieldRender.js"); } catch (err) { deepFieldApi = null; }
+    return deepFieldApi;
+}
+let legacyDeepFieldObj = null;
 
 function idleSlice(timeout = 120) {
     return new Promise(resolve => {
@@ -99,7 +345,7 @@ function starAbsMag(lum, absMagField, mag, distPc) {
 }
 
 function installCatalogObject(pos, col, absMag, count, stats) {
-    const obj = viewBrightPoints(pos, col, absMag, { basePx: 1.9, maxPx: 14, opacity: .82 });
+    const obj = viewBrightPoints(pos, col, absMag, { basePx: 1.7, maxPx: 8.5, magLimit: 8.4, opacity: .62 });
     obj.name = "HYG v4.1 catalog";
     catalogRoot.add(obj);
     catalogCount = count;
@@ -260,6 +506,7 @@ function makeLocalStars() {
     const count = STARS.length;
     const pos = new Float32Array(count * 3);
     const col = new Float32Array(count * 3);
+    const absMag = new Float32Array(count);
     let n = 0;
     for (const star of STARS) {
         pos[n * 3] = star.x * K;
@@ -268,9 +515,13 @@ function makeLocalStars() {
         col[n * 3] = ((star.color >> 16) & 255) / 255;
         col[n * 3 + 1] = ((star.color >> 8) & 255) / 255;
         col[n * 3 + 2] = (star.color & 255) / 255;
+        const dPc = star.dLy / PC_LY;
+        absMag[n] = Number.isFinite(star.absMag)
+            ? star.absMag
+            : starAbsMag(star.lumSolar, NaN, star.mag ?? 7, dPc);
         n++;
     }
-    return { pos, col };
+    return { pos, col, absMag };
 }
 
 // Observer-relative-brightness point cloud: unlike `points()` (plain
@@ -283,10 +534,17 @@ function makeLocalStars() {
 const PC_SCENE_UNITS = PC_SCENE;
 function viewBrightPoints(pos, col, absMag, opts = {}) {
     const curve = { ...BRIGHTNESS_CURVE, ...opts };
+    const count = pos.length / 3;
     const geom = new THREE.BufferGeometry();
     geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
     geom.setAttribute("absMag", new THREE.BufferAttribute(absMag, 1));
+    const solDistPc = new Float32Array(count);
+    for (let i = 0; i < count; i++) {
+        const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+        solDistPc[i] = Math.sqrt(x * x + y * y + z * z) / PC_SCENE_UNITS;
+    }
+    geom.setAttribute("solDistPc", new THREE.BufferAttribute(solDistPc, 1));
     const mat = new THREE.ShaderMaterial({
         uniforms: {
             uBasePx: { value: curve.basePx },
@@ -299,8 +557,10 @@ function viewBrightPoints(pos, col, absMag, opts = {}) {
         },
         vertexShader: /* glsl */`
             attribute float absMag;
+            attribute float solDistPc;
             varying vec3 vColor;
             varying float vHdr;
+            varying float vDensity;
             uniform float uBasePx, uMagRef, uMinPx, uMaxPx, uMagLimit, uPcScene;
             ${VIEW_BRIGHTNESS_GLSL}
             void main() {
@@ -309,19 +569,21 @@ function viewBrightPoints(pos, col, absMag, opts = {}) {
                 float camDistPc = length(mvPosition.xyz) / uPcScene;
                 float mag = obmApparentMagAt(absMag, camDistPc);
                 gl_PointSize = obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
-                vHdr = obmHdrIntensity(mag, uMagLimit);
+                vHdr = min(obmHdrIntensity(mag, uMagLimit), 2.2);
+                vDensity = mix(0.08, 1.0, smoothstep(18.0, 90.0, solDistPc));
                 gl_Position = projectionMatrix * mvPosition;
             }`,
         fragmentShader: /* glsl */`
             varying vec3 vColor;
             varying float vHdr;
+            varying float vDensity;
             uniform float uOpacity;
             void main() {
                 vec2 uv = gl_PointCoord - 0.5;
                 float r2 = dot(uv, uv);
-                float g = exp(-r2 * 14.0) + exp(-r2 * 60.0) * max(0.0, vHdr - 1.0) * 0.6;
+                float g = exp(-r2 * 14.0) + exp(-r2 * 60.0) * max(0.0, vHdr - 1.0) * 0.42;
                 if (g < 0.006) discard;
-                gl_FragColor = vec4(vColor * max(vHdr, 1.0), clamp(g, 0.0, 4.0) * uOpacity);
+                gl_FragColor = vec4(vColor * max(vHdr, 1.0), clamp(g, 0.0, 1.8) * uOpacity * vDensity);
             }`,
         vertexColors: true,
         transparent: true,
@@ -330,6 +592,88 @@ function viewBrightPoints(pos, col, absMag, opts = {}) {
         blending: THREE.AdditiveBlending,
     });
     mat.userData.baseOpacity = curve.opacity ?? 1;
+    const obj = new THREE.Points(geom, mat);
+    obj.frustumCulled = false;
+    return obj;
+}
+
+// A disk point-cloud that can progressively scatter into a spheroid and
+// redden, driven by `uDisrupt` (WP23a merger visual) and `uEraRed` (WP23c
+// era hook) uniforms. Used for both the Milky Way's own procedural disk
+// cloud and Andromeda's disk (`diskGalaxy(..., { mergeable: true })`) so the
+// two merging disks share one shader; non-merging galaxies (M33/LMC/SMC)
+// keep the plain PointsMaterial path in `diskGalaxy()`, untouched.
+//
+// `scatterTarget` is a per-point randomized position on a puffed-out
+// spheroid with the same characteristic radius as the source disk
+// (precomputed once, deterministic in `seed`) - at uDisrupt=1 the cloud
+// looks like a pressure-supported elliptical remnant instead of flying
+// apart to infinity.
+function mergeableDiskPoints(pos, col, opts = {}) {
+    const { size = 1.2, opacity = .5, seed = 1 } = opts;
+    const count = pos.length / 3;
+    const scatter = new Float32Array(count * 3);
+    const rnd = mulberry32(seed | 0);
+    let maxR = 1;
+    for (let i = 0; i < count; i++) {
+        const x = pos[i * 3], y = pos[i * 3 + 1], z = pos[i * 3 + 2];
+        const r = Math.sqrt(x * x + y * y * 4 + z * z);
+        if (r > maxR) maxR = r;
+        const u = rnd() * 2 - 1, th = rnd() * Math.PI * 2;
+        const side = Math.sqrt(Math.max(0, 1 - u * u));
+        scatter[i * 3] = Math.cos(th) * side * r;
+        scatter[i * 3 + 1] = u * r * .7;
+        scatter[i * 3 + 2] = Math.sin(th) * side * r;
+    }
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    geom.setAttribute("scatterTarget", new THREE.BufferAttribute(scatter, 3));
+    const mat = new THREE.ShaderMaterial({
+        uniforms: {
+            uSize: { value: size },
+            uOpacity: { value: opacity },
+            uDisrupt: { value: 0 },
+            uEraRed: { value: 0 },
+            uRadiusScale: { value: maxR },
+        },
+        vertexShader: /* glsl */`
+            attribute vec3 scatterTarget;
+            varying vec3 vColor;
+            uniform float uSize, uDisrupt, uEraRed, uRadiusScale;
+            void main() {
+                float m = smoothstep(0.0, 1.0, uDisrupt);
+                // Shear/twist the still-disk-like points before they fully
+                // leave the plane (inner region shears faster, mimicking
+                // differential rotation winding up during the approach).
+                float rr = length(position.xz);
+                float twist = uDisrupt * 2.4 * (1.0 - clamp(rr / uRadiusScale, 0.0, 1.0));
+                float tc = cos(twist), ts = sin(twist);
+                vec3 sheared = vec3(position.x * tc - position.z * ts, position.y, position.x * ts + position.z * tc);
+                vec3 mixed = mix(sheared, scatterTarget, m);
+                float red = clamp(m * .85 + uEraRed * .5, 0.0, 1.0);
+                vColor = mix(color, vec3(1.0, 0.62, 0.42), red);
+                vec4 mvPosition = modelViewMatrix * vec4(mixed, 1.0);
+                gl_PointSize = uSize;
+                gl_Position = projectionMatrix * mvPosition;
+            }`,
+        fragmentShader: /* glsl */`
+            varying vec3 vColor;
+            uniform float uOpacity;
+            void main() {
+                vec2 uv = gl_PointCoord - 0.5;
+                float r2 = dot(uv, uv);
+                if (r2 > 0.25) discard;
+                float g = exp(-r2 * 10.0);
+                gl_FragColor = vec4(vColor, g * uOpacity);
+            }`,
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: THREE.AdditiveBlending,
+    });
+    mat.userData.baseOpacity = opacity;
     const obj = new THREE.Points(geom, mat);
     obj.frustumCulled = false;
     return obj;
@@ -429,7 +773,7 @@ function galaxyCoreTexture(colorA, colorB) {
     return t;
 }
 
-function diskGalaxy(cx, cy, cz, radiusLy, tilt, colorA, colorB, seed, count = 9000) {
+function diskGalaxy(cx, cy, cz, radiusLy, tilt, colorA, colorB, seed, count = 9000, opts = {}) {
     const rnd = mulberry32(seed);
     const radius = radiusLy * LY_SCENE;
     const pos = new Float32Array(count * 3);
@@ -454,24 +798,32 @@ function diskGalaxy(cx, cy, cz, radiusLy, tilt, colorA, colorB, seed, count = 90
         col[i * 3 + 1] = Math.max(0, Math.min(1, c[1]));
         col[i * 3 + 2] = Math.max(0, Math.min(1, c[2]));
     }
-    const geom = new THREE.BufferGeometry();
-    geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    const mat = new THREE.PointsMaterial({
-        vertexColors: true,
-        size: 1.18,
-        sizeAttenuation: false,
-        transparent: true,
-        map: cosmicPointMap(),
-        alphaTest: .015,
-        opacity: .66,
-        depthWrite: false,
-        depthTest: true,
-        blending: THREE.AdditiveBlending,
-    });
-    mat.userData.baseOpacity = .66;
-    const disk = new THREE.Points(geom, mat);
-    disk.frustumCulled = false;
+    let disk;
+    if (opts.mergeable) {
+        // WP23a: this disk is a merger participant (currently just M31) -
+        // build it with the disruptable/reddenable shader instead of the
+        // plain PointsMaterial path below.
+        disk = mergeableDiskPoints(pos, col, { size: 1.18, opacity: .66, seed: seed ^ 0x77 });
+    } else {
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+        geom.setAttribute("color", new THREE.BufferAttribute(col, 3));
+        const mat = new THREE.PointsMaterial({
+            vertexColors: true,
+            size: 1.18,
+            sizeAttenuation: false,
+            transparent: true,
+            map: cosmicPointMap(),
+            alphaTest: .015,
+            opacity: .66,
+            depthWrite: false,
+            depthTest: true,
+            blending: THREE.AdditiveBlending,
+        });
+        mat.userData.baseOpacity = .66;
+        disk = new THREE.Points(geom, mat);
+        disk.frustumCulled = false;
+    }
     const coreMat = new THREE.SpriteMaterial({
         map: galaxyCoreTexture(colorA, colorB),
         transparent: true,
@@ -488,6 +840,7 @@ function diskGalaxy(cx, cy, cz, radiusLy, tilt, colorA, colorB, seed, count = 90
     group.add(disk, core);
     group.rotation.set(tilt || 0, seed * .017, (seed % 31) * .021);
     group.frustumCulled = false;
+    if (opts.mergeable) group.userData.mergeUniforms = disk.material.uniforms;
     return group;
 }
 
@@ -577,42 +930,55 @@ function galacticPlaneRing(Rpc, color, opacity) {
     return line;
 }
 
-function setTreeOpacity(obj, opacity) {
-    obj.traverse(child => {
-        if (!child.material) return;
-        const base = child.material.userData.baseOpacity ?? child.material.opacity ?? 1;
-        child.material.opacity = base * opacity;
-    });
-}
-
 function addMovingGalaxy(cfg) {
     const group = new THREE.Group();
     group.name = cfg.name;
     const base = new THREE.Vector3(cfg.xLy * LY_SCENE, cfg.yLy * LY_SCENE, cfg.zLy * LY_SCENE);
     group.position.copy(base);
-    group.add(diskGalaxy(0, 0, 0, cfg.radiusLy, cfg.tilt || 0, cfg.colorA, cfg.colorB, cfg.seed, cfg.count || 9000));
+    const diskGroup = diskGalaxy(0, 0, 0, cfg.radiusLy, cfg.tilt || 0, cfg.colorA, cfg.colorB, cfg.seed, cfg.count || 9000, { mergeable: !!cfg.mergeable });
+    group.add(diskGroup);
     group.add(galaxyHalo(cfg.radiusLy, cfg.seed, cfg.colorA, cfg.colorB, cfg.richness || 1));
     localRoot.add(group);
     const velocity = new THREE.Vector3();
     if (cfg.approachKmS) velocity.copy(base).normalize().multiplyScalar(-cfg.approachKmS * K);
     if (cfg.velocityKmS) velocity.add(new THREE.Vector3(cfg.velocityKmS[0] * K, cfg.velocityKmS[2] * K, -cfg.velocityKmS[1] * K));
-    LOCAL_GALAXIES.push({ id: cfg.id, name: cfg.name, group, base, velocity });
+    LOCAL_GALAXIES.push({ id: cfg.id, name: cfg.name, group, base, velocity, mergeUniforms: diskGroup.userData.mergeUniforms || null });
     return group;
 }
 
+// M31 ("m31") follows the WP23a two-body merger trajectory (see above);
+// M33/LMC/SMC keep their original constant-velocity vectors, just no longer
+// clamped to +-5 Gyr (they stay finite for any sim time on a straight line -
+// no numerical-safety reason to clamp them, and clamping was only ever what
+// froze M31 mid-approach).
 function updateLocalGalaxyMotion() {
-    const t = Math.min(Math.max(G.t, -5e9 * SEC_YEAR), 5e9 * SEC_YEAR);
+    const t = G.t;
+    const gc = galacticCenterScene();
+    diskRoot.position.set(gc[0] - GC_SCENE[0], gc[1] - GC_SCENE[1], gc[2] - GC_SCENE[2]);
+    galaxyMotionRoot.quaternion.setFromAxisAngle(GALACTIC_NORTH_SCENE_AXIS, GALAXY_OMEGA0 * t);
+    const era = eraModulation(t);
+    const eraRed = era.redshiftTint;
     for (const g of LOCAL_GALAXIES) {
-        g.group.position.set(
-            g.base.x + g.velocity.x * t,
-            g.base.y + g.velocity.y * t,
-            g.base.z + g.velocity.z * t,
-        );
+        if (g.id === "m31") {
+            ensureMergerAxes(g.base);
+            const { mwOffset, m31Pos } = mergerScenePositions();
+            g.group.position.copy(m31Pos);
+            galaxyRoot.position.set(mwOffset.x - GC_SCENE[0], mwOffset.y - GC_SCENE[1], mwOffset.z - GC_SCENE[2]);
+            const disrupt = mergerDisruptFractionAt(t);
+            setDisruptUniforms(g.mergeUniforms, disrupt, eraRed);
+            setDisruptUniforms(mwDiskMergeUniforms, disrupt, eraRed);
+        } else {
+            g.group.position.set(
+                g.base.x + g.velocity.x * t,
+                g.base.y + g.velocity.y * t,
+                g.base.z + g.velocity.z * t,
+            );
+        }
     }
 }
 
 function buildLocalGroup() {
-    addMovingGalaxy({ id: "m31", name: "ANDROMEDA", xLy: 2537000, yLy: 18000, zLy: -420000, radiusLy: 110000, tilt: .35, colorA: [.56, .65, .9], colorB: [1, .82, .55], seed: 8102, approachKmS: 110, richness: 1.35 });
+    addMovingGalaxy({ id: "m31", name: "ANDROMEDA", xLy: 2537000, yLy: 18000, zLy: -420000, radiusLy: 110000, tilt: .35, colorA: [.56, .65, .9], colorB: [1, .82, .55], seed: 8102, approachKmS: 110, richness: 1.35, mergeable: true });
     addMovingGalaxy({ id: "m33", name: "TRIANGULUM", xLy: 1610000, yLy: -24000, zLy: 980000, radiusLy: 45000, tilt: -.25, colorA: [.54, .68, 1], colorB: [.9, .88, .74], seed: 8117, approachKmS: 44, richness: .85 });
     addMovingGalaxy({ id: "lmc", name: "LARGE MAGELLANIC CLOUD", xLy: -142000, yLy: -36000, zLy: 68000, radiusLy: 16000, colorA: [.62, .72, 1], colorB: [.95, .86, .7], seed: 8131, velocityKmS: [57, -226, 221], richness: .45 });
     addMovingGalaxy({ id: "smc", name: "SMALL MAGELLANIC CLOUD", xLy: -184000, yLy: -62000, zLy: 104000, radiusLy: 9500, colorA: [.58, .68, .96], colorB: [.9, .82, .68], seed: 8149, velocityKmS: [19, -153, 174], richness: .32 });
@@ -644,19 +1010,37 @@ async function buildCosmicLayer() {
         // The 170k Milky Way cloud is visually important but not needed for the
         // first solar-system frame. Generate it in slices so startup and play
         // remain responsive while the far-scale layer warms up.
-        galaxyRoot.add(points(await makeGalaxyCloudAsync(170000, 0x6d57, 4096, idleSlice), 1.20, .5));
+        // WP23a: built with the disruptable/reddenable shader (mergeableDiskPoints)
+        // instead of the plain points() helper, so the MW's own disk can puff
+        // into "Milkomeda" alongside M31's disk during the merger.
+        const mwCloud = await makeGalaxyCloudAsync(170000, 0x6d57, 4096, idleSlice);
+        const mwDisk = mergeableDiskPoints(mwCloud.pos, mwCloud.col, { size: 1.20, opacity: .5, seed: 0x6d57 ^ 0x77 });
+        mwDiskMergeUniforms = mwDisk.material.uniforms;
+        galaxyRoot.add(mwDisk);
         await idleSlice();
         galaxyRoot.add(milkyWayHalo());
         galaxyRoot.add(galacticPlaneRing(8178, 0x53617a, .30));
         galaxyRoot.add(galacticPlaneRing(16000, 0x344058, .24));
         catalogRoot.frustumCulled = false;
         await idleSlice();
-        nearStarRoot.add(points(makeLocalStars(), 2.4, .78));
+        const localStars = makeLocalStars();
+        nearStarRoot.add(viewBrightPoints(localStars.pos, localStars.col, localStars.absMag, { basePx: 1.3, maxPx: 5.0, magLimit: 7.8, opacity: .34 }));
         await idleSlice();
         buildLocalGroup();
         await idleSlice();
-        deepRoot.add(deepFieldLayer());
+        legacyDeepFieldObj = deepFieldLayer();
+        deepRoot.add(legacyDeepFieldObj);
         deepRoot.frustumCulled = false;
+        const deepApi = await ensureDeepFieldApi();
+        // WP24's contract: initDeepField builds into its OWN camera-following
+        // skybox group nested inside the group we hand it, so that group must
+        // be a plain, non-animated Object3D at the scene root - NOT `deepRoot`,
+        // which cosmic.js itself already recenters onto the camera every frame
+        // for the legacy layer below (double-applying that would be wrong).
+        // scene.js's farTierGroup is exactly that group.
+        if (deepApi?.initDeepField) {
+            try { deepApi.initDeepField(farTierGroup); } catch (err) { console.warn("deepField init failed", err); }
+        }
         layerBuilt = true;
         cosmicVisualBucket = "";
         if (PERF.enabled) markPerf("cosmic.buildLayer", performance.now() - t0, {
@@ -758,7 +1142,13 @@ export function updateCosmicLayer() {
     const groupVisible = group > .01;
     const deepVisible = deep > .01;
     if (catalogVisible) scheduleCatalogLoad();
-    if (groupVisible) updateLocalGalaxyMotion();
+    // Unconditional (not gated on groupVisible): the MW backdrop's own
+    // barycentric merger wobble lives on galaxyRoot, which is visible over a
+    // much wider zoom range than the Local Group view.
+    updateLocalGalaxyMotion();
+    if (deepFieldApi?.updateDeepField) {
+        try { deepFieldApi.updateDeepField(camera, G.t); } catch (err) { console.warn("deepField update failed", err); }
+    }
     const label = "COSMIC SCALE · " + cosmicScaleLabel() + catalogCoverageLabel();
     const bucket = [
         Math.round(gal * 100),
@@ -781,20 +1171,46 @@ export function updateCosmicLayer() {
     localRoot.visible = groupVisible;
     deepRoot.visible = deepVisible;
     if (deepRoot.visible) deepRoot.position.copy(camera.position);
-    if (bucket === cosmicVisualBucket) return;
-    cosmicVisualBucket = bucket;
+    // WP24 contract: once its own field has finished building, stop showing
+    // cosmic.js's old fixed-16k decoration so the two don't double up - but
+    // never before, so there is no frame with neither field visible.
+    if (legacyDeepFieldObj && deepFieldApi?.deepFieldReady?.()) legacyDeepFieldObj.visible = false;
+
+    // WP23c wiring contract: eraModulation(G.t) via applyEraToCloud multiplies
+    // the procedural galaxy backdrop's color/intensity as star formation
+    // declines over deep time. Real star catalogs (catalogRoot/nearStarRoot)
+    // are left alone - individual-star aging is WP23b's job, a different
+    // mechanism. Runs every frame, NOT bucket-gated like the block below:
+    // era keeps changing continuously under warp even on frames where the
+    // camera-distance LOD factors haven't crossed a bucket boundary.
+    const era = eraModulation(G.t);
     for (const child of galaxyRoot.children) {
+        child.visible = galaxyVisible;
         if (child.material) {
-            child.visible = galaxyVisible;
-            child.material.opacity = child.isPoints ? .18 + .72 * gal * (1 - group * .55) : .07 + .24 * gal * (1 - group * .55);
+            // mwDisk/rings historically render at the raw LOD value (their
+            // authored baseOpacity was never actually consumed on this
+            // path) - stash this frame's LOD value as the base applyEraToCloud
+            // reads, so its base*lumFactor multiply reproduces that exactly,
+            // with era's factor now composed in too.
+            child.material.userData.baseOpacity = child.isPoints ? .18 + .72 * gal * (1 - group * .55) : .07 + .24 * gal * (1 - group * .55);
+            applyEraToCloud(child, era);
         } else {
-            child.visible = galaxyVisible;
-            setTreeOpacity(child, (.22 + .68 * gal) * (1 - group * .35));
+            // milkyWayHalo(): a Group of Points whose own authored
+            // baseOpacity IS multiplied in (matches the setTreeOpacity call
+            // this replaces).
+            applyEraToCloud(child, { lumFactor: (.22 + .68 * gal) * (1 - group * .35) * era.lumFactor, redshiftTint: era.redshiftTint });
         }
     }
+    applyEraToCloud(localRoot, { lumFactor: (.16 + .84 * group) * era.lumFactor, redshiftTint: era.redshiftTint });
+    applyEraToCloud(deepRoot, { lumFactor: deep * era.lumFactor, redshiftTint: era.redshiftTint });
+
+    if (bucket === cosmicVisualBucket) return;
+    cosmicVisualBucket = bucket;
     for (const child of nearStarRoot.children) if (child.material) {
         child.visible = nearVisible;
-        child.material.opacity = Math.min(1, (.74 + .26 * gal) * near);
+        const fade = Math.min(1, (.74 + .26 * gal) * near);
+        if (child.material.uniforms?.uOpacity) child.material.uniforms.uOpacity.value = (child.material.userData.baseOpacity ?? 1) * fade;
+        else child.material.opacity = fade;
     }
     for (const child of catalogRoot.children) if (child.material) {
         child.visible = catalogVisible;
@@ -805,8 +1221,6 @@ export function updateCosmicLayer() {
         if (child.material.uniforms?.uOpacity) child.material.uniforms.uOpacity.value = (child.material.userData.baseOpacity ?? 1) * fade;
         else child.material.opacity = fade;
     }
-    setTreeOpacity(localRoot, .16 + .84 * group);
-    setTreeOpacity(deepRoot, deep);
     if (scaleEl) {
         scaleEl.style.opacity = gal > .01 ? "1" : "0";
         scaleEl.textContent = label;

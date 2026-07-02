@@ -1,4 +1,4 @@
-import { WARPS, WARP_MAX, PL, STARS, BH_SIZES, K, LY_SCENE } from "./constants.js";
+import { WARPS, WARP_DIGIT_OFFSET, warpStepDown, warpStepUp, PL, STARS, BH_SIZES, K, LY_SCENE } from "./constants.js";
 import { MOONS, moonFocusIndex } from "./moons.js";
 import { G, keys, BH } from "./state.js";
 import { cam } from "./scene.js";
@@ -75,8 +75,8 @@ function onKeyDown(e) {
     if (e.code === "KeyZ" && !e.shiftKey) G.throttle = Math.max(.05, G.throttle / 1.3);
     if (e.code === "KeyX" && !e.shiftKey) G.throttle = Math.min(100, G.throttle * 1.3);
     if (e.code === "KeyX" && e.shiftKey) apOff("cancelled", toast);
-    if (e.code === "Comma") G.warp = Math.max(1, G.warp / 2);
-    if (e.code === "Period") G.warp = Math.min(WARP_MAX, G.warp * 2);
+    if (e.code === "Comma") G.warp = warpStepDown(G.warp);
+    if (e.code === "Period") G.warp = warpStepUp(G.warp);
     if (e.repeat) return;
     switch (e.code) {
         case "Escape":
@@ -149,7 +149,7 @@ function onKeyDown(e) {
         case "KeyH": toggleHelp(); break;
         default: {
             const m = e.code.match(/^Digit([1-9])$/);
-            if (m) G.warp = WARPS[Number(m[1]) - 1];
+            if (m) G.warp = WARPS[Number(m[1]) - 1 + WARP_DIGIT_OFFSET];
         }
     }
 }

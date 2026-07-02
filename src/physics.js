@@ -7,7 +7,7 @@ import {
     eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance3,
     gravityStarsFor, currentGravityStars, STELLAR_GRAVITY_MIN_R,
 } from "./ephemeris.js";
-import { G, BH, WORLD, GS, EPHT, bhMuAt } from "./state.js";
+import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody } from "./state.js";
 import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
 import { ACTIVE_STARS, refreshActiveStars } from "./universe/activeStars.js";
@@ -16,10 +16,82 @@ import { darkEnergyAccel, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, 
 import { equatorialKmToGal } from "./universe/coords.js";
 import { segmentSphereHit } from "./geometry.js";
 import { PERF, markPerf } from "./perf.js";
+import { sunStateAt, sunMaxRadiusReachedRsunAt } from "./universe/sunEvolution.js";
 
-// hooks into the presentation layer, wired once by main.js
-let H = { die: () => { }, award: () => { }, banner: () => { }, hideBanner: () => { } };
+// hooks into the presentation layer, wired once by main.js. `engulfed` is
+// optional (main.js's current initPhysicsHooks call doesn't pass it) — WP23b
+// calls it defensively with `?.()` so a planet engulfment never throws while
+// main.js (out of this package's file ownership) hasn't wired a UI reaction.
+let H = { die: () => { }, award: () => { }, banner: () => { }, hideBanner: () => { }, engulfed: () => { } };
 export function initPhysicsHooks(hooks) { H = hooks; }
+
+// ============================ SUN EVOLUTION (WP23b) ============================
+// The Sun's radius (and, later, its remnant mass) evolve under deep time
+// warp per universe/sunEvolution.js. `sunLive`/`sunRKmLive` are refreshed
+// once per advance() call (not per RK4 substep, which would recompute the
+// same Gyr-scale-slow function dozens of times a frame for no benefit) and
+// consumed by every contact/flush-zone check below that used to assume a
+// constant R_SUN. Initialized to today's exact values so any call before the
+// first advance() (there shouldn't be one) is still correct.
+let sunLive = { phase: "MS", L_Lsun: 1, R_Rsun: 1, Teff: 5772, massLoss: 1 };
+let sunRKmLive = R_SUN;
+// SCOPE NOTE (investigated per the WP23b brief's "recompute elements on mass
+// change" instruction): the Sun's gravitational parameter is intentionally
+// NOT scaled by sunLive.massLoss anywhere in this file. ephemeris.js keeps
+// a private, load-time-fixed `bodyMu[IDX_SUN] = MU_S` that both the honest
+// RK4 field (relGravityAt3, used by deriv() below) and the Kepler-jump
+// analytic bridge (keplerAdvance3) read from — a file this package does not
+// own. Scaling MU_S only in physics.js's own local mu usages (the 1PN term,
+// orbitInfo's domSun branch) would make the "fast path" (Kepler jump /
+// prediction) disagree with the "honest path" (RK4 via relGravityAt3) about
+// how heavy the Sun is, which is worse than no change at all: it would drift
+// ship state on every fast<->honest handoff instead of leaving the (already
+// small, since AGB mass loss only matters ~7.6+ Gyr out) mismatch alone.
+// Properly threading a live Sun mass through gravity — including recomputing
+// each planet's osculating elements at the mass-loss epoch, since adiabatic
+// mass loss expands orbits (Ma ~ const) and the Kepler-jump bridge assumes a
+// fixed mu — needs an ephemeris.js-owning pass and is left as a follow-up.
+// The Sun's evolving RADIUS (contact/engulfment, this file) and VISUAL
+// (bodies.js) are fully wired; sunStateAt's `massLoss` field is exported and
+// ready for that follow-up to consume.
+function checkSunEngulfment(sunMaxRKmEver) {
+    if (WORLD.sunDestroyed) return;
+    for (let i = 0; i < PL.length; i++) {
+        if (WORLD.plDestroyed[i]) continue;
+        // Simplified per the WP23b brief: engulf when the giant's radius
+        // exceeds the planet's semi-major axis (not its live/eccentric
+        // distance) — matches the real-astrophysics result this timeline was
+        // tuned to reproduce: Mercury/Venus lost mid-RGB-ascent, Earth's fate
+        // decided right at the AGB tip (R~215 Rsun ~ 1 AU), Mars untouched.
+        // Uses the HIGH-WATER-MARK radius (sunMaxRadiusReachedRsunAt), not
+        // the instantaneous one: R(t) briefly peaks past Earth's 1 AU right
+        // at the AGB tip and then immediately shrinks again during the PN
+        // ejection, a window only ~1 Myr wide — narrower than a single
+        // frame's simulated span at the game's own top warp speed. Comparing
+        // against the peak-ever-reached radius makes engulfment correct
+        // regardless of how coarsely (or in how few jumps) time advances.
+        if (sunMaxRKmEver <= PL[i].a) continue;
+        // Deliberately NOT ghosted (contrast with main.js's markBodyDestroyed,
+        // which every live caller already calls with ghost=false too):
+        // addGhost() pushes onto the GS array, and every deep-time
+        // fast-bridging path in this file and ephemeris.js (frame bridge,
+        // shipDeepJump, shipCosmologyJump, the Kepler-jump tail) is gated on
+        // GS.length===0 and never clears it. A ghosted engulfment would
+        // permanently fall the whole rest of the run back to full RK4
+        // stepping — exactly backwards for a feature whose entire point is
+        // warping through Gyr of Sun evolution.
+        destroyBody(i);
+        H.engulfed?.(PL[i].name, sunLive.phase);
+    }
+    // Earth isn't in PL[] (it defines the frame origin, tracked separately
+    // via WORLD.earthDestroyed) but is subject to the exact same rule at its
+    // own semi-major axis (1 AU) — the AGB tip (R~215 Rsun ~1 AU) is where
+    // the brief's "Earth's fate is marginal" is actually decided.
+    if (!WORLD.earthDestroyed && sunMaxRKmEver > AU_KM) {
+        destroyBody("earth");
+        H.engulfed?.("EARTH", sunLive.phase);
+    }
+}
 
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 const _pv = { vx: 0, vy: 0 };
@@ -194,7 +266,7 @@ export function orbitInfo() {
         mu = p.mu; rx = G.x - eph.plX[pNear]; ry = G.y - eph.plY[pNear]; rz = G.z - eph.plZ[pNear];
         rvx = G.vx - _pv.vx; rvy = G.vy - _pv.vy; rvz = G.vz - eph.plVz[pNear]; R = p.R; body = p.name;
     }
-    else if (domSun) { mu = MU_S; rx = sdx; ry = sdy; rz = sdz; rvx = G.vx - eph.sunVx; rvy = G.vy - eph.sunVy; rvz = G.vz - eph.sunVz; R = R_SUN; body = "SUN"; }
+    else if (domSun) { mu = MU_S; rx = sdx; ry = sdy; rz = sdz; rvx = G.vx - eph.sunVx; rvy = G.vy - eph.sunVy; rvz = G.vz - eph.sunVz; R = sunRKmLive; body = "SUN"; }
     else if (!WORLD.earthDestroyed) { mu = MU_E; rx = G.x; ry = G.y; rz = G.z; rvx = G.vx; rvy = G.vy; rvz = G.vz; R = R_EARTH; body = "EARTH"; }
     else { mu = 1; rx = G.x; ry = G.y; rz = G.z; rvx = G.vx; rvy = G.vy; rvz = G.vz; R = 0; body = "DRIFT"; }
     const baseAcc = mu / Math.max(1, rx * rx + ry * ry + rz * rz);
@@ -357,7 +429,7 @@ function smoothCosmologyAccelAt(x, y, z, out) {
 function cosmologyJumpLocalClear(x0, y0, z0, x1, y1, z1, dt) {
     if (!WORLD.earthDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, Math.max(SOI_E, R_EARTH + ATM_TOP))) return false;
     if (!WORLD.moonDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, A_MOON + SOI_M)) return false;
-    if (!WORLD.sunDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, AU_KM + 3 * R_SUN)) return false;
+    if (!WORLD.sunDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, AU_KM + 3 * sunRKmLive)) return false;
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) continue;
         const p = PL[i];
@@ -452,7 +524,7 @@ function bodiesNeedFlush(x, y, z, lag) {
     }
     if (!WORLD.sunDestroyed) {
         const dx = x - (eph.sunX + eph.sunVx * lag), dy = y - (eph.sunY + eph.sunVy * lag), dz = z - (eph.sunZ + eph.sunVz * lag);
-        if (dx * dx + dy * dy + dz * dz < 9 * R_SUN * R_SUN) return true;
+        if (dx * dx + dy * dy + dz * dz < 9 * sunRKmLive * sunRKmLive) return true;
     }
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) continue;
@@ -496,11 +568,19 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
     updEphem(G.t);
     refreshActiveStars(eph.earthX + s[0], eph.earthY + s[1], s[2], G.focus);
+    // WP23b: refresh the Sun's evolving state once per frame (Gyr-scale
+    // slow — no need to recompute per RK4 substep) and engulf any inner
+    // planet the growing giant has swallowed.
+    sunLive = sunStateAt(G.t);
+    sunRKmLive = sunLive.R_Rsun * R_SUN;
+    checkSunEngulfment(sunMaxRadiusReachedRsunAt(G.t) * R_SUN);
     // Hour/s+ warp can ask for dozens of local RK4 substeps in one browser
     // frame. If the coast is safely conic, bridge it in O(1) so rendering
     // and HUD cadence stay smooth while the clock keeps its requested rate.
-    if (!G.dead && !G.landed && aMag === 0 && GS.length === 0 &&
-        !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
+    // Destruction flags must not gate the jump: the guarded paths are
+    // internally destruction-aware, and a permanently-closed gate froze deep
+    // warp forever after the Sun engulfed Earth (BUG D).
+    if (!G.dead && !G.landed && aMag === 0 && GS.length === 0) {
         const rE0 = Math.hypot(s[0], s[1], s[2]);
         const dm0 = Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY, s[2] - eph.moonZ);
         const ds0 = Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2] - eph.sunZ);
@@ -582,9 +662,9 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         // only need to run when the ephemeris is fresh
         if (lag > 0) continue;
         if (!WORLD.moonDestroyed && Math.hypot(s[0] - eph.moonX, s[1] - eph.moonY, s[2] - eph.moonZ) <= R_MOON) { handleMoonContact(s); break; }
-        if (!WORLD.sunDestroyed && Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2] - eph.sunZ) <= R_SUN) {
+        if (!WORLD.sunDestroyed && Math.hypot(s[0] - eph.sunX, s[1] - eph.sunY, s[2] - eph.sunZ) <= sunRKmLive) {
             G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
-            H.die("Vaporized in the solar photosphere");
+            H.die(sunLive.phase === "WD" ? "Vaporized on the white dwarf's surface" : "Vaporized in the solar photosphere");
             break;
         }
         let hitP = -1;
@@ -615,8 +695,11 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     // the ship rides its osculating two-body orbit while the ephemeris
     // Kepler-jumps the same span, keeping the commanded clock rate at every
     // scale.
+    // Destruction flags must not gate the jump (see the frame-bridge gate
+    // above): a permanently-closed gate froze deep warp after Earth's
+    // engulfment (BUG D).
     if (adv > 1e-9 && !G.dead && !G.landed && aMag === 0 &&
-        GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
+        GS.length === 0) {
         if (BH.n === 0) {
             const cosJump = shipCosmologyJump(adv);
             if (cosJump > 0) {
