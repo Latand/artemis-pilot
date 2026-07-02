@@ -41,6 +41,7 @@
     "smoke:bound-systems": "node scripts/smoke-bound-systems.mjs",
     "smoke:sun-evolution": "node scripts/smoke-sun-evolution.mjs",
     "smoke:reltravel": "node scripts/smoke-reltravel.mjs",
+    "smoke:river-visual": "node scripts/smoke-river-visual.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "smoke:determinism": "node scripts/smoke-determinism.mjs"
