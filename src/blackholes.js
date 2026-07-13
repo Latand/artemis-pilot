@@ -1207,8 +1207,9 @@ function advanceDisruptions(dt) {
             continue;
         }
         const simDone = d.age >= d.duration;
-        const visibleDone = d.visual >= .96 && performance.now() - d.bornRt > 5000;
-        if (simDone && visibleDone) {
+        // Presentation progress may lag or race simulated completion; physical
+        // state changes publish as soon as the simulated disruption is done.
+        if (simDone) {
             const dx = d.x - BH.x[d.bh], dy = d.y - BH.y[d.bh];
             const r = Math.max(1e-9, Math.hypot(dx, dy));
             const horizon = Math.max(BH.rs[d.bh] * 1.08, 1e-6);
