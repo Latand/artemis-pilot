@@ -1,4 +1,15 @@
-import { SEC_YEAR, WARPS, WARP_MAX } from "../constants.js";
+import {
+    AU_KM,
+    E_EARTH,
+    OM_YEAR,
+    PL,
+    SEC_YEAR,
+    SUN_TH0,
+    VARPI_EARTH,
+    WARPS,
+    WARP_MAX,
+} from "../constants.js";
+import { epochOffsetSeconds, meanAnomalyAdvance } from "../epoch.js";
 import { resolveJumpFrameDelivery } from "./jumpFrame.js";
 import { engulfmentEvents, sunPhaseEvents } from "./sunTimeline.js";
 
@@ -10,6 +21,358 @@ export const RUNG_WALL_S = 0.7;
 
 const FIRST_LADDER_RUNG = WARPS.indexOf(1);
 const GHOST_REASON = "deep time blocked: absorbed matter's gravity ghosts force step-by-step physics";
+const TWO_PI = 2 * Math.PI;
+const GOLDEN_TOLERANCE_SEC = 3600;
+const DEFAULT_SCAN_SAMPLE_BUDGET = 256;
+const PHYSICAL_PLANET_ORDER = Object.freeze([
+    "MERCURY",
+    "VENUS",
+    "EARTH",
+    "MARS",
+    "JUPITER",
+    "SATURN",
+    "URANUS",
+    "NEPTUNE",
+]);
+
+function conicPosition(body, tSec) {
+    const meanAnomaly = Math.atan2(
+        Math.sin(body.phase + body.n * tSec),
+        Math.cos(body.phase + body.n * tSec),
+    );
+    let eccentricAnomaly = meanAnomaly;
+    for (let i = 0; i < 8; i++) {
+        eccentricAnomaly -= (
+            eccentricAnomaly - body.e * Math.sin(eccentricAnomaly) - meanAnomaly
+        ) / (1 - body.e * Math.cos(eccentricAnomaly));
+    }
+    const xOrbit = body.a * (Math.cos(eccentricAnomaly) - body.e);
+    const yOrbit = body.a * Math.sqrt(1 - body.e * body.e) * Math.sin(eccentricAnomaly);
+    const cosVarpi = Math.cos(body.varpi);
+    const sinVarpi = Math.sin(body.varpi);
+    return {
+        x: xOrbit * cosVarpi - yOrbit * sinVarpi,
+        y: xOrbit * sinVarpi + yOrbit * cosVarpi,
+    };
+}
+
+export function pairDistanceAt(bodyA, bodyB, tSec) {
+    const a = conicPosition(bodyA, tSec);
+    const b = conicPosition(bodyB, tSec);
+    return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function normalizedBody(body) {
+    const normalized = {
+        name: String(body?.name || "BODY").toUpperCase(),
+        a: Number(body?.a),
+        e: Number(body?.e),
+        varpi: Number(body?.varpi),
+        phase: Number(body?.phase),
+        n: Number(body?.n),
+    };
+    if (!(normalized.a > 0) || !(normalized.e >= 0 && normalized.e < 1) ||
+        !Number.isFinite(normalized.varpi) || !Number.isFinite(normalized.phase) || !(normalized.n > 0)) {
+        throw new TypeError("close-approach bodies require finite elliptical elements");
+    }
+    return Object.freeze(normalized);
+}
+
+function defaultElements() {
+    const epochOffsetSec = epochOffsetSeconds();
+    const elements = PL.map(planet => normalizedBody({
+        ...planet,
+        phase: planet.phase + meanAnomalyAdvance(epochOffsetSec, TWO_PI / planet.n),
+    }));
+
+    // Keep this Earth M0 seed in sync with ephemeris.js resetEphem.
+    const nu0 = SUN_TH0 + Math.PI - VARPI_EARTH;
+    const E0 = 2 * Math.atan2(Math.sqrt(1 - E_EARTH) * Math.sin(nu0 / 2), Math.sqrt(1 + E_EARTH) * Math.cos(nu0 / 2));
+    const earthPeriod = TWO_PI / OM_YEAR;
+    const earthM0 = (E0 - E_EARTH * Math.sin(E0)) + meanAnomalyAdvance(epochOffsetSec, earthPeriod);
+    elements.push(normalizedBody({
+        name: "EARTH",
+        a: AU_KM,
+        e: E_EARTH,
+        varpi: VARPI_EARTH,
+        phase: earthM0,
+        n: OM_YEAR,
+    }));
+    return elements;
+}
+
+function normalizedPairs(pairs, bodies) {
+    const bodyCount = bodies.length;
+    const source = pairs || Array.from({ length: bodyCount }, (_, i) =>
+        Array.from({ length: bodyCount - i - 1 }, (__, offset) => [i, i + offset + 1])
+    ).flat();
+    const unique = new Map();
+    for (const pair of source) {
+        const first = Number(pair?.[0]);
+        const second = Number(pair?.[1]);
+        if (!Number.isInteger(first) || !Number.isInteger(second) || first === second ||
+            first < 0 || second < 0 || first >= bodyCount || second >= bodyCount) {
+            throw new TypeError("close-approach pairs require two distinct body indices");
+        }
+        const low = Math.min(first, second);
+        const high = Math.max(first, second);
+        const firstBody = bodies[first];
+        const secondBody = bodies[second];
+        const bodyOrder = firstBody.a - secondBody.a ||
+            firstBody.name.localeCompare(secondBody.name) || first - second;
+        if (!unique.has(low + ":" + high)) {
+            unique.set(low + ":" + high, bodyOrder <= 0 ? [first, second] : [second, first]);
+        }
+    }
+    return [...unique.values()];
+}
+
+function minimumPossibleDistance(bodyA, bodyB) {
+    const inner = bodyA.a <= bodyB.a ? bodyA : bodyB;
+    const outer = inner === bodyA ? bodyB : bodyA;
+    return Math.max(0, outer.a * (1 - outer.e) - inner.a * (1 + inner.e));
+}
+
+function refineMinimum(bodyA, bodyB, leftSec, rightSec) {
+    const ratio = (Math.sqrt(5) - 1) / 2;
+    let left = leftSec;
+    let right = rightSec;
+    let innerLeft = right - ratio * (right - left);
+    let innerRight = left + ratio * (right - left);
+    let leftDistance = pairDistanceAt(bodyA, bodyB, innerLeft);
+    let rightDistance = pairDistanceAt(bodyA, bodyB, innerRight);
+    while (right - left > GOLDEN_TOLERANCE_SEC) {
+        if (leftDistance <= rightDistance) {
+            right = innerRight;
+            innerRight = innerLeft;
+            rightDistance = leftDistance;
+            innerLeft = right - ratio * (right - left);
+            leftDistance = pairDistanceAt(bodyA, bodyB, innerLeft);
+        } else {
+            left = innerLeft;
+            innerLeft = innerRight;
+            leftDistance = rightDistance;
+            innerRight = left + ratio * (right - left);
+            rightDistance = pairDistanceAt(bodyA, bodyB, innerRight);
+        }
+    }
+    const tSimSec = (left + right) / 2;
+    return { tSimSec, distKm: pairDistanceAt(bodyA, bodyB, tSimSec) };
+}
+
+function approachId(bodyA, bodyB, tSimSec) {
+    const pairName = [bodyA.name, bodyB.name]
+        .map(name => name.toLowerCase().replace(/[^a-z0-9]+/g, "-"))
+        .join("-");
+    const relativeLongitude = bodyA.phase + bodyA.varpi - bodyB.phase - bodyB.varpi +
+        (bodyA.n - bodyB.n) * tSimSec;
+    return "approach:" + pairName + ":" + Math.round(relativeLongitude / TWO_PI);
+}
+
+function createPairScan(bodyA, bodyB, pair, fromSec, spanSec, threshold) {
+    const endSec = fromSec + spanSec;
+    const coarseSec = Math.min(TWO_PI / bodyA.n, TWO_PI / bodyB.n) / 64;
+    const leftSec = fromSec - 2 * coarseSec;
+    const centerSec = fromSec - coarseSec;
+    return {
+        bodyA,
+        bodyB,
+        pair,
+        fromSec,
+        endSec,
+        threshold,
+        coarseSec,
+        leftSec,
+        centerSec,
+        leftDistance: pairDistanceAt(bodyA, bodyB, leftSec),
+        centerDistance: pairDistanceAt(bodyA, bodyB, centerSec),
+        rowsById: new Map(),
+    };
+}
+
+function stepPairScan(scan, sampleBudget) {
+    let samples = 0;
+    while (samples < sampleBudget && scan.centerSec <= scan.endSec + scan.coarseSec) {
+        const rightSec = scan.centerSec + scan.coarseSec;
+        const bodyA = scan.bodyA;
+        const bodyB = scan.bodyB;
+        const rightDistance = pairDistanceAt(bodyA, bodyB, rightSec);
+        if (scan.centerDistance <= scan.leftDistance && scan.centerDistance <= rightDistance &&
+            (scan.centerDistance < scan.leftDistance || scan.centerDistance < rightDistance)) {
+            const refined = refineMinimum(bodyA, bodyB, scan.leftSec, rightSec);
+            if (refined.tSimSec >= scan.fromSec && refined.tSimSec <= scan.endSec &&
+                refined.distKm <= scan.threshold) {
+                const id = approachId(bodyA, bodyB, refined.tSimSec);
+                const previous = scan.rowsById.get(id);
+                if (!previous || refined.distKm < previous.distKm) {
+                    scan.rowsById.set(id, Object.freeze({
+                        id,
+                        label: bodyA.name + "–" + bodyB.name + " close approach · " +
+                            (refined.distKm / AU_KM).toFixed(3) + " AU (two-body estimate)",
+                        tier: "modeled",
+                        tSimSec: refined.tSimSec,
+                        distKm: refined.distKm,
+                        pair: Object.freeze([bodyA, bodyB]),
+                        pairIndices: Object.freeze(scan.pair.slice()),
+                    }));
+                }
+            }
+        }
+        scan.leftSec = scan.centerSec;
+        scan.leftDistance = scan.centerDistance;
+        scan.centerSec = rightSec;
+        scan.centerDistance = rightDistance;
+        samples++;
+    }
+    return samples;
+}
+
+const SUPPRESSED_APPROACHES = Object.freeze({ suppressed: true });
+
+function sortedApproachRows(rows) {
+    rows.sort((a, b) => a.tSimSec - b.tSimSec || a.id.localeCompare(b.id));
+    return Object.freeze(rows);
+}
+
+export function createCloseApproachScan(options = {}) {
+    if (options.perturbed) {
+        return Object.freeze({
+            done: true,
+            step() { return true; },
+            result() { return SUPPRESSED_APPROACHES; },
+        });
+    }
+
+    const elements = options.bodies ? options.bodies.map(normalizedBody) : defaultElements();
+    const selectedPairs = normalizedPairs(options.pairs, elements);
+    const fromSec = Number(options.fromSec ?? 0);
+    const spanSec = Number(options.spanSec ?? 0);
+    const threshold = options.threshold;
+    const rows = [];
+    let pairIndex = 0;
+    let pairScan = null;
+    let completedRows = null;
+    let lastStepSamples = 0;
+    const scan = {
+        get done() { return pairIndex >= selectedPairs.length && pairScan === null; },
+        get lastStepSamples() { return lastStepSamples; },
+        step(sampleBudget = DEFAULT_SCAN_SAMPLE_BUDGET) {
+            lastStepSamples = 0;
+            if (scan.done) return true;
+            const budget = Number.isFinite(sampleBudget)
+                ? Math.max(1, Math.floor(sampleBudget))
+                : DEFAULT_SCAN_SAMPLE_BUDGET;
+            if (!pairScan) {
+                const pair = selectedPairs[pairIndex];
+                const bodyA = elements[pair[0]];
+                const bodyB = elements[pair[1]];
+                const pairThreshold = threshold === undefined
+                    ? 1.2 * minimumPossibleDistance(bodyA, bodyB)
+                    : Number(threshold);
+                pairScan = createPairScan(bodyA, bodyB, pair, fromSec, spanSec, pairThreshold);
+            }
+            lastStepSamples = stepPairScan(pairScan, budget);
+            if (pairScan.centerSec > pairScan.endSec + pairScan.coarseSec) {
+                rows.push(...pairScan.rowsById.values());
+                pairIndex++;
+                pairScan = null;
+            }
+            return scan.done;
+        },
+        result() {
+            if (!scan.done) return null;
+            if (!completedRows) completedRows = sortedApproachRows(rows);
+            return completedRows;
+        },
+    };
+    return scan;
+}
+
+export function closeApproaches(options = {}) {
+    const scan = createCloseApproachScan(options);
+    while (!scan.done) scan.step();
+    return scan.result();
+}
+
+export function nextConjunction({ fromSec = 0, spanSec = 3 * SEC_YEAR, bodies } = {}) {
+    const elements = bodies ? bodies.map(normalizedBody) : defaultElements();
+    const indexByName = new Map(elements.map((body, index) => [body.name, index]));
+    const pairs = [];
+    for (let i = 1; i < PHYSICAL_PLANET_ORDER.length; i++) {
+        const innerIndex = indexByName.get(PHYSICAL_PLANET_ORDER[i - 1]);
+        const outerIndex = indexByName.get(PHYSICAL_PLANET_ORDER[i]);
+        if (innerIndex !== undefined && outerIndex !== undefined) pairs.push([innerIndex, outerIndex]);
+    }
+    const rows = closeApproaches({
+        fromSec,
+        spanSec,
+        pairs,
+        threshold: Infinity,
+        bodies: elements,
+    });
+    const approach = rows[0];
+    if (!approach) return null;
+    const days = Math.max(1, Math.round((approach.tSimSec - fromSec) / 86400));
+    return Object.freeze({
+        ...approach,
+        id: "now:" + approach.id,
+        label: "NOW · next conjunction: " + approach.pair[0].name + "–" + approach.pair[1].name +
+            " in " + days + " d (two-body estimate)",
+    });
+}
+
+function approachClosingLead(row) {
+    const bodyA = row?.pair?.[0];
+    const bodyB = row?.pair?.[1];
+    const minimumSec = Number(row?.tSimSec);
+    const minimumKm = Number(row?.distKm);
+    if (!bodyA || !bodyB || !Number.isFinite(minimumSec) || !(minimumKm > 0)) return 0;
+
+    const targetKm = 3 * minimumKm;
+    const stepSec = Math.min(TWO_PI / bodyA.n, TWO_PI / bodyB.n) / 64;
+    const relativeRate = Math.abs(bodyA.n - bodyB.n);
+    const searchSpanSec = relativeRate > 0
+        ? TWO_PI / relativeRate
+        : Math.max(TWO_PI / bodyA.n, TWO_PI / bodyB.n);
+    let laterSec = minimumSec;
+    let earlierSec = minimumSec - stepSec;
+    const limitSec = minimumSec - searchSpanSec;
+    while (earlierSec >= limitSec - stepSec) {
+        const distanceKm = pairDistanceAt(bodyA, bodyB, earlierSec);
+        if (distanceKm >= targetKm) {
+            let outsideSec = earlierSec;
+            let insideSec = laterSec;
+            while (insideSec - outsideSec > GOLDEN_TOLERANCE_SEC) {
+                const middleSec = (outsideSec + insideSec) / 2;
+                if (pairDistanceAt(bodyA, bodyB, middleSec) >= targetKm) outsideSec = middleSec;
+                else insideSec = middleSec;
+            }
+            return minimumSec - (outsideSec + insideSec) / 2;
+        }
+        laterSec = earlierSec;
+        earlierSec -= stepSec;
+    }
+    return 0;
+}
+
+function holdWarpForLead(leadSec) {
+    let bestWarp = WARPS[0];
+    let bestError = Infinity;
+    for (const warp of WARPS) {
+        if (!(warp > 0) || warp > WARP_MAX) continue;
+        const error = Math.abs(leadSec / warp - 8);
+        if (error < bestError) {
+            bestError = error;
+            bestWarp = warp;
+        }
+    }
+    return bestWarp;
+}
+
+export function predictedLead(row) {
+    const leadSec = Math.max(30 * 86400, approachClosingLead(row));
+    return Object.freeze({ leadSec, holdWarp: holdWarpForLead(leadSec) });
+}
 
 function mergerRows(merger) {
     if (!merger) return [];
@@ -61,9 +424,9 @@ export function pickJumpWarp(spanSec, feas) {
     return Math.min(WARP_MAX, feas);
 }
 
-function shortJumpPlan(nowSec, targetSec, feas) {
+function shortJumpPlan(nowSec, targetSec, feas, preferredHoldWarp = JUMP_HOLD_WARP) {
     const remaining = targetSec - nowSec;
-    let warp = Math.min(JUMP_HOLD_WARP, feas);
+    let warp = Math.min(preferredHoldWarp, feas);
     if (remaining / warp < 1) {
         warp = WARPS[0];
         for (const rung of WARPS) {
@@ -85,16 +448,24 @@ function enforceCappedJumpEta(plan, feas) {
     return plan;
 }
 
-export function planJump(nowSec, targetSec, feas) {
+export function planJump(nowSec, targetSec, feas, options = undefined) {
     if (!Number.isFinite(nowSec) || !Number.isFinite(targetSec) || !(targetSec > nowSec)) {
         return { ok: false, reason: "jump target must be in the future" };
     }
     if (!(feas > 0)) return { ok: false, reason: "jump unavailable while the vehicle is lost" };
-    const span = targetSec - JUMP_LEAD_SEC - nowSec;
-    if (span <= 0) return enforceCappedJumpEta(shortJumpPlan(nowSec, targetSec, feas), feas);
+    const leadSec = Number.isFinite(options?.leadSec) && options.leadSec > 0
+        ? options.leadSec
+        : JUMP_LEAD_SEC;
+    const preferredHoldWarp = WARPS.includes(options?.holdWarp) && options.holdWarp > 0
+        ? options.holdWarp
+        : JUMP_HOLD_WARP;
+    const span = targetSec - leadSec - nowSec;
+    if (span <= 0) {
+        return enforceCappedJumpEta(shortJumpPlan(nowSec, targetSec, feas, preferredHoldWarp), feas);
+    }
 
     const cruiseWarp = pickJumpWarp(span, feas);
-    const cruiseEnd = targetSec - JUMP_LEAD_SEC;
+    const cruiseEnd = targetSec - leadSec;
     const legs = [];
     let cursor = nowSec;
     let etaWallSec = 0;
@@ -115,7 +486,7 @@ export function planJump(nowSec, targetSec, feas) {
         cursor = cruiseEnd;
         etaWallSec += wallSec;
     }
-    const holdWarp = Math.min(JUMP_HOLD_WARP, feas);
+    const holdWarp = Math.min(preferredHoldWarp, feas);
     const holdWallSec = (targetSec - cursor) / holdWarp;
     legs.push({ kind: "hold", warp: holdWarp, fromSimT: cursor, toSimT: targetSec, wallSec: holdWallSec });
     etaWallSec += holdWallSec;

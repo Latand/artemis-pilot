@@ -28,6 +28,8 @@
     "smoke:tde": "node scripts/smoke-tde.mjs",
     "smoke:contacts": "node scripts/smoke-contacts.mjs",
     "smoke:events": "node scripts/smoke-events.mjs",
+    "smoke:approach": "node scripts/smoke-approach.mjs",
+    "test": "npm run smoke:approach && npm run smoke:events",
     "smoke:reverse": "node scripts/smoke-reverse.mjs",
     "smoke:time-dock": "node scripts/smoke-time-dock.mjs",
     "smoke:relview": "node scripts/smoke-relview.mjs",
