@@ -82,6 +82,7 @@ import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBod
 import { initUiMode, setXrPresenting } from "./uiMode.js";
 import { cancelTimeJump, setExternalTimeDriver, tickJump } from "./timeCtl.js";
 import { initTimeDock, renderTimeDock, sampleTimeDock } from "./timeDock.js";
+import { classifyContact } from "./universe/contactMath.js";
 
 // ============================ WIRING ============================
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
@@ -962,7 +963,7 @@ renderer.domElement.addEventListener("pointerup", e => {
 });
 
 function contactBody(target, name, R, mu) {
-    return { target, name, x: 0, y: 0, vx: 0, vy: 0, R, mu, rho: mu / Math.max(1, R * R * R), rocheMax: R * 60 };
+    return { target, name, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, R, mu, rho: mu / Math.max(1, R * R * R), rocheMax: R * 60 };
 }
 const CONTACT_SOURCES = [
     contactBody("earth", "Earth", R_EARTH, MU_E),
@@ -971,49 +972,43 @@ const CONTACT_SOURCES = [
     ...PL.map((p, i) => contactBody(i, p.name, p.R, p.mu)),
 ];
 const CONTACT_BODIES = new Array(CONTACT_SOURCES.length);
-function setContactBody(slot, x, y, vx, vy) {
-    slot.x = x; slot.y = y; slot.vx = vx; slot.vy = vy;
+const CONTACT_RESULT = { kind: "none", dKm: 0, relKmS: 0, rocheKm: 0, escKmS: 0 };
+function setContactBody(slot, x, y, z, vx, vy, vz) {
+    slot.x = x; slot.y = y; slot.z = z;
+    slot.vx = vx; slot.vy = vy; slot.vz = vz;
     return slot;
 }
 function bodyContactList() {
     let n = 0;
-    if (!WORLD.earthDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[0], 0, 0, 0, 0);
-    if (!WORLD.moonDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[1], eph.moonX, eph.moonY, eph.moonVx, eph.moonVy);
-    if (!WORLD.sunDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[2], eph.sunX, eph.sunY, eph.sunVx, eph.sunVy);
+    if (!WORLD.earthDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[0], 0, 0, 0, 0, 0, 0);
+    if (!WORLD.moonDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[1], eph.moonX, eph.moonY, eph.moonZ, eph.moonVx, eph.moonVy, eph.moonVz);
+    if (!WORLD.sunDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[2], eph.sunX, eph.sunY, eph.sunZ, eph.sunVx, eph.sunVy, eph.sunVz);
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) continue;
         const src = CONTACT_SOURCES[3 + i];
-        CONTACT_BODIES[n++] = setContactBody(src, eph.plX[i], eph.plY[i], eph.plVx[i], eph.plVy[i]);
+        CONTACT_BODIES[n++] = setContactBody(src, eph.plX[i], eph.plY[i], eph.plZ[i], eph.plVx[i], eph.plVy[i], eph.plVz[i]);
     }
     return n;
-}
-function rocheLimit(big, small) {
-    return Math.min(big.rocheMax, 2.44 * big.R * Math.cbrt(big.rho / Math.max(1e-12, small.rho)));
 }
 function checkBodyContacts() {
     const count = bodyContactList();
     for (let i = 0; i < count; i++) for (let j = i + 1; j < count; j++) {
         const a = CONTACT_BODIES[i], b = CONTACT_BODIES[j];
-        const d = Math.hypot(a.x - b.x, a.y - b.y);
-        const rel = Math.hypot(a.vx - b.vx, a.vy - b.vy);
-        const sumR = a.R + b.R;
         const big = a.mu >= b.mu ? a : b;
         const small = big === a ? b : a;
-        if (d <= sumR) {
-            const esc = Math.sqrt(2 * (a.mu + b.mu) / Math.max(1, sumR));
-            const ratio = small.mu / big.mu;
+        const contact = classifyContact(a, b, CONTACT_RESULT);
+        if (contact.kind === "impact" || contact.kind === "impact-both") {
             const smallName = markBodyDestroyed(small.target, "impact with " + big.name);
-            if (smallName) toast(smallName + " destroyed by impact with " + big.name + " · " + rel.toFixed(2) + " km/s");
-            if (ratio > .2 || rel > esc) {
+            if (smallName) toast(smallName + " destroyed by impact with " + big.name + " · " + contact.relKmS.toFixed(2) + " km/s");
+            if (contact.kind === "impact-both") {
                 const bigName = markBodyDestroyed(big.target, "high-energy impact with " + small.name);
-                if (bigName) toast(bigName + " destroyed by high-energy impact · " + rel.toFixed(2) + " km/s");
+                if (bigName) toast(bigName + " destroyed by high-energy impact · " + contact.relKmS.toFixed(2) + " km/s");
             }
             return;
         }
-        const roche = rocheLimit(big, small);
-        if (d < roche) {
+        if (contact.kind === "roche") {
             const smallName = markBodyDestroyed(small.target, "tidal disruption near " + big.name);
-            if (smallName) toast(smallName + " torn apart near " + big.name + " · Roche " + fmtKm(roche));
+            if (smallName) toast(smallName + " torn apart near " + big.name + " · Roche " + fmtKm(contact.rocheKm));
             return;
         }
     }

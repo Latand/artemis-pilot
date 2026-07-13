@@ -26,6 +26,7 @@
     "smoke:lunar-elp": "node scripts/smoke-lunar-elp.mjs",
     "smoke:minor": "node scripts/smoke-minor.mjs",
     "smoke:tde": "node scripts/smoke-tde.mjs",
+    "smoke:contacts": "node scripts/smoke-contacts.mjs",
     "smoke:reverse": "node scripts/smoke-reverse.mjs",
     "smoke:time-dock": "node scripts/smoke-time-dock.mjs",
     "smoke:relview": "node scripts/smoke-relview.mjs",
