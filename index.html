@@ -2,19 +2,19 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <meta name="description" content="Live universe simulator with real-time Three.js physics, deep-time orbits, trajectory prediction, planets, black holes, and spacetime river flow." />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Live universe simulator: fly from Earth orbit to black holes, warp time to a billion years per second, and watch a modeled universe evolve." />
   <meta property="og:title" content="Artemis — Live Universe Simulator" />
-  <meta property="og:description" content="Live universe simulator with real-time Three.js physics, deep-time orbits, planets, black holes, and spacetime river flow." />
+  <meta property="og:description" content="Live universe simulator: fly from Earth orbit to black holes, warp time to a billion years per second, and watch a modeled universe evolve." />
   <meta property="og:type" content="website" />
-  <meta property="og:image" content="/social-preview.jpg" />
+  <meta property="og:image" content="https://latand.github.io/artemis-pilot/social-preview.jpg" />
   <meta property="og:image:width" content="1280" />
   <meta property="og:image:height" content="640" />
   <meta property="og:image:alt" content="Artemis Pilot spacecraft orbiting Earth through a spacetime river field." />
   <meta name="twitter:card" content="summary_large_image" />
   <meta name="twitter:title" content="Artemis — Live Universe Simulator" />
-  <meta name="twitter:description" content="Live universe simulator with real-time Three.js physics, deep-time orbits, planets, black holes, and spacetime river flow." />
-  <meta name="twitter:image" content="/social-preview.jpg" />
+  <meta name="twitter:description" content="Live universe simulator: fly from Earth orbit to black holes, warp time to a billion years per second, and watch a modeled universe evolve." />
+  <meta name="twitter:image" content="https://latand.github.io/artemis-pilot/social-preview.jpg" />
   <meta name="twitter:image:alt" content="Artemis Pilot spacecraft orbiting Earth through a spacetime river field." />
   <meta name="theme-color" content="#04060a" />
   <title>Artemis — Live Universe Simulator</title>
@@ -226,12 +226,12 @@
         <div class="help__title">CONTROLS<button id="helpClose" class="help__dismiss" type="button">✕ CLOSE</button></div>
         <div class="help__keys">
           <div class="kb__sec">FLIGHT</div>
-          <div class="kb"><span class="kb__k">W / ↑</span><span class="kb__d">main engine — thrust along the nose</span></div>
+          <div class="kb"><span class="kb__k">W / ↑</span><span class="kb__d">main engine: thrust along the nose</span></div>
           <div class="kb"><span class="kb__k">S / ↓</span><span class="kb__d">reverse thrust</span></div>
           <div class="kb"><span class="kb__k">A / D, ← / →</span><span class="kb__d">rotate ship</span></div>
           <div class="kb"><span class="kb__k">Q / E</span><span class="kb__d">RCS lateral translation</span></div>
           <div class="kb"><span class="kb__k">SHIFT</span><span class="kb__d">×4 boost (needed to lift off Earth)</span></div>
-          <div class="kb"><span class="kb__k">Z / X</span><span class="kb__d">throttle ÷ / × — no upper limit</span></div>
+          <div class="kb"><span class="kb__k">Z / X</span><span class="kb__d">throttle ÷ / ×; no upper limit</span></div>
           <div class="kb"><span class="kb__k">T / Y</span><span class="kb__d">hold prograde / retrograde</span></div>
 
           <div class="kb__sec">AUTOPILOT</div>
@@ -241,7 +241,7 @@
 
           <div class="kb__sec">TIME</div>
           <div class="kb"><span class="kb__k">1 – 9</span><span class="kb__d">time warp presets: real time … 1 yr/s</span></div>
-          <div class="kb"><span class="kb__k">, / .</span><span class="kb__d">warp ÷2 / ×2 — up to 1 Byr/s</span></div>
+          <div class="kb"><span class="kb__k">, / .</span><span class="kb__d">warp ÷2 / ×2; up to 1 Byr/s</span></div>
           <div class="kb"><span class="kb__k">SPACE</span><span class="kb__d">pause</span></div>
 
           <div class="kb__sec">CAMERA &amp; SCALE</div>
@@ -253,7 +253,7 @@
           <div class="kb"><span class="kb__k">J</span><span class="kb__d">toggle in-ship cabin view</span></div>
           <div class="kb"><span class="kb__k">0 / click label</span><span class="kb__d">focus ship / focus body</span></div>
           <div class="kb"><span class="kb__k">hold-drag ship</span><span class="kb__d">grab the ship, release with damped velocity</span></div>
-          <div class="kb"><span class="kb__k">RMB drag</span><span class="kb__d">pan — free camera, detached from any body</span></div>
+          <div class="kb"><span class="kb__k">RMB drag</span><span class="kb__d">pan the free camera (detached from any body)</span></div>
 
           <div class="kb__sec">VISUALIZATION</div>
           <div class="kb"><span class="kb__k">P</span><span class="kb__d">trajectory prediction on/off</span></div>
@@ -282,24 +282,12 @@
           <span class="fl--cyan">cyan</span> space infall ·
           <span class="fl--violet">violet</span> dark-energy expansion ·
           <span class="fl--mint">green</span> Milky Way halo ·
-          <span class="fl--amber">yellow</span> the nose. When cyan rivals red, the river wins — that's the turn.
+          <span class="fl--amber">yellow</span> the nose. When cyan rivals red, the river takes the turn.
         </div>
         <div class="help__note">
-          Physics runs live: RK4 world motion for Earth, Sun, Moon, planets, and
-          black holes, with Earth-local high-precision ship dynamics for launch,
-          landing, and atmosphere. All seven planets are in, true radii and μ,
-          each with its own SOI; you can land on the rocky ones.
-          Exponential Earth atmosphere below 160 km.
-          Black holes are real point masses (μ = r_s·c²/2) with the Paczyński–Wiita
-          potential for ISCO and capture. The river view follows v = √(2μ/r) and
-          uses a small visual core for tiny holes so their local direction stays readable. Dark energy adds the physical ΛCDM a = ΩΛH₀²r term,
-          visible from stellar-balance scale upward, and Shift+O adds the Milky Way dark-matter halo. Cosmic scale adds HYG real-star catalog points with estimated mass/radius/luminosity/temperature,
-          generated world-space stars, nearby named stars,
-          the Milky Way disk, Andromeda, Triangulum, and Local Group dwarf bodies.
-          Nearby named stars and a capped HYG physical subset are destinations with true light-year 3D RA/declination positions,
-          photosphere contact, and gravity in the live field. Holes and planets move through the live n-body field.
-          Drag to orbit the camera, scroll to zoom.
-          Aim for the Moon, capture orbit, land, come home — or dive into something dark.
+          <p>Planet and Moon motion comes from Solar System ephemerides advanced by KDK or velocity-Verlet integration; the sim hands off to analytic osculating Kepler orbits at high warp so planets stay on their tracks. RK4 advances your ship from all Solar System bodies and player-placed holes, plus a capped, priority-ranked subset of nearby stellar sources. A separate RK4 path advances player-placed holes from Solar System bodies, gravitational debris, and other placed holes. Deep-time events such as galaxy passages and stellar eras follow reduced-order equations: simplified models with fixed parameters.</p>
+          <p>The spacetime river is a velocity-field visualization, an honest picture of the pulls around you. Player-placed holes use the Paczynski-Wiita pseudo-Newtonian approximation. Catalog and special-object black holes, including SGR A*, use the capped active-star Newtonian field. Limited 1PN corrections cover weak-field motion near the Sun. Collisions are classified between simple spheres, with no melting or fragments. Only the Sun evolves as a star, changing its appearance and contact radius. Merger energy loss is bookkeeping; the engine carries no gravitational waveforms.</p>
+          <p>Galaxy-scale views skip galaxy-wide N-body integration, and the Milky Way and Andromeda dates play one modeled scenario whose real outcome stays uncertain. Shift+O toggles the modeled NFW dark-matter halo; its applied strength is under physics review and currently changes little inside the galactic disk. Drag to orbit the camera; scroll to zoom. You can land on the rocky planets. Aim for the Moon, capture orbit, land, and come home, or dive into something dark.</p>
         </div>
         <div class="help__cta">PRESS H OR START FLYING</div>
       </div>
@@ -420,12 +408,12 @@
           </svg>
         </div>
         <div id="introTitle">ARTEMIS</div>
-        <div id="introSub">LIVE UNIVERSE SIMULATION · REAL PHYSICS</div>
+        <div id="introSub">LIVE UNIVERSE SIMULATION · MODELED PHYSICS</div>
         <div id="introLore">
           The hull coasts between stars for centuries.
-          Your mind lives inside a physics-true simulation of the universe outside the wall.
-          Watch it run across deep time, or take the stick and fly it.
-          Every date, orbit and cataclysm is computed, not scripted.
+          Your mind lives inside the ship's simulation of the universe beyond the wall.
+          Watch it run across deep time, or take the stick and fly.
+          Every date, orbit, and cataclysm comes from live physics models; press H to see what each model covers and where it stops.
         </div>
         <div id="introBtns">
           <button id="introEnter" class="uiBtn uiBtnHot">ENTER SIMULATION</button>
