@@ -17,6 +17,7 @@ export const BH_META = []; // visual groups, parallel to the data arrays
 let H = {
     toast: () => { }, predict: () => { }, cataclysm: () => { },
     disrupt: () => "", absorbed: () => { },
+    event: () => { },
 };
 export function initBHHooks(hooks) { H = { ...H, ...hooks }; }
 
@@ -982,6 +983,7 @@ function tryMerge() {
                 addBlackHole(x, y, rs, vx, vy, false, ev);
                 WORLD.irreversibleFloorT = Math.max(WORLD.irreversibleFloorT, EPHT.t);
                 H.toast("⚫ Black-hole merger → r_s " + fmtKm(rs) + " · GW loss " + (gwLossFrac * 100).toFixed(1) + "%");
+                H.event?.("merger", "⚫ Black-hole merger → r_s " + fmtKm(rs) + " · GW loss " + (gwLossFrac * 100).toFixed(1) + "%");
                 return true;
             }
         }

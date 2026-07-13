@@ -126,6 +126,33 @@
       <div id="toasts"></div>
     </div>
 
+    <div id="evDock">
+      <button id="evBtn" type="button" aria-controls="evPanel" aria-expanded="false"><i id="evBtnDot" aria-hidden="true"></i>EVENTS</button>
+      <div id="evJumpChip" hidden>
+        <span id="evJumpChipLabel" aria-live="polite"></span>
+        <b id="evJumpChipEta"></b>
+        <button id="evJumpCancel" type="button" aria-label="Cancel time jump">CANCEL</button>
+      </div>
+    </div>
+
+    <aside id="evPanel" class="panel panel--amber" aria-label="Universe events">
+      <div class="panel__head"><span>EVENTS</span><span class="evPanel__mode">OBSERVE</span><button id="evClose" type="button" aria-label="Close events">×</button></div>
+      <section class="evSection" aria-labelledby="evLiveHead">
+        <h2 id="evLiveHead">LIVE</h2>
+        <div id="evLive"></div>
+        <div id="evLiveEmpty" class="evEmpty">NO ACTIVE CATACLYSM</div>
+      </section>
+      <section class="evSection" aria-labelledby="evTimelineHead">
+        <h2 id="evTimelineHead">TIMELINE</h2>
+        <div id="evTimeline"></div>
+      </section>
+      <section class="evSection" aria-labelledby="evRecentHead">
+        <h2 id="evRecentHead">RECENT</h2>
+        <div id="evRecent"></div>
+        <div id="evRecentEmpty" class="evEmpty">DISCOVERIES AND CATACLYSMS WILL APPEAR HERE</div>
+      </section>
+    </aside>
+
     <!-- go-to navigator: direct destination picker (ship / planets+moons / stars / holes) -->
     <button id="navBtn" class="uiBtn" type="button">◎ GO TO</button>
     <div id="navPanel" class="panel panel--cyan" aria-live="polite">

@@ -6,11 +6,18 @@ import { toast } from "./achievements.js";
 import { fmtMET } from "./format.js";
 
 const MAX_ENTRIES = 500;
+const RECENT_SNAPSHOT_LIMIT = 12;
 const DEFAULT_RECORDS = Object.freeze({ maxDistLy: 0, minClockRate: 1, maxDvUsed: 0 });
 const seen = { bodies: new Set(), stars: new Set(), notables: new Set() };
 let entries = [];
 let records = { ...DEFAULT_RECORDS };
 let nextRecordMilestone = { distLy: 1, dvUsed: 1000, clockDrop: 1e-6 };
+let discoveryRevision = 0;
+let recentDiscoverySnapshot = Object.freeze({
+    revision: discoveryRevision,
+    change: "replace",
+    entries: Object.freeze([]),
+});
 
 let panel = null, listEl = null, recordsEl = null, open = false;
 
@@ -20,10 +27,22 @@ function stamp() {
 }
 function pushEntry(kind, id, label, announce = true) {
     const s = stamp();
-    entries.push({ kind, id, label, civil: s.civil, met: s.met });
+    entries.push(Object.freeze({ kind, id, label, civil: s.civil, met: s.met }));
     if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES);
+    publishDiscoverySnapshot("append");
     if (announce) toast("Logged: " + label);
     rebuildLog();
+}
+function publishDiscoverySnapshot(change) {
+    discoveryRevision++;
+    const tail = Object.freeze(entries.slice(-RECENT_SNAPSHOT_LIMIT));
+    recentDiscoverySnapshot = Object.freeze({ revision: discoveryRevision, change, entries: tail });
+}
+function resetLogState() {
+    seen.bodies.clear(); seen.stars.clear(); seen.notables.clear();
+    entries = [];
+    records = { ...DEFAULT_RECORDS };
+    rebuildMilestones();
 }
 function rebuildMilestones() {
     nextRecordMilestone.distLy = Math.max(1, records.maxDistLy > 0 ? records.maxDistLy * 2 : 1);
@@ -32,10 +51,8 @@ function rebuildMilestones() {
 }
 
 export function clearLog() {
-    seen.bodies.clear(); seen.stars.clear(); seen.notables.clear();
-    entries = [];
-    records = { ...DEFAULT_RECORDS };
-    rebuildMilestones();
+    resetLogState();
+    publishDiscoverySnapshot("replace");
     rebuildLog();
 }
 
@@ -99,12 +116,16 @@ export function serializeLog() {
     };
 }
 export function restoreLog(data) {
-    clearLog();
-    if (!data || typeof data !== "object") return;
+    resetLogState();
+    if (!data || typeof data !== "object") {
+        publishDiscoverySnapshot("replace");
+        rebuildLog();
+        return;
+    }
     for (const k of data.seen?.bodies || []) seen.bodies.add(String(k));
     for (const k of data.seen?.stars || []) seen.stars.add(String(k));
     for (const k of data.seen?.notables || []) seen.notables.add(String(k));
-    entries = Array.isArray(data.entries) ? data.entries.slice(-MAX_ENTRIES).map(e => ({
+    entries = Array.isArray(data.entries) ? data.entries.slice(-MAX_ENTRIES).map(e => Object.freeze({
         kind: String(e.kind || "log"),
         id: String(e.id || ""),
         label: String(e.label || ""),
@@ -117,9 +138,11 @@ export function restoreLog(data) {
         maxDvUsed: Number(data.records?.maxDvUsed) || 0,
     };
     rebuildMilestones();
+    publishDiscoverySnapshot("replace");
     rebuildLog();
 }
 export function getEntries() { return entries.map(e => ({ ...e })); }
+export function getRecentDiscoverySnapshot() { return recentDiscoverySnapshot; }
 export function getRecords() { return { ...records }; }
 
 function setOpen(v) {

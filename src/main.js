@@ -38,7 +38,7 @@ import {
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
-import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale } from "./cosmic.js";
+import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState } from "./cosmic.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
@@ -80,9 +80,10 @@ import { initAttitude, drawAttitude } from "./attitude.js";
 import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
 import { initUiMode, setXrPresenting } from "./uiMode.js";
-import { cancelTimeJump, setExternalTimeDriver, tickJump } from "./timeCtl.js";
+import { cancelTimeJump, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
 import { initTimeDock, renderTimeDock, sampleTimeDock } from "./timeDock.js";
 import { classifyContact } from "./universe/contactMath.js";
+import { initEvents, noteEvent, updateEvents } from "./events.js";
 
 // ============================ WIRING ============================
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
@@ -217,7 +218,11 @@ initBHHooks({
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), true, false);
         award("bh");
         if (bi >= 0) focusBlackHole(bi);
-        if (name) toast(name + " absorbed by black hole · r_s now " + fmtKm(rs));
+        if (name) {
+            const label = name + " absorbed by black hole · r_s now " + fmtKm(rs);
+            toast(label);
+            noteEvent(label);
+        }
     },
     // blackholes.js carries the mass through phantom → hole event → ghost,
     // so the BH paths skip the generic destruction ghost
@@ -225,14 +230,21 @@ initBHHooks({
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), false, false) || bodyName(target);
         award("bh");
         if (bi >= 0) focusBlackHole(bi);
-        if (name) toast(name + " is being tidally shredded");
+        if (name) {
+            const label = name + " is being tidally shredded";
+            toast(label);
+            noteEvent(label);
+        }
         return name;
     },
     absorbed(target, rs, bi = -1) {
         const name = markBodyDestroyed(target, "mass absorbed by r_s " + fmtKm(rs), false, false) || bodyName(target);
         if (bi >= 0) focusBlackHole(bi);
-        toast((name || "Body") + " mass absorbed · r_s now " + fmtKm(rs));
+        const label = (name || "Body") + " mass absorbed · r_s now " + fmtKm(rs);
+        toast(label);
+        noteEvent(label);
     },
+    event: noteEvent,
 });
 initInput({ restart, openCatalogSearch: openCatalogSearchLazy });
 initScenarios({ restart });
@@ -256,6 +268,7 @@ cinematic.bindCinematic({ camera, cam, G, renderer, setCamRoll, applyCameraRoll 
 cinematic.initCine();
 initQuickControls();
 initTimeDock();
+initEvents({ mergerState: mergerDebugState });
 initUiMode();
 
 // Camera/share-state must be applied before renderer warmup; otherwise startup
@@ -269,7 +282,7 @@ function applyStartupCameraState() {
             cam.yaw = saved.yaw ?? cam.yaw;
             cam.pitch = saved.pitch ?? cam.pitch;
             if (saved.focus !== undefined && saved.focus !== "free") G.focus = saved.focus;
-            if (isFinite(saved.warp) && saved.warp >= 1) G.warp = saved.warp;
+            if (isFinite(saved.warp) && saved.warp >= 1) setWarp(saved.warp, "startup");
         }
     } catch (e) { }
 
@@ -291,7 +304,7 @@ function applyStartupCameraState() {
         }
         computePrediction();
     }
-    if (q.get("warp")) G.warp = +q.get("warp");
+    if (q.get("warp")) setWarp(+q.get("warp"), "startup");
     if (q.get("focus")) { const f = q.get("focus"); G.focus = /^\d+$/.test(f) ? +f : f; }
     if (q.get("dist")) cam.dist = +q.get("dist");
     if (q.get("yaw")) cam.yaw = +q.get("yaw");
@@ -999,16 +1012,28 @@ function checkBodyContacts() {
         const contact = classifyContact(a, b, CONTACT_RESULT);
         if (contact.kind === "impact" || contact.kind === "impact-both") {
             const smallName = markBodyDestroyed(small.target, "impact with " + big.name);
-            if (smallName) toast(smallName + " destroyed by impact with " + big.name + " · " + contact.relKmS.toFixed(2) + " km/s");
+            if (smallName) {
+                const label = smallName + " destroyed by impact with " + big.name + " · " + contact.relKmS.toFixed(2) + " km/s";
+                toast(label);
+                noteEvent(label);
+            }
             if (contact.kind === "impact-both") {
                 const bigName = markBodyDestroyed(big.target, "high-energy impact with " + small.name);
-                if (bigName) toast(bigName + " destroyed by high-energy impact · " + contact.relKmS.toFixed(2) + " km/s");
+                if (bigName) {
+                    const label = bigName + " destroyed by high-energy impact · " + contact.relKmS.toFixed(2) + " km/s";
+                    toast(label);
+                    noteEvent(label);
+                }
             }
             return;
         }
         if (contact.kind === "roche") {
             const smallName = markBodyDestroyed(small.target, "tidal disruption near " + big.name);
-            if (smallName) toast(smallName + " torn apart near " + big.name + " · Roche " + fmtKm(contact.rocheKm));
+            if (smallName) {
+                const label = smallName + " torn apart near " + big.name + " · Roche " + fmtKm(contact.rocheKm);
+                toast(label);
+                noteEvent(label);
+            }
             return;
         }
     }
@@ -1500,6 +1525,26 @@ function finishFramePerf(start, dtR, rawDtR, dtRCap, cosmicView, cabinActive) {
     } : null);
 }
 
+function noteLandedDiscovery(oi) {
+    if (!G.landed) return;
+    if (G.landed.body === "sysplanet" || G.landed.body === "sysmoon") {
+        if (!G.landed.discoveryId) {
+            const sys = getCachedFocusedSystem();
+            if (!sys || sys.starId !== G.landed.starId) return;
+            const planetIndex = G.landed.body === "sysplanet" ? G.landed.i : G.landed.planetIndex;
+            const planet = sys.planets?.[planetIndex];
+            const body = G.landed.body === "sysplanet" ? planet : planet?.moons?.[G.landed.moonIndex];
+            if (!body) return;
+            const provenance = body.real === true ? "catalog" : "generated";
+            G.landed.discoveryId = provenance + ":" + G.landed.starId + ":" + planetIndex +
+                (G.landed.body === "sysmoon" ? ":" + G.landed.moonIndex : "");
+        }
+        noteBody(G.landed.body, G.landed.discoveryId, oi.body || String(G.landed.body).toUpperCase());
+        return;
+    }
+    noteBody(G.landed.body, G.landed.i ?? 0, oi.body || String(G.landed.body).toUpperCase());
+}
+
 function frame() {
     const frameT0 = perfStart();
     const rawDtR = clock.getDelta();
@@ -1569,10 +1614,11 @@ function frame() {
     const physicsT0 = perfStart();
     let advanced = 0, activeStarsFresh = false;
     setExternalTimeDriver(cinematic.isPlaying() || REL.active);
-    tickJump(dtR);
+    const jumpFrame = tickJump(rawDtR, dtR, aMag > 0);
+    const frameSimAdvance = jumpFrame ? jumpFrame.advanceSec : dtR * G.warp;
     if (!G.paused) {
         if (REL.active) {
-            advanced = dtR * G.warp;
+            advanced = frameSimAdvance;
             if (G.warp < 0) relCancel("reverse warp", toast);
             if (REL.active) {
                 relTravelStep(advanced);
@@ -1582,20 +1628,22 @@ function frame() {
                 activeStarsFresh = true;
             }
         } else if (G.dead) {
-            advanced = dtR * G.warp;
+            advanced = frameSimAdvance;
             advanceEphem(advanced);
             bhAdvance(advanced, G.t);
             G.t += advanced;
         } else if (G.landed) {
-            advanced = dtR * G.warp;
+            advanced = frameSimAdvance;
             advanceEphem(advanced);
             bhAdvance(advanced, G.t);
             G.t += advanced;
         } else {
-            advanced = advance(dtR * G.warp, atx, aty, atz, aMag);
+            advanced = advance(frameSimAdvance, atx, aty, atz, aMag);
             activeStarsFresh = true;
         }
     }
+    const jumpSettlement = jumpFrame ? settleTimeJump(jumpFrame, advanced, aMag > 0) : null;
+    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) G.t = jumpSettlement.syncTimeSec;
     snapLanded();
     const oi = orbitInfo();
     perfEnd("frame.physics", physicsT0, PERF.enabled ? { advanced, warp: G.warp, dtR, rawDtR, dtRCap } : null);
@@ -1613,7 +1661,7 @@ function frame() {
         if (oi.domMoon) noteBody("moon", 0, "THE MOON");
         if (oi.domSun) noteBody("sun", 0, "THE SUN");
         if (oi.domPl && oi.pNear >= 0 && oi.pNearD < PL[oi.pNear].soi) noteBody("planet", oi.pNear, PL[oi.pNear].name);
-        if (G.landed) noteBody(G.landed.body, G.landed.i ?? 0, oi.body || String(G.landed.body).toUpperCase());
+        noteLandedDiscovery(oi);
         if (oi.domStar && oi.starId) noteStar(oi.starId, oi.star?.name || oi.starId);
         const notableStar = oi.star || oi.starNear;
         if (notableStar?.bh) noteNotable("bh", notableStar.name || "BLACK HOLE");
@@ -1954,6 +2002,7 @@ function frame() {
         }
         if (hudDue) {
             renderTimeDock();
+            updateEvents();
             updateMobileControls(oi, cosmicSpeed, aMag);
             if (!renderQuality.mobile) {
                 updateHUD(oi, aMag, mainIn, cosmicSpeed, cosmicSpeed, 1);
@@ -2214,6 +2263,7 @@ function frame() {
     }
     if (hudDue) {
         renderTimeDock();
+        updateEvents();
         if (!renderQuality.mobile) {
             updateHUD(oi, aMag, mainIn, sp, kVLoc, fRiver);
             if (fSystem) setHudText(fSystem, activeNebFocus ? nebulaHudSummary(activeNebFocus) : systemSummary(focusedSystem));
