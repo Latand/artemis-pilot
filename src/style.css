@@ -36,6 +36,9 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --safe-b: env(safe-area-inset-bottom, 0px);
+  --time-dock-bottom: 18px;
+  --time-dock-height: 136px;
+  --time-dock-gap: 12px;
 }
 
 html, body { margin: 0; width: 100%; height: 100%; background: var(--bg); overflow: hidden;
@@ -153,7 +156,9 @@ body.star-labels-far .starLbl { font-size: 11px; filter: none;
   background: rgba(6,10,16,.94); border: 1px solid var(--line-2); border-radius: var(--r-xs);
   padding: 5px 9px; white-space: nowrap; box-shadow: var(--shadow); }
 
-#cosmicScale { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); z-index: 5;
+#cosmicScale { position: absolute; left: 50%;
+  bottom: calc(var(--time-dock-bottom) + var(--time-dock-height) + var(--time-dock-gap));
+  transform: translateX(-50%); z-index: 5;
   pointer-events: none; opacity: 0; transition: opacity .25s;
   font-family: var(--font-display); font-size: 10.5px; font-weight: 600; letter-spacing: .24em;
   color: #e2d4ff; text-shadow: 0 0 16px rgba(150,110,255,.6);
@@ -318,6 +323,49 @@ body.bh-place-mode #bhPlaceHint { color: #ddd2ff; text-shadow: 0 0 10px rgba(148
 /* bottom keybind reminder removed from the flight HUD — H opens the full controls */
 #hint { display: none; }
 
+/* ============ TIME DOCK ============ */
+#timeDock { position: fixed; left: 50%; bottom: var(--time-dock-bottom); transform: translateX(-50%);
+  z-index: 8; width: min(720px, calc(100vw - 32px)); padding: 11px 14px 12px;
+  pointer-events: auto; text-align: center; }
+body.mode-pilot:not(.mode-xr),
+body.mode-direct:not(.mode-xr),
+body.mode-xr { --time-dock-bottom: 76px; }
+#tdDate { font-family: var(--font-display); font-size: 18px; font-weight: 700;
+  letter-spacing: .08em; color: #fff; text-shadow: 0 0 18px rgba(184,240,255,.24); }
+#tdRow { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; }
+#tdRow button, #tdCancel { font-family: var(--font-ui); border: 1px solid var(--line-2);
+  border-radius: var(--r-xs); background: rgba(8,12,18,.78); color: var(--ink);
+  cursor: pointer; transition: all .12s; }
+#tdRow button:hover, #tdCancel:hover { border-color: var(--cyan); color: #fff; box-shadow: var(--glow-cyan); }
+#tdStepDown, #tdStepUp { width: 44px; height: 30px; font-size: 13px; }
+#tdPause { width: 54px; height: 38px; font-size: 22px; line-height: 1; color: var(--ice); }
+#tdWarpLabel { min-width: 136px; font-family: var(--font-mono); font-size: 13px;
+  font-weight: 700; color: var(--ice); text-align: left; }
+#tdRev { height: 30px; padding: 0 11px; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+#tdRev.active { color: #fff; border-color: var(--ember); background: rgba(255,90,54,.22);
+  box-shadow: 0 0 18px rgba(255,90,54,.26); }
+#tdRail { display: grid; gap: 0;
+  margin-top: 9px; padding: 0 4px; }
+.tdTick { position: relative; min-width: 0; height: 34px; padding: 0; border: 0; background: transparent;
+  color: var(--ink-4); cursor: pointer; font-family: var(--font-ui); }
+.tdTick::before { content: ""; position: absolute; left: 0; right: 0; top: 8px; height: 1px;
+  background: rgba(132,168,205,.28); }
+.tdTickDot { position: absolute; left: 50%; top: 4px; width: 9px; height: 9px; transform: translateX(-50%);
+  border-radius: 50%; background: rgba(132,168,205,.6); box-shadow: 0 0 0 2px rgba(6,10,16,.9); }
+.tdTick:hover .tdTickDot { background: var(--cyan); }
+.tdTick.active .tdTickDot { top: 1px; width: 15px; height: 15px; background: var(--ice);
+  box-shadow: 0 0 12px rgba(184,240,255,.65); }
+.tdTickLabel { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+  font-size: 8px; letter-spacing: .02em; white-space: nowrap; color: var(--ink-3); }
+.tdTick.active .tdTickLabel { color: #fff; }
+#tdBlocked, #tdJump { margin-top: 8px; border: 1px solid rgba(255,122,82,.44);
+  border-radius: var(--r-xs); background: rgba(60,20,14,.58); color: var(--warn);
+  padding: 7px 9px; font-size: 10px; line-height: 1.35; letter-spacing: .06em; }
+#tdJump { display: flex; justify-content: center; align-items: center; gap: 10px;
+  border-color: rgba(84,198,255,.4); background: rgba(8,28,40,.6); color: var(--ice); }
+#tdJump[hidden], #tdBlocked[hidden] { display: none !important; }
+#tdCancel { padding: 5px 8px; font-size: 9px; letter-spacing: .12em; color: var(--ink-2); }
+
 /* ---- attitude / heading dial (navball) ---- */
 #navBall { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); z-index: 5;
   width: 152px; padding: 9px 11px 8px; text-align: center; pointer-events: none; }
@@ -335,7 +383,8 @@ body.bh-place-mode #bhPlaceHint { color: #ddd2ff; text-shadow: 0 0 10px rgba(148
 body.mode-cabin #cabinHud { display: block; }
 body.mode-cabin #hudTL, body.mode-cabin #hudTR, body.mode-cabin #hudBot,
 body.mode-cabin #flowPanel, body.mode-cabin #hint, body.mode-cabin .lbl,
-body.mode-cabin #simsBtn, body.mode-cabin #navBall, body.mode-cabin #navBtn, body.mode-cabin #navPanel { display: none !important; }
+body.mode-cabin #simsBtn, body.mode-cabin #navBall, body.mode-cabin #navBtn,
+body.mode-cabin #navPanel, body.mode-cabin #timeDock { display: none !important; }
 
 /* ============ UI MODES ============ */
 body.mode-observe:not(.mode-xr) #objPanel,
@@ -538,9 +587,12 @@ body.mode-direct:not(.mode-xr) #bhPlacer {
 /* ============ RESPONSIVE ============ */
 @media (max-width: 980px) { #flowPanel { width: min(520px, calc(100vw - 540px)); } }
 @media (max-width: 860px) { #flowPanel { display: none !important; } }
+@media (min-width: 761px) and (max-width: 980px) {
+  #timeDock { width: calc(100vw - 280px); }
+}
 
 @media (max-width: 760px) {
-  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn, #hintCard, #navBall, #navBtn { display: none !important; }
+  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn, #hintCard, #navBall, #navBtn, #timeDock { display: none !important; }
   #root::after { display: none; }   /* corner frame is a desktop flourish; it clips behind touch controls */
   #cosmicScale { bottom: auto; top: calc(60px + env(safe-area-inset-top, 0px));
     max-width: calc(100vw - 24px); text-align: center; white-space: normal; }
@@ -573,7 +625,7 @@ body.mode-direct:not(.mode-xr) #bhPlacer {
 }
 /* tablets / touch laptops: same gesture-first UI as phones */
 @media (hover: none) and (pointer: coarse) and (min-width: 761px) {
-  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn, #hintCard, #navBall, #navBtn { display: none !important; }
+  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn, #hintCard, #navBall, #navBtn, #timeDock { display: none !important; }
   #root::after { display: none; }
   #mobileUI { display: block; }
   #cosmicScale { bottom: auto; top: calc(60px + env(safe-area-inset-top, 0px)); }

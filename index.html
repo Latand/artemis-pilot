@@ -36,7 +36,8 @@
     body.mode-clean #simsBtn, body.mode-clean #simsMenu, body.mode-clean #navBtn,
     body.mode-clean #navPanel, body.mode-clean #hygSearch, body.mode-clean #cinePanel,
     body.mode-clean #mobileUI, body.mode-clean .lbl, body.mode-clean #cosmicScale,
-    body.mode-clean #banner, body.mode-clean #toasts, body.mode-clean #navBall { display: none !important; }
+    body.mode-clean #banner, body.mode-clean #toasts, body.mode-clean #navBall,
+    body.mode-clean #timeDock { display: none !important; }
   </style>
 </head>
 <body>
@@ -177,6 +178,20 @@
     </div>
 
     <div id="banner"></div>
+
+    <div id="timeDock" class="panel" aria-label="Time controls">
+      <div id="tdDate">—</div>
+      <div id="tdRow">
+        <button id="tdStepDown" type="button" aria-label="Slower">◀◀</button>
+        <button id="tdPause" type="button" aria-label="Pause">▶</button>
+        <button id="tdStepUp" type="button" aria-label="Faster">▶▶</button>
+        <b id="tdWarpLabel">—</b>
+        <button id="tdRev" type="button" aria-label="Reverse time">REV ⏪</button>
+      </div>
+      <div id="tdRail" aria-label="Warp ladder"></div>
+      <div id="tdBlocked" role="status" aria-live="polite" hidden></div>
+      <div id="tdJump" hidden><span id="tdJumpLabel"></span><button id="tdCancel" type="button" aria-label="Cancel time jump">CANCEL</button></div>
+    </div>
 
     <!-- ============ CONTROLS REFERENCE ============ -->
     <div id="help">

@@ -81,6 +81,7 @@ import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
 import { initUiMode, setXrPresenting } from "./uiMode.js";
 import { cancelTimeJump, setExternalTimeDriver, tickJump } from "./timeCtl.js";
+import { initTimeDock, renderTimeDock, sampleTimeDock } from "./timeDock.js";
 
 // ============================ WIRING ============================
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
@@ -253,6 +254,7 @@ initLog();
 cinematic.bindCinematic({ camera, cam, G, renderer, setCamRoll, applyCameraRoll });
 cinematic.initCine();
 initQuickControls();
+initTimeDock();
 initUiMode();
 
 // Camera/share-state must be applied before renderer warmup; otherwise startup
@@ -1602,6 +1604,7 @@ function frame() {
     snapLanded();
     const oi = orbitInfo();
     perfEnd("frame.physics", physicsT0, PERF.enabled ? { advanced, warp: G.warp, dtR, rawDtR, dtRCap } : null);
+    sampleTimeDock();
     const cosmicView = cam.dist > LY_SCENE * .2;
     const cosmicLod = cam.dist > LY_SCENE * 800000 ? 3 : cam.dist > LY_SCENE * 20000 ? 2 : cosmicView ? 1 : 0;
     const pixelLoadShed = renderQuality.mobile ? (G.warp > 600 && G.gr ? 2 : 1) :
@@ -1955,6 +1958,7 @@ function frame() {
             updateScaleLadder(cam.dist / K, focusLight?.distKm ?? null, focusLight?.name);
         }
         if (hudDue) {
+            renderTimeDock();
             updateMobileControls(oi, cosmicSpeed, aMag);
             if (!renderQuality.mobile) {
                 updateHUD(oi, aMag, mainIn, cosmicSpeed, cosmicSpeed, 1);
@@ -2214,6 +2218,7 @@ function frame() {
         updateScaleLadder(cam.dist / K, focusLight?.distKm ?? null, focusLight?.name);
     }
     if (hudDue) {
+        renderTimeDock();
         if (!renderQuality.mobile) {
             updateHUD(oi, aMag, mainIn, sp, kVLoc, fRiver);
             if (fSystem) setHudText(fSystem, activeNebFocus ? nebulaHudSummary(activeNebFocus) : systemSummary(focusedSystem));
