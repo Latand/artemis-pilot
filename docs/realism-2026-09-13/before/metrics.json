@@ -1,0 +1,1058 @@
+{
+  "epoch": "2026-09-13T12:00:00Z",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "gpu": {
+    "vendor": "Google Inc. (Google)",
+    "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)"
+  },
+  "results": [
+    {
+      "name": "earth",
+      "focus": "earth",
+      "radius": 6.371,
+      "phase": 1.05,
+      "medianMs": 449.90000000000146,
+      "p95Ms": 483.40000000000146,
+      "cam": {
+        "yaw": -0.32741367255320397,
+        "pitch": 0.22,
+        "dist": 27.395300000000002,
+        "tgt": {
+          "x": -29186.815568263704,
+          "y": 0,
+          "z": 149041.66920927426
+        },
+        "distTarget": null
+      },
+      "camera": {
+        "x": -29161.500801507096,
+        "y": 5.97846599318734,
+        "z": 149033.07136125764
+      },
+      "t": 0,
+      "perf": {
+        "frame.physics": {
+          "count": 32,
+          "avg": 0.031250000931322575,
+          "max": 0.19900000296533107
+        },
+        "scene.bodies": {
+          "count": 32,
+          "avg": 5.174999998416752,
+          "max": 50.549088138569694
+        },
+        "scene.focus": {
+          "count": 32,
+          "avg": 0.03125000000000001,
+          "max": 0.09999999403953552
+        },
+        "scene.camera": {
+          "count": 32,
+          "avg": 0.07500000158324834,
+          "max": 0.19504975353084278
+        },
+        "scene.bodyLod": {
+          "count": 32,
+          "avg": 0.003125000279396771,
+          "max": 0.08690530732446525
+        },
+        "scene.nearPlane": {
+          "count": 32,
+          "avg": 0.003124999813735486,
+          "max": 0.08603841406318018
+        },
+        "scene.update": {
+          "count": 32,
+          "avg": 5.3000000002793985,
+          "max": 50.64000377285643
+        },
+        "cosmic.update": {
+          "count": 32,
+          "avg": 0.012500000186264518,
+          "max": 0.0951110215501644
+        },
+        "stars.update": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "river.update": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "river.shells": {
+          "count": 32,
+          "avg": 0.003124999813735486,
+          "max": 0.0900087374223853
+        },
+        "hud.update": {
+          "count": 32,
+          "avg": 0.07500000018626451,
+          "max": 0.20000000298023224
+        },
+        "hud.starLabels": {
+          "count": 32,
+          "avg": 0.006249999627470972,
+          "max": 0.09511100737751904
+        },
+        "hud.hover": {
+          "count": 32,
+          "avg": 0.006250000558793544,
+          "max": 0.0975248840315908
+        },
+        "labels.near": {
+          "count": 32,
+          "avg": 0.003125000279396771,
+          "max": 0.08955870708055948
+        },
+        "hud.labels": {
+          "count": 32,
+          "avg": 0.10000000055879356,
+          "max": 0.2911117499149442
+        },
+        "render.world": {
+          "count": 32,
+          "avg": 0.9500000011175871,
+          "max": 1.292103579065029
+        },
+        "render.frame": {
+          "count": 32,
+          "avg": 0.9562500007450581,
+          "max": 1.292103579065029
+        },
+        "frame.total": {
+          "count": 32,
+          "avg": 6.903125000651927,
+          "max": 51.73099128946496
+        }
+      },
+      "render": {
+        "calls": 42,
+        "triangles": 24578,
+        "points": 8920,
+        "lines": 3841,
+        "geometries": 136,
+        "textures": 47
+      },
+      "quality": {
+        "mobile": false,
+        "dpr": 1,
+        "loadShed": 0,
+        "bloomScale": 0.52
+      },
+      "tier1": {
+        "initialized": true,
+        "totalTiles": 12288,
+        "totalStars": 2372677,
+        "tilesLoaded": 12288,
+        "starsLoaded": 2372677,
+        "tileErrors": 0,
+        "cpuTiles": 2048,
+        "pending": 0,
+        "drawCalls": 48,
+        "workerFallback": false,
+        "residualDirtyGroups": 0
+      }
+    },
+    {
+      "name": "earth-night",
+      "focus": "earth",
+      "radius": 6.371,
+      "phase": 2.35,
+      "medianMs": 500,
+      "p95Ms": 533.4000000000087,
+      "cam": {
+        "yaw": 0.9725863274467961,
+        "pitch": 0.22,
+        "dist": 27.395300000000002,
+        "tgt": {
+          "x": -29186.815568263704,
+          "y": 0,
+          "z": 149041.66920927426
+        },
+        "distTarget": null
+      },
+      "camera": {
+        "x": -29171.759370976022,
+        "y": 5.97846599318734,
+        "z": 149063.76154572138
+      },
+      "t": 0,
+      "perf": {
+        "frame.physics": {
+          "count": 32,
+          "avg": 0.028125000186264515,
+          "max": 0.09999999403953552
+        },
+        "scene.bodies": {
+          "count": 32,
+          "avg": 3.4656250011175875,
+          "max": 6.404460163600559
+        },
+        "scene.focus": {
+          "count": 32,
+          "avg": 0.04062500037252903,
+          "max": 0.2700262256795037
+        },
+        "scene.camera": {
+          "count": 32,
+          "avg": 0.05937499925494193,
+          "max": 0.27411747669622744
+        },
+        "scene.bodyLod": {
+          "count": 32,
+          "avg": 0.0031250002793967724,
+          "max": 0.09850749630725569
+        },
+        "scene.nearPlane": {
+          "count": 32,
+          "avg": 0.006250000093132258,
+          "max": 0.0975248840315908
+        },
+        "scene.update": {
+          "count": 32,
+          "avg": 3.590625001583248,
+          "max": 6.500049129982632
+        },
+        "cosmic.update": {
+          "count": 32,
+          "avg": 0.006250000093132256,
+          "max": 0.09999999403953552
+        },
+        "stars.update": {
+          "count": 32,
+          "avg": 0.003125000279396771,
+          "max": 0.09229312064907087
+        },
+        "river.update": {
+          "count": 32,
+          "avg": 0.003124999813735486,
+          "max": 0.09369146370353364
+        },
+        "river.shells": {
+          "count": 32,
+          "avg": 0.003125000279396772,
+          "max": 0.09558896638207477
+        },
+        "hud.update": {
+          "count": 32,
+          "avg": 0.08437500009313226,
+          "max": 0.3785418375660901
+        },
+        "hud.starLabels": {
+          "count": 32,
+          "avg": 0.003125000279396771,
+          "max": 0.0927569051749456
+        },
+        "hud.hover": {
+          "count": 32,
+          "avg": 0.01249999972060323,
+          "max": 0.09511100737751904
+        },
+        "labels.near": {
+          "count": 32,
+          "avg": 0.015625000000000007,
+          "max": 0.18551379652803654
+        },
+        "hud.labels": {
+          "count": 32,
+          "avg": 0.12499999953433873,
+          "max": 0.3785418375660901
+        },
+        "render.world": {
+          "count": 32,
+          "avg": 1.0250000003725286,
+          "max": 1.7101661049117556
+        },
+        "render.frame": {
+          "count": 32,
+          "avg": 1.0250000003725286,
+          "max": 1.7101661049117556
+        },
+        "frame.total": {
+          "count": 32,
+          "avg": 4.943750000558794,
+          "max": 8.316239334559542
+        }
+      },
+      "render": {
+        "calls": 49,
+        "triangles": 45256,
+        "points": 8920,
+        "lines": 5281,
+        "geometries": 136,
+        "textures": 50
+      },
+      "quality": {
+        "mobile": false,
+        "dpr": 1,
+        "loadShed": 0,
+        "bloomScale": 0.52
+      },
+      "tier1": {
+        "initialized": true,
+        "totalTiles": 12288,
+        "totalStars": 2372677,
+        "tilesLoaded": 12288,
+        "starsLoaded": 2372677,
+        "tileErrors": 0,
+        "cpuTiles": 2048,
+        "pending": 0,
+        "drawCalls": 48,
+        "workerFallback": false,
+        "residualDirtyGroups": 0
+      }
+    },
+    {
+      "name": "mars",
+      "focus": 2,
+      "radius": 3.3895,
+      "phase": 1.05,
+      "medianMs": 450,
+      "p95Ms": 483.3000000000029,
+      "cam": {
+        "yaw": -2.0790020418570077,
+        "pitch": 0.22,
+        "dist": 14.57485,
+        "tgt": {
+          "x": 208024.65833732468,
+          "y": 0,
+          "z": 2619.2961120990813
+        },
+        "distTarget": null
+      },
+      "camera": {
+        "x": 208017.73700406135,
+        "y": 3.180664021960208,
+        "z": 2606.8701403157597
+      },
+      "t": 0,
+      "perf": {
+        "frame.physics": {
+          "count": 32,
+          "avg": 0.024999998975545168,
+          "max": 0.09999999403953552
+        },
+        "scene.bodies": {
+          "count": 32,
+          "avg": 3.243750001303851,
+          "max": 3.4000000059604645
+        },
+        "scene.focus": {
+          "count": 32,
+          "avg": 0.018749998882412914,
+          "max": 0.09949999406933785
+        },
+        "scene.camera": {
+          "count": 32,
+          "avg": 0.0499999998137355,
+          "max": 0.17207684094708392
+        },
+        "scene.bodyLod": {
+          "count": 32,
+          "avg": 0.006250000093132259,
+          "max": 0.08955870708055948
+        },
+        "scene.nearPlane": {
+          "count": 32,
+          "avg": 0.003125000279396773,
+          "max": 0.09606931294680882
+        },
+        "scene.update": {
+          "count": 32,
+          "avg": 3.3406250006519262,
+          "max": 3.5
+        },
+        "cosmic.update": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "stars.update": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "river.update": {
+          "count": 32,
+          "avg": 0.003125000279396771,
+          "max": 0.08911091354515668
+        },
+        "river.shells": {
+          "count": 32,
+          "avg": 0.003124999813735485,
+          "max": 0.09511100737751904
+        },
+        "hud.update": {
+          "count": 32,
+          "avg": 0.08437500009313223,
+          "max": 0.2646660834015253
+        },
+        "hud.starLabels": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "hud.hover": {
+          "count": 32,
+          "avg": 0.006250000093132258,
+          "max": 0.09801495882571941
+        },
+        "labels.near": {
+          "count": 32,
+          "avg": 0.015625000000000003,
+          "max": 0.18551379652803654
+        },
+        "hud.labels": {
+          "count": 32,
+          "avg": 0.11250000027939677,
+          "max": 0.3710275930560731
+        },
+        "render.world": {
+          "count": 32,
+          "avg": 0.768749999348074,
+          "max": 1
+        },
+        "render.frame": {
+          "count": 32,
+          "avg": 0.771874999627471,
+          "max": 1
+        },
+        "frame.total": {
+          "count": 32,
+          "avg": 4.3749999990686765,
+          "max": 4.699999988079071
+        }
+      },
+      "render": {
+        "calls": 24,
+        "triangles": 4112,
+        "points": 8920,
+        "lines": 3601,
+        "geometries": 136,
+        "textures": 52
+      },
+      "quality": {
+        "mobile": false,
+        "dpr": 1,
+        "loadShed": 0,
+        "bloomScale": 0.52
+      },
+      "tier1": {
+        "initialized": true,
+        "totalTiles": 12288,
+        "totalStars": 2372677,
+        "tilesLoaded": 12288,
+        "starsLoaded": 2372677,
+        "tileErrors": 0,
+        "cpuTiles": 2048,
+        "pending": 0,
+        "drawCalls": 48,
+        "workerFallback": false,
+        "residualDirtyGroups": 0
+      }
+    },
+    {
+      "name": "jupiter",
+      "focus": 3,
+      "radius": 69.911,
+      "phase": 1.05,
+      "medianMs": 449.90000000000873,
+      "p95Ms": 483.29999999998836,
+      "cam": {
+        "yaw": -0.15118059781295257,
+        "pitch": 0.22,
+        "dist": 300.6173,
+        "tgt": {
+          "x": -288754.0084832932,
+          "y": 0,
+          "z": 745323.3006880794
+        },
+        "distTarget": null
+      },
+      "camera": {
+        "x": -288463.9830350927,
+        "y": 65.60360007058861,
+        "z": 745279.1173415201
+      },
+      "t": 0,
+      "perf": {
+        "frame.physics": {
+          "count": 32,
+          "avg": 0.03437500074505805,
+          "max": 0.09950000889599324
+        },
+        "scene.bodies": {
+          "count": 32,
+          "avg": 3.31874999916181,
+          "max": 3.572426381685189
+        },
+        "scene.focus": {
+          "count": 32,
+          "avg": 0.02187500009313226,
+          "max": 0.09801494422035373
+        },
+        "scene.camera": {
+          "count": 32,
+          "avg": 0.06562500027939677,
+          "max": 0.29999999701976776
+        },
+        "scene.bodyLod": {
+          "count": 32,
+          "avg": 0.003125000279396771,
+          "max": 0.09322302027632724
+        },
+        "scene.nearPlane": {
+          "count": 32,
+          "avg": 0.003125000279396771,
+          "max": 0.08734201741152287
+        },
+        "scene.update": {
+          "count": 32,
+          "avg": 3.418750000186264,
+          "max": 3.727969347048164
+        },
+        "cosmic.update": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "stars.update": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "river.update": {
+          "count": 32,
+          "avg": 0.003124999813735486,
+          "max": 0.09137248315503459
+        },
+        "river.shells": {
+          "count": 32,
+          "avg": 0.003124999813735486,
+          "max": 0.08647076790269365
+        },
+        "hud.update": {
+          "count": 32,
+          "avg": 0.0656249993480742,
+          "max": 0.29552245956424805
+        },
+        "hud.starLabels": {
+          "count": 32,
+          "avg": 0.0062500000931322575,
+          "max": 0.18738294136818417
+        },
+        "hud.hover": {
+          "count": 32,
+          "avg": 0.012500000186264515,
+          "max": 0.0951110215501644
+        },
+        "labels.near": {
+          "count": 32,
+          "avg": 0.01249999972060323,
+          "max": 0.09950000889599324
+        },
+        "hud.labels": {
+          "count": 32,
+          "avg": 0.09687499934807421,
+          "max": 0.29552245956424805
+        },
+        "render.world": {
+          "count": 32,
+          "avg": 0.8250000001862646,
+          "max": 1.0835823566284963
+        },
+        "render.frame": {
+          "count": 32,
+          "avg": 0.828125,
+          "max": 1.0835823566284963
+        },
+        "frame.total": {
+          "count": 32,
+          "avg": 4.52500000083819,
+          "max": 5.220896834564248
+        }
+      },
+      "render": {
+        "calls": 23,
+        "triangles": 4112,
+        "points": 8920,
+        "lines": 2881,
+        "geometries": 136,
+        "textures": 53
+      },
+      "quality": {
+        "mobile": false,
+        "dpr": 1,
+        "loadShed": 0,
+        "bloomScale": 0.52
+      },
+      "tier1": {
+        "initialized": true,
+        "totalTiles": 12288,
+        "totalStars": 2372677,
+        "tilesLoaded": 12288,
+        "starsLoaded": 2372677,
+        "tileErrors": 0,
+        "cpuTiles": 2048,
+        "pending": 0,
+        "drawCalls": 48,
+        "workerFallback": false,
+        "residualDirtyGroups": 0
+      }
+    },
+    {
+      "name": "saturn",
+      "focus": 4,
+      "radius": 58.232,
+      "phase": 1.05,
+      "medianMs": 433.29999999998836,
+      "p95Ms": 450,
+      "cam": {
+        "yaw": 2.822256897864496,
+        "pitch": 0.5,
+        "dist": 378.508,
+        "tgt": {
+          "x": 271350.3321103406,
+          "y": 0,
+          "z": -1328643.705731421
+        },
+        "distTarget": null
+      },
+      "camera": {
+        "x": 271034.9533262835,
+        "y": 181.46640176599965,
+        "z": -1328539.4249869818
+      },
+      "t": 0,
+      "perf": {
+        "frame.physics": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "scene.bodies": {
+          "count": 32,
+          "avg": 3.362500000745058,
+          "max": 3.4933410423583626
+        },
+        "scene.focus": {
+          "count": 32,
+          "avg": 0.015624999068677425,
+          "max": 0.09900249409899116
+        },
+        "scene.camera": {
+          "count": 32,
+          "avg": 0.04374999972060323,
+          "max": 0.19022202892768347
+        },
+        "scene.bodyLod": {
+          "count": 32,
+          "avg": 0.003124999813735486,
+          "max": 0.0882220190364377
+        },
+        "scene.nearPlane": {
+          "count": 32,
+          "avg": 0.00937500037252903,
+          "max": 0.09558895213821009
+        },
+        "scene.update": {
+          "count": 32,
+          "avg": 3.4437499996274714,
+          "max": 3.6142184929354038
+        },
+        "cosmic.update": {
+          "count": 32,
+          "avg": 0.003125000279396771,
+          "max": 0.08690530732446525
+        },
+        "stars.update": {
+          "count": 32,
+          "avg": 0.003124999813735486,
+          "max": 0.09091562073925942
+        },
+        "river.update": {
+          "count": 32,
+          "avg": 0.012500000186264513,
+          "max": 0.09137248315503459
+        },
+        "river.shells": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "hud.update": {
+          "count": 32,
+          "avg": 0.06562500167638065,
+          "max": 0.342432913484697
+        },
+        "hud.starLabels": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "hud.hover": {
+          "count": 32,
+          "avg": 0.00937500037252903,
+          "max": 0.10000000894069672
+        },
+        "labels.near": {
+          "count": 32,
+          "avg": 0.009374999906867744,
+          "max": 0.09850749630725569
+        },
+        "hud.labels": {
+          "count": 32,
+          "avg": 0.09062500204890966,
+          "max": 0.342432913484697
+        },
+        "render.world": {
+          "count": 32,
+          "avg": 0.8531249985098839,
+          "max": 1.0152242308705621
+        },
+        "render.frame": {
+          "count": 32,
+          "avg": 0.8531249985098839,
+          "max": 1.0152242308705621
+        },
+        "frame.total": {
+          "count": 32,
+          "avg": 4.543750000651925,
+          "max": 4.778718896110122
+        }
+      },
+      "render": {
+        "calls": 26,
+        "triangles": 5690,
+        "points": 8920,
+        "lines": 2161,
+        "geometries": 136,
+        "textures": 55
+      },
+      "quality": {
+        "mobile": false,
+        "dpr": 1,
+        "loadShed": 0,
+        "bloomScale": 0.52
+      },
+      "tier1": {
+        "initialized": true,
+        "totalTiles": 12288,
+        "totalStars": 2372677,
+        "tilesLoaded": 12288,
+        "starsLoaded": 2372677,
+        "tileErrors": 0,
+        "cpuTiles": 2048,
+        "pending": 0,
+        "drawCalls": 48,
+        "workerFallback": false,
+        "residualDirtyGroups": 0
+      }
+    },
+    {
+      "name": "sun",
+      "focus": "sun",
+      "radius": 695.7,
+      "phase": 0,
+      "medianMs": 450,
+      "p95Ms": 483.20000000001164,
+      "cam": {
+        "yaw": -0.95,
+        "pitch": 0.22,
+        "dist": 2991.51,
+        "tgt": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "distTarget": null
+      },
+      "camera": {
+        "x": 1698.1696707418089,
+        "y": 652.8360997426514,
+        "z": -2374.6909012217698
+      },
+      "t": 0,
+      "perf": {
+        "frame.physics": {
+          "count": 32,
+          "avg": 0.009374999441206452,
+          "max": 0.09183164136184381
+        },
+        "scene.bodies": {
+          "count": 32,
+          "avg": 3.262500001117587,
+          "max": 3.6447770404357516
+        },
+        "scene.focus": {
+          "count": 32,
+          "avg": 0.01874999981373549,
+          "max": 0.09655205892599691
+        },
+        "scene.camera": {
+          "count": 32,
+          "avg": 0.04999999934807419,
+          "max": 0.19213861157817577
+        },
+        "scene.bodyLod": {
+          "count": 32,
+          "avg": 0.009374999441206455,
+          "max": 0.09850748162849621
+        },
+        "scene.nearPlane": {
+          "count": 32,
+          "avg": 0.003124999813735486,
+          "max": 0.09369146370353364
+        },
+        "scene.update": {
+          "count": 32,
+          "avg": 3.3656249991618097,
+          "max": 3.7432845220642483
+        },
+        "cosmic.update": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "stars.update": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "river.update": {
+          "count": 32,
+          "avg": 0.006249999627470972,
+          "max": 0.09801494422035373
+        },
+        "river.shells": {
+          "count": 32,
+          "avg": 0.006250000558793542,
+          "max": 0.09416228911020151
+        },
+        "hud.update": {
+          "count": 32,
+          "avg": 0.056250000838190324,
+          "max": 0.28533303630520246
+        },
+        "hud.starLabels": {
+          "count": 32,
+          "avg": 0.0031250002793967724,
+          "max": 0.10000000894069672
+        },
+        "hud.hover": {
+          "count": 32,
+          "avg": 0.02187499916180968,
+          "max": 0.09900249409899116
+        },
+        "labels.near": {
+          "count": 32,
+          "avg": 0.018750000279396772,
+          "max": 0.0970372451517557
+        },
+        "hud.labels": {
+          "count": 32,
+          "avg": 0.10000000055879353,
+          "max": 0.28533303630520246
+        },
+        "render.world": {
+          "count": 32,
+          "avg": 0.9218749995343386,
+          "max": 1.293499997034669
+        },
+        "render.frame": {
+          "count": 32,
+          "avg": 0.924999999348074,
+          "max": 1.293499997034669
+        },
+        "frame.total": {
+          "count": 32,
+          "avg": 4.5625000009313235,
+          "max": 4.925374375
+        }
+      },
+      "render": {
+        "calls": 53,
+        "triangles": 73962,
+        "points": 8920,
+        "lines": 5281,
+        "geometries": 136,
+        "textures": 55
+      },
+      "quality": {
+        "mobile": false,
+        "dpr": 1,
+        "loadShed": 0,
+        "bloomScale": 0.52
+      },
+      "tier1": {
+        "initialized": true,
+        "totalTiles": 12288,
+        "totalStars": 2372677,
+        "tilesLoaded": 12288,
+        "starsLoaded": 2372677,
+        "tileErrors": 0,
+        "cpuTiles": 2048,
+        "pending": 0,
+        "drawCalls": 48,
+        "workerFallback": false,
+        "residualDirtyGroups": 0
+      }
+    },
+    {
+      "name": "starfield",
+      "focus": "sun",
+      "distance": 10000000,
+      "phase": 0,
+      "medianMs": 483.29999999998836,
+      "p95Ms": 533.2999999999884,
+      "cam": {
+        "yaw": -0.95,
+        "pitch": 0.22,
+        "dist": 10000000,
+        "tgt": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "distTarget": null
+      },
+      "camera": {
+        "x": 5676630.433265504,
+        "y": 2182296.2308086934,
+        "z": -7938101.163699168
+      },
+      "t": 0,
+      "perf": {
+        "frame.physics": {
+          "count": 32,
+          "avg": 0.024999999441206452,
+          "max": 0.09752486949925196
+        },
+        "scene.bodies": {
+          "count": 32,
+          "avg": 3.40625000046566,
+          "max": 4.366676292103196
+        },
+        "scene.focus": {
+          "count": 32,
+          "avg": 0.03437499934807419,
+          "max": 0.09900250885151327
+        },
+        "scene.camera": {
+          "count": 32,
+          "avg": 0.08124999981373549,
+          "max": 0.19407450476318858
+        },
+        "scene.bodyLod": {
+          "count": 32,
+          "avg": 0.003125000279396771,
+          "max": 0.08911091354515668
+        },
+        "scene.nearPlane": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "scene.update": {
+          "count": 32,
+          "avg": 3.540624999906868,
+          "max": 4.657788042018139
+        },
+        "cosmic.update": {
+          "count": 32,
+          "avg": 0,
+          "max": 0
+        },
+        "stars.update": {
+          "count": 32,
+          "avg": 0.09687500167638063,
+          "max": 0.38814900952637715
+        },
+        "river.update": {
+          "count": 32,
+          "avg": 0.0031249998137354855,
+          "max": 0.09900249409899116
+        },
+        "river.shells": {
+          "count": 32,
+          "avg": 0.0062500000931322575,
+          "max": 0.09558896638207477
+        },
+        "hud.update": {
+          "count": 32,
+          "avg": 0.06562499981373547,
+          "max": 0.1970149779357519
+        },
+        "hud.starLabels": {
+          "count": 32,
+          "avg": 0.024999999441206452,
+          "max": 0.17468400879309845
+        },
+        "hud.hover": {
+          "count": 32,
+          "avg": 0.003124999813735486,
+          "max": 0.08866534576526403
+        },
+        "labels.near": {
+          "count": 32,
+          "avg": 0.009375000372529032,
+          "max": 0.0927568913530909
+        },
+        "hud.labels": {
+          "count": 32,
+          "avg": 0.10624999925494193,
+          "max": 0.2754949514534949
+        },
+        "render.world": {
+          "count": 32,
+          "avg": 1.6531249997206034,
+          "max": 7.083719315408803
+        },
+        "render.frame": {
+          "count": 32,
+          "avg": 1.65625,
+          "max": 7.083719315408803
+        },
+        "frame.total": {
+          "count": 32,
+          "avg": 5.606250000186263,
+          "max": 13.391140626224526
+        }
+      },
+      "render": {
+        "calls": 69,
+        "triangles": 89366,
+        "points": 38925,
+        "lines": 5281,
+        "geometries": 136,
+        "textures": 55
+      },
+      "quality": {
+        "mobile": false,
+        "dpr": 1,
+        "loadShed": 0,
+        "bloomScale": 0.52
+      },
+      "tier1": {
+        "initialized": true,
+        "totalTiles": 12288,
+        "totalStars": 2372677,
+        "tilesLoaded": 12288,
+        "starsLoaded": 2372677,
+        "tileErrors": 0,
+        "cpuTiles": 2048,
+        "pending": 0,
+        "drawCalls": 48,
+        "workerFallback": false,
+        "residualDirtyGroups": 0
+      }
+    }
+  ],
+  "errors": []
+}

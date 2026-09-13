@@ -1,0 +1,9 @@
+# Preserve interrupted and diagnostic captures locally. Publish before/ and final/.
+*.local.mjs
+probe.png
+after/
+resumed/
+waited/
+verified/
+diagnostic*/
+checks.json

@@ -1,0 +1,6 @@
+{
+  "command": "bun run build",
+  "exitCode": 0,
+  "sourceHash": "3bac00347b550551cc91db2b9847ea0bf51c8e3be648459ab727bc9582d71b6e",
+  "typecheck": "Not applicable: repository uses JavaScript and has no configured TypeScript checker"
+}

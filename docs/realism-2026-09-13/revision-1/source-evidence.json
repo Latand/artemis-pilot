@@ -1,0 +1,11 @@
+{
+  "reviewedHead": "c819d0d70edbca00ef12cb59e979cfb8d9833059",
+  "base": "62e80d8e44511aad7fc4150d36d67141d266b16a",
+  "sha256": {
+    "src/bodies.js": "183982c5c35ae46b439afc7b286c48957026c6d95644b861600b41af6c5b8721",
+    "src/main.js": "9c8a5a3945ecb26bf3f7d3594f32152bd0336f68e38fed27b53ce7b49b6892d1",
+    "src/stars.js": "93b4fbc4bb1fb3525b416990da5f916d3c479939dc72c7ebd176a3fb11ca2548",
+    "src/render/stellarAppearance.js": "d68494e746b8d8a02efa656cf301dd4a00e2ae76719f1f187f302c69d192db02",
+    "scripts/verify-stellar-exposure.mjs": "40985b54f3344d02f9adf8512d145aa6b4d14938646796608b602a6f4b5b7f93"
+  }
+}
