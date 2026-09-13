@@ -1,0 +1,14 @@
+[
+  {
+    "name": "desktop",
+    "errors": [],
+    "focus": "ship",
+    "text": "EARTH\nMOON\nSHIP\nSUN\nARTEMISOBSERVE\nT+ 00:00:00:28\n2026-09-13 14:06:49 UTC\n⏩ 1 min/s · ❚❚ PAUSED\nENGINE OFF — gravity shapes the path\nSCALE SUB-AU · 2,600 km\nLIGHT-TRAVEL —\nZOOM\n＋\n−\nWARP\n≪\n≫\nCOSMIC SCALE\nEVENTS\nOBSERVE\nLIVE\nNO ACTIVE CATACLYSM\nTIMELINE\nMODELED · contingent scenario\nMW–M31 first passage (modeled scenario; the real encounter is uncertain — Sawala et al. 2025)\nYear 3,902,002,026 CE\n⏩ JUMP\nMODELED\nSun leaves the main sequence\nYear 6,300,002,026 CE\n⏩ JUMP\nMODELED · contingent scenario\nMW–M31 coalescence (modeled scenario; the real encounter is uncertain — Sawala et al. 2025)\nYear 7,070,002,026 CE\n⏩ JUMP\nMODELED\nSun engulfs Mercury\nYear 7,421,019,994 CE\n⏩ JUMP\nMODELED\nSun engulfs Venus\nYear 7,473,927,003 CE\n⏩ JUMP\nMODELED\nSun reaches the red-giant tip\nYear 7,500,002,026 CE\n⏩ JUMP\nMODELED · contingent scenario\nSun may engulf Earth\naround 7.6 billion years from now · depends on solar mass loss and tidal drag\n⏩ JUMP\nMODELED\nSun reaches the AGB tip\nYear 7,650,002,026 CE\n⏩ JUMP\nMODELED\nSun becomes a white dwarf\nYear 7,660,002,026 CE\n⏩ JUMP\nPREDICTED\nMODELED\nNOW · next conjunction: MERCURY–VENUS in 33 d (two-body estimate)\n2026-10-16 08:44:42 UTC\n⏩ JUMP\nRECENT\nDISCOVERIES AND CATACLYSMS WILL APPEAR HERE\n◎ GO TO\nSPACETIME FLOW · RIVER MODEL\nINFALL 47.07 km/s\nEXPANSION 1.21e-11 m/s\nHALO 0.00e+0 m/s²\nSYSTEM PROXIMA · 2 planets · HZ 0.0-0.0 AU · P1 SYNTH ice 0.014 AU · P2 SYNTH ice 0.019 AU\nSHIP 7.73 km/s\nCLOCK 16.44 ns/s slow\nEarth vesc 10.93 km/s · Moon vesc 0.16 km/s · net g 8.963 m/s²\n2026-09-13 14:06:49 UTC\n◀◀\n▶\n▶▶\n1 min/s\nREV ⏪\n0.01×\n0.1×\n0.5×\n1 yr/s\n30 yr/s\n1 kyr/s\n1 Myr/s\n1 Byr/s\n▦ SIMS\nW thrust · A/D rotate · scroll zoom · H all controls\nMERCURY\nVENUS\nMARS\nJUPITER\nSATURN\nURANUS\nNEPTUNE\nPHOBOS\nDEIMOS\nIO\nEUROPA\nGANYMEDE\nCALLISTO\nMIMAS\nENCELADUS\nTETHYS\nDIONE\nRHEA\nTITAN\nIAPETUS\nMIRANDA\nARIEL\nUMBRIEL\nTITANIA\nOBERON\nTRITON\nPROTEUS\nNEREID"
+  },
+  {
+    "name": "mobile",
+    "errors": [],
+    "focus": "ship",
+    "text": "EARTH\nMOON\nSHIP\nSUN\nCOSMIC SCALE\nEVENTS\nMET\n00:00:00:36\nVEL\n7.73 km/s\nALT\n300 km\nMODE\nPAUSED\n☰\n≪\n1 min/s\n≫\n＋\n−\n↺\n↻\n◂\nRCS\n▸\nRCS\nBOOST ×4\n⇕\nCOAST\nMERCURY\nVENUS\nMARS\nJUPITER\nSATURN\nURANUS\nNEPTUNE\nPHOBOS\nDEIMOS\nIO\nEUROPA\nGANYMEDE\nCALLISTO\nMIMAS\nENCELADUS\nTETHYS\nDIONE\nRHEA\nTITAN\nIAPETUS\nMIRANDA\nARIEL\nUMBRIEL\nTITANIA\nOBERON\nTRITON\nPROTEUS\nNEREID"
+  }
+]

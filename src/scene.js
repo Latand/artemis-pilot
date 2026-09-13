@@ -326,6 +326,7 @@ function resetShipGrab() {
     shipGrab.id = -1;
 }
 function startShipGrab(e) {
+    if (G.uiMode === "observe") return false;
     if (G.cabin || G.dead || e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey || !pointerNearShip(e)) return false;
     shipScenePoint(grabShip);
     grabNormal.copy(camera.position).sub(grabShip).normalize();

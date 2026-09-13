@@ -45,7 +45,7 @@ function rebuild() {
     listEl.textContent = "";
     const add = (...a) => listEl.appendChild(makeRow(...a));
 
-    if (has("SHIP")) add("SHIP", "your vehicle", "ship", 0, "#ffd9d1");
+    if (G.uiMode === "pilot" && has("SHIP")) add("SHIP", "your vehicle", "ship", 0, "#ffd9d1");
     if (has("EARTH")) add("EARTH", "home planet", "earth", 0, "#9fe8ff");
     if (has("MOON")) add("MOON", "Earth's moon", "moon", 1, "#cdd6df");
     if (has("SUN")) add("SUN", "home star", "sun", 0, "#ffe3a8");
@@ -85,6 +85,7 @@ function setOpen(v) {
     if (!panel) return;
     panel.classList.toggle("open", open);
     if (open) { rebuild(); queryEl?.focus?.(); }
+    else document.getElementById(G.uiMode === "observe" ? "exploreSearch" : "navBtn")?.focus();
 }
 
 export function toggleNavigator() { setOpen(!open); }
@@ -104,13 +105,5 @@ export function initNavigator(h) {
         if (e.key === "Escape") setOpen(false);
         // enter picks the first row
         if (e.key === "Enter") { listEl?.querySelector(".navItem")?.click(); }
-    });
-    window.addEventListener("keydown", e => {
-        if (e.code === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-            const tag = (e.target?.tagName || "").toLowerCase();
-            if (tag === "input" || tag === "textarea") return;
-            e.preventDefault();
-            toggleNavigator();
-        }
     });
 }

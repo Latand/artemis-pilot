@@ -1,0 +1,29 @@
+{
+  "checks": [
+    "Fresh session explores Earth",
+    "W moves the camera while paused",
+    "Camera movement preserves time, ship and Explore mode",
+    "Search typing cannot trigger flight or time shortcuts",
+    "Navigator updates selected-object context",
+    "Speed changes preserve pause and reverse direction",
+    "Play advances the simulation through the time controller",
+    "Events are reachable from the time dock",
+    "Closing events returns keyboard focus to time controls",
+    "Tab moves focus without toggling modes or navigator",
+    "Pilot focuses the spacecraft explicitly",
+    "Returning to Explore restores the previous world",
+    "Exploration reaches an interstellar destination",
+    "Returning from a distant world centers Earth immediately",
+    "mobile: time controls replace flight controls in Explore",
+    "mobile: primary controls are inside viewport and unobstructed [{\"id\":\"exploreSearch\",\"inside\":true,\"hit\":true},{\"id\":\"tdPause\",\"inside\":true,\"hit\":true},{\"id\":\"tdSpeed\",\"inside\":true,\"hit\":true},{\"id\":\"exploreEvents\",\"inside\":true,\"hit\":true}]",
+    "mobile: pointer camera controls work independently of simulation",
+    "tablet: time controls replace flight controls in Explore",
+    "tablet: primary controls are inside viewport and unobstructed [{\"id\":\"exploreSearch\",\"inside\":true,\"hit\":true},{\"id\":\"tdPause\",\"inside\":true,\"hit\":true},{\"id\":\"tdSpeed\",\"inside\":true,\"hit\":true},{\"id\":\"exploreEvents\",\"inside\":true,\"hit\":true}]",
+    "tablet: pointer camera controls work independently of simulation",
+    "short-mobile: time controls replace flight controls in Explore",
+    "short-mobile: primary controls are inside viewport and unobstructed [{\"id\":\"exploreSearch\",\"inside\":true,\"hit\":true},{\"id\":\"tdPause\",\"inside\":true,\"hit\":true},{\"id\":\"tdSpeed\",\"inside\":true,\"hit\":true},{\"id\":\"exploreEvents\",\"inside\":true,\"hit\":true}]",
+    "short-mobile: pointer camera controls work independently of simulation",
+    "No browser errors"
+  ],
+  "errors": []
+}

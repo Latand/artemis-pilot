@@ -38,13 +38,13 @@ import {
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
-import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale } from "./cosmic.js";
+import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState } from "./cosmic.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
 import {
-    showBanner, hideBanner, updateHUD, updateEscapeTracker, updateScaleLadder, hideHelp,
+    showBanner, hideBanner, updateHUD, updateEscapeTracker, updateScaleLadder, hideHelp, toggleHelp,
     fFlow, fDark, fHalo, lblE, lblM, lblO, lblS,
     setText as setHudText, systemSummary,
 } from "./hud.js";
@@ -79,6 +79,12 @@ import { initMobileControls, updateMobileControls } from "./mobileControls.js";
 import { initAttitude, drawAttitude } from "./attitude.js";
 import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
+import { initExplorerUI, moveExplorerCamera, updateExplorerUI } from "./explorerUI.js";
+import { initUiMode, setXrPresenting } from "./uiMode.js";
+import { cancelTimeJump, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
+import { initTimeDock, renderTimeDock, sampleTimeDock } from "./timeDock.js";
+import { classifyContact } from "./universe/contactMath.js";
+import { initEvents, noteEvent, updateEvents } from "./events.js";
 
 // ============================ WIRING ============================
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
@@ -196,6 +202,7 @@ function die(reason, swallowed) {
     showBanner("VEHICLE LOST", reason + " · MET " + fmtMET(G.t) + " · max Earth distance " + fmtKm(G.maxRE) + " · Δv used " + Math.round(G.dvUsed) + " m/s", "R TO REBUILD SHIP");
 }
 function restart() {
+    cancelTimeJump("restart");
     resetEphem();
     resetShip();
     rebaseBHEvents(); // clock rewound to 0: surviving holes count as long-established
@@ -212,7 +219,11 @@ initBHHooks({
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), true, false);
         award("bh");
         if (bi >= 0) focusBlackHole(bi);
-        if (name) toast(name + " absorbed by black hole · r_s now " + fmtKm(rs));
+        if (name) {
+            const label = name + " absorbed by black hole · r_s now " + fmtKm(rs);
+            toast(label);
+            noteEvent(label);
+        }
     },
     // blackholes.js carries the mass through phantom → hole event → ghost,
     // so the BH paths skip the generic destruction ghost
@@ -220,19 +231,28 @@ initBHHooks({
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), false, false) || bodyName(target);
         award("bh");
         if (bi >= 0) focusBlackHole(bi);
-        if (name) toast(name + " is being tidally shredded");
+        if (name) {
+            const label = name + " is being tidally shredded";
+            toast(label);
+            noteEvent(label);
+        }
         return name;
     },
     absorbed(target, rs, bi = -1) {
         const name = markBodyDestroyed(target, "mass absorbed by r_s " + fmtKm(rs), false, false) || bodyName(target);
         if (bi >= 0) focusBlackHole(bi);
-        toast((name || "Body") + " mass absorbed · r_s now " + fmtKm(rs));
+        const label = (name || "Body") + " mass absorbed · r_s now " + fmtKm(rs);
+        toast(label);
+        noteEvent(label);
     },
+    event: noteEvent,
 });
 initInput({ restart, openCatalogSearch: openCatalogSearchLazy });
 initScenarios({ restart });
 initHints();
 initVR({ restart });
+renderer.xr.addEventListener("sessionstart", () => setXrPresenting(true));
+renderer.xr.addEventListener("sessionend", () => setXrPresenting(false));
 initMobileControls({
     restart,
     cycleFocus() {
@@ -248,23 +268,33 @@ initLog();
 cinematic.bindCinematic({ camera, cam, G, renderer, setCamRoll, applyCameraRoll });
 cinematic.initCine();
 initQuickControls();
+initTimeDock();
+initEvents({ mergerState: mergerDebugState });
+initUiMode();
+initExplorerUI({flyTo: flyFocus, openNavigator, openCatalog: openCatalogSearchLazy, toggleHelp});
 
 // Camera/share-state must be applied before renderer warmup; otherwise startup
 // compiles the default low-orbit view, then immediately renders a different
 // restored or URL-selected view on the first live frame.
 function applyStartupCameraState() {
+    let restoredCamera = false;
     try {
         const saved = JSON.parse(localStorage.getItem("ap_cam") || "null");
         if (saved && isFinite(saved.dist)) {
+            restoredCamera = true;
             cam.dist = saved.dist;
             cam.yaw = saved.yaw ?? cam.yaw;
             cam.pitch = saved.pitch ?? cam.pitch;
             if (saved.focus !== undefined && saved.focus !== "free") G.focus = saved.focus;
-            if (isFinite(saved.warp) && saved.warp >= 1) G.warp = saved.warp;
+            if (isFinite(saved.warp) && saved.warp >= 1) setWarp(saved.warp, "startup");
         }
     } catch (e) { }
 
     const q = new URLSearchParams(location.search);
+    if (!restoredCamera && G.uiMode === "observe" && !q.has("focus") && !q.has("dist")) {
+        setFocus("earth");
+        G.gr = false;
+    }
     initRelViewOverride(q);
     if (q.get("bh")) for (const s of q.get("bh").split(";")) {
         const [bx, by, brs] = s.split(":").map(Number);
@@ -282,7 +312,7 @@ function applyStartupCameraState() {
         }
         computePrediction();
     }
-    if (q.get("warp")) G.warp = +q.get("warp");
+    if (q.get("warp")) setWarp(+q.get("warp"), "startup");
     if (q.get("focus")) { const f = q.get("focus"); G.focus = /^\d+$/.test(f) ? +f : f; }
     if (q.get("dist")) cam.dist = +q.get("dist");
     if (q.get("yaw")) cam.yaw = +q.get("yaw");
@@ -954,7 +984,7 @@ renderer.domElement.addEventListener("pointerup", e => {
 });
 
 function contactBody(target, name, R, mu) {
-    return { target, name, x: 0, y: 0, vx: 0, vy: 0, R, mu, rho: mu / Math.max(1, R * R * R), rocheMax: R * 60 };
+    return { target, name, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, R, mu, rho: mu / Math.max(1, R * R * R), rocheMax: R * 60 };
 }
 const CONTACT_SOURCES = [
     contactBody("earth", "Earth", R_EARTH, MU_E),
@@ -963,49 +993,55 @@ const CONTACT_SOURCES = [
     ...PL.map((p, i) => contactBody(i, p.name, p.R, p.mu)),
 ];
 const CONTACT_BODIES = new Array(CONTACT_SOURCES.length);
-function setContactBody(slot, x, y, vx, vy) {
-    slot.x = x; slot.y = y; slot.vx = vx; slot.vy = vy;
+const CONTACT_RESULT = { kind: "none", dKm: 0, relKmS: 0, rocheKm: 0, escKmS: 0 };
+function setContactBody(slot, x, y, z, vx, vy, vz) {
+    slot.x = x; slot.y = y; slot.z = z;
+    slot.vx = vx; slot.vy = vy; slot.vz = vz;
     return slot;
 }
 function bodyContactList() {
     let n = 0;
-    if (!WORLD.earthDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[0], 0, 0, 0, 0);
-    if (!WORLD.moonDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[1], eph.moonX, eph.moonY, eph.moonVx, eph.moonVy);
-    if (!WORLD.sunDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[2], eph.sunX, eph.sunY, eph.sunVx, eph.sunVy);
+    if (!WORLD.earthDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[0], 0, 0, 0, 0, 0, 0);
+    if (!WORLD.moonDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[1], eph.moonX, eph.moonY, eph.moonZ, eph.moonVx, eph.moonVy, eph.moonVz);
+    if (!WORLD.sunDestroyed) CONTACT_BODIES[n++] = setContactBody(CONTACT_SOURCES[2], eph.sunX, eph.sunY, eph.sunZ, eph.sunVx, eph.sunVy, eph.sunVz);
     for (let i = 0; i < PL.length; i++) {
         if (WORLD.plDestroyed[i]) continue;
         const src = CONTACT_SOURCES[3 + i];
-        CONTACT_BODIES[n++] = setContactBody(src, eph.plX[i], eph.plY[i], eph.plVx[i], eph.plVy[i]);
+        CONTACT_BODIES[n++] = setContactBody(src, eph.plX[i], eph.plY[i], eph.plZ[i], eph.plVx[i], eph.plVy[i], eph.plVz[i]);
     }
     return n;
-}
-function rocheLimit(big, small) {
-    return Math.min(big.rocheMax, 2.44 * big.R * Math.cbrt(big.rho / Math.max(1e-12, small.rho)));
 }
 function checkBodyContacts() {
     const count = bodyContactList();
     for (let i = 0; i < count; i++) for (let j = i + 1; j < count; j++) {
         const a = CONTACT_BODIES[i], b = CONTACT_BODIES[j];
-        const d = Math.hypot(a.x - b.x, a.y - b.y);
-        const rel = Math.hypot(a.vx - b.vx, a.vy - b.vy);
-        const sumR = a.R + b.R;
         const big = a.mu >= b.mu ? a : b;
         const small = big === a ? b : a;
-        if (d <= sumR) {
-            const esc = Math.sqrt(2 * (a.mu + b.mu) / Math.max(1, sumR));
-            const ratio = small.mu / big.mu;
+        const contact = classifyContact(a, b, CONTACT_RESULT);
+        if (contact.kind === "impact" || contact.kind === "impact-both") {
             const smallName = markBodyDestroyed(small.target, "impact with " + big.name);
-            if (smallName) toast(smallName + " destroyed by impact with " + big.name + " · " + rel.toFixed(2) + " km/s");
-            if (ratio > .2 || rel > esc) {
+            if (smallName) {
+                const label = smallName + " destroyed by impact with " + big.name + " · " + contact.relKmS.toFixed(2) + " km/s";
+                toast(label);
+                noteEvent(label);
+            }
+            if (contact.kind === "impact-both") {
                 const bigName = markBodyDestroyed(big.target, "high-energy impact with " + small.name);
-                if (bigName) toast(bigName + " destroyed by high-energy impact · " + rel.toFixed(2) + " km/s");
+                if (bigName) {
+                    const label = bigName + " destroyed by high-energy impact · " + contact.relKmS.toFixed(2) + " km/s";
+                    toast(label);
+                    noteEvent(label);
+                }
             }
             return;
         }
-        const roche = rocheLimit(big, small);
-        if (d < roche) {
+        if (contact.kind === "roche") {
             const smallName = markBodyDestroyed(small.target, "tidal disruption near " + big.name);
-            if (smallName) toast(smallName + " torn apart near " + big.name + " · Roche " + fmtKm(roche));
+            if (smallName) {
+                const label = smallName + " torn apart near " + big.name + " · Roche " + fmtKm(contact.rocheKm);
+                toast(label);
+                noteEvent(label);
+            }
             return;
         }
     }
@@ -1497,6 +1533,26 @@ function finishFramePerf(start, dtR, rawDtR, dtRCap, cosmicView, cabinActive) {
     } : null);
 }
 
+function noteLandedDiscovery(oi) {
+    if (!G.landed) return;
+    if (G.landed.body === "sysplanet" || G.landed.body === "sysmoon") {
+        if (!G.landed.discoveryId) {
+            const sys = getCachedFocusedSystem();
+            if (!sys || sys.starId !== G.landed.starId) return;
+            const planetIndex = G.landed.body === "sysplanet" ? G.landed.i : G.landed.planetIndex;
+            const planet = sys.planets?.[planetIndex];
+            const body = G.landed.body === "sysplanet" ? planet : planet?.moons?.[G.landed.moonIndex];
+            if (!body) return;
+            const provenance = body.real === true ? "catalog" : "generated";
+            G.landed.discoveryId = provenance + ":" + G.landed.starId + ":" + planetIndex +
+                (G.landed.body === "sysmoon" ? ":" + G.landed.moonIndex : "");
+        }
+        noteBody(G.landed.body, G.landed.discoveryId, oi.body || String(G.landed.body).toUpperCase());
+        return;
+    }
+    noteBody(G.landed.body, G.landed.i ?? 0, oi.body || String(G.landed.body).toUpperCase());
+}
+
 function frame() {
     const frameT0 = perfStart();
     const rawDtR = clock.getDelta();
@@ -1508,7 +1564,9 @@ function frame() {
     if (G.dead && !G.observerMode && performance.now() - G.deathRt >= 2000) enterObserverMode();
     // ---- input → attitude & thrust (keyboard merged with VR controllers) ----
     const vrIn = vrPoll(dtR);
-    let rotIn = ((keys.has("KeyA") || keys.has("ArrowLeft")) ? 1 : 0) - ((keys.has("KeyD") || keys.has("ArrowRight")) ? 1 : 0);
+    moveExplorerCamera(Math.min(rawDtR, .06));
+    const flightKeys = G.uiMode === "pilot" || VR.active;
+    let rotIn = !flightKeys ? 0 : ((keys.has("KeyA") || keys.has("ArrowLeft")) ? 1 : 0) - ((keys.has("KeyD") || keys.has("ArrowRight")) ? 1 : 0);
     if (!rotIn) rotIn = vrIn.rot;
     if (rotIn) { G.hold = null; G.heading += rotIn * ROT_RATE * dtR; }
     if (!G.landed) {
@@ -1516,11 +1574,11 @@ function frame() {
         if (G.hold === "pro") { G.heading = Math.atan2(G.vy, G.vx); G.pitch = Math.atan2(G.vz, vh); }
         else if (G.hold === "retro") { G.heading = Math.atan2(-G.vy, -G.vx); G.pitch = Math.atan2(-G.vz, vh); }
     }
-    let mainIn = (keys.has("KeyW") || keys.has("ArrowUp")) ? 1 : ((keys.has("KeyS") || keys.has("ArrowDown")) ? -1 : 0);
+    let mainIn = !flightKeys ? 0 : (keys.has("KeyW") || keys.has("ArrowUp")) ? 1 : ((keys.has("KeyS") || keys.has("ArrowDown")) ? -1 : 0);
     if (!mainIn) mainIn = vrIn.main;
-    let latIn = (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0);
+    let latIn = !flightKeys ? 0 : (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0);
     if (!latIn) latIn = vrIn.lat;
-    G.boost = keys.has("ShiftLeft") || keys.has("ShiftRight") || vrIn.boost;
+    G.boost = (flightKeys && (keys.has("ShiftLeft") || keys.has("ShiftRight"))) || vrIn.boost;
     // the pilot always outranks the flight computer
     if ((rotIn || mainIn || latIn) && AP.mode !== "off") apOff("pilot override", toast);
     if ((rotIn || mainIn || latIn) && REL.active) relCancel("pilot override", toast);
@@ -1565,9 +1623,12 @@ function frame() {
     // ---- physics ----
     const physicsT0 = perfStart();
     let advanced = 0, activeStarsFresh = false;
+    setExternalTimeDriver(cinematic.isPlaying() || REL.active);
+    const jumpFrame = tickJump(rawDtR, dtR, aMag > 0);
+    const frameSimAdvance = jumpFrame ? jumpFrame.advanceSec : dtR * G.warp;
     if (!G.paused) {
         if (REL.active) {
-            advanced = dtR * G.warp;
+            advanced = frameSimAdvance;
             if (G.warp < 0) relCancel("reverse warp", toast);
             if (REL.active) {
                 relTravelStep(advanced);
@@ -1577,23 +1638,26 @@ function frame() {
                 activeStarsFresh = true;
             }
         } else if (G.dead) {
-            advanced = dtR * G.warp;
+            advanced = frameSimAdvance;
             advanceEphem(advanced);
             bhAdvance(advanced, G.t);
             G.t += advanced;
         } else if (G.landed) {
-            advanced = dtR * G.warp;
+            advanced = frameSimAdvance;
             advanceEphem(advanced);
             bhAdvance(advanced, G.t);
             G.t += advanced;
         } else {
-            advanced = advance(dtR * G.warp, atx, aty, atz, aMag);
+            advanced = advance(frameSimAdvance, atx, aty, atz, aMag);
             activeStarsFresh = true;
         }
     }
+    const jumpSettlement = jumpFrame ? settleTimeJump(jumpFrame, advanced, aMag > 0) : null;
+    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) G.t = jumpSettlement.syncTimeSec;
     snapLanded();
     const oi = orbitInfo();
     perfEnd("frame.physics", physicsT0, PERF.enabled ? { advanced, warp: G.warp, dtR, rawDtR, dtRCap } : null);
+    sampleTimeDock();
     const cosmicView = cam.dist > LY_SCENE * .2;
     const cosmicLod = cam.dist > LY_SCENE * 800000 ? 3 : cam.dist > LY_SCENE * 20000 ? 2 : cosmicView ? 1 : 0;
     const pixelLoadShed = renderQuality.mobile ? (G.warp > 600 && G.gr ? 2 : 1) :
@@ -1607,7 +1671,7 @@ function frame() {
         if (oi.domMoon) noteBody("moon", 0, "THE MOON");
         if (oi.domSun) noteBody("sun", 0, "THE SUN");
         if (oi.domPl && oi.pNear >= 0 && oi.pNearD < PL[oi.pNear].soi) noteBody("planet", oi.pNear, PL[oi.pNear].name);
-        if (G.landed) noteBody(G.landed.body, G.landed.i ?? 0, oi.body || String(G.landed.body).toUpperCase());
+        noteLandedDiscovery(oi);
         if (oi.domStar && oi.starId) noteStar(oi.starId, oi.star?.name || oi.starId);
         const notableStar = oi.star || oi.starNear;
         if (notableStar?.bh) noteNotable("bh", notableStar.name || "BLACK HOLE");
@@ -1768,7 +1832,7 @@ function frame() {
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
-    shipG.visible = !G.dead && !cosmicView && !G.cabin;
+    shipG.visible = !G.dead && !cosmicView && !G.cabin && (G.uiMode !== "observe" || VR.active);
     clouds.rotation.y += dtR * .01;
     perfEnd("scene.focus", sceneFocusT0, PERF.enabled ? { activeStarsDue, activeStarsFresh, focus: String(G.focus) } : null);
     // ---- camera ----
@@ -1804,7 +1868,7 @@ function frame() {
         // offset left by focus transitions and pans
         if (placed && camPrevFocus === G.focus) cam.tgt.add(camDelta.copy(tgt).sub(camPrevTgt));
         // interstellar focus jumps snap: gliding 26,000 ly takes forever
-        const glide = placed && cam.tgt.distanceTo(tgt) < 1e8;
+        const glide = placed && G.uiMode !== "observe" && cam.tgt.distanceTo(tgt) < 1e8;
         cam.tgt.lerp(tgt, glide ? Math.min(1, dtR * 6) : 1);
         camPrevTgt.copy(tgt);
         camPrevFocus = G.focus;
@@ -1941,12 +2005,15 @@ function frame() {
     if (cosmicView) {
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
-        updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, 1);
+        updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, G.uiMode === "observe" ? 0 : 1);
         if (frameNo % 6 === 0) {
             const focusLight = focusLightTarget();
             updateScaleLadder(cam.dist / K, focusLight?.distKm ?? null, focusLight?.name);
         }
         if (hudDue) {
+            renderTimeDock();
+            updateExplorerUI();
+            updateEvents();
             updateMobileControls(oi, cosmicSpeed, aMag);
             if (!renderQuality.mobile) {
                 updateHUD(oi, aMag, mainIn, cosmicSpeed, cosmicSpeed, 1);
@@ -1992,7 +2059,7 @@ function frame() {
     const velAngleRate = prevVelAngleVis === null || dtR <= 0 ? 0 : Math.abs(angleDelta(velAngle, prevVelAngleVis)) / dtR;
     prevHeadingVis = G.heading;
     prevVelAngleVis = velAngle;
-    const directionVisualActive = G.warp <= 600 && headingRate < 7 && velAngleRate < 7;
+    const directionVisualActive = (G.uiMode !== "observe" || VR.active) && G.warp <= 600 && headingRate < 7 && velAngleRate < 7;
     craft.scale.setScalar(cs);
     dot.scale.setScalar(cd * .014);
     dot.material.opacity = G.dead ? 0 : (cd > 4 ? 1 : Math.max(0, (cd - 1.2) / 2.8));
@@ -2185,7 +2252,7 @@ function frame() {
         tipV.visible = false; tipF.visible = false;
         hideCosmologyArrows();
     }
-    updateFocusVelocityVector(cabinActive || cosmicView ? 0 : 1);
+    updateFocusVelocityVector(cabinActive || cosmicView || (G.uiMode === "observe" && !VR.active) ? 0 : 1);
     // ---- audio ----
     if (thrustGain) {
         const target = (aMag > 0 && !G.muted) ? Math.min(.22, .04 + .12 * G.throttle * (G.boost ? 1.8 : 1)) : 0;
@@ -2206,6 +2273,9 @@ function frame() {
         updateScaleLadder(cam.dist / K, focusLight?.distKm ?? null, focusLight?.name);
     }
     if (hudDue) {
+        renderTimeDock();
+        updateExplorerUI();
+        updateEvents();
         if (!renderQuality.mobile) {
             updateHUD(oi, aMag, mainIn, sp, kVLoc, fRiver);
             if (fSystem) setHudText(fSystem, activeNebFocus ? nebulaHudSummary(activeNebFocus) : systemSummary(focusedSystem));

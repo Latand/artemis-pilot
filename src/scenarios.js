@@ -12,6 +12,7 @@ import { toast } from "./achievements.js";
 import { apTravelToFocus } from "./autopilot.js";
 import { resetHints } from "./hints.js";
 import { hideHelp } from "./hud.js";
+import { setWarp } from "./timeCtl.js";
 
 const $ = id => document.getElementById(id);
 let H = { restart: () => { } };
@@ -47,7 +48,7 @@ const SCENARIOS = [
             "⇧T hands the intercept to the autopilot; warp with 1–9 while you wait.",
         ],
         setup() {
-            G.warp = 3600;
+            setWarp(3600, "scenario");
             G.focus = 2; // Mars
             cam.dist = Math.max(PL[2].R * K * 7, 2);
         },
@@ -77,7 +78,7 @@ const SCENARIOS = [
             G.vx = vr * ct - vt * st; G.vy = vr * st + vt * ct; G.vz = 0;
             G.heading = Math.atan2(G.vy, G.vx);
             G.pitch = 0;
-            G.warp = 21600;
+            setWarp(21600, "scenario");
             G.focus = "earth";
             cam.dist = 520;
         },
@@ -106,7 +107,7 @@ const SCENARIOS = [
             G.vy = eph.plVy[J] - vinf * ty; G.vz = 0;
             G.heading = Math.atan2(G.vy, G.vx);
             G.pitch = 0;
-            G.warp = 86400;
+            setWarp(86400, "scenario");
             G.focus = J;
             cam.dist = 2800;
         },
@@ -128,7 +129,7 @@ const SCENARIOS = [
             const ux = G.x / r, uy = G.y / r;
             addBlackHole(G.x + 80000 * ux, G.y + 80000 * uy, 100, 0, 0, true);
             G.gr = true;
-            G.warp = 1;
+            setWarp(1, "scenario");
             G.focus = "bh:0";
             cam.dist = 160;
         },
@@ -154,7 +155,7 @@ const SCENARIOS = [
             G.darkEnergy = true;
             G.darkMatter = true;
             G.gr = true;
-            G.warp = 1000000000 * SEC_YEAR;
+            setWarp(1000000000 * SEC_YEAR, "scenario");
             G.focus = "ship";
             cam.dist = COSMIC_ZOOMS.LOCAL_GROUP;
         },
@@ -174,7 +175,7 @@ const SCENARIOS = [
             apTravelToFocus(toast);
             G.focus = "ship";
             cam.dist = 60;
-            G.warp = 2592000; // 30 d/s — the burn unfolds over seconds
+            setWarp(2592000, "scenario"); // 30 d/s — the burn unfolds over seconds
         },
     },
     {
@@ -189,7 +190,7 @@ const SCENARIOS = [
         ],
         setup() {
             G.gr = true;
-            G.warp = 1000000 * SEC_YEAR;
+            setWarp(1000000 * SEC_YEAR, "scenario");
             G.focus = "star:8";
             cam.dist = Math.max(STARS[8].R * K * 30, 1);
         },

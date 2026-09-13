@@ -1,0 +1,14 @@
+[
+  {
+    "name": "desktop",
+    "errors": [],
+    "focus": "earth",
+    "text": "EARTH\nMOON\nSUN\nCOSMIC SCALE\nARTEMIS\nSPACE EXPLORER\nExplore\nPilot\nCreate\nFind a world ↗\n?\nYOUR VIEW\nFollowing object\nEarth\n\nHome planet\n\nObject details\nRadius\n6,371 km\nViewing distance\n34,000 km\nPlaces to explore\nEarth\nOur world\nMoon\nNearby\nJupiter\nGiant planets\nSaturn\nRings\nSun\nWatch a star age\nProxima\nBeyond the Sun\nView the Milky Way ↗\nSearch the star catalog ↗\nGravity flow\nNatural view\n\nGravity flow is a visual metaphor. Object motion follows the simulation.\n\nDrag to look · scroll to approach · WASD to move · Q/E up/down\nForward\nBack\nLeft\nRight\nUp\nDown\nTIME\nExplore events ↗\n2026-09-13 14:15:26 UTC\n◀◀\nPlay\n▶▶\n1 min/s\nReverse\nTime per second\n0.01 seconds / second\n0.1 seconds / second\n0.5 seconds / second\nReal time\n1 minute / second\n10 minutes / second\n1 hour / second\n6 hours / second\n1 day / second\n7 days / second\n30 days / second\n1 year / second\n30 years / second\n1,000 years / second\n1,000,000 years / second\n1,000,000,000 years / second\nPaused\nAll speeds\nMERCURY\nVENUS\nMARS\nJUPITER\nSATURN\nURANUS\nNEPTUNE\nPHOBOS\nDEIMOS\nIO\nEUROPA\nGANYMEDE\nCALLISTO\nMIMAS\nENCELADUS\nTETHYS\nDIONE\nRHEA\nTITAN\nIAPETUS\nMIRANDA\nARIEL\nUMBRIEL\nTITANIA\nOBERON\nTRITON\nPROTEUS\nNEREID"
+  },
+  {
+    "name": "mobile",
+    "errors": [],
+    "focus": "earth",
+    "text": "EARTH\nMOON\nSUN\nCOSMIC SCALE\nARTEMIS\nSPACE EXPLORER\nExplore\nPilot\nCreate\nFind a world ↗\n?\nYOUR VIEW\nEarth\n\nHome planet\n\nObject details\nPlaces to explore\nGravity flow\nForward\nBack\nLeft\nRight\nUp\nDown\nTIME\nExplore events ↗\n2026-09-13 14:15:25 UTC\n◀◀\nPlay\n▶▶\n1 min/s\nReverse\nTime per second\n0.01 seconds / second\n0.1 seconds / second\n0.5 seconds / second\nReal time\n1 minute / second\n10 minutes / second\n1 hour / second\n6 hours / second\n1 day / second\n7 days / second\n30 days / second\n1 year / second\n30 years / second\n1,000 years / second\n1,000,000 years / second\n1,000,000,000 years / second\nPaused\nAll speeds\nMERCURY\nVENUS\nMARS\nJUPITER\nSATURN\nURANUS\nNEPTUNE\nPHOBOS\nDEIMOS\nIO\nEUROPA\nGANYMEDE\nCALLISTO\nMIMAS\nENCELADUS\nTETHYS\nDIONE\nRHEA\nTITAN\nIAPETUS\nMIRANDA\nARIEL\nUMBRIEL\nTITANIA\nOBERON\nTRITON\nPROTEUS\nNEREID"
+  }
+]

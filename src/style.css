@@ -36,6 +36,9 @@
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --safe-b: env(safe-area-inset-bottom, 0px);
+  --time-dock-bottom: 18px;
+  --time-dock-height: 136px;
+  --time-dock-gap: 12px;
 }
 
 html, body { margin: 0; width: 100%; height: 100%; background: var(--bg); overflow: hidden;
@@ -153,7 +156,9 @@ body.star-labels-far .starLbl { font-size: 11px; filter: none;
   background: rgba(6,10,16,.94); border: 1px solid var(--line-2); border-radius: var(--r-xs);
   padding: 5px 9px; white-space: nowrap; box-shadow: var(--shadow); }
 
-#cosmicScale { position: absolute; left: 50%; bottom: 66px; transform: translateX(-50%); z-index: 5;
+#cosmicScale { position: absolute; left: 50%;
+  bottom: calc(var(--time-dock-bottom) + var(--time-dock-height) + var(--time-dock-gap));
+  transform: translateX(-50%); z-index: 5;
   pointer-events: none; opacity: 0; transition: opacity .25s;
   font-family: var(--font-display); font-size: 10.5px; font-weight: 600; letter-spacing: .24em;
   color: #e2d4ff; text-shadow: 0 0 16px rgba(150,110,255,.6);
@@ -170,6 +175,64 @@ body.star-labels-far .starLbl { font-size: 11px; filter: none;
 #objList li { font-size: 10px; line-height: 1.85; color: var(--ink-3); padding-left: 16px; position: relative; }
 #objList li::before { content: "○"; position: absolute; left: 0; color: var(--ink-4); }
 #objList li.done { display: none; }   /* completed goals drop off so the list stays short */
+
+/* ============ OBSERVE EVENTS ============ */
+#evDock, #evBtn, #evClose, #evJumpChip { display: none; }
+#evDock { position: fixed; top: calc(56px + env(safe-area-inset-top, 0px));
+  right: calc(10px + env(safe-area-inset-right, 0px)); z-index: 13;
+  flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; }
+#evBtn { min-width: 44px; min-height: 40px; align-items: center; justify-content: center; gap: 7px;
+  padding: 0 12px; border: 1px solid rgba(255,211,107,.42); border-radius: 999px;
+  background: rgba(30,25,12,.86); color: var(--amber); font-family: var(--font-ui);
+  font-size: 9px; font-weight: 700; letter-spacing: .14em; cursor: pointer; pointer-events: auto;
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); -webkit-tap-highlight-color: transparent; }
+#evBtnDot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-4); }
+#evBtn.evBtn--new #evBtnDot { background: var(--cyan); box-shadow: 0 0 10px rgba(84,198,255,.8); }
+#evBtn.evBtn--live #evBtnDot { background: var(--amber); box-shadow: 0 0 10px rgba(255,211,107,.8); }
+#evJumpChip { min-height: 40px; max-width: min(300px, calc(100vw - 130px)); box-sizing: border-box;
+  align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid rgba(84,198,255,.4);
+  border-radius: var(--r-sm); background: rgba(8,28,40,.88); color: var(--ice);
+  font-family: var(--font-ui); pointer-events: auto; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+#evJumpChipLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 9px; font-weight: 700; letter-spacing: .05em; }
+#evJumpChipEta { flex: none; font-family: var(--font-mono); font-size: 9px; white-space: nowrap; }
+#evJumpCancel { flex: none; min-height: 40px; padding: 0 10px; border: 1px solid var(--line-2);
+  border-radius: var(--r-xs); background: rgba(8,12,18,.78); color: var(--ink-2);
+  font-family: var(--font-ui); font-size: 9px; letter-spacing: .12em; cursor: pointer; }
+#evClose { width: 40px; height: 40px; flex: none; align-items: center; justify-content: center;
+  border: 1px solid var(--line-2); border-radius: var(--r-xs); background: rgba(8,12,18,.7);
+  color: var(--amber); font: 18px var(--font-ui); cursor: pointer; }
+#evPanel { position: fixed; top: 92px; right: 14px; z-index: 6; width: 314px;
+  max-height: calc(100dvh - var(--time-dock-height) - 138px); overflow-y: auto;
+  padding: 11px 13px 13px; box-sizing: border-box; pointer-events: auto; }
+#evPanel .panel__head { color: var(--amber); }
+.evPanel__mode { color: var(--ink-4); font-size: 8px; letter-spacing: .16em; }
+.evSection { margin-top: 12px; }
+.evSection h2 { margin: 0 0 6px; font-family: var(--font-ui); font-size: 8px;
+  letter-spacing: .24em; color: var(--ink-3); }
+.evRow { position: relative; padding: 8px 0 9px; border-top: 1px solid var(--line); }
+.evRow__top { display: flex; align-items: flex-start; gap: 7px; }
+.evRow__top strong { flex: 1; font-size: 10px; line-height: 1.35; color: var(--ink); font-weight: 600; }
+.evRow__meta { display: block; margin-top: 4px; font-family: var(--font-mono); font-size: 8.5px;
+  line-height: 1.35; color: var(--ink-3); }
+.evRow--past { opacity: .42; }
+.evJump, .evWatch { margin-top: 7px; min-height: 28px; border: 1px solid rgba(255,211,107,.42);
+  border-radius: var(--r-xs); background: rgba(42,34,12,.58); color: var(--amber);
+  font-family: var(--font-ui); font-size: 8.5px; font-weight: 700; letter-spacing: .12em; cursor: pointer; }
+.evJump { padding: 0 9px; }
+.evWatch { padding: 0 12px; color: var(--ice); border-color: rgba(84,198,255,.42); background: rgba(8,28,40,.6); }
+.evJump:hover, .evWatch:hover { color: #fff; border-color: currentColor; }
+.evJump[hidden], .evRow__reason[hidden], .evRow[hidden], .evEmpty[hidden] { display: none !important; }
+.evRow__reason { display: block; margin-top: 6px; color: var(--warn); font-size: 8.5px; line-height: 1.4; }
+.evEmpty { padding: 7px 0 2px; border-top: 1px solid var(--line); color: var(--ink-4);
+  font-size: 8px; line-height: 1.4; letter-spacing: .1em; }
+.epi { flex: 0 0 auto; display: inline-flex; align-items: center; min-height: 15px; padding: 0 5px;
+  border: 1px solid currentColor; border-radius: 999px; font-family: var(--font-ui); font-size: 6.5px;
+  font-weight: 700; line-height: 1.1; letter-spacing: .09em; white-space: nowrap; }
+.epi--measured { color: #d8f4ff; background: rgba(84,198,255,.26); border-color: rgba(84,198,255,.72); }
+.epi--modeled { color: var(--amber); background: rgba(42,34,12,.28); border-color: rgba(255,211,107,.58); }
+.epi--metaphor { color: #d8c4ff; background: rgba(82,56,122,.18); border-color: rgba(181,140,255,.62); }
+.epi--hypo { color: #ff9bdd; background: rgba(90,22,68,.16); border-style: dashed; }
 
 /* black-hole selector is on-demand: only while arming placement (press B) */
 #bhPlacer { display: none; padding: 11px 13px 12px; overflow: hidden; }
@@ -318,6 +381,49 @@ body.bh-place-mode #bhPlaceHint { color: #ddd2ff; text-shadow: 0 0 10px rgba(148
 /* bottom keybind reminder removed from the flight HUD — H opens the full controls */
 #hint { display: none; }
 
+/* ============ TIME DOCK ============ */
+#timeDock { position: fixed; left: 50%; bottom: var(--time-dock-bottom); transform: translateX(-50%);
+  z-index: 8; width: min(720px, calc(100vw - 32px)); padding: 11px 14px 12px;
+  pointer-events: auto; text-align: center; }
+body.mode-pilot:not(.mode-xr),
+body.mode-direct:not(.mode-xr),
+body.mode-xr { --time-dock-bottom: 76px; }
+#tdDate { font-family: var(--font-display); font-size: 18px; font-weight: 700;
+  letter-spacing: .08em; color: #fff; text-shadow: 0 0 18px rgba(184,240,255,.24); }
+#tdRow { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 8px; }
+#tdRow button, #tdCancel { font-family: var(--font-ui); border: 1px solid var(--line-2);
+  border-radius: var(--r-xs); background: rgba(8,12,18,.78); color: var(--ink);
+  cursor: pointer; transition: all .12s; }
+#tdRow button:hover, #tdCancel:hover { border-color: var(--cyan); color: #fff; box-shadow: var(--glow-cyan); }
+#tdStepDown, #tdStepUp { width: 44px; height: 30px; font-size: 13px; }
+#tdPause { width: 54px; height: 38px; font-size: 22px; line-height: 1; color: var(--ice); }
+#tdWarpLabel { min-width: 136px; font-family: var(--font-mono); font-size: 13px;
+  font-weight: 700; color: var(--ice); text-align: left; }
+#tdRev { height: 30px; padding: 0 11px; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+#tdRev.active { color: #fff; border-color: var(--ember); background: rgba(255,90,54,.22);
+  box-shadow: 0 0 18px rgba(255,90,54,.26); }
+#tdRail { display: grid; gap: 0;
+  margin-top: 9px; padding: 0 4px; }
+.tdTick { position: relative; min-width: 0; height: 34px; padding: 0; border: 0; background: transparent;
+  color: var(--ink-4); cursor: pointer; font-family: var(--font-ui); }
+.tdTick::before { content: ""; position: absolute; left: 0; right: 0; top: 8px; height: 1px;
+  background: rgba(132,168,205,.28); }
+.tdTickDot { position: absolute; left: 50%; top: 4px; width: 9px; height: 9px; transform: translateX(-50%);
+  border-radius: 50%; background: rgba(132,168,205,.6); box-shadow: 0 0 0 2px rgba(6,10,16,.9); }
+.tdTick:hover .tdTickDot { background: var(--cyan); }
+.tdTick.active .tdTickDot { top: 1px; width: 15px; height: 15px; background: var(--ice);
+  box-shadow: 0 0 12px rgba(184,240,255,.65); }
+.tdTickLabel { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+  font-size: 8px; letter-spacing: .02em; white-space: nowrap; color: var(--ink-3); }
+.tdTick.active .tdTickLabel { color: #fff; }
+#tdBlocked, #tdJump { margin-top: 8px; border: 1px solid rgba(255,122,82,.44);
+  border-radius: var(--r-xs); background: rgba(60,20,14,.58); color: var(--warn);
+  padding: 7px 9px; font-size: 10px; line-height: 1.35; letter-spacing: .06em; }
+#tdJump { display: flex; justify-content: center; align-items: center; gap: 10px;
+  border-color: rgba(84,198,255,.4); background: rgba(8,28,40,.6); color: var(--ice); }
+#tdJump[hidden], #tdBlocked[hidden] { display: none !important; }
+#tdCancel { padding: 5px 8px; font-size: 9px; letter-spacing: .12em; color: var(--ink-2); }
+
 /* ---- attitude / heading dial (navball) ---- */
 #navBall { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); z-index: 5;
   width: 152px; padding: 9px 11px 8px; text-align: center; pointer-events: none; }
@@ -335,7 +441,35 @@ body.bh-place-mode #bhPlaceHint { color: #ddd2ff; text-shadow: 0 0 10px rgba(148
 body.mode-cabin #cabinHud { display: block; }
 body.mode-cabin #hudTL, body.mode-cabin #hudTR, body.mode-cabin #hudBot,
 body.mode-cabin #flowPanel, body.mode-cabin #hint, body.mode-cabin .lbl,
-body.mode-cabin #simsBtn, body.mode-cabin #navBall, body.mode-cabin #navBtn, body.mode-cabin #navPanel { display: none !important; }
+body.mode-cabin #simsBtn, body.mode-cabin #navBall, body.mode-cabin #navBtn,
+body.mode-cabin #navPanel, body.mode-cabin #timeDock { display: none !important; }
+
+/* ============ UI MODES ============ */
+body.mode-observe:not(.mode-xr) #objPanel,
+body.mode-observe:not(.mode-xr) #bhPlacer,
+body.mode-observe:not(.mode-xr) #navBall,
+body.mode-observe:not(.mode-xr) #hudBot,
+body.mode-observe:not(.mode-xr) #hudTL .gauge,
+body.mode-observe:not(.mode-xr) #throttleLine,
+body.mode-observe:not(.mode-xr) #vTrack,
+body.mode-observe:not(.mode-xr) #bhLine,
+body.mode-observe:not(.mode-xr) #tdeLine {
+  display: none !important;
+}
+body.mode-pilot:not(.mode-xr) #bhPlacer {
+  display: none !important;
+}
+body.mode-direct:not(.mode-xr) #bhPlacer {
+  display: block;
+}
+body.mode-pilot:not(.mode-xr) #evPanel,
+body.mode-direct:not(.mode-xr) #evPanel,
+body.mode-xr #evPanel,
+body.mode-cabin #evPanel,
+body.mode-clean #evPanel { display: none !important; }
+body.mode-cabin #evJumpChip,
+body.mode-clean #evJumpChip,
+body.mode-xr #evJumpChip { display: none !important; }
 
 /* ============ SHARED BUTTONS ============ */
 .uiBtn { font-family: var(--font-ui); font-size: 11px; font-weight: 600; letter-spacing: .14em; color: var(--ink);
@@ -519,13 +653,24 @@ body.mode-cabin #simsBtn, body.mode-cabin #navBall, body.mode-cabin #navBtn, bod
 /* ============ RESPONSIVE ============ */
 @media (max-width: 980px) { #flowPanel { width: min(520px, calc(100vw - 540px)); } }
 @media (max-width: 860px) { #flowPanel { display: none !important; } }
+@media (min-width: 761px) and (max-width: 980px) {
+  #timeDock { width: calc(100vw - 280px); }
+}
 
 @media (max-width: 760px) {
-  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn, #hintCard, #navBall, #navBtn { display: none !important; }
+  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn, #hintCard, #navBall, #navBtn, #timeDock { display: none !important; }
   #root::after { display: none; }   /* corner frame is a desktop flourish; it clips behind touch controls */
   #cosmicScale { bottom: auto; top: calc(60px + env(safe-area-inset-top, 0px));
     max-width: calc(100vw - 24px); text-align: center; white-space: normal; }
   #mobileUI { display: block; }
+  #evDock { display: flex; }
+  #evPanel { display: none; }
+  #evPanel.open { display: block; top: auto; left: 10px; right: 10px; bottom: calc(10px + var(--safe-b));
+    width: auto; max-height: 62dvh; overflow-y: auto; z-index: 23; animation: sheetUp .22s ease; }
+  body.mode-observe:not(.mode-xr):not(.mode-cabin):not(.mode-clean) #evBtn { display: inline-flex; }
+  #evJumpChip:not([hidden]) { display: flex; }
+  #evClose { display: inline-flex; }
+  .evJump, .evWatch { min-height: 40px; font-size: 10px; }
   /* catalog becomes a bottom sheet above the corner controls */
   #hygSearch { top: auto; left: 10px; right: 10px; width: auto;
     bottom: calc(10px + var(--safe-b)); max-height: 70dvh; overflow-y: auto; z-index: 24; }
@@ -554,10 +699,24 @@ body.mode-cabin #simsBtn, body.mode-cabin #navBall, body.mode-cabin #navBtn, bod
 }
 /* tablets / touch laptops: same gesture-first UI as phones */
 @media (hover: none) and (pointer: coarse) and (min-width: 761px) {
-  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn, #hintCard, #navBall, #navBtn { display: none !important; }
+  #hudTL, #hudTR, #flowPanel, #hudBot, #hint, #simsBtn, #hintCard, #navBall, #navBtn, #timeDock { display: none !important; }
   #root::after { display: none; }
   #mobileUI { display: block; }
   #cosmicScale { bottom: auto; top: calc(60px + env(safe-area-inset-top, 0px)); }
+  #evDock { display: flex; }
+  #evPanel { display: none; }
+  #evPanel.open { display: block; top: auto; left: auto;
+    right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(14px + var(--safe-b));
+    width: min(420px, calc(100vw - 28px)); max-height: 70dvh; overflow-y: auto; z-index: 23;
+    animation: sheetUp .22s ease; }
+  body.mode-observe:not(.mode-xr):not(.mode-cabin):not(.mode-clean) #evBtn { display: inline-flex; }
+  #evJumpChip:not([hidden]) { display: flex; }
+  #evClose { display: inline-flex; }
+  .evJump, .evWatch { min-height: 40px; font-size: 10px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #evPanel.open { animation: none; }
 }
 
 /* touch devices: planet / moon labels are the primary way to find and tap a
