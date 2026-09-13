@@ -1,0 +1,91 @@
+{
+  "sourceHash": "3bac00347b550551cc91db2b9847ea0bf51c8e3be648459ab727bc9582d71b6e",
+  "matchedCameras": 7,
+  "cameraDelta": 0,
+  "loadedStarsPerScene": 2372677,
+  "beforeBrowserErrors": [],
+  "afterBrowserErrors": [],
+  "pausedEarthChangedPixels": 0,
+  "returnedEarthChangedPixels": 732,
+  "comparisonCropPixels": 247500,
+  "performance": [
+    {
+      "scene": "earth",
+      "beforeMedianMs": 449.9,
+      "afterMedianMs": 433.4,
+      "beforeP95Ms": 483.4,
+      "afterP95Ms": 516.6,
+      "beforeJsFrameMs": 6.9,
+      "afterJsFrameMs": 7.22,
+      "beforeLastPassCalls": 42,
+      "afterLastPassCalls": 38
+    },
+    {
+      "scene": "earth-night",
+      "beforeMedianMs": 500,
+      "afterMedianMs": 466.6,
+      "beforeP95Ms": 533.4,
+      "afterP95Ms": 516.7,
+      "beforeJsFrameMs": 4.94,
+      "afterJsFrameMs": 4.61,
+      "beforeLastPassCalls": 49,
+      "afterLastPassCalls": 45
+    },
+    {
+      "scene": "mars",
+      "beforeMedianMs": 450,
+      "afterMedianMs": 400,
+      "beforeP95Ms": 483.3,
+      "afterP95Ms": 450,
+      "beforeJsFrameMs": 4.37,
+      "afterJsFrameMs": 4.62,
+      "beforeLastPassCalls": 24,
+      "afterLastPassCalls": 19
+    },
+    {
+      "scene": "jupiter",
+      "beforeMedianMs": 449.9,
+      "afterMedianMs": 400,
+      "beforeP95Ms": 483.3,
+      "afterP95Ms": 466.7,
+      "beforeJsFrameMs": 4.53,
+      "afterJsFrameMs": 4.47,
+      "beforeLastPassCalls": 23,
+      "afterLastPassCalls": 18
+    },
+    {
+      "scene": "saturn",
+      "beforeMedianMs": 433.3,
+      "afterMedianMs": 433.3,
+      "beforeP95Ms": 450,
+      "afterP95Ms": 483.4,
+      "beforeJsFrameMs": 4.54,
+      "afterJsFrameMs": 4.78,
+      "beforeLastPassCalls": 26,
+      "afterLastPassCalls": 21
+    },
+    {
+      "scene": "sun",
+      "beforeMedianMs": 450,
+      "afterMedianMs": 433.3,
+      "beforeP95Ms": 483.2,
+      "afterP95Ms": 516.6,
+      "beforeJsFrameMs": 4.56,
+      "afterJsFrameMs": 4.55,
+      "beforeLastPassCalls": 53,
+      "afterLastPassCalls": 47
+    },
+    {
+      "scene": "starfield",
+      "beforeMedianMs": 483.3,
+      "afterMedianMs": 516.6,
+      "beforeP95Ms": 533.3,
+      "afterP95Ms": 583.4,
+      "beforeJsFrameMs": 5.61,
+      "afterJsFrameMs": 5.12,
+      "beforeLastPassCalls": 69,
+      "afterLastPassCalls": 63
+    }
+  ],
+  "supplementalCosmicReadinessVerified": true
+}

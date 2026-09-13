@@ -229,15 +229,16 @@ assert(
 assert(
   texturesSrc.includes('const forceSunMap = q.get("sunmap") === "1"') &&
     texturesSrc.includes('sun: forceSunMap ? tryLoad("2k_sun.jpg") : Promise.resolve(null)') &&
-    bodiesSrc.includes("uHasMap: { value: maps.sun ? 1 : 0 }"),
-  "Sun texture should stay opt-in because the shader has a procedural plasma fallback",
+    bodiesSrc.includes("photosphereMaterial(0xffffff, maps.sun)"),
+  "Sun texture stays opt-in while its visible-light photosphere works without a texture",
 );
 assert(
   texturesSrc.includes('const forceClouds = q.get("clouds") === "1"') &&
-    texturesSrc.includes('clouds: forceClouds ? tryLoad("2k_earth_clouds.jpg", false) : Promise.resolve(null)') &&
-    bodiesSrc.includes(": new THREE.Group()") &&
+    texturesSrc.includes('clouds: forceClouds ? loadEarthCloudMap() : Promise.resolve(null)') &&
+    bodiesSrc.includes("requestIdleCallback(load") &&
+    bodiesSrc.includes("earthPx > 2") &&
     !bodiesSrc.includes("cloudTextureProc"),
-  "Earth cloud layer should stay opt-in so default startup avoids cloud texture transfer and procedural canvas generation",
+  "Cloud texture transfer is deferred until a resolved Earth is visible and idle time is available",
 );
 assert(
   texturesSrc.includes('const forceMilky = q.get("milky") === "1" || q.get("sky") === "1"') &&
@@ -285,7 +286,8 @@ assert(
     realSkySrc.includes("CANIS MAJOR") &&
     realSkySrc.includes("PEGASUS") &&
     realSkySrc.includes("LineSegments") &&
-    realSkySrc.includes("PointsMaterial") &&
+    realSkySrc.includes("ShaderMaterial") &&
+    realSkySrc.includes('g.setAttribute("magnitude"') &&
     bodiesSrc.includes("function shouldUseRealSky()") &&
     bodiesSrc.includes('flag === "1"') &&
     bodiesSrc.includes('flag === "0"') &&

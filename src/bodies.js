@@ -1,12 +1,14 @@
 import * as THREE from "three";
 import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM } from "./constants.js";
+import { earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
+import { stellarExposure, meteredSkyExposure, linearStarColor } from "./render/stellarAppearance.js";
 import { MOONS } from "./moons.js";
 import { mulberry32 } from "./format.js";
 import {
     dotTexture, earthTextureProc,
-    planetTextureProc, ringTextureProc, loadEarthNightMap, loadPlanetMap,
+    planetTextureProc, ringTextureProc, loadEarthNightMap, loadPlanetMap, loadEarthCloudMap, loadMoonMap,
 } from "./textures.js";
-import { renderQuality, scene } from "./scene.js";
+import { renderQuality, scene, viewportSize } from "./scene.js";
 import { initRealSky, realSkyReady, realSkyStatus, updateRealSkyFade } from "./realSky.js";
 import { BRIGHTNESS_CURVE, observedMag, sizePxForMag, hdrIntensityForMag, teffToRGB, SUN_TEFF_K } from "./render/viewBrightness.js";
 import { applyTerrellToMaterial } from "./relView.js";
@@ -171,21 +173,83 @@ function orbitEllipseGeometry(aKm, e, varpi = 0, segs = seg(720, 240)) {
 
 // shared shader uniforms updated once per frame from main.js
 export const sunDirW = new THREE.Vector3(1, 0, 0); // world-space Earth→Sun
-export const shaderTick = { earthUniforms: null, atmoUniforms: null, coronaUniforms: null, sunUniforms: null, pnUniforms: null };
-// updates every sun-direction / camera-distance dependent uniform
+export const shaderTick = { earthUniforms: null, atmoUniforms: null, coronaUniforms: null, pnUniforms: null };
+const bodyCamera = new THREE.Vector3();
+const inverseRotation = new THREE.Quaternion();
+const detailOptions = new URLSearchParams(location.search);
+const cloudsEnabled = detailOptions.get("clouds") !== "0";
+const moonPhotoEnabled = detailOptions.get("moonmap") !== "0";
+let cloudsRequested = false;
+let moonRequested = false;
+function requestCloudDetails() {
+    if (cloudsRequested || !cloudsEnabled) return;
+    cloudsRequested = true;
+    const load = () => loadEarthCloudMap().then(map => {
+        if (!map) return;
+        clouds.material.alphaMap = map;
+        clouds.material.needsUpdate = true;
+        shaderTick.earthUniforms.cloudMap.value = map;
+        shaderTick.earthUniforms.uHasClouds.value = 1;
+    });
+    if (typeof requestIdleCallback === "function") requestIdleCallback(load, {timeout:1200});
+    else setTimeout(load, 0);
+}
+
+// All clocks below use simulation time. A paused planet and its clouds remain
+// registered, including after reversing time or restoring a saved epoch.
 export function updateBodyShaders(camera, t) {
     const u = shaderTick;
-    if (u.earthUniforms) u.earthUniforms.sunDir.value.copy(sunDirW);
+    const radius = R_EARTH * K;
+    inverseRotation.copy(earth.quaternion).invert();
+    bodyCamera.copy(camera.position).sub(earthG.position).divideScalar(radius);
+    if (u.earthUniforms) {
+        u.earthUniforms.sunDir.value.copy(sunDirW).applyQuaternion(inverseRotation);
+        u.earthUniforms.uCamera.value.copy(bodyCamera).applyQuaternion(inverseRotation);
+        clouds.rotation.y = earth.rotation.y + (t * 2 * Math.PI / (14 * 86400)) % (2 * Math.PI);
+        u.earthUniforms.uCloudOffset.value = (earth.rotation.y - clouds.rotation.y) / (2 * Math.PI);
+    }
     if (u.atmoUniforms) {
         u.atmoUniforms.sunDir.value.copy(sunDirW);
-        const dCam = camera.position.distanceTo(earthG.position);
-        const rAtm = R_EARTH * K * 1.07;
-        // inside or skimming the shell: fade the additive glow hard so the
-        // cabin view at 300 km reads as space plus a thin horizon.
-        u.atmoUniforms.uFade.value = Math.min(1, Math.max(.05, (dCam / rAtm - 1) * 1.4 + .08));
+        u.atmoUniforms.uCamera.value.copy(bodyCamera);
     }
+    const pxScale = viewportSize.pxScale;
+    const earthPx = radius * pxScale / Math.max(radius, camera.position.distanceTo(earthG.position));
+    if (earthG.visible && earthPx > 2) requestCloudDetails();
+    clouds.visible = earth.visible && !!clouds.material.alphaMap && earthPx > 1;
+    earthAtmo.visible = earth.visible && earthPx > 1;
+    let exposure = 1;
+    if (earthG.visible) exposure = Math.min(exposure, meteredSkyExposure(camera, earthG.position, radius, sunPos));
+    if (sunCore.visible) exposure = Math.min(exposure, meteredSkyExposure(camera, sunPos, SUN_RADIUS * sunCore.scale.x));
+    if (moon.visible) {
+        exposure = Math.min(exposure, meteredSkyExposure(camera, moon.position, R_MOON * K, sunPos));
+        if (!moonRequested && !moon.material.map && R_MOON * K * pxScale / camera.position.distanceTo(moon.position) > 8 && moonPhotoEnabled) {
+            moonRequested = true;
+            loadMoonMap().then(map => {
+                if (!map) return;
+                moon.material.map = map; moon.material.color.set(0xffffff); moon.material.needsUpdate = true;
+            });
+        }
+    }
+    for (let i = 0; i < PL.length; i++) {
+        if (!plGroups[i].visible) continue;
+        const p = PL[i], group = plGroups[i];
+        const distance = camera.position.distanceTo(group.position);
+        const rpx = p.R * K * pxScale / Math.max(p.R * K, distance);
+        exposure = Math.min(exposure, meteredSkyExposure(camera, group.position, p.R * K, sunPos));
+        if (rpx > 2) requestPlanetTexture(i);
+        // A distant marker fades continuously as the physical disk resolves.
+        plGlows[i].material.opacity = 0.24 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4));
+        for (const child of group.children) {
+            const direction = child.material?.userData.sunDirection;
+            if (direction) {
+                child.updateWorldMatrix(true, false);
+                child.getWorldQuaternion(inverseRotation).invert();
+                direction.value.copy(sunPos).sub(group.position).normalize().applyQuaternion(inverseRotation);
+            }
+        }
+    }
+    stellarExposure.value = exposure;
     if (u.coronaUniforms) u.coronaUniforms.uT.value = t;
-    if (u.sunUniforms) u.sunUniforms.uT.value = t;
     if (u.pnUniforms) u.pnUniforms.uT.value = t;
 }
 
@@ -193,75 +257,46 @@ export function updateBodyShaders(camera, t) {
 // star's color comes from — WP16 a2: from outside, the Sun IS an ordinary
 // star, so it must share every part of the model, color included.
 const SUN_TEFF_COLOR = teffToRGB(SUN_TEFF_K);
-// bodies.js doesn't own the renderer/canvas (main.js does), so the sprite's
-// pixel<->world-unit conversion uses a nominal reference viewport height
-// instead of the real one. This only shapes the halo's absolute on-screen
-// footprint (a cosmetic/artistic knob); the photometric quantities that the
-// WP16 gate actually checks — opacity and HDR color intensity — come
-// straight from the shared curve and don't depend on this constant.
-const SUN_NOMINAL_VIEWPORT_H = 900;
-
 const _sunTintScratch = [1, 1, 1];
 const _sunEvoTint = new THREE.Vector3(1, 1, 1);
 
-/**
- * Frozen contract (WP16 -> WP17): replaces the old inline sunGlow scale/
- * opacity block in main.js. Implements a true inverse-square falloff with NO
- * opacity floor and NO linear-with-distance size term (the old bugs that kept
- * the Sun a constant over-bright blob from any distance) — brightness comes
- * from the exact same observer-relative curve every other star uses. Because
- * both the "near corona glow" and "far star point" regimes are the SAME
- * continuous function of camDistPc, there is no discrete sprite->point
- * handoff to seam — the function is continuous by construction across the
- * whole range (verified by smoke:brightness). Also drives the realSky
- * naked-eye dome's distance fade, since "distance from the Sun" and
- * "distance from Sol" are the same number.
- *
- * WP23b: the Sun is no longer hardcoded to L=1 Lsun/Teff=5772K/R=1 Rsun —
- * sunStateAt(G.t) supplies today's exact values on the main sequence and
- * evolves them under warp, so every photometric/visual quantity below (glow
- * magnitude, mesh radius, Teff tint, corona intensity, the planetary-nebula
- * shell) is driven through the SAME live state and stays consistent by
- * construction; nothing here re-derives brightness from a stale constant.
- */
+// Physical radius, temperature and luminosity still come from sunStateAt.
+// The display maps unresolved flux to a finite PSF and resolves the actual
+// photosphere without superimposing an unbounded additive glow on its center.
 export function updateSunView(camera, camDistPc) {
     const sun = sunStateAt(G.t);
     const d = Math.max(camDistPc, 1e-9);
     const mag = observedMag(sun.L_Lsun, d);
     const sizePx = sizePxForMag(mag, BRIGHTNESS_CURVE);
-    const hdr = hdrIntensityForMag(mag, BRIGHTNESS_CURVE); // unclamped: feeds HDR bloom up close
-    const pxScale = SUN_NOMINAL_VIEWPORT_H / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * .5));
+    const hdr = hdrIntensityForMag(mag, BRIGHTNESS_CURVE);
+    const pxScale = viewportSize.pxScale;
     const distScene = d * PC_KM * K;
     const pointWorldScale = sizePx * distScene / Math.max(1e-6, pxScale);
     const sunRadiusScene = SUN_RADIUS * sun.R_Rsun; // evolving photosphere radius, scene units
-    // Size floor/ceiling scale with the CURRENT photosphere radius (not the
-    // fixed present-day SUN_RADIUS), so a red-giant Sun's glow footprint
-    // grows with it instead of staying pinned to today's tiny disk, and a
-    // white-dwarf Sun's glow shrinks down with its now-Earth-size core.
-    sunGlow.scale.setScalar(Math.max(sunRadiusScene * 2.2, Math.min(sunRadiusScene * 180, pointWorldScale)));
-    sunGlow.material.opacity = Math.min(1, Math.max(0, hdr));
+    const radiusPx = sunRadiusScene * pxScale / Math.max(sunRadiusScene, distScene);
+    const unresolved = 1 - THREE.MathUtils.smoothstep(radiusPx, 0.75, 3);
+    sunGlow.scale.setScalar(Math.max(sunRadiusScene * 2, pointWorldScale));
+    sunGlow.material.opacity = Math.min(1, hdr) * unresolved;
     const teffColor = teffToRGB(sun.Teff, _sunTintScratch);
-    const boost = Math.max(1, hdr); // >1 saturates the additive core toward white for bloom
-    sunGlow.material.color.setRGB(teffColor[0] * boost, teffColor[1] * boost, teffColor[2] * boost);
+    linearStarColor(teffColor, sunGlow.material.color).multiplyScalar(Math.min(8, Math.max(1, hdr)));
+    linearStarColor(teffColor, sunCore.material.color);
+    sunLight.color.copy(sunCore.material.color);
+    sunCore.rotation.y = (G.t * 2 * Math.PI / (25.38 * 86400)) % (2 * Math.PI);
     updateRealSkyFade(d);
 
-    // Mesh photosphere/corona: radius follows R(t); color tint follows
-    // Teff(t) relative to today's 5772K baseline, so at t=0 the tint is
-    // exactly (1,1,1) — bit-for-bit today's look — and diverges smoothly
-    // as the star reddens (giant branch) or bleaches blue-white (WD).
+    // Both the photosphere radius and corona tint follow the evolving Sun.
     if (sunCore) sunCore.scale.setScalar(sun.R_Rsun);
     _sunEvoTint.set(
         teffColor[0] / Math.max(1e-4, SUN_TEFF_COLOR[0]),
         teffColor[1] / Math.max(1e-4, SUN_TEFF_COLOR[1]),
         teffColor[2] / Math.max(1e-4, SUN_TEFF_COLOR[2]),
     );
-    if (shaderTick.sunUniforms) shaderTick.sunUniforms.uTint.value.copy(_sunEvoTint);
     if (sunCorona) sunCorona.scale.setScalar(sun.R_Rsun);
     if (shaderTick.coronaUniforms) {
         shaderTick.coronaUniforms.uTint.value.copy(_sunEvoTint);
         // the WD has no extended chromosphere to speak of; the AGB/PN wind
         // briefly brightens it before the envelope is gone entirely.
-        shaderTick.coronaUniforms.uIntensity.value = sun.phase === "WD" ? .2 : sun.phase === "AGB" ? 1.6 : 1;
+        shaderTick.coronaUniforms.uIntensity.value = .002 * (sun.phase === "WD" ? .2 : sun.phase === "AGB" ? 1.6 : 1);
     }
 
     // Planetary-nebula shell: only rendered during the brief 'PN' phase,
@@ -285,63 +320,9 @@ export function buildBodies(maps) {
     // point light, no decay: every planet gets lit from the Sun's true
     // direction (a directional light aimed at Earth left the outer planets
     // showing their night side to the camera)
-    sunLight = new THREE.PointLight(0xfff0d2, 1.65, 0, 0);
-    scene.add(sunLight, new THREE.AmbientLight(0x32425c, .72));
-    // limb-darkened photosphere with slow granulation shimmer
-    const sunUniforms = {
-        map: { value: maps.sun },
-        uHasMap: { value: maps.sun ? 1 : 0 },
-        uT: { value: 0 },
-        // WP23b: multiplicative Teff tint, (1,1,1) at today's 5772K so the
-        // present-day look is bit-for-bit unchanged; updateSunView drives it
-        // toward red/orange on the giant branch and blue-white on the WD.
-        uTint: { value: new THREE.Vector3(1, 1, 1) },
-    };
-    shaderTick.sunUniforms = sunUniforms;
-    const sunMat = applyTerrellToMaterial(new THREE.ShaderMaterial({
-        uniforms: sunUniforms,
-        vertexShader: /* glsl */`
-            varying vec2 vUv; varying vec3 vNv; varying vec3 vPv;
-            void main(){
-                vUv = uv;
-                vNv = normalize(normalMatrix * normal);
-                vec4 mv = modelViewMatrix * vec4(position, 1.0);
-                vPv = mv.xyz;
-                gl_Position = projectionMatrix * mv;
-            }`,
-        fragmentShader: /* glsl */`
-            uniform sampler2D map; uniform float uHasMap; uniform float uT; uniform vec3 uTint;
-            varying vec2 vUv; varying vec3 vNv; varying vec3 vPv;
-            float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-            float noise(vec2 p){
-                vec2 i = floor(p), f = fract(p);
-                f = f * f * (3.0 - 2.0 * f);
-                float a = hash(i), b = hash(i + vec2(1.0, 0.0));
-                float c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
-                return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-            }
-            void main(){
-                vec3 tex = uHasMap > .5 ? texture2D(map, vUv).rgb : vec3(.95, .72, .42);
-                float texLum = dot(tex, vec3(.299, .587, .114));
-                float mu = clamp(dot(normalize(vNv), normalize(-vPv)), 0.0, 1.0);
-                float limb = 1.0 - 0.64 * (1.0 - mu);
-                float gran = noise(vUv * 28.0 + vec2(uT * .012, -uT * .009));
-                gran += .55 * noise(vUv * 74.0 + vec2(-uT * .018, uT * .014));
-                gran = gran / 1.55;
-                float cell = .82 + .18 * smoothstep(.16, .88, gran);
-                float plage = smoothstep(.72, 1.0, texLum) * .06;
-                float hot = clamp(cell + plage - .78, 0.0, 1.0);
-                vec3 core = mix(vec3(1.0, .36, .055), vec3(1.0, .68, .24), hot);
-                vec3 rim = vec3(.92, .22, .035);
-                vec3 col = mix(rim, core, smoothstep(.06, .94, mu)) * limb;
-                float texDetail = clamp((texLum - .45) * 1.75 + .78, .46, 1.18);
-                float activeBand = smoothstep(.18, .48, texLum) * (1.0 - smoothstep(.82, .98, texLum));
-                vec3 plasma = mix(vec3(.58, .12, .025), vec3(1.0, .62, .16), activeBand);
-                col = mix(col * texDetail, plasma * limb, .38);
-                col += vec3(1.0, .46, .10) * pow(mu, 3.1) * .025;
-                gl_FragColor = vec4(col * uTint, 1.0);
-            }`,
-    }));
+    sunLight = new THREE.PointLight(0xffffff, Math.PI, 0, 0);
+    scene.add(sunLight, new THREE.AmbientLight(0xffffff, .004));
+    const sunMat = applyTerrellToMaterial(photosphereMaterial(0xffffff, maps.sun));
     sunCore = new THREE.Mesh(sphere(SUN_RADIUS, 96, 72, 48, 32), sunMat);
     scene.add(sunCore);
     // animated corona: fresnel rim shell with streamer noise
@@ -416,7 +397,7 @@ export function buildBodies(maps) {
     // neutral white so the Sun's true Teff=5772K hue comes entirely from
     // material.color, set every frame by updateSunView from the same
     // blackbody LUT every other star uses.
-    sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,255,255,0.95)", "rgba(255,255,255,0.2)"), transparent: true, depthWrite: false, depthTest: false, blending: THREE.AdditiveBlending, opacity: .06 }));
+    sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,255,255,0.95)", "rgba(255,255,255,0.2)"), transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, opacity: .06 }));
     sunGlow.scale.setScalar(SUN_RADIUS * 2.2);
     scene.add(sunGlow);
     // ---- stars: three magnitude bands, blackbody-ish colors ----
@@ -494,88 +475,19 @@ export function buildBodies(maps) {
         galaxyBackdrop.frustumCulled = false;
         scene.add(galaxyBackdrop);
     }
-    // ---- earth: day/night terminator, city lights, ocean specular ----
+    // ---- Earth: linear-light surface, cloud shadows and a thin atmosphere ----
     earthG = new THREE.Group();
-    const earthUniforms = {
-        dayMap: { value: maps.earth || earthTextureProc() },
-        nightMap: { value: maps.earthNight },
-        uHasNight: { value: maps.earthNight ? 1 : 0 },
-        sunDir: { value: new THREE.Vector3(1, 0, 0) },
-    };
-    shaderTick.earthUniforms = earthUniforms;
-    earth = new THREE.Mesh(
-        sphere(R_EARTH * K, 96, 72, 48, 32),
-        applyTerrellToMaterial(new THREE.ShaderMaterial({
-            uniforms: earthUniforms,
-            vertexShader: /* glsl */`
-                varying vec2 vUv; varying vec3 vNw; varying vec3 vPw;
-                void main(){
-                    vUv = uv;
-                    vNw = normalize(mat3(modelMatrix) * normal);
-                    vec4 wp = modelMatrix * vec4(position, 1.0);
-                    vPw = wp.xyz;
-                    gl_Position = projectionMatrix * viewMatrix * wp;
-                }`,
-            fragmentShader: /* glsl */`
-                uniform sampler2D dayMap; uniform sampler2D nightMap;
-                uniform float uHasNight; uniform vec3 sunDir;
-                varying vec2 vUv; varying vec3 vNw; varying vec3 vPw;
-                void main(){
-                    vec3 n = normalize(vNw);
-                    vec3 day = texture2D(dayMap, vUv).rgb;
-                    float sd = dot(n, sunDir);
-                    float dayF = smoothstep(-0.06, 0.22, sd);
-                    vec3 v = normalize(cameraPosition - vPw);
-                    // ocean: blue-dominant pixels get sun glint
-                    float ocean = clamp((day.b - max(day.r, day.g)) * 5.0, 0.0, 1.0);
-                    vec3 h = normalize(sunDir + v);
-                    float spec = pow(max(dot(n, h), 0.0), 80.0) * ocean;
-                    vec3 lit = day * (0.05 + 1.1 * max(sd, 0.0)) + vec3(1.0, .92, .75) * spec * .6 * dayF;
-                    // gain kept below the bloom threshold: at close range the
-                    // texels are huge and anything brighter blooms into blobs
-                    vec3 night = uHasNight > .5
-                        ? min(texture2D(nightMap, vUv).rgb * vec3(1.12, .92, .62), vec3(.72))
-                        : vec3(0.0);
-                    // terminator band warms slightly (sunset ring)
-                    float band = smoothstep(0.0, .14, sd) * (1.0 - smoothstep(.14, .42, sd));
-                    vec3 col = lit * dayF + night * (1.0 - dayF) + vec3(.55, .26, .08) * band * .16;
-                    float rim = pow(1.0 - max(dot(n, v), 0.0), 3.4);
-                    col += vec3(.25, .5, 1.0) * rim * .2 * (0.12 + 0.88 * dayF);
-                    gl_FragColor = vec4(col, 1.0);
-                }`,
-        })));
-    clouds = maps.clouds
-        ? new THREE.Mesh(
-            sphere(R_EARTH * K * 1.014, 80, 56, 40, 28),
-            applyTerrellToMaterial(new THREE.MeshLambertMaterial({ color: 0xffffff, alphaMap: maps.clouds, transparent: true, opacity: .92, depthWrite: false })))
-        : new THREE.Group();
-    const atmoUniforms = {
-        c: { value: new THREE.Color(0x4d9fff) },
-        sunDir: { value: new THREE.Vector3(1, 0, 0) },
-        uFade: { value: 1 },
-    };
-    shaderTick.atmoUniforms = atmoUniforms;
-    earthAtmo = new THREE.Mesh(sphere(R_EARTH * K * 1.07, 80, 56, 40, 28), new THREE.ShaderMaterial({
-        transparent: true, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false,
-        uniforms: atmoUniforms,
-        vertexShader: /* glsl */`
-            varying float vF; varying vec3 vNw;
-            void main(){
-                vec3 n = normalize(normalMatrix * normal);
-                vNw = normalize(mat3(modelMatrix) * normal);
-                vec4 mv = modelViewMatrix * vec4(position, 1.0);
-                vF = pow(1.0 + dot(normalize(mv.xyz), n), 2.6);
-                gl_Position = projectionMatrix * mv;
-            }`,
-        fragmentShader: /* glsl */`
-            uniform vec3 c; uniform vec3 sunDir; uniform float uFade;
-            varying float vF; varying vec3 vNw;
-            void main(){
-                // glow follows the lit hemisphere; night limb stays a faint trace
-                float lit = clamp(dot(normalize(vNw), sunDir) * .9 + .42, 0.04, 1.0);
-                gl_FragColor = vec4(c, vF * 0.5 * lit * uFade);
-            }`,
-    }));
+    const radius = R_EARTH * K;
+    const earthMat = earthSurfaceMaterial(maps.earth || earthTextureProc(), maps.earthNight, maps.clouds, radius);
+    shaderTick.earthUniforms = earthMat.uniforms;
+    earth = new THREE.Mesh(sphere(radius, 96, 72, 48, 32), earthMat);
+    clouds = new THREE.Mesh(
+        sphere((R_EARTH + EARTH_CLOUD_HEIGHT_KM) * K, 96, 72, 48, 32),
+        applyTerrellToMaterial(new THREE.MeshLambertMaterial({color:0xffffff, alphaMap:maps.clouds, transparent:true, opacity:0.92, depthWrite:false})));
+    earthAtmo = new THREE.Mesh(
+        sphere((R_EARTH + EARTH_ATMOSPHERE_HEIGHT_KM) * K, 96, 72, 48, 32), atmosphereMaterial(R_EARTH));
+    shaderTick.atmoUniforms = earthAtmo.material.uniforms;
+    earthAtmo.renderOrder = 2;
     earthG.add(earth, clouds, earthAtmo);
     scene.add(earthG);
     // ---- moon ----
@@ -610,9 +522,9 @@ export function buildBodies(maps) {
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];
         const g = new THREE.Group();
-        const materialConfig = { color: p.color, shininess: p.gas ? 8 : 4 };
+        const materialConfig = { color: maps.planets[i] ? 0xffffff : p.color, roughness: 1, metalness: 0 };
         if (maps.planets[i]) materialConfig.map = maps.planets[i];
-        const surface = new THREE.Mesh(sphere(p.R * K, 48, 32, 32, 20), applyTerrellToMaterial(new THREE.MeshPhongMaterial(materialConfig)));
+        const surface = new THREE.Mesh(sphere(p.R * K, 96, 64, 48, 32), applyTerrellToMaterial(new THREE.MeshStandardMaterial(materialConfig)));
         g.rotation.z = p.visualTilt || 0;
         g.add(surface);
         if (p.ring) {
@@ -624,7 +536,7 @@ export function buildBodies(maps) {
                 const r = Math.hypot(posA.getX(vi), posA.getY(vi));
                 uvA.setXY(vi, (r - p.ring[0] * K) / ((p.ring[1] - p.ring[0]) * K), .5);
             }
-            const ring = new THREE.Mesh(rg, new THREE.MeshBasicMaterial({ map: ringMap, transparent: true, side: THREE.DoubleSide, depthWrite: false }));
+            const ring = new THREE.Mesh(rg, ringMaterial(ringMap, p.R * K));
             ring.rotation.x = -Math.PI / 2;
             g.add(ring);
         }

@@ -1,0 +1,10 @@
+# Preserve exploratory captures locally; publish the matched final comparison.
+initial-baseline/
+first-pass/
+second-pass/
+third-pass/
+fourth-pass/
+star-probe/*.mjs
+pr-body.md
+scale-ready/
+scale-warming/

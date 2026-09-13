@@ -1,7 +1,11 @@
 import * as THREE from "three";
-import { STARS, K, LY_SCENE } from "./constants.js";
+import { STARS, K, LY_SCENE, PC_KM } from "./constants.js";
+import { CURATED_PHOTOMETRY } from "./render/curatedPhotometry.js";
+import { photosphereMaterial } from "./render/planetAppearance.js";
+import { stellarExposure, linearStarColor, meteredSkyExposure, stellarPointMarker } from "./render/stellarAppearance.js";
+import { observedMag, apparentMagAt, absMagFromApparent, hdrIntensityForMag, sizePxForMag, teffToRGB, bvToTeff } from "./render/viewBrightness.js";
 import { dotTexture } from "./textures.js";
-import { renderQuality, scene } from "./scene.js";
+import { renderQuality, scene, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { applyTerrellToMaterial } from "./relView.js";
@@ -14,6 +18,7 @@ import { applyTerrellToMaterial } from "./relView.js";
 // close approaches render, but sub-1000 km precision out there is not exact.
 
 const entries = [];
+const starRGB = [1,1,1];
 const entryById = new Map();
 const hexRgba = (hex, a) => "rgba(" + ((hex >> 16) & 255) + "," + ((hex >> 8) & 255) + "," + (hex & 255) + "," + a + ")";
 const ACTIVE_VISUAL_MAX = 48;
@@ -122,10 +127,22 @@ export function addStarVisual(star) {
     const existing = entryById.get(id);
     if (existing) {
         existing.star = star;
+        if (star.tempK > 0 && existing.photosphere) {
+            existing.tempK = star.tempK;
+            linearStarColor(teffToRGB(star.tempK, starRGB), existing.photosphere.material.color);
+        }
+        if (Number.isFinite(star.absMag)) existing.absMag = star.absMag;
+        else if (star.lumSolar > 0) existing.absMag = observedMag(star.lumSolar, 10);
         return existing;
     }
     const g = new THREE.Group();
     let disk = null;
+    let photosphere = null;
+    const photometry = CURATED_PHOTOMETRY[star.name];
+    const tempK = star.tempK || photometry?.tempK || (Number.isFinite(star.bv) ? bvToTeff(star.bv) : null);
+    const absMag = Number.isFinite(star.absMag) ? star.absMag
+        : photometry ? absMagFromApparent(photometry.mag, Math.hypot(star.x, star.y, star.z || 0) / PC_KM)
+        : star.lumSolar > 0 ? observedMag(star.lumSolar, 10) : null;
     if (star.bh) {
         const rsU = star.rs * K;
         g.add(new THREE.Mesh(sphere(rsU, 48, 32, 24, 16), applyTerrellToMaterial(new THREE.MeshBasicMaterial({ color: 0x000000 }))));
@@ -143,18 +160,22 @@ export function addStarVisual(star) {
             g.add(jet);
         }
     } else {
-        const col = new THREE.Color(star.color);
-        g.add(new THREE.Mesh(sphere(star.R * K, 48, 32, 24, 16), applyTerrellToMaterial(new THREE.MeshBasicMaterial({ color: col.clone().multiplyScalar(1.15) }))));
-        g.add(fresnelShell(star.R * K * 1.3, star.color, 2.2, .5));
+        const color = tempK ? linearStarColor(teffToRGB(tempK, starRGB)) : new THREE.Color(star.color);
+        photosphere = new THREE.Mesh(sphere(star.R * K, 64, 48, 32, 24), applyTerrellToMaterial(photosphereMaterial(color)));
+        g.add(photosphere);
     }
-    const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: dotTexture(hexRgba(star.color, 1), hexRgba(star.color, .4)),
-        transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .9,
-    }));
+    // Point primitives avoid precision loss in light-year-sized billboard
+    // triangles. Their footprint is specified directly in display pixels.
+    const glow = star.bh
+        ? new THREE.Sprite(new THREE.SpriteMaterial({
+            map: dotTexture(hexRgba(star.color, 1), hexRgba(star.color, .4)),
+            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .9,
+        }))
+        : stellarPointMarker(dotTexture("rgba(255,255,255,1)", "rgba(255,255,255,0.1)"));
     g.add(glow);
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
     scene.add(g);
-    const entry = { g, glow, disk, star, id };
+    const entry = { g, glow, disk, photosphere, tempK, absMag, star, id };
     entries.push(entry);
     entryById.set(id, entry);
     return entry;
@@ -220,29 +241,35 @@ export function updateStars(camera, dtR) {
     localVisualsHidden = false;
     syncActiveStarVisuals(camera, dtR);
     for (const e of entries) {
+        if (e.star.bh) continue;
+        e.g.position.set(e.star.x * K, (e.star.z || 0) * K, -e.star.y * K);
+        stellarExposure.value = Math.min(stellarExposure.value, meteredSkyExposure(camera, e.g.position, e.star.R * K));
+    }
+    for (const e of entries) {
         e.g.position.set(e.star.x * K, (e.star.z || 0) * K, -e.star.y * K);
         const d = camera.position.distanceTo(e.g.position);
-        const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
-        // beacon brightness must ramp in at the SAME zoom the labels do, otherwise
-        // you see a name floating over empty space. Reach full brightness early.
-        const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, cameraSolarDistance);
-        // sky-beacon stars read as crisp bright balls, not just their labels:
-        // hold the glow at full opacity so Proxima / Sirius / Vega show as small
-        // luminous points the way the eye expects real stars to look.
-        const farAlpha = (e.star.bh ? .85 : 1) * skyBeacon;
-        const alpha = Math.max(.82 * local, farAlpha);
-        e.g.visible = alpha > .012;
-        e.glow.material.opacity = alpha;
-        const localScale = e.star.bh
-            ? Math.min(e.star.rs * K * 14, Math.max(e.star.rs * K * 2.2, d * .002))
-            : Math.min(e.star.R * K * 48, Math.max(e.star.R * K * 4.5, d * .0022));
-        // brighter / more luminous stars get a fatter dot so the sky has a hierarchy;
-        // the beacon tracks distance so its on-screen size stays roughly constant
-        // every named star should read as a clear bright ball; brighter/larger
-        // stars get a fatter dot on top of a solid floor so none of them vanish
-        const beaconGain = e.star.bh ? 1 : 1.2 + Math.min(1.1, (e.star.lumSolar ? Math.log10(e.star.lumSolar + 1) * .14 : (e.star.R || 1) > 3 ? .4 : 0));
-        const skyScale = d * (e.star.bh ? .0075 : .0048) * skyBeacon * beaconGain;
-        e.glow.scale.setScalar(Math.max(localScale, skyScale));
+        if (!e.star.bh) {
+            const pc = Math.max(1e-9, d / (PC_KM * K));
+            const mag = Number.isFinite(e.absMag) ? apparentMagAt(e.absMag, pc) : Infinity;
+            const flux = hdrIntensityForMag(mag) * stellarExposure.value;
+            const pxScale = viewportSize.pxScale;
+            const radiusPx = e.star.R * K * pxScale / Math.max(e.star.R * K, d);
+            const unresolved = 1 - THREE.MathUtils.smoothstep(radiusPx, .75, 3);
+            e.g.visible = radiusPx > .3 || flux > .001;
+            e.photosphere.visible = radiusPx > .3;
+            e.glow.material.opacity = Math.min(1, flux) * unresolved;
+            const color = teffToRGB(e.tempK, starRGB);
+            linearStarColor(color, e.glow.material.color).multiplyScalar(Math.min(8, Math.max(1, flux)));
+            e.glow.material.size = Math.max(3, sizePxForMag(mag));
+        } else {
+            const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
+            const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, cameraSolarDistance);
+            const alpha = Math.max(.82 * local, .85 * skyBeacon);
+            e.g.visible = alpha > .012;
+            e.glow.material.opacity = alpha;
+            const localScale = Math.min(e.star.rs * K * 14, Math.max(e.star.rs * K * 2.2, d * .002));
+            e.glow.scale.setScalar(Math.max(localScale, d * .0075 * skyBeacon));
+        }
         if (e.disk) e.disk.rotation.z += dtR * .05;
     }
 }

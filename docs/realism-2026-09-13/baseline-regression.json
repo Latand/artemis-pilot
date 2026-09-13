@@ -1,0 +1,15 @@
+{
+  "flux": [
+    3620,
+    3620,
+    3620
+  ],
+  "hiddenFlux": 0,
+  "clearSkyFlux": 16073,
+  "occludedFlux": 16073,
+  "findings": [
+    "Faint stellar flux has a floor or loses magnitude ordering",
+    "Catalog sky shines through opaque body"
+  ],
+  "errors": []
+}

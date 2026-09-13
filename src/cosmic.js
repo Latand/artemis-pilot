@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { stellarExposure, STELLAR_VISIBILITY_GLSL, STELLAR_PSF_GLSL } from "./render/stellarAppearance.js";
 import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, PC_KM, SEC_YEAR, STARS } from "./constants.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
@@ -573,6 +574,7 @@ function viewBrightPoints(pos, col, absMag, teffK, opts = {}) {
             uMagLimit: { value: curve.magLimit },
             uPcScene: { value: PC_SCENE_UNITS },
             uOpacity: { value: curve.opacity ?? 1 },
+            uStellarExposure: stellarExposure,
             uBeta: relUniforms.uBeta,
             uBoostDirView: relUniforms.uBoostDirView,
         },
@@ -585,7 +587,9 @@ function viewBrightPoints(pos, col, absMag, teffK, opts = {}) {
             varying float vDoppler;
             varying float vDensity;
             uniform float uBasePx, uMagRef, uMinPx, uMaxPx, uMagLimit, uPcScene;
+            uniform float uStellarExposure;
             ${VIEW_BRIGHTNESS_GLSL}
+${STELLAR_VISIBILITY_GLSL}
             ${RELATIVISTIC_VIEW_GLSL}
             void main() {
                 vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
@@ -593,25 +597,28 @@ function viewBrightPoints(pos, col, absMag, teffK, opts = {}) {
                 vec3 abPos = relApplyView(mvPosition.xyz, teffK, dopplerD);
                 vDoppler = dopplerD;
                 vColor = uBeta > 0.0 ? relTeffToRGB(teffK * dopplerD) : color;
+                vColor = mix(vColor / 12.92, pow((vColor + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), vColor));
                 float camDistPc = length(abPos) / uPcScene;
                 float mag = obmApparentMagAt(absMag, camDistPc);
                 gl_PointSize = obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
                 float hb = obmHdrIntensity(mag, uMagLimit) * (uBeta > 0.0 ? pow(dopplerD, 4.0) : 1.0);
-                vHdr = min(hb, 2.2);
+                vHdr = min(stellarDisplayFlux(hb, uStellarExposure), 16.0);
                 vDensity = mix(0.08, 1.0, smoothstep(18.0, 90.0, solDistPc));
                 gl_Position = projectionMatrix * vec4(abPos, 1.0);
+                if (vHdr * uStellarExposure < 0.001) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
             }`,
         fragmentShader: /* glsl */`
             varying vec3 vColor;
             varying float vHdr;
             varying float vDensity;
             uniform float uOpacity;
+            ${STELLAR_PSF_GLSL}
             void main() {
-                vec2 uv = gl_PointCoord - 0.5;
-                float r2 = dot(uv, uv);
-                float g = exp(-r2 * 14.0) + exp(-r2 * 60.0) * max(0.0, vHdr - 1.0) * 0.42;
-                if (g < 0.006) discard;
-                gl_FragColor = vec4(vColor * max(vHdr, 1.0), clamp(g, 0.0, 1.8) * uOpacity * vDensity);
+                float g = stellarPSF(gl_PointCoord);
+                if (g < 0.001) discard;
+                gl_FragColor = vec4(vColor * vHdr * uStellarExposure, g * uOpacity * vDensity);
+                #include <tonemapping_fragment>
+                #include <colorspace_fragment>
             }`,
         vertexColors: true,
         transparent: true,
@@ -1148,6 +1155,9 @@ export function cycleCosmicScale() {
 }
 
 export function updateCosmicLayer() {
+    // The main loop skips body updates at cosmic scales. Reset metering here
+    // so an Earth close-up cannot leave the galactic sky underexposed.
+    if (cam.dist > LY_SCENE * .2) stellarExposure.value = 1;
     if (!inited) return;
     if (!layerBuilt) {
         if (cam.dist > LY_SCENE * .2) {

@@ -171,7 +171,7 @@ export function ringTexture(color, size = 128, lineWidth = Math.max(5, size * .0
 // ---------- NASA maps (solarsystemscope.com renditions, CC BY 4.0) ----------
 const loader = new THREE.TextureLoader();
 function highQualityMipmaps() {
-    return typeof location !== "undefined" && new URLSearchParams(location.search).get("mips") === "1";
+    return typeof location !== "undefined" && new URLSearchParams(location.search).get("mips") !== "0";
 }
 function tryLoad(file, srgb = true) {
     return loader.loadAsync("textures/" + file).then(t => {
@@ -179,6 +179,7 @@ function tryLoad(file, srgb = true) {
         if (srgb) t.colorSpace = THREE.SRGBColorSpace;
         if (highQualityMipmaps()) {
             t.anisotropy = 4;
+            t.wrapS = THREE.RepeatWrapping;
         } else {
             t.generateMipmaps = false;
             t.minFilter = THREE.LinearFilter;
@@ -190,6 +191,14 @@ function tryLoad(file, srgb = true) {
 }
 const planetMapPromises = new Map();
 let earthNightMapPromise = null;
+let cloudMapPromise = null;
+let moonMapPromise = null;
+export function loadEarthCloudMap() {
+    return cloudMapPromise ||= tryLoad("2k_earth_clouds.jpg", false);
+}
+export function loadMoonMap() {
+    return moonMapPromise ||= tryLoad("2k_moon.jpg");
+}
 export function loadEarthNightMap() {
     if (!earthNightMapPromise) earthNightMapPromise = tryLoad("2k_earth_nightmap.jpg");
     return earthNightMapPromise;
@@ -209,7 +218,7 @@ export async function loadAllMaps() {
     const names = {
         earth: tryLoad("2k_earth_daymap.jpg"),
         earthNight: forceEarthNight ? loadEarthNightMap() : Promise.resolve(null),
-        clouds: forceClouds ? tryLoad("2k_earth_clouds.jpg", false) : Promise.resolve(null),
+        clouds: forceClouds ? loadEarthCloudMap() : Promise.resolve(null),
         moon: forceMoonMap ? tryLoad("2k_moon.jpg") : Promise.resolve(null),
         sun: forceSunMap ? tryLoad("2k_sun.jpg") : Promise.resolve(null),
         ring: tryLoad("2k_saturn_ring_alpha.png"),
