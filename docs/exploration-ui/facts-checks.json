@@ -1,0 +1,111 @@
+{
+  "checks": [
+    "Earth reports its radius",
+    "Earth reports mass in kg from its gravitational parameter",
+    "Earth reports surface gravity in m/s²",
+    "Earth reports its Sun distance in AU",
+    "Earth reports orbital speed in km/s",
+    "Earth is labelled as measured data",
+    "The basis line carries model-limit copy",
+    "Moon reports its radius",
+    "Moon reports mass in kg",
+    "Moon reports surface gravity",
+    "Moon reports its distance from Earth",
+    "Moon does not claim a heliocentric orbital speed",
+    "Jupiter reports mass in kg",
+    "Jupiter reports surface gravity",
+    "Jupiter reports its Sun distance in AU",
+    "Jupiter is labelled as measured data",
+    "Sun reports an effective temperature",
+    "Sun reports luminosity in solar units",
+    "Sun reports mass in solar units",
+    "Sun reports radius in solar units",
+    "Sun evolution is labelled as modeled",
+    "Catalog star reports mass in solar units",
+    "Catalog star reports distance in light-years",
+    "Catalog star does not invent surface gravity",
+    "Catalog star does not invent orbital speed",
+    "No fact renders NaN, undefined or Infinity",
+    "interstellar viewing distance uses a light-year unit (20.00 ly)",
+    "galactic viewing distance uses a light-year unit (50.0 kly)",
+    "intergalactic viewing distance uses a light-year unit (5.00 Mly)",
+    "Viewing distance never prints a raw kilometre figure at interstellar scale",
+    "No browser errors"
+  ],
+  "observed": {
+    "earth": {
+      "rows": {
+        "Radius": "6,371 km",
+        "Mass": "5.97e24 kg",
+        "Surface gravity": "9.82 m/s²",
+        "Distance from the Sun": "1.015 AU",
+        "Orbital speed": "29.33 km/s",
+        "Basis": "MEASURED",
+        "Viewing distance": "34,000 km"
+      },
+      "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
+    },
+    "moon": {
+      "rows": {
+        "Radius": "1,737 km",
+        "Mass": "7.35e22 kg",
+        "Surface gravity": "1.62 m/s²",
+        "Distance from Earth": "387,501 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "10,215 km"
+      },
+      "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
+    },
+    "jupiter": {
+      "rows": {
+        "Radius": "69,911 km",
+        "Mass": "1.90e27 kg",
+        "Surface gravity": "25.92 m/s²",
+        "Distance from the Sun": "5.343 AU",
+        "Orbital speed": "12.71 km/s",
+        "Basis": "MEASURED",
+        "Viewing distance": "489,377 km"
+      },
+      "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
+    },
+    "sun": {
+      "rows": {
+        "Radius": "696,340 km · 1.00 R☉",
+        "Effective temperature": "5,772 K",
+        "Luminosity": "1.000 L☉",
+        "Mass": "1.000 M☉",
+        "Basis": "MODELED",
+        "Viewing distance": "2,600,000 km"
+      },
+      "basis": "A published physical model, simplified to run live. Right shape, approximate numbers."
+    },
+    "proxima": {
+      "rows": {
+        "Radius": "107,376 km · 0.15 R☉",
+        "Mass": "0.122 M☉",
+        "Distance from the Sun": "4.25 ly",
+        "Basis": "MEASURED",
+        "Viewing distance": "1,288,508 km"
+      },
+      "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
+    },
+    "viewingDistance": [
+      {
+        "name": "interstellar",
+        "ly": 20,
+        "value": "20.00 ly"
+      },
+      {
+        "name": "galactic",
+        "ly": 50000,
+        "value": "50.0 kly"
+      },
+      {
+        "name": "intergalactic",
+        "ly": 5000000,
+        "value": "5.00 Mly"
+      }
+    ]
+  },
+  "errors": []
+}

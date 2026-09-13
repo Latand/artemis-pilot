@@ -20,6 +20,9 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 .exploreFacts { font-size:13px;border-block:1px solid var(--explore-line);padding:12px 0;margin:0 0 16px; }
 .exploreFacts div { display:flex;justify-content:space-between;gap:12px;margin:4px 0; }
 .exploreFacts dt { color:var(--explore-muted); }.exploreFacts dd { margin:0; }
+/* Model-limit copy: says which epistemic tier the numbers above come from. */
+.exploreBasis { font-size:11px;line-height:1.4;color:var(--explore-muted);margin:0 0 12px; }
+.exploreBasis:empty { display:none; }
 #explorePanel summary { font-size:13px;cursor:pointer;min-height:32px;padding-top:8px; }
 .explorePlaces { display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:8px 0; }
 .explorePlaces button { text-align:left;border:0;background:#22262b;color:var(--explore-text);padding:10px 9px;border-radius:4px;min-height:56px;font-size:14px!important; }

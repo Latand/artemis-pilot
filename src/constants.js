@@ -4,6 +4,10 @@ import { HYG_PHYSICAL_STARS } from "./generated/hygPhysicalStars.js";
 import { SPECIAL_OBJECTS } from "./universe/specialObjects.js";
 
 export const MU_E = 398600.4418, MU_M = 4902.8001, MU_S = 132712440018;
+// CODATA gravitational constant, m^3 kg^-1 s^-2. Lets the standard
+// gravitational parameters above be reported as masses without
+// storing a second, drifting copy of each body's mass.
+export const G_SI = 6.674e-11;
 export const R_EARTH = 6371, R_MOON = 1737.4, R_SUN = 696340;
 const DEG = Math.PI / 180;
 // Curated physical destinations use true 3-D equatorial placement from

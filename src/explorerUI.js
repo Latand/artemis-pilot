@@ -1,13 +1,15 @@
 import * as THREE from "three";
 import { G, keys, WORLD, BH } from "./state.js";
-import { K, R_EARTH, R_MOON, R_SUN, PL, STARS, LY_SCENE } from "./constants.js";
+import { K, MU_E, MU_M, R_EARTH, R_MOON, R_SUN, PL, STARS, LY_SCENE } from "./constants.js";
 import { MOONS, moonFocusIndex } from "./moons.js";
 import { cam, camera } from "./scene.js";
 import { onModeChange, setUiMode, isXrPresenting } from "./uiMode.js";
 import { sunStateAt } from "./universe/sunEvolution.js";
 import { activeStarForFocus, getCachedFocusedSystem } from "./universe/activeStars.js";
 import { planetFocusIndex } from "./universe/planetarySystem.js";
-import { fmtKm } from "./format.js";
+import { bodyFactRows, basisDescription } from "./universe/bodyFacts.js";
+import { bhMassLabel } from "./blackholes.js";
+import { fmtDist } from "./format.js";
 
 let hooks, lastFocus = "earth", movement = null;
 const forward = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(), delta = new THREE.Vector3();
@@ -79,20 +81,42 @@ export function moveExplorerCamera(dt) {
     cam.tgt.addScaledVector(delta,speed);cam.distTarget=null;G.focus='free';
 }
 
+// Alongside the display name this carries the raw records the fact rows are
+// derived from — mu, the catalogue entry, the Sun's evolution state — plus the
+// epistemic tier those numbers belong to. A body that simply has no record for
+// a quantity carries no field for it, and bodyFacts then omits that row.
 function selectedBody() {
-    if(G.focus==='sun'&&cam.dist>=LY_SCENE*20000)return {name:cam.dist>LY_SCENE*800000?'Local Group':'Milky Way',kind:'Galaxy-scale view'};
+    if(G.focus==='sun'&&cam.dist>=LY_SCENE*20000)return {name:cam.dist>LY_SCENE*800000?'Local Group':'Milky Way',kind:'Galaxy-scale view',basis:'modeled'};
     const bi=/^bh:(\d+)$/.exec(String(G.focus));
-    if(bi&&+bi[1]<BH.n)return {name:(BH.kind[+bi[1]]===1?'Quasar ':BH.kind[+bi[1]]===2?'Pulsar ':'Black hole ')+(+bi[1]+1),kind:'Modeled compact object'};
-    if(G.focus==='earth')return {name:'Earth',kind:WORLD.earthDestroyed?'Destroyed planet':'Home planet',R:R_EARTH};
-    if(G.focus==='moon')return {name:'Moon',kind:WORLD.moonDestroyed?'Destroyed moon':"Earth’s moon",R:R_MOON};
-    if(G.focus==='sun'){const s=sunStateAt(G.t);return {name:'Sun',kind:'Stellar evolution · '+s.phase,R:R_SUN*s.R_Rsun};}
-    if(typeof G.focus==='number'){const p=PL[G.focus];return p?{...p,kind:WORLD.plDestroyed[G.focus]?'Destroyed planet':p.gas?'Gas / ice giant':'Rocky planet'}:null;}
-    const mi=moonFocusIndex(G.focus);if(mi>=0)return {...MOONS[mi],kind:'Moon'};
-    const si=/^star:(\d+)$/.exec(String(G.focus));if(si&&STARS[+si[1]])return {...STARS[+si[1]],R:STARS[+si[1]].bh?null:STARS[+si[1]].R,kind:STARS[+si[1]].bh?'Black hole':'Catalog star'};
-    const active=activeStarForFocus(G.focus);if(active)return {...active,kind:'Stellar destination'};
+    if(bi&&+bi[1]<BH.n)return {name:(BH.kind[+bi[1]]===1?'Quasar ':BH.kind[+bi[1]]===2?'Pulsar ':'Black hole ')+(+bi[1]+1),kind:'Modeled compact object',rs:BH.rs[+bi[1]],bhMass:bhMassLabel(BH.rs[+bi[1]]),basis:'modeled'};
+    if(G.focus==='earth')return {name:'Earth',kind:WORLD.earthDestroyed?'Destroyed planet':'Home planet',R:R_EARTH,mu:MU_E,focusKey:'earth',basis:'measured'};
+    if(G.focus==='moon')return {name:'Moon',kind:WORLD.moonDestroyed?'Destroyed moon':"Earth’s moon",R:R_MOON,mu:MU_M,focusKey:'moon',basis:'measured'};
+    if(G.focus==='sun'){const s=sunStateAt(G.t);return {name:'Sun',kind:'Stellar evolution · '+s.phase,R:R_SUN*s.R_Rsun,sun:s,basis:'modeled'};}
+    if(typeof G.focus==='number'){const p=PL[G.focus];return p?{...p,kind:WORLD.plDestroyed[G.focus]?'Destroyed planet':p.gas?'Gas / ice giant':'Rocky planet',planetIndex:G.focus,basis:'measured'}:null;}
+    const mi=moonFocusIndex(G.focus);if(mi>=0)return {...MOONS[mi],kind:'Moon',basis:'measured'};
+    const si=/^star:(\d+)$/.exec(String(G.focus));if(si&&STARS[+si[1]]){const st=STARS[+si[1]];return {...st,R:st.bh?null:st.R,kind:st.bh?'Black hole':'Catalog star',star:st.bh?null:st,rs:st.rs,bhMass:st.bh?bhMassLabel(st.rs):null,basis:st.bh?'modeled':'measured'};}
+    const active=activeStarForFocus(G.focus);if(active)return {...active,kind:'Stellar destination',star:active,basis:active.estimated||active.procedural?'modeled':'measured'};
     const pi=planetFocusIndex(G.focus),p=getCachedFocusedSystem()?.planets?.[pi];
-    if(p)return {name:p.name,kind:'Planetary system',R:p.radiusKm};
+    if(p)return {name:p.name,kind:'Planetary system',R:p.radiusKm,basis:p.catalog?'measured':'modeled'};
     return null;
+}
+
+// Rows are reconciled in place so an unchanged panel does no DOM work.
+function renderFacts(rows) {
+    const host=$('exploreFacts');
+    if(!host)return;
+    while(host.children.length>rows.length) host.removeChild(host.lastChild);
+    while(host.children.length<rows.length) {
+        const wrap=document.createElement('div');
+        wrap.appendChild(document.createElement('dt'));
+        wrap.appendChild(document.createElement('dd'));
+        host.appendChild(wrap);
+    }
+    rows.forEach((row,i)=>{
+        const [dt,dd]=host.children[i].children;
+        if(dt.textContent!==row.label)dt.textContent=row.label;
+        if(dd.textContent!==row.value)dd.textContent=row.value;
+    });
 }
 
 export function updateExplorerUI() {
@@ -102,8 +126,10 @@ export function updateExplorerUI() {
     if(G.focus!=='free'&&G.focus!=='ship')lastFocus=G.focus;
     text('exploreObject',body?.name|| (G.focus==='free'?'Free flight':G.focus==='ship'?'Spacecraft':'Selected destination'));
     text('exploreKind',body?.kind||(G.focus==='free'?'Camera moves independently':'Explore the surrounding space'));
-    text('exploreRadius',body?.R>0?fmtKm(body.R):'—');
-    text('exploreDistance',fmtKm(cam.dist/K));
+    // Viewing distance spans metres to megaparsecs, so it needs the
+    // scale-aware formatter; raw kilometres are unreadable past a light-year.
+    renderFacts(bodyFactRows(body).concat({label:'Viewing distance',value:fmtDist(cam.dist/K)}));
+    text('exploreBasis',basisDescription(body));
     text('exploreFollow',G.focus==='free'?'Free camera':'Following object');
     text('exploreGravityStatus',G.gr?'Gravity flow visible':'Natural view');
     if($('exploreGravity').getAttribute('aria-pressed')!==String(G.gr)) $('exploreGravity').setAttribute('aria-pressed',String(G.gr));
