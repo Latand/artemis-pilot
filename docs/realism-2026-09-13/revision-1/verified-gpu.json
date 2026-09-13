@@ -1,0 +1,18 @@
+{
+  "flux": [
+    1600,
+    144,
+    0
+  ],
+  "hiddenFlux": 0,
+  "clearSkyFlux": 1048,
+  "occludedFlux": 0,
+  "planetFlux": 3579,
+  "atmosphereFlux": 4622,
+  "solarCenter": 255,
+  "solarLimb": 211,
+  "nearTierLeak": 0,
+  "farTierFlux": 16320,
+  "findings": [],
+  "errors": []
+}

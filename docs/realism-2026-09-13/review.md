@@ -17,3 +17,5 @@ Findings addressed before publication:
 No remaining high-confidence correctness findings in the changed source. The rendering approximations and software-performance limits are recorded in the main report. This is a builder self-review; independent pipeline review remains the next stage.
 
 The separate local main worktree remains clean and its nine unpublished commits are preserved. The changed source/test file set has no overlap with that work. No merge, deployment, paid generation, host changes or additional agent launches were performed.
+
+The independent review subsequently requested shared exposure for the Sun and renderer-owned label opacity. The [revision response](revision-1/review-response.md) records both fixes, their validation and the narrow `src/main.js` overlap introduced by that request.

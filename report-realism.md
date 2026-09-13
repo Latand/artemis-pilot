@@ -57,3 +57,5 @@ The physical motivations are documented with [primary references](docs/realism-2
 ## Detail controls
 
 Clouds now load after the first usable frame when Earth is resolved; `?clouds=0` disables them and `?clouds=1` loads them during startup. The Moon map loads when its disk is resolved above eight pixels; `?moonmap=0` disables that request and `?moonmap=1` preserves eager loading. Mipmaps and anisotropic filtering are enabled by default, with `?mips=0` as the lower-memory option. Night-map, bloom and existing catalog controls keep their prior behavior.
+
+Review revision: [solar exposure and stellar-label fixes, regression evidence and builder review](docs/realism-2026-09-13/revision-1/review-response.md).

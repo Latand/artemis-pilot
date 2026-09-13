@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM } from "./constants.js";
 import { earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
-import { stellarExposure, meteredSkyExposure, linearStarColor } from "./render/stellarAppearance.js";
+import { stellarExposure, meteredSkyExposure, linearStarColor, stellarPointAppearance } from "./render/stellarAppearance.js";
 import { MOONS } from "./moons.js";
 import { mulberry32 } from "./format.js";
 import {
@@ -259,6 +259,7 @@ export function updateBodyShaders(camera, t) {
 const SUN_TEFF_COLOR = teffToRGB(SUN_TEFF_K);
 const _sunTintScratch = [1, 1, 1];
 const _sunEvoTint = new THREE.Vector3(1, 1, 1);
+const _sunAppearance = {};
 
 // Physical radius, temperature and luminosity still come from sunStateAt.
 // The display maps unresolved flux to a finite PSF and resolves the actual
@@ -274,11 +275,11 @@ export function updateSunView(camera, camDistPc) {
     const pointWorldScale = sizePx * distScene / Math.max(1e-6, pxScale);
     const sunRadiusScene = SUN_RADIUS * sun.R_Rsun; // evolving photosphere radius, scene units
     const radiusPx = sunRadiusScene * pxScale / Math.max(sunRadiusScene, distScene);
-    const unresolved = 1 - THREE.MathUtils.smoothstep(radiusPx, 0.75, 3);
+    const appearance = stellarPointAppearance(hdr, radiusPx, stellarExposure.value, _sunAppearance);
     sunGlow.scale.setScalar(Math.max(sunRadiusScene * 2, pointWorldScale));
-    sunGlow.material.opacity = Math.min(1, hdr) * unresolved;
+    sunGlow.material.opacity = appearance.opacity;
     const teffColor = teffToRGB(sun.Teff, _sunTintScratch);
-    linearStarColor(teffColor, sunGlow.material.color).multiplyScalar(Math.min(8, Math.max(1, hdr)));
+    linearStarColor(teffColor, sunGlow.material.color).multiplyScalar(appearance.intensity);
     linearStarColor(teffColor, sunCore.material.color);
     sunLight.color.copy(sunCore.material.color);
     sunCore.rotation.y = (G.t * 2 * Math.PI / (25.38 * 86400)) % (2 * Math.PI);

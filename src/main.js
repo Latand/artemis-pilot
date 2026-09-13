@@ -20,7 +20,7 @@ import {
     moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
 import { MOONS, moonOffset, moonFocusValue, moonFocusIndex, MOON_LABEL_DIST } from "./moons.js";
-import { addStarVisual, buildStars, updateStars } from "./stars.js";
+import { addStarVisual, buildStars, updateStars, starVisualAlpha } from "./stars.js";
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff, targetState } from "./autopilot.js";
@@ -779,13 +779,12 @@ function updateStarLabels(w, h) {
     const starLabelsDue = !starLabelsVisible || frameNo % starLabelCadence() === 0;
     let starLabelBatch = 0;
     if (starLabelsDue) {
+        // Cosmic frames skip the near-field renderer. Refresh named markers
+        // only while labels are requested, at their existing bounded cadence.
+        if (cam.dist > LY_SCENE * .2) updateStars(camera, 0);
         // names step back to half strength across the 0.2 -> 1 ly transition
         // so at interstellar zoom text sits below the star dots it names
         const dim = 1 - .5 * smooth01(LY_SCENE * .2, LY_SCENE, cam.dist);
-        // dot-alpha model mirrored from stars.js updateStars (local + skyBeacon
-        // ramps) — a label may never be more opaque than its star's dot; keep
-        // these constants in sync with src/stars.js if they move there.
-        const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, camera.position.length());
         const maxLabels = farLabels ? STAR_LABEL_MAX : Infinity;
         starBins.clear();
         const tryPlace = i => {
@@ -799,14 +798,14 @@ function updateStarLabels(w, h) {
             const pos = starScenePos(i, _starLabelPos);
             const p = projectTo(pos, w, h, _starBinP);
             if (!p || p[0] < 0 || p[0] > w || p[1] < 0 || p[1] > h) return false;
-            if (starLabelBatch >= maxLabels || !claimStarBin(p[0], p[1])) return false;
-            const d = camera.position.distanceTo(pos);
-            const dotAlpha = Math.max(.82 * (1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d)), skyBeacon);
-            const op = Math.min(starLabelFade * dim, dotAlpha);
+            const op = activeStarFocus && i === focusStar ? starLabelFade * dim
+                : Math.min(starLabelFade * dim, starVisualAlpha(star));
             if (op < .02) return false;
+            // Invisible candidates must not reserve space ahead of visible ones.
+            if (starLabelBatch >= maxLabels || !claimStarBin(p[0], p[1])) return false;
             const el = ensureStarLabel(i);
             if (!el) return false;
-            put(el, pos, -8, w, h, op >= .995 ? "1" : op.toFixed(2));
+            put(el, pos, -8, w, h, op >= 1 ? "1" : (Math.floor(op * 100) / 100).toFixed(2));
             starLabelBatch++;
             return true;
         };

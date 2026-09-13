@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { STARS, K, LY_SCENE, PC_KM } from "./constants.js";
 import { CURATED_PHOTOMETRY } from "./render/curatedPhotometry.js";
 import { photosphereMaterial } from "./render/planetAppearance.js";
-import { stellarExposure, linearStarColor, meteredSkyExposure, stellarPointMarker } from "./render/stellarAppearance.js";
+import { stellarExposure, linearStarColor, meteredSkyExposure, stellarPointMarker, stellarPointAppearance } from "./render/stellarAppearance.js";
 import { observedMag, apparentMagAt, absMagFromApparent, hdrIntensityForMag, sizePxForMag, teffToRGB, bvToTeff } from "./render/viewBrightness.js";
 import { dotTexture } from "./textures.js";
 import { renderQuality, scene, viewportSize } from "./scene.js";
@@ -39,6 +39,14 @@ function starVisualId(star) {
     if (star.id) return star.id;
     if (star.hygIndex !== undefined) return "hyg:" + star.hygIndex;
     return star.name;
+}
+
+// Label consumers read the rendered marker and resolved-disk visibility.
+// A resolved photosphere remains a visible target when its point has faded out.
+export function starVisualAlpha(star) {
+    const entry = entryById.get(starVisualId(star));
+    if (!entry?.g.visible) return 0;
+    return Math.max(entry.glow.material.opacity, entry.photosphere?.visible ? entry.appearance.disk : 0);
 }
 
 function fresnelShell(radius, color, power, gain) {
@@ -175,7 +183,7 @@ export function addStarVisual(star) {
     g.add(glow);
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
     scene.add(g);
-    const entry = { g, glow, disk, photosphere, tempK, absMag, star, id };
+    const entry = { g, glow, disk, photosphere, tempK, absMag, star, id, appearance: {disk:0} };
     entries.push(entry);
     entryById.set(id, entry);
     return entry;
@@ -251,15 +259,14 @@ export function updateStars(camera, dtR) {
         if (!e.star.bh) {
             const pc = Math.max(1e-9, d / (PC_KM * K));
             const mag = Number.isFinite(e.absMag) ? apparentMagAt(e.absMag, pc) : Infinity;
-            const flux = hdrIntensityForMag(mag) * stellarExposure.value;
             const pxScale = viewportSize.pxScale;
             const radiusPx = e.star.R * K * pxScale / Math.max(e.star.R * K, d);
-            const unresolved = 1 - THREE.MathUtils.smoothstep(radiusPx, .75, 3);
-            e.g.visible = radiusPx > .3 || flux > .001;
+            const appearance = stellarPointAppearance(hdrIntensityForMag(mag), radiusPx, stellarExposure.value, e.appearance);
+            e.g.visible = appearance.visible;
             e.photosphere.visible = radiusPx > .3;
-            e.glow.material.opacity = Math.min(1, flux) * unresolved;
+            e.glow.material.opacity = appearance.opacity;
             const color = teffToRGB(e.tempK, starRGB);
-            linearStarColor(color, e.glow.material.color).multiplyScalar(Math.min(8, Math.max(1, flux)));
+            linearStarColor(color, e.glow.material.color).multiplyScalar(appearance.intensity);
             e.glow.material.size = Math.max(3, sizePxForMag(mag));
         } else {
             const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);

@@ -4,6 +4,18 @@ import * as THREE from 'three';
 // unchanged. This approximates a camera exposing for a resolved sunlit body.
 export const stellarExposure = { value: 1 };
 
+// Sun and named stars share the same exposed signal and disk/point transition.
+// Callers reuse their output object to keep frame updates allocation free.
+export function stellarPointAppearance(hdr, radiusPx, exposure, out = {}) {
+    const flux = hdr * exposure;
+    const disk = THREE.MathUtils.smoothstep(radiusPx, 0.75, 3);
+    out.visible = radiusPx > 0.3 || flux > 0.001;
+    out.opacity = Math.min(1, flux) * (1 - disk);
+    out.intensity = Math.min(8, Math.max(1, flux));
+    out.disk = disk;
+    return out;
+}
+
 // A finite display cannot distinguish arbitrarily faint point sources. Taper
 // the last few magnitudes smoothly before rejecting their rasterization.
 // The inverse-square photometry and catalog remain intact upstream.
