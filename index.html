@@ -23,6 +23,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Orbitron:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/src/style.css" />
+  <link rel="stylesheet" href="/src/explorerUI.css" />
   <style>
     #cinePanel { position: absolute; right: 18px; top: 166px; width: 260px; display: none; z-index: 7; padding: 12px; }
     #cinePanel .cineGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
@@ -103,6 +104,47 @@
       <div id="navRead">HDG — · PRO —</div>
     </div>
 
+    <header id="exploreBar" aria-label="Exploration toolbar">
+      <button id="exploreHome" class="exploreBrand" type="button" aria-label="Explore Earth">ARTEMIS <span>SPACE EXPLORER</span></button>
+      <nav class="exploreModes" aria-label="Experience mode">
+        <button type="button" data-ui-mode="observe" aria-pressed="true">Explore</button>
+        <button type="button" data-ui-mode="pilot" aria-pressed="false">Pilot</button>
+        <button type="button" data-ui-mode="direct" aria-pressed="false">Create</button>
+      </nav>
+      <button id="exploreSearch" type="button">Find a world <span aria-hidden="true">↗</span></button>
+      <button id="exploreHelp" type="button" aria-label="Controls and help">?</button>
+    </header>
+    <aside id="explorePanel" aria-label="Explore space">
+      <div class="exploreEyebrow">YOUR VIEW <span id="exploreFollow">Following object</span></div>
+      <h1 id="exploreObject">Earth</h1><p id="exploreKind">Home planet</p>
+      <details id="exploreInfo" class="exploreInfo" open><summary>Object details</summary><dl class="exploreFacts"><div><dt>Radius</dt><dd id="exploreRadius">—</dd></div><div><dt>Viewing distance</dt><dd id="exploreDistance">—</dd></div></dl></details>
+      <button id="exploreRefocus" type="button" hidden>Return to object</button>
+      <details id="exploreDestinations" open><summary>Places to explore</summary>
+        <div class="explorePlaces">
+          <button type="button" data-destination="earth">Earth <span>Our world</span></button>
+          <button type="button" data-destination="moon">Moon <span>Nearby</span></button>
+          <button type="button" data-destination="jupiter">Jupiter <span>Giant planets</span></button>
+          <button type="button" data-destination="saturn">Saturn <span>Rings</span></button>
+          <button type="button" data-destination="sun">Sun <span>Watch a star age</span></button>
+          <button type="button" data-destination="proxima">Proxima <span>Beyond the Sun</span></button>
+        </div>
+        <button id="exploreScale" class="exploreTextButton" type="button">View the Milky Way ↗</button>
+        <button id="exploreCatalog" class="exploreTextButton" type="button">Search the star catalog ↗</button>
+      </details>
+      <button id="exploreGravity" type="button" aria-pressed="false">Gravity flow <span id="exploreGravityStatus">Natural view</span></button>
+      <p class="exploreNote">Gravity flow is a visual metaphor. Object motion follows the simulation.</p>
+    </aside>
+    <div id="exploreCamera" aria-label="Free camera controls">
+      <span>Drag to look · scroll to approach · WASD to move · Q/E up/down</span>
+      <div class="exploreMoveButtons">
+        <button type="button" data-camera-move="forward" aria-label="Move camera forward">Forward</button>
+        <button type="button" data-camera-move="back" aria-label="Move camera backward">Back</button>
+        <button type="button" data-camera-move="left" aria-label="Move camera left">Left</button>
+        <button type="button" data-camera-move="right" aria-label="Move camera right">Right</button>
+        <button type="button" data-camera-move="up" aria-label="Move camera up">Up</button>
+        <button type="button" data-camera-move="down" aria-label="Move camera down">Down</button>
+      </div>
+    </div>
     <!-- ============ TOP-RIGHT · MISSION + INSTRUMENTS ============ -->
     <div id="hudTR">
       <div class="panel panel--amber" id="objPanel">
@@ -207,15 +249,17 @@
     <div id="banner"></div>
 
     <div id="timeDock" class="panel" aria-label="Time controls">
+      <div class="tdHeading"><span>TIME</span><button id="exploreEvents" type="button">Explore events ↗</button></div>
       <div id="tdDate">—</div>
       <div id="tdRow">
         <button id="tdStepDown" type="button" aria-label="Slower">◀◀</button>
         <button id="tdPause" type="button" aria-label="Pause">▶</button>
         <button id="tdStepUp" type="button" aria-label="Faster">▶▶</button>
         <b id="tdWarpLabel">—</b>
-        <button id="tdRev" type="button" aria-label="Reverse time">REV ⏪</button>
+        <button id="tdRev" type="button" aria-label="Reverse time">Reverse</button>
       </div>
-      <div id="tdRail" aria-label="Warp ladder"></div>
+      <div class="tdSpeedRow"><label for="tdSpeed">Time per second</label><select id="tdSpeed" aria-label="Time per second"></select><span id="tdDirection">Forward</span></div>
+      <details class="tdFine"><summary>All speeds</summary><div id="tdRail" aria-label="Warp ladder"></div></details>
       <div id="tdBlocked" role="status" aria-live="polite" hidden></div>
       <div id="tdJump" hidden><span id="tdJumpLabel"></span><button id="tdCancel" type="button" aria-label="Cancel time jump">CANCEL</button></div>
     </div>
@@ -225,6 +269,11 @@
       <div class="help__inner panel">
         <div class="help__title">CONTROLS<button id="helpClose" class="help__dismiss" type="button">✕ CLOSE</button></div>
         <div class="help__keys">
+          <div class="kb__sec">EXPLORATION</div>
+          <div class="kb"><span class="kb__k">W A S D / Q E</span><span class="kb__d">free camera: move forward, sideways, up and down in Explore</span></div>
+          <div class="kb"><span class="kb__k">DRAG / SCROLL</span><span class="kb__d">look around / approach an object; two fingers pan on touch screens</span></div>
+          <div class="kb"><span class="kb__k">SPACE / , .</span><span class="kb__d">pause time / change its speed; use Events for time jumps</span></div>
+          <div class="kb"><span class="kb__k">TAB</span><span class="kb__d">move keyboard focus between controls</span></div>
           <div class="kb__sec">FLIGHT</div>
           <div class="kb"><span class="kb__k">W / ↑</span><span class="kb__d">main engine: thrust along the nose</span></div>
           <div class="kb"><span class="kb__k">S / ↓</span><span class="kb__d">reverse thrust</span></div>
@@ -408,12 +457,12 @@
           </svg>
         </div>
         <div id="introTitle">ARTEMIS</div>
-        <div id="introSub">LIVE UNIVERSE SIMULATION · MODELED PHYSICS</div>
+        <div id="introSub">EXPLORE SPACE &amp; TIME · MODELED PHYSICS</div>
         <div id="introLore">
-          The hull coasts between stars for centuries.
-          Your mind lives inside the ship's simulation of the universe beyond the wall.
-          Watch it run across deep time, or take the stick and fly.
-          Every date, orbit, and cataclysm comes from live physics models; press H to see what each model covers and where it stops.
+          Explore planets, stars and gravity at your own pace.
+          Move freely around a world and watch an orbit unfold in seconds.
+          Use time controls and Events to follow a star through billions of years.
+          Press H for the physics models and their limits, or switch to Pilot to fly the spacecraft.
         </div>
         <div id="introBtns">
           <button id="introEnter" class="uiBtn uiBtnHot">ENTER SIMULATION</button>

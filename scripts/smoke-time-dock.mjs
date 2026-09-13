@@ -115,9 +115,9 @@ try {
       throttleVisible: visible("mThrottle"),
     };
   });
-  check(mobileState.dockDisplay === "none", "mobile hides the desktop Time Dock", mobileState);
-  check(mobileState.leftVisible, "mobile attitude controls remain accessible", mobileState);
-  check(mobileState.throttleVisible, "mobile throttle remains accessible", mobileState);
+  check(mobileState.dockDisplay !== "none", "mobile Explore exposes time controls", mobileState);
+  check(!mobileState.leftVisible, "mobile Explore hides ship attitude controls", mobileState);
+  check(!mobileState.throttleVisible, "mobile Explore hides ship throttle", mobileState);
   await mobileContext.close();
 
   const intermediateContext = await browser.newContext({
@@ -133,7 +133,7 @@ try {
       const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
       return { id, hit: hit?.id || hit?.className || hit?.tagName, ownsHit: hit === target || target.contains(hit) };
     };
-    return [hitCenter("navBtn"), hitCenter("simsBtn")];
+    return [hitCenter("exploreSearch"), hitCenter("exploreEvents")];
   });
   check(intermediateHits.every(result => result.ownsHit),
     "768x1024 fine-pointer layout preserves navigator and simulation center hit targets", intermediateHits);
@@ -148,7 +148,7 @@ try {
   });
   const coarseTablet = await openReadyPage(coarseTabletContext, "coarse-tablet", url);
   const coarseDockDisplay = await coarseTablet.locator("#timeDock").evaluate(element => getComputedStyle(element).display);
-  check(coarseDockDisplay === "none", "coarse layouts above 760px hide the desktop Time Dock", { coarseDockDisplay });
+  check(coarseDockDisplay !== "none", "coarse Explore layouts expose time controls", { coarseDockDisplay });
   await coarseTabletContext.close();
 
   const desktopContext = await browser.newContext({
@@ -275,6 +275,7 @@ try {
     "log-space selection changes sides at the geometric midpoint", rungEdges);
 
   const oneHour = page.locator('.tdTick[aria-label="1 h/s"]');
+  await page.locator(".tdFine summary").click();
   await oneHour.click();
   await page.waitForFunction(() => window.__G.warp === 3600);
   await page.waitForFunction(() => document.querySelector('.tdTick[aria-label="1 h/s"]')?.getAttribute("aria-current") === "true");
@@ -396,7 +397,10 @@ try {
   check(cancelLabel === "Cancel time jump", "the jump cancel button has an explicit accessible name", { cancelLabel });
   const jumpBeforeCancel = await page.evaluate(async () => {
     const { jumpActive, startTimeJump } = await import("/src/timeCtl.js");
-    startTimeJump({ holdWarp: 60 });
+    const { planJump, maxFeasibleWarp } = await import("/src/universe/eventTimeline.js");
+    const { G } = await import("/src/state.js");
+    const plan = planJump(G.t, G.t + 1e10, maxFeasibleWarp());
+    startTimeJump(plan, {label:"Time Dock smoke"});
     document.getElementById("tdJump").hidden = false;
     return jumpActive();
   });

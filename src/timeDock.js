@@ -55,6 +55,15 @@ function nearestWarpIndex(warp) {
     return best;
 }
 
+function speedDescription(warp) {
+    if (warp === 1) return "Real time";
+    if (warp >= SEC_YEAR) return (warp / SEC_YEAR).toLocaleString("en", {maximumFractionDigits:2}) + (warp === SEC_YEAR ? " year / second" : " years / second");
+    if (warp >= 86400) return (warp / 86400).toLocaleString("en", {maximumFractionDigits:2}) + (warp === 86400 ? " day / second" : " days / second");
+    if (warp >= 3600) return (warp / 3600).toLocaleString("en", {maximumFractionDigits:2}) + (warp === 3600 ? " hour / second" : " hours / second");
+    if (warp >= 60) return (warp / 60).toLocaleString("en", {maximumFractionDigits:2}) + (warp === 60 ? " minute / second" : " minutes / second");
+    return warp.toLocaleString("en", {maximumSignificantDigits:3}) + " seconds / second";
+}
+
 function tickLabel(warp) {
     return warp < 1 || warp >= SEC_YEAR ? warpLabel(warp) : "";
 }
@@ -80,12 +89,24 @@ export function initTimeDock() {
         warpLabel: $("tdWarpLabel"),
         rev: $("tdRev"),
         rail,
+        speed: $("tdSpeed"),
+        direction: $("tdDirection"),
         ticks: [],
         blocked: $("tdBlocked"),
         jump: $("tdJump"),
         cancel: $("tdCancel"),
     };
     if (!rail) return;
+    if (els.speed) {
+        els.speed.textContent = "";
+        for (const warp of WARPS) {
+            const option = document.createElement("option");
+            option.value = String(warp);
+            option.textContent = speedDescription(warp);
+            els.speed.appendChild(option);
+        }
+        els.speed.addEventListener("change", () => setWarp(Number(els.speed.value) * (G.warp < 0 ? -1 : 1), "dock"));
+    }
     rail.textContent = "";
     rail.style.gridTemplateColumns = `repeat(${WARPS.length}, minmax(0, 1fr))`;
     WARPS.forEach((warp, i) => {
@@ -106,8 +127,11 @@ export function initTimeDock() {
     });
     els.stepDown?.addEventListener("click", () => stepWarp(-1, "dock"));
     els.stepUp?.addEventListener("click", () => stepWarp(1, "dock"));
-    els.pause?.addEventListener("click", () => setPaused(!G.paused, "dock"));
-    els.rev?.addEventListener("click", () => setWarp(-G.warp, "dock"));
+    els.pause?.addEventListener("click", () => {
+        if (G.warp === 0) { setWarp(1, "dock"); setPaused(false, "dock"); }
+        else setPaused(!G.paused, "dock");
+    });
+    els.rev?.addEventListener("click", () => setWarp(G.warp === 0 ? -1 : -G.warp, "dock"));
     els.cancel?.addEventListener("click", () => cancelTimeJump("cancel button"));
     sampleTimeDock();
     renderTimeDock();
@@ -138,13 +162,26 @@ export function renderTimeDock() {
     if (!els) return;
     setText(els.date, fmtCivil(civilDateAt(getEpochMs(), G.t)));
     setText(els.warpLabel, warpLabel(G.warp));
-    setText(els.pause, G.paused ? "▶" : "❚❚");
-    setAttribute(els.pause, "aria-label", G.paused ? "Play" : "Pause");
+    const stopped = G.paused || G.warp === 0;
+    setText(els.pause, stopped ? "Play" : "Pause");
+    setAttribute(els.pause, "aria-label", stopped ? "Play" : "Pause");
     setAttribute(els.pause, "aria-pressed", G.paused);
     const reversing = G.warp < 0;
     setClass(els.rev, "active", reversing);
     setAttribute(els.rev, "aria-pressed", reversing);
     const activeWarp = nearestWarpIndex(G.warp);
+    setText(els.direction, stopped ? "Paused" : reversing ? "Rewinding" : "Forward");
+    if (els.speed) {
+        const exact = WARPS.includes(Math.abs(G.warp));
+        let custom = els.speed.querySelector('[data-custom]');
+        if (!exact) {
+            if (!custom) { custom = document.createElement('option'); custom.dataset.custom = 'true'; els.speed.appendChild(custom); }
+            if (custom.value !== String(Math.abs(G.warp))) custom.value = String(Math.abs(G.warp));
+            setText(custom, speedDescription(Math.abs(G.warp)));
+        } else custom?.remove();
+        const value = String(Math.abs(G.warp));
+        if (els.speed.value !== value) els.speed.value = value;
+    }
     for (let i = 0; i < els.ticks.length; i++) {
         const tick = els.ticks[i];
         const active = i === activeWarp;

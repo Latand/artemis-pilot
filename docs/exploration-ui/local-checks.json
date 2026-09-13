@@ -1,0 +1,56 @@
+[
+  {
+    "suite": "core",
+    "exitCode": 0,
+    "stdout": "core smoke passed\n",
+    "stderr": ""
+  },
+  {
+    "suite": "determinism",
+    "exitCode": 0,
+    "stdout": "determinism smoke passed  structural=392d861  full12=ef2c1f9a\n",
+    "stderr": ""
+  },
+  {
+    "suite": "river-visual",
+    "exitCode": 0,
+    "stdout": "shares: sun=0.621 jup=0.109 sat=0.081\nriver visual smoke passed (15 sync literals)\n",
+    "stderr": ""
+  },
+  {
+    "suite": "river-deeptime",
+    "exitCode": 0,
+    "stdout": "epoch 34.41Gyr -> {\"gyrReached\":34.41,\"guard\":345,\"framesWaited\":0,\"camTgt\":[-25378159137529388,-25921486281722.97,98008027348548140],\"riverEnabled\":true,\"riverRadius\":108.72588885012621,\"snap1\":{\"finite\":true,\"nonZero\":992,\"distinct\":991,\"sampled\":992,\"hash\":3872247202,\"center\":{\"x\":-25378159137529388,\"y\":-25921486281722.97,\"z\":98008027348548140},\"radius\":108.72588885012621,\"meshPos\":{\"x\":-25378159137529388,\"y\":-25921486281722.97,\"z\":98008027348548140},\"visible\":true},\"snap2\":{\"finite\":true,\"nonZero\":992,\"distinct\":991,\"sampled\":992,\"hash\":2824360563,\"center\":{\"x\":-25378159137529388,\"y\":-25921486281722.97,\"z\":98008027348548140},\"radius\":108.72588885012621,\"meshPos\":{\"x\":-25378159137529388,\"y\":-25921486281722.97,\"z\":98008027348548140},\"visible\":true}}\nepoch 100Gyr -> {\"gyrReached\":100,\"guard\":1000,\"framesWaited\":0,\"camTgt\":[-79937214570419220,-94310359626546.94,224974683567713300],\"riverEnabled\":true,\"riverRadius\":108.72588885012621,\"snap1\":{\"finite\":true,\"nonZero\":992,\"distinct\":991,\"sampled\":992,\"hash\":2651586358,\"center\":{\"x\":-79937214570419220,\"y\":-94310359626546.94,\"z\":224974683567713300},\"radius\":108.72588885012621,\"meshPos\":{\"x\":-79937214570419220,\"y\":-94310359626546.94,\"z\":224974683567713300},\"visible\":true},\"snap2\":{\"finite\":true,\"nonZero\":992,\"distinct\":991,\"sampled\":992,\"hash\":1245988933,\"center\":{\"x\":-79937214570419220,\"y\":-94310359626546.94,\"z\":224974683567713300},\"radius\":108.72588885012621,\"meshPos\":{\"x\":-79937214570419220,\"y\":-94310359626546.94,\"z\":224974683567713300},\"visible\":true}}\nscreenshot bytes 160669\nriver deep-time smoke passed\n",
+    "stderr": ""
+  },
+  {
+    "suite": "reverse",
+    "exitCode": 0,
+    "stdout": "(a) reverse warp ladder OK\n(b) stepped ephemeris round-trip OK\n(c) Kepler-jump round-trip OK\n(d) civil date countdown OK\n(e) irreversible floor guard OK\n(f) live debris reverse block OK\n(g) forward positive-dt parity OK\nreverse smoke passed\n",
+    "stderr": "(node:3970243) ExperimentalWarning: localStorage is not available because --localstorage-file was not provided.\n(Use `node --trace-warnings ...` to show where the warning was created)\n"
+  },
+  {
+    "suite": "saves",
+    "exitCode": 0,
+    "stdout": "saves smoke passed\n{\"saved\":{\"ok\":true,\"seedUsed\":305419896,\"pickedId\":\"p:305419896:0:0:0:0\",\"focus\":\"proc:p:305419896:0:0:0:0\",\"blob\":{\"v\":11,\"galaxySeed\":305419896,\"epochMs\":1789308514727,\"g\":{\"t\":12345.5,\"x\":5894.655898751177,\"y\":-3123.209170567291,\"z\":4.338503608489574e-7,\"vx\":3.6178876404390836,\"vy\":6.831049795889174,\"vz\":8.774763396294777e-9,\"heading\":0.9707963267948966,\"pitch\":0,\"throttle\":1,\"warp\":60,\"paused\":false,\"fuel\":9000,\"infinite\":true,\"dvUsed\":0,\"hold\":null,\"landed\":null,\"dead\":false,\"deadReason\":\"\",\"deathT\":0,\"leftHome\":false,\"maxRE\":6671,\"gr\":true,\"predict\":false,\"constellations\":false,\"darkEnergy\":true,\"darkMatter\":true,\"muted\":false,\"focus\":\"proc:p:305419896:0:0:0:0\",\"cabin\":false},\"focusCatalog\":null,\"focusHygCatalog\":null,\"focusProcedural\":{\"id\":\"p:305419896:0:0:0:0\"},\"procStars\":[\"p:305419896:0:0:0:0\"],\"hygStars\":[],\"world\":{\"earth\":false,\"moon\":false,\"sun\":false,\"pl\":[0,0,0,0,0,0,0]},\"log\":{\"seen\":{\"bodies\":[],\"stars\":[],\"notables\":[\"smoke-discovery\"]},\"entries\":[{\"kind\":\"notable\",\"id\":\"smoke-discovery\",\"label\":\"Smoke Discovery\",\"civil\":\"2026-09-13 14:11:16 UTC\",\"met\":97.31999999999996}],\"records\":{\"maxDistLy\":0,\"minClockRate\":1,\"maxDvUsed\":0}},\"eph\":{\"x\":[-125623.66835427193,28962194.95757634,21401207.169426907,129777790.21744096,236996422.76111957,-259697873.3890892,300234719.54480904,-1444244612.7066886,685002922.1839981],\"y\":[365326.43920888624,149087090.35354683,79976418.74880853,108495859.15914637,146673216.54624328,-596268331.020156,1477745748.9897923,2500035511.8871164,4583218330.3312],\"vx\":[-0.9748270809020413,-28.757401236806952,9.898020880334183,-15.87266383100576,-27.54440307486778,-16.732073491168833,-38.71739805118766,-34.57896671873611,-34.15237019773547],\"vy\":[-0.2807120406217071,5.792181087220405,2.981902610697098,38.12667096464865,32.087903599047394,1.6812513857356002,7.705987974280654,1.8575690823446078,6.621065574143463],\"earthX\":-28962195.757089436,\"earthY\":-149087090.01952323,\"earthVx\":28.749185933545576,\"earthVy\":-5.788748877662909,\"z\":[-27686.47982013999,0.000011045883138300139,-4951609.347303582,-6374610.616085282,-5164513.996233871,9535602.556847006,-33982388.29382792,27847286.104859583,-106419431.52269317],\"vz\":[-0.061863228686235845,2.2700796261238037e-7,-3.7775957250377794,-0.30187234486573244,0.5211347622888728,-0.2519914694378468,0.363148173475516,0.06087825491074194,0.10724672700159585],\"earthZ\":0,\"earthVz\":0},\"bh\":[],\"neb\":[],\"bhEv\":[],\"gs\":[],\"bhSizeIdx\":5}},\"loaded\":{\"ok\":true,\"seed\":305419896,\"focus\":\"proc:p:305419896:0:0:0:0\",\"pinned\":[\"p:305419896:0:0:0:0\"],\"log\":{\"seen\":{\"bodies\":[],\"stars\":[],\"notables\":[\"smoke-discovery\"]},\"entries\":[{\"kind\":\"notable\",\"id\":\"smoke-discovery\",\"label\":\"Smoke Discovery\",\"civil\":\"2026-09-13 14:11:16 UTC\",\"met\":97.31999999999996}],\"records\":{\"maxDistLy\":0,\"minClockRate\":1,\"maxDvUsed\":0}}},\"v8\":{\"ok\":true,\"threw\":null,\"seedAfter\":2654435769},\"v9fwd\":{\"ok\":true,\"threw\":null,\"seedAfter\":123456789,\"gFuture\":42,\"log\":{\"seen\":{\"bodies\":[],\"stars\":[],\"notables\":[]},\"entries\":[],\"records\":{\"maxDistLy\":0,\"minClockRate\":1,\"maxDvUsed\":0}}}}\n",
+    "stderr": ""
+  },
+  {
+    "suite": "science-copy",
+    "exitCode": 0,
+    "stdout": "science copy smoke passed\n",
+    "stderr": ""
+  },
+  {
+    "suite": "time-dock",
+    "exitCode": 0,
+    "stdout": "smoke-time-dock passed\n",
+    "stderr": ""
+  },
+  {
+    "suite": "build",
+    "exitCode": 0,
+    "stdout": "vite v5.4.21; 111 modules transformed; built in 2.35s",
+    "stderr": ""
+  }
+]

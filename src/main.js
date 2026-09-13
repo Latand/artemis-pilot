@@ -44,7 +44,7 @@ import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
 import {
-    showBanner, hideBanner, updateHUD, updateEscapeTracker, updateScaleLadder, hideHelp,
+    showBanner, hideBanner, updateHUD, updateEscapeTracker, updateScaleLadder, hideHelp, toggleHelp,
     fFlow, fDark, fHalo, lblE, lblM, lblO, lblS,
     setText as setHudText, systemSummary,
 } from "./hud.js";
@@ -79,6 +79,7 @@ import { initMobileControls, updateMobileControls } from "./mobileControls.js";
 import { initAttitude, drawAttitude } from "./attitude.js";
 import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
+import { initExplorerUI, moveExplorerCamera, updateExplorerUI } from "./explorerUI.js";
 import { initUiMode, setXrPresenting } from "./uiMode.js";
 import { cancelTimeJump, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
 import { initTimeDock, renderTimeDock, sampleTimeDock } from "./timeDock.js";
@@ -270,14 +271,17 @@ initQuickControls();
 initTimeDock();
 initEvents({ mergerState: mergerDebugState });
 initUiMode();
+initExplorerUI({flyTo: flyFocus, openNavigator, openCatalog: openCatalogSearchLazy, toggleHelp});
 
 // Camera/share-state must be applied before renderer warmup; otherwise startup
 // compiles the default low-orbit view, then immediately renders a different
 // restored or URL-selected view on the first live frame.
 function applyStartupCameraState() {
+    let restoredCamera = false;
     try {
         const saved = JSON.parse(localStorage.getItem("ap_cam") || "null");
         if (saved && isFinite(saved.dist)) {
+            restoredCamera = true;
             cam.dist = saved.dist;
             cam.yaw = saved.yaw ?? cam.yaw;
             cam.pitch = saved.pitch ?? cam.pitch;
@@ -287,6 +291,10 @@ function applyStartupCameraState() {
     } catch (e) { }
 
     const q = new URLSearchParams(location.search);
+    if (!restoredCamera && G.uiMode === "observe" && !q.has("focus") && !q.has("dist")) {
+        setFocus("earth");
+        G.gr = false;
+    }
     initRelViewOverride(q);
     if (q.get("bh")) for (const s of q.get("bh").split(";")) {
         const [bx, by, brs] = s.split(":").map(Number);
@@ -1556,7 +1564,9 @@ function frame() {
     if (G.dead && !G.observerMode && performance.now() - G.deathRt >= 2000) enterObserverMode();
     // ---- input → attitude & thrust (keyboard merged with VR controllers) ----
     const vrIn = vrPoll(dtR);
-    let rotIn = ((keys.has("KeyA") || keys.has("ArrowLeft")) ? 1 : 0) - ((keys.has("KeyD") || keys.has("ArrowRight")) ? 1 : 0);
+    moveExplorerCamera(Math.min(rawDtR, .06));
+    const flightKeys = G.uiMode === "pilot" || VR.active;
+    let rotIn = !flightKeys ? 0 : ((keys.has("KeyA") || keys.has("ArrowLeft")) ? 1 : 0) - ((keys.has("KeyD") || keys.has("ArrowRight")) ? 1 : 0);
     if (!rotIn) rotIn = vrIn.rot;
     if (rotIn) { G.hold = null; G.heading += rotIn * ROT_RATE * dtR; }
     if (!G.landed) {
@@ -1564,11 +1574,11 @@ function frame() {
         if (G.hold === "pro") { G.heading = Math.atan2(G.vy, G.vx); G.pitch = Math.atan2(G.vz, vh); }
         else if (G.hold === "retro") { G.heading = Math.atan2(-G.vy, -G.vx); G.pitch = Math.atan2(-G.vz, vh); }
     }
-    let mainIn = (keys.has("KeyW") || keys.has("ArrowUp")) ? 1 : ((keys.has("KeyS") || keys.has("ArrowDown")) ? -1 : 0);
+    let mainIn = !flightKeys ? 0 : (keys.has("KeyW") || keys.has("ArrowUp")) ? 1 : ((keys.has("KeyS") || keys.has("ArrowDown")) ? -1 : 0);
     if (!mainIn) mainIn = vrIn.main;
-    let latIn = (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0);
+    let latIn = !flightKeys ? 0 : (keys.has("KeyE") ? 1 : 0) - (keys.has("KeyQ") ? 1 : 0);
     if (!latIn) latIn = vrIn.lat;
-    G.boost = keys.has("ShiftLeft") || keys.has("ShiftRight") || vrIn.boost;
+    G.boost = (flightKeys && (keys.has("ShiftLeft") || keys.has("ShiftRight"))) || vrIn.boost;
     // the pilot always outranks the flight computer
     if ((rotIn || mainIn || latIn) && AP.mode !== "off") apOff("pilot override", toast);
     if ((rotIn || mainIn || latIn) && REL.active) relCancel("pilot override", toast);
@@ -1822,7 +1832,7 @@ function frame() {
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
-    shipG.visible = !G.dead && !cosmicView && !G.cabin;
+    shipG.visible = !G.dead && !cosmicView && !G.cabin && (G.uiMode !== "observe" || VR.active);
     clouds.rotation.y += dtR * .01;
     perfEnd("scene.focus", sceneFocusT0, PERF.enabled ? { activeStarsDue, activeStarsFresh, focus: String(G.focus) } : null);
     // ---- camera ----
@@ -1858,7 +1868,7 @@ function frame() {
         // offset left by focus transitions and pans
         if (placed && camPrevFocus === G.focus) cam.tgt.add(camDelta.copy(tgt).sub(camPrevTgt));
         // interstellar focus jumps snap: gliding 26,000 ly takes forever
-        const glide = placed && cam.tgt.distanceTo(tgt) < 1e8;
+        const glide = placed && G.uiMode !== "observe" && cam.tgt.distanceTo(tgt) < 1e8;
         cam.tgt.lerp(tgt, glide ? Math.min(1, dtR * 6) : 1);
         camPrevTgt.copy(tgt);
         camPrevFocus = G.focus;
@@ -1995,13 +2005,14 @@ function frame() {
     if (cosmicView) {
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
-        updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, 1);
+        updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, G.uiMode === "observe" ? 0 : 1);
         if (frameNo % 6 === 0) {
             const focusLight = focusLightTarget();
             updateScaleLadder(cam.dist / K, focusLight?.distKm ?? null, focusLight?.name);
         }
         if (hudDue) {
             renderTimeDock();
+            updateExplorerUI();
             updateEvents();
             updateMobileControls(oi, cosmicSpeed, aMag);
             if (!renderQuality.mobile) {
@@ -2048,7 +2059,7 @@ function frame() {
     const velAngleRate = prevVelAngleVis === null || dtR <= 0 ? 0 : Math.abs(angleDelta(velAngle, prevVelAngleVis)) / dtR;
     prevHeadingVis = G.heading;
     prevVelAngleVis = velAngle;
-    const directionVisualActive = G.warp <= 600 && headingRate < 7 && velAngleRate < 7;
+    const directionVisualActive = (G.uiMode !== "observe" || VR.active) && G.warp <= 600 && headingRate < 7 && velAngleRate < 7;
     craft.scale.setScalar(cs);
     dot.scale.setScalar(cd * .014);
     dot.material.opacity = G.dead ? 0 : (cd > 4 ? 1 : Math.max(0, (cd - 1.2) / 2.8));
@@ -2241,7 +2252,7 @@ function frame() {
         tipV.visible = false; tipF.visible = false;
         hideCosmologyArrows();
     }
-    updateFocusVelocityVector(cabinActive || cosmicView ? 0 : 1);
+    updateFocusVelocityVector(cabinActive || cosmicView || (G.uiMode === "observe" && !VR.active) ? 0 : 1);
     // ---- audio ----
     if (thrustGain) {
         const target = (aMag > 0 && !G.muted) ? Math.min(.22, .04 + .12 * G.throttle * (G.boost ? 1.8 : 1)) : 0;
@@ -2263,6 +2274,7 @@ function frame() {
     }
     if (hudDue) {
         renderTimeDock();
+        updateExplorerUI();
         updateEvents();
         if (!renderQuality.mobile) {
             updateHUD(oi, aMag, mainIn, sp, kVLoc, fRiver);

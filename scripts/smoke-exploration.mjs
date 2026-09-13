@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'vite';import {chromium} from 'playwright';import {mkdir,writeFile} from 'node:fs/promises';import {resolve} from 'node:path';
+const out=resolve('docs/exploration-ui/verified');await mkdir(out,{recursive:true});
+const server=await createServer({server:{host:'127.0.0.1',port:0,hmr:false}});await server.listen();const browser=await chromium.launch({headless:true});const errors=[],checks=[];
+const check=(condition,message)=>{assert.ok(condition,message);checks.push(message);};
+try {
+ const page=await browser.newPage({viewport:{width:1440,height:900}});page.on('pageerror',e=>errors.push(String(e)));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
+ const url=`http://127.0.0.1:${server.httpServer.address().port}/?tier1=0&hidehelp=1&dpr=1`;
+ await page.goto(url);await page.waitForFunction(()=>window.__AP_READY,null,{timeout:60000});await page.getByRole('button',{name:'ENTER SIMULATION',exact:true}).click();
+ check(await page.evaluate(()=>__G.focus==='earth'&&__G.uiMode==='observe'),'Fresh session explores Earth');
+ await page.locator('#tdPause').click();await page.waitForFunction(()=>__G.paused);
+ const snapshot=()=>page.evaluate(()=>({ship:[__G.x,__G.y,__G.z,__G.vx,__G.vy,__G.vz,__G.heading,__G.dvUsed],t:__G.t,target:__cam.tgt.toArray(),mode:__G.uiMode,warp:__G.warp}));
+ await page.locator('#gl canvas').first().click({position:{x:1000,y:300}});
+ const before=await snapshot();await page.keyboard.down('w');await page.waitForTimeout(900);await page.keyboard.up('w');const after=await snapshot();
+ check(JSON.stringify(before.target)!==JSON.stringify(after.target),'W moves the camera while paused');
+ assert.deepEqual(after.ship,before.ship);check(after.t===before.t&&after.mode==='observe','Camera movement preserves time, ship and Explore mode');
+ await page.locator('#exploreRefocus').click();await page.waitForFunction(()=>__G.focus==='earth');
+ await page.locator('#exploreSearch').click();const typingBefore=await snapshot();await page.locator('#navQuery').pressSequentially('Saturn',{delay:20});const typingAfter=await snapshot();
+ check(typingBefore.mode===typingAfter.mode&&typingBefore.warp===typingAfter.warp&&typingBefore.t===typingAfter.t,'Search typing cannot trigger flight or time shortcuts');
+ await page.locator('.navItem').filter({hasText:'SATURN'}).first().click();await page.waitForFunction(()=>__G.focus===4);
+ check(await page.locator('#exploreObject').innerText()==='SATURN','Navigator updates selected-object context');
+ await page.locator('#tdSpeed').selectOption('86400');await page.waitForFunction(()=>__G.warp===86400);
+ await page.locator('#tdRev').click();await page.waitForFunction(()=>__G.warp===-86400);
+ await page.locator('#tdSpeed').selectOption('3600');await page.waitForFunction(()=>__G.warp===-3600);
+ check(await page.locator('#tdDirection').innerText()==='Paused','Speed changes preserve pause and reverse direction');
+ await page.locator('#tdRev').click();await page.locator('#tdPause').click();await page.waitForFunction(()=>!__G.paused);await page.waitForTimeout(400);await page.locator('#tdPause').click();await page.waitForFunction(()=>__G.paused);
+ check((await snapshot()).t>before.t,'Play advances the simulation through the time controller');
+ await page.locator('#exploreEvents').click();check(await page.locator('#evPanel').isVisible(),'Events are reachable from the time dock');
+ await page.locator('#evClose').click();check(await page.locator('#exploreEvents').evaluate(el=>el===document.activeElement),'Closing events returns keyboard focus to time controls');
+ await page.locator('[data-ui-mode="observe"]').focus();await page.keyboard.press('Tab');
+ check(await page.evaluate(()=>__G.uiMode==='observe'&&!document.querySelector('#navPanel').classList.contains('open')),'Tab moves focus without toggling modes or navigator');
+ await page.locator('[data-ui-mode="pilot"]').click();check(await page.evaluate(()=>__G.uiMode==='pilot'&&__G.focus==='ship'),'Pilot focuses the spacecraft explicitly');
+ await page.locator('[data-ui-mode="observe"]').click();await page.waitForFunction(()=>__G.focus===4);
+ check(await page.evaluate(()=>__G.focus===4),'Returning to Explore restores the previous world');
+ await page.locator('[data-destination="proxima"]').click();await page.waitForFunction(()=>__G.focus==='star:0');
+ check((await page.locator('#exploreObject').innerText()).toUpperCase()==='PROXIMA','Exploration reaches an interstellar destination');
+ await page.locator('[data-destination="earth"]').click();await page.waitForTimeout(1200);
+ check(await page.evaluate(async()=>{const {earthG}=await import('/src/bodies.js');return __cam.tgt.distanceTo(earthG.position)<.01;}),'Returning from a distant world centers Earth immediately');
+ await page.screenshot({path:resolve(out,'desktop.png')});
+ for(const [name,width,height,touch] of [['mobile',390,844,true],['tablet',820,900,true],['short-mobile',375,667,true]]){
+  const p=await browser.newPage({viewport:{width,height},isMobile:touch,hasTouch:touch});p.on('pageerror',e=>errors.push(name+': '+String(e)));
+  await p.goto(url);await p.waitForFunction(()=>window.__AP_READY,null,{timeout:60000});await p.getByRole('button',{name:'ENTER SIMULATION',exact:true}).click();await p.locator('#tdPause').click();await p.waitForFunction(()=>__G.paused);
+  check(await p.locator('#timeDock').isVisible()&&!await p.locator('#mobileUI').isVisible(),name+': time controls replace flight controls in Explore');
+  const geometry=await p.evaluate(()=>['exploreSearch','tdPause','tdSpeed','exploreEvents'].map(id=>{const el=document.getElementById(id),r=el.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return {id,inside:r.x>=0&&r.right<=innerWidth&&r.y>=0&&r.bottom<=innerHeight,hit:el===hit||el.contains(hit)};}));
+  check(geometry.every(x=>x.inside&&x.hit),name+': primary controls are inside viewport and unobstructed '+JSON.stringify(geometry));
+  const start=await p.evaluate(()=>({t:__G.t,ship:[__G.x,__G.y,__G.z,__G.dvUsed],target:__cam.tgt.toArray()}));
+  const button=p.locator('[data-camera-move="right"]'),box=await button.boundingBox();await p.mouse.move(box.x+box.width/2,box.y+box.height/2);await p.mouse.down();await p.waitForTimeout(500);await p.mouse.up();
+  const end=await p.evaluate(()=>({t:__G.t,ship:[__G.x,__G.y,__G.z,__G.dvUsed],target:__cam.tgt.toArray()}));assert.deepEqual(start.ship,end.ship);check(start.t===end.t&&JSON.stringify(start.target)!==JSON.stringify(end.target),name+': pointer camera controls work independently of simulation');
+  await p.locator('#exploreRefocus').click();await p.waitForTimeout(600);await p.screenshot({path:resolve(out,name+'.png')});await p.close();
+ }
+ check(errors.length===0,'No browser errors');
+ console.log(JSON.stringify({checks,errors},null,2));
+} catch(e){errors.push(String(e));console.error(e);process.exitCode=1;} finally{await writeFile(resolve(out,'checks.json'),JSON.stringify({checks,errors},null,2));await browser.close();await server.close();}

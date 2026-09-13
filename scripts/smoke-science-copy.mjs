@@ -85,7 +85,7 @@ requireEqual(metaContent("property", "og:title"), brandedTitle,
     "Open Graph title must preserve the ARTEMIS brand identity");
 requireEqual(metaContent("name", "twitter:title"), brandedTitle,
     "Twitter title must preserve the ARTEMIS brand identity");
-requireMatch(elementText(intro, "introSub"), /LIVE UNIVERSE SIMULATION.{0,8}MODELED PHYSICS/i,
+requireMatch(elementText(intro, "introSub"), /MODELED PHYSICS/i,
     "intro subtitle must identify modeled physics");
 requireCondition((introLore.match(/[.!?](?=\s|$)/g) ?? []).length === 4,
     "intro lore must contain four sentences");

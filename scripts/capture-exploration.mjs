@@ -1,0 +1,7 @@
+import {createServer} from 'vite';import {chromium} from 'playwright';import {mkdir,writeFile} from 'node:fs/promises';import {resolve} from 'node:path';
+const out=resolve(process.argv[2]||'docs/exploration-ui/after');await mkdir(out,{recursive:true});
+const server=await createServer({...(process.argv[3]?{root:resolve(process.argv[3])}:{}),server:{host:'127.0.0.1',port:0,hmr:false}});await server.listen();const b=await chromium.launch({headless:true});const result=[];
+try{for(const [name,width,height] of [['desktop',1440,900],['mobile',390,844]]){
+const p=await b.newPage({viewport:{width,height},isMobile:width<700,hasTouch:width<700});const errors=[];p.on('pageerror',e=>errors.push(String(e)));p.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
+await p.goto(`http://127.0.0.1:${server.httpServer.address().port}/?tier1=0&hidehelp=1&dpr=1`);await p.waitForFunction(()=>window.__AP_READY,null,{timeout:60000});const enter=p.getByRole('button',{name:'ENTER SIMULATION',exact:true});if(await enter.isVisible())await enter.click();await p.evaluate(async()=>{const {setPaused}=await import('/src/timeCtl.js');setPaused(true,'capture');});await p.waitForTimeout(1800);await p.screenshot({path:resolve(out,name+'.png')});result.push({name,errors,focus:await p.evaluate(()=>__G.focus),text:await p.locator('body').innerText()});await p.close();}
+await writeFile(resolve(out,'capture.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result.map(({name,errors,focus})=>({name,errors,focus}))));}finally{await b.close();await server.close();}

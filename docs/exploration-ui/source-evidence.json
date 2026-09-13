@@ -1,0 +1,14 @@
+{
+  "foundation": "8bc8fa8bb0806ff8de0b53731b3e3c9da997aee7",
+  "remoteBase": "62e80d8e44511aad7fc4150d36d67141d266b16a",
+  "sourceSha256": {
+    "index.html": "0b38ffc7b99d55089479a0bc349a3425d386b35f81f0a631fb661ef9fa70993f",
+    "src/explorerUI.js": "4f2ac2f80ba29f8ea776d4d46985bf78ade4107c744e4c4f289f2baff6fb2bc0",
+    "src/explorerUI.css": "33a872e9bcfa97f26b5da97978a61e4d8c96d9e0336db22e602b1dc6f6be31e3",
+    "src/input.js": "6a16a6d79733b491c76a7ffb52afa9aecf09644f078e411c08b0a4ddbe9fac8a",
+    "src/main.js": "37162bf0f3a479d289a76a4519a65bb48fc175a27981df5c732ff27ae0c5ec33",
+    "src/navigator.js": "08ce459b2e9583dd382852aecc009b0a2aba4a34dd1e5f24860cdde63cd47621",
+    "src/scene.js": "62ae26b6abde80c5a97c15c0daa3136e3d9b18ae71619b11f540caa30395143e",
+    "src/timeDock.js": "aa8d7d198c46311ca6254d3886baf1cdc6c260e70acff4f45c3211c138a8ea33"
+  }
+}
