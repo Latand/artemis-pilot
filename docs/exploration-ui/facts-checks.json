@@ -3,33 +3,69 @@
     "Earth reports its radius",
     "Earth reports mass in kg from its gravitational parameter",
     "Earth reports surface gravity in m/s²",
-    "Earth reports its Sun distance in AU",
-    "Earth reports orbital speed in km/s",
     "Earth is labelled as measured data",
-    "The basis line carries model-limit copy",
+    "Earth labels its Sun distance as simulated, in AU",
+    "Earth labels its orbital speed as simulated, in km/s",
+    "Earth shows no unqualified \"Distance from the Sun\" row",
+    "Earth shows no unqualified \"Orbital speed\" row",
+    "Earth copy says its simulated rows are approximate",
+    "Earth copy does not claim real planetary positions",
     "Moon reports its radius",
-    "Moon reports mass in kg",
-    "Moon reports surface gravity",
+    "Moon reports mass 7.35e22 kg",
+    "Moon reports surface gravity 1.62 m/s²",
     "Moon reports its distance from Earth",
     "Moon does not claim a heliocentric orbital speed",
+    "MOONS keeps the parent mu that drives each analytic orbit",
+    "moon:2 is Io",
+    "Io reports its own radius",
+    "Io shows no mass (the only mu on record is Jupiter's)",
+    "Io shows no surface gravity (the only mu on record is Jupiter's)",
+    "Io radius is labelled as measured data",
+    "All 21 planetary moons show no mass or surface gravity",
+    "Mars reports mass in kg",
+    "Mars reports surface gravity",
+    "Mars is labelled as measured data",
+    "Mars labels its Sun distance as simulated, in AU",
+    "Mars labels its orbital speed as simulated, in km/s",
+    "Mars shows no unqualified \"Distance from the Sun\" row",
+    "Mars shows no unqualified \"Orbital speed\" row",
+    "Mars copy says its simulated rows are approximate",
+    "Mars copy does not claim real planetary positions",
     "Jupiter reports mass in kg",
     "Jupiter reports surface gravity",
-    "Jupiter reports its Sun distance in AU",
     "Jupiter is labelled as measured data",
+    "Jupiter labels its Sun distance as simulated, in AU",
+    "Jupiter labels its orbital speed as simulated, in km/s",
+    "Jupiter shows no unqualified \"Distance from the Sun\" row",
+    "Jupiter shows no unqualified \"Orbital speed\" row",
+    "Jupiter copy says its simulated rows are approximate",
+    "Jupiter copy does not claim real planetary positions",
     "Sun reports an effective temperature",
     "Sun reports luminosity in solar units",
     "Sun reports mass in solar units",
     "Sun reports radius in solar units",
     "Sun evolution is labelled as modeled",
+    "Sgr A* is in the star catalogue",
+    "Sgr A* reports mass in solar units",
+    "Sgr A* reports its Schwarzschild radius",
     "Catalog star reports mass in solar units",
     "Catalog star reports distance in light-years",
     "Catalog star does not invent surface gravity",
     "Catalog star does not invent orbital speed",
+    "Catalog star does not invent simulated orbital speed",
     "No fact renders NaN, undefined or Infinity",
-    "interstellar viewing distance uses a light-year unit (20.00 ly)",
-    "galactic viewing distance uses a light-year unit (50.0 kly)",
-    "intergalactic viewing distance uses a light-year unit (5.00 Mly)",
+    "interstellar viewing distance uses a light-year unit (0.89 ly)",
+    "galactic viewing distance uses a light-year unit (1.3 kly)",
+    "intergalactic viewing distance uses a light-year unit (126.3 kly)",
     "Viewing distance never prints a raw kilometre figure at interstellar scale",
+    "Object details opens on a 390 px phone",
+    "Earth: all 7 values sit on one line at 390×844 without overlap or overflow",
+    "Moon: all 6 values sit on one line at 390×844 without overlap or overflow",
+    "Io: all 3 values sit on one line at 390×844 without overlap or overflow",
+    "Mars: all 7 values sit on one line at 390×844 without overlap or overflow",
+    "Sun: all 6 values sit on one line at 390×844 without overlap or overflow",
+    "Sgr A*: all 4 values sit on one line at 390×844 without overlap or overflow",
+    "Proxima: all 5 values sit on one line at 390×844 without overlap or overflow",
     "No browser errors"
   ],
   "observed": {
@@ -38,35 +74,162 @@
         "Radius": "6,371 km",
         "Mass": "5.97e24 kg",
         "Surface gravity": "9.82 m/s²",
-        "Distance from the Sun": "1.015 AU",
-        "Orbital speed": "29.33 km/s",
+        "Simulated Sun distance": "1.015 AU",
+        "Simulated orbital speed": "29.33 km/s",
         "Basis": "MEASURED",
         "Viewing distance": "34,000 km"
       },
-      "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
+      "basis": "Radius, mass and surface gravity are measured. Simulated rows follow this model's approximate orbits and can differ from real values."
     },
     "moon": {
       "rows": {
         "Radius": "1,737 km",
         "Mass": "7.35e22 kg",
         "Surface gravity": "1.62 m/s²",
-        "Distance from Earth": "387,501 km",
+        "Distance from Earth": "387,662 km",
         "Basis": "MEASURED",
-        "Viewing distance": "10,215 km"
+        "Viewing distance": "10,214 km"
       },
       "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
+    },
+    "io": {
+      "rows": {
+        "Radius": "1,822 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "12,751 km"
+      },
+      "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
+    },
+    "planetaryMoons": {
+      "PHOBOS": {
+        "Radius": "11 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "250 km"
+      },
+      "DEIMOS": {
+        "Radius": "6.2 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "250 km"
+      },
+      "IO": {
+        "Radius": "1,822 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "12,751 km"
+      },
+      "EUROPA": {
+        "Radius": "1,561 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "10,926 km"
+      },
+      "GANYMEDE": {
+        "Radius": "2,634 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "18,439 km"
+      },
+      "CALLISTO": {
+        "Radius": "2,410 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "16,872 km"
+      },
+      "MIMAS": {
+        "Radius": "198 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "1,387 km"
+      },
+      "ENCELADUS": {
+        "Radius": "252 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "1,765 km"
+      },
+      "TETHYS": {
+        "Radius": "531 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "3,718 km"
+      },
+      "DIONE": {
+        "Radius": "561 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "3,930 km"
+      },
+      "RHEA": {
+        "Radius": "764 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "5,347 km"
+      },
+      "TITAN": {
+        "Radius": "2,575 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "18,023 km"
+      },
+      "IAPETUS": {
+        "Radius": "735 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "5,142 km"
+      },
+      "MIRANDA": {
+        "Radius": "236 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "1,651 km"
+      },
+      "ARIEL": {
+        "Radius": "579 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "4,052 km"
+      },
+      "UMBRIEL": {
+        "Radius": "585 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "4,093 km"
+      },
+      "TITANIA": {
+        "Radius": "788 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "5,519 km"
+      },
+      "OBERON": {
+        "Radius": "761 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "5,330 km"
+      },
+      "TRITON": {
+        "Radius": "1,353 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "9,474 km"
+      },
+      "PROTEUS": {
+        "Radius": "210 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "1,470 km"
+      },
+      "NEREID": {
+        "Radius": "170 km",
+        "Basis": "MEASURED",
+        "Viewing distance": "1,190 km"
+      }
+    },
+    "mars": {
+      "rows": {
+        "Radius": "3,390 km",
+        "Mass": "6.42e23 kg",
+        "Surface gravity": "3.73 m/s²",
+        "Simulated Sun distance": "1.391 AU",
+        "Simulated orbital speed": "26.33 km/s",
+        "Basis": "MEASURED",
+        "Viewing distance": "23,727 km"
+      },
+      "basis": "Radius, mass and surface gravity are measured. Simulated rows follow this model's approximate orbits and can differ from real values."
     },
     "jupiter": {
       "rows": {
         "Radius": "69,911 km",
         "Mass": "1.90e27 kg",
         "Surface gravity": "25.92 m/s²",
-        "Distance from the Sun": "5.343 AU",
-        "Orbital speed": "12.71 km/s",
+        "Simulated Sun distance": "5.343 AU",
+        "Simulated orbital speed": "12.71 km/s",
         "Basis": "MEASURED",
         "Viewing distance": "489,377 km"
       },
-      "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
+      "basis": "Radius, mass and surface gravity are measured. Simulated rows follow this model's approximate orbits and can differ from real values."
     },
     "sun": {
       "rows": {
@@ -79,13 +242,22 @@
       },
       "basis": "A published physical model, simplified to run live. Right shape, approximate numbers."
     },
+    "sgrA": {
+      "rows": {
+        "Mass": "4,151,359 M☉",
+        "Schwarzschild radius": "12,260,000 km",
+        "Basis": "MODELED",
+        "Viewing distance": "3.688 AU"
+      },
+      "basis": "A published physical model, simplified to run live. Right shape, approximate numbers."
+    },
     "proxima": {
       "rows": {
         "Radius": "107,376 km · 0.15 R☉",
         "Mass": "0.122 M☉",
         "Distance from the Sun": "4.25 ly",
         "Basis": "MEASURED",
-        "Viewing distance": "1,288,508 km"
+        "Viewing distance": "5,916,539 km"
       },
       "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
     },
@@ -93,19 +265,381 @@
       {
         "name": "interstellar",
         "ly": 20,
-        "value": "20.00 ly"
+        "value": "0.89 ly"
       },
       {
         "name": "galactic",
         "ly": 50000,
-        "value": "50.0 kly"
+        "value": "1.3 kly"
       },
       {
         "name": "intergalactic",
         "ly": 5000000,
-        "value": "5.00 Mly"
+        "value": "126.3 kly"
       }
-    ]
+    ],
+    "phoneLayout": {
+      "Earth": {
+        "rows": [
+          {
+            "label": "Radius",
+            "value": "6,371 km",
+            "valueLines": 1,
+            "valueLeft": 155,
+            "valueRight": 199,
+            "labelRight": 63
+          },
+          {
+            "label": "Mass",
+            "value": "5.97e24 kg",
+            "valueLines": 1,
+            "valueLeft": 143,
+            "valueRight": 199,
+            "labelRight": 53
+          },
+          {
+            "label": "Surface gravity",
+            "value": "9.82 m/s²",
+            "valueLines": 1,
+            "valueLeft": 150,
+            "valueRight": 199,
+            "labelRight": 110
+          },
+          {
+            "label": "Simulated Sun distance",
+            "value": "1.015 AU",
+            "valueLines": 1,
+            "valueLeft": 156,
+            "valueRight": 199,
+            "labelRight": 144
+          },
+          {
+            "label": "Simulated orbital speed",
+            "value": "29.33 km/s",
+            "valueLines": 1,
+            "valueLeft": 141,
+            "valueRight": 199,
+            "labelRight": 129
+          },
+          {
+            "label": "Basis",
+            "value": "MEASURED",
+            "valueLines": 1,
+            "valueLeft": 137,
+            "valueRight": 199,
+            "labelRight": 54
+          },
+          {
+            "label": "Viewing distance",
+            "value": "34,000 km",
+            "valueLines": 1,
+            "valueLeft": 141,
+            "valueRight": 199,
+            "labelRight": 117
+          }
+        ],
+        "listLeft": 25,
+        "listRight": 199,
+        "panelOverflowX": 0,
+        "viewportWidth": 390
+      },
+      "Moon": {
+        "rows": [
+          {
+            "label": "Radius",
+            "value": "1,737 km",
+            "valueLines": 1,
+            "valueLeft": 157,
+            "valueRight": 199,
+            "labelRight": 63
+          },
+          {
+            "label": "Mass",
+            "value": "7.35e22 kg",
+            "valueLines": 1,
+            "valueLeft": 144,
+            "valueRight": 199,
+            "labelRight": 53
+          },
+          {
+            "label": "Surface gravity",
+            "value": "1.62 m/s²",
+            "valueLines": 1,
+            "valueLeft": 153,
+            "valueRight": 199,
+            "labelRight": 110
+          },
+          {
+            "label": "Distance from Earth",
+            "value": "387,663 km",
+            "valueLines": 1,
+            "valueLeft": 139,
+            "valueRight": 199,
+            "labelRight": 127
+          },
+          {
+            "label": "Basis",
+            "value": "MEASURED",
+            "valueLines": 1,
+            "valueLeft": 137,
+            "valueRight": 199,
+            "labelRight": 54
+          },
+          {
+            "label": "Viewing distance",
+            "value": "10,000 km",
+            "valueLines": 1,
+            "valueLeft": 142,
+            "valueRight": 199,
+            "labelRight": 117
+          }
+        ],
+        "listLeft": 25,
+        "listRight": 199,
+        "panelOverflowX": 0,
+        "viewportWidth": 390
+      },
+      "Io": {
+        "rows": [
+          {
+            "label": "Radius",
+            "value": "1,822 km",
+            "valueLines": 1,
+            "valueLeft": 155,
+            "valueRight": 199,
+            "labelRight": 63
+          },
+          {
+            "label": "Basis",
+            "value": "MEASURED",
+            "valueLines": 1,
+            "valueLeft": 137,
+            "valueRight": 199,
+            "labelRight": 54
+          },
+          {
+            "label": "Viewing distance",
+            "value": "12,751 km",
+            "valueLines": 1,
+            "valueLeft": 152,
+            "valueRight": 199,
+            "labelRight": 117
+          }
+        ],
+        "listLeft": 25,
+        "listRight": 199,
+        "panelOverflowX": 0,
+        "viewportWidth": 390
+      },
+      "Mars": {
+        "rows": [
+          {
+            "label": "Radius",
+            "value": "3,390 km",
+            "valueLines": 1,
+            "valueLeft": 149,
+            "valueRight": 199,
+            "labelRight": 63
+          },
+          {
+            "label": "Mass",
+            "value": "6.42e23 kg",
+            "valueLines": 1,
+            "valueLeft": 142,
+            "valueRight": 199,
+            "labelRight": 53
+          },
+          {
+            "label": "Surface gravity",
+            "value": "3.73 m/s²",
+            "valueLines": 1,
+            "valueLeft": 151,
+            "valueRight": 199,
+            "labelRight": 110
+          },
+          {
+            "label": "Simulated Sun distance",
+            "value": "1.391 AU",
+            "valueLines": 1,
+            "valueLeft": 157,
+            "valueRight": 199,
+            "labelRight": 145
+          },
+          {
+            "label": "Simulated orbital speed",
+            "value": "26.33 km/s",
+            "valueLines": 1,
+            "valueLeft": 141,
+            "valueRight": 199,
+            "labelRight": 129
+          },
+          {
+            "label": "Basis",
+            "value": "MEASURED",
+            "valueLines": 1,
+            "valueLeft": 137,
+            "valueRight": 199,
+            "labelRight": 54
+          },
+          {
+            "label": "Viewing distance",
+            "value": "23,727 km",
+            "valueLines": 1,
+            "valueLeft": 149,
+            "valueRight": 199,
+            "labelRight": 117
+          }
+        ],
+        "listLeft": 25,
+        "listRight": 199,
+        "panelOverflowX": 0,
+        "viewportWidth": 390
+      },
+      "Sun": {
+        "rows": [
+          {
+            "label": "Radius",
+            "value": "696,340 km · 1.00 R☉",
+            "valueLines": 1,
+            "valueLeft": 85,
+            "valueRight": 199,
+            "labelRight": 63
+          },
+          {
+            "label": "Effective temperature",
+            "value": "5,772 K",
+            "valueLines": 1,
+            "valueLeft": 164,
+            "valueRight": 199,
+            "labelRight": 145
+          },
+          {
+            "label": "Luminosity",
+            "value": "1.000 L☉",
+            "valueLines": 1,
+            "valueLeft": 150,
+            "valueRight": 199,
+            "labelRight": 85
+          },
+          {
+            "label": "Mass",
+            "value": "1.000 M☉",
+            "valueLines": 1,
+            "valueLeft": 147,
+            "valueRight": 199,
+            "labelRight": 53
+          },
+          {
+            "label": "Basis",
+            "value": "MODELED",
+            "valueLines": 1,
+            "valueLeft": 146,
+            "valueRight": 199,
+            "labelRight": 54
+          },
+          {
+            "label": "Viewing distance",
+            "value": "2,600,000 km",
+            "valueLines": 1,
+            "valueLeft": 123,
+            "valueRight": 199,
+            "labelRight": 111
+          }
+        ],
+        "listLeft": 25,
+        "listRight": 199,
+        "panelOverflowX": 0,
+        "viewportWidth": 390
+      },
+      "Sgr A*": {
+        "rows": [
+          {
+            "label": "Mass",
+            "value": "4,151,359 M☉",
+            "valueLines": 1,
+            "valueLeft": 132,
+            "valueRight": 199,
+            "labelRight": 53
+          },
+          {
+            "label": "Schwarzschild radius",
+            "value": "12,260,000 km",
+            "valueLines": 1,
+            "valueLeft": 121,
+            "valueRight": 199,
+            "labelRight": 109
+          },
+          {
+            "label": "Basis",
+            "value": "MODELED",
+            "valueLines": 1,
+            "valueLeft": 146,
+            "valueRight": 199,
+            "labelRight": 54
+          },
+          {
+            "label": "Viewing distance",
+            "value": "3.688 AU",
+            "valueLines": 1,
+            "valueLeft": 151,
+            "valueRight": 199,
+            "labelRight": 117
+          }
+        ],
+        "listLeft": 25,
+        "listRight": 199,
+        "panelOverflowX": 0,
+        "viewportWidth": 390
+      },
+      "Proxima": {
+        "rows": [
+          {
+            "label": "Radius",
+            "value": "107,376 km · 0.15 R☉",
+            "valueLines": 1,
+            "valueLeft": 94,
+            "valueRight": 199,
+            "labelRight": 63
+          },
+          {
+            "label": "Mass",
+            "value": "0.122 M☉",
+            "valueLines": 1,
+            "valueLeft": 152,
+            "valueRight": 199,
+            "labelRight": 53
+          },
+          {
+            "label": "Distance from the Sun",
+            "value": "4.25 ly",
+            "valueLines": 1,
+            "valueLeft": 165,
+            "valueRight": 199,
+            "labelRight": 148
+          },
+          {
+            "label": "Basis",
+            "value": "MEASURED",
+            "valueLines": 1,
+            "valueLeft": 137,
+            "valueRight": 199,
+            "labelRight": 54
+          },
+          {
+            "label": "Viewing distance",
+            "value": "1,288,508 km",
+            "valueLines": 1,
+            "valueLeft": 130,
+            "valueRight": 199,
+            "labelRight": 117
+          }
+        ],
+        "listLeft": 25,
+        "listRight": 199,
+        "panelOverflowX": 0,
+        "viewportWidth": 390
+      }
+    }
   },
   "errors": []
 }

@@ -93,7 +93,9 @@ function selectedBody() {
     if(G.focus==='moon')return {name:'Moon',kind:WORLD.moonDestroyed?'Destroyed moon':"Earth’s moon",R:R_MOON,mu:MU_M,focusKey:'moon',basis:'measured'};
     if(G.focus==='sun'){const s=sunStateAt(G.t);return {name:'Sun',kind:'Stellar evolution · '+s.phase,R:R_SUN*s.R_Rsun,sun:s,basis:'modeled'};}
     if(typeof G.focus==='number'){const p=PL[G.focus];return p?{...p,kind:WORLD.plDestroyed[G.focus]?'Destroyed planet':p.gas?'Gas / ice giant':'Rocky planet',planetIndex:G.focus,basis:'measured'}:null;}
-    const mi=moonFocusIndex(G.focus);if(mi>=0)return {...MOONS[mi],kind:'Moon',basis:'measured'};
+    // MOONS[i].mu is the parent planet's, kept for the analytic orbit, so a
+    // planetary moon passes only its own radius and shows no mass or gravity.
+    const mi=moonFocusIndex(G.focus);if(mi>=0)return {name:MOONS[mi].name,kind:'Moon',R:MOONS[mi].R,basis:'measured'};
     const si=/^star:(\d+)$/.exec(String(G.focus));if(si&&STARS[+si[1]]){const st=STARS[+si[1]];return {...st,R:st.bh?null:st.R,kind:st.bh?'Black hole':'Catalog star',star:st.bh?null:st,rs:st.rs,bhMass:st.bh?bhMassLabel(st.rs):null,basis:st.bh?'modeled':'measured'};}
     const active=activeStarForFocus(G.focus);if(active)return {...active,kind:'Stellar destination',star:active,basis:active.estimated||active.procedural?'modeled':'measured'};
     const pi=planetFocusIndex(G.focus),p=getCachedFocusedSystem()?.planets?.[pi];

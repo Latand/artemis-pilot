@@ -19,7 +19,8 @@ button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible
 #exploreKind { color:var(--explore-muted);font-size:13px;margin:0 0 18px; }
 .exploreFacts { font-size:13px;border-block:1px solid var(--explore-line);padding:12px 0;margin:0 0 16px; }
 .exploreFacts div { display:flex;justify-content:space-between;gap:12px;margin:4px 0; }
-.exploreFacts dt { color:var(--explore-muted); }.exploreFacts dd { margin:0; }
+/* A value never breaks across lines; on a narrow panel its label wraps instead. */
+.exploreFacts dt { color:var(--explore-muted); }.exploreFacts dd { margin:0;white-space:nowrap;text-align:right; }
 /* Model-limit copy: says which epistemic tier the numbers above come from. */
 .exploreBasis { font-size:11px;line-height:1.4;color:var(--explore-muted);margin:0 0 12px; }
 .exploreBasis:empty { display:none; }

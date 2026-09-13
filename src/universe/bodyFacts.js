@@ -7,6 +7,10 @@
 // simply omitted, so an absent row means "this build does not know", never
 // "this is zero". Each body also reports which epistemic tier its numbers
 // come from, using the vocabulary in epistemic.js.
+//
+// Earth's and the planets' Sun distance and orbital speed are the exception:
+// they are read from the live n-body state, whose starting orbital phases are
+// approximate, so those rows are labelled Simulated and the copy says so.
 import { R_SUN, AU_KM, G_SI, PL } from "../constants.js";
 import { eph } from "../ephemeris.js";
 import { fmtDist } from "../format.js";
@@ -86,14 +90,14 @@ export function bodyFactRows(body) {
     }
 
     if (body.focusKey === "earth") {
-        push(rows, "Distance from the Sun", fmtAu(Math.hypot(eph.sunX, eph.sunY, eph.sunZ)));
-        push(rows, "Orbital speed", Math.hypot(eph.earthVx, eph.earthVy, eph.earthVz).toFixed(2) + " km/s");
+        push(rows, "Simulated Sun distance", fmtAu(Math.hypot(eph.sunX, eph.sunY, eph.sunZ)));
+        push(rows, "Simulated orbital speed", Math.hypot(eph.earthVx, eph.earthVy, eph.earthVz).toFixed(2) + " km/s");
     } else if (body.focusKey === "moon") {
         push(rows, "Distance from Earth", fmtDist(Math.hypot(eph.moonX, eph.moonY, eph.moonZ)));
-    } else if (Number.isInteger(body.planetIndex) && PL[body.planetIndex]) {
+    } else if (hasSimulatedOrbit(body)) {
         const i = body.planetIndex;
-        push(rows, "Distance from the Sun", fmtAu(sunDistanceKm(eph.plX[i], eph.plY[i], eph.plZ[i])));
-        push(rows, "Orbital speed", sunRelativeSpeed(eph.plVx[i], eph.plVy[i], eph.plVz[i]).toFixed(2) + " km/s");
+        push(rows, "Simulated Sun distance", fmtAu(sunDistanceKm(eph.plX[i], eph.plY[i], eph.plZ[i])));
+        push(rows, "Simulated orbital speed", sunRelativeSpeed(eph.plVx[i], eph.plVy[i], eph.plVz[i]).toFixed(2) + " km/s");
     }
 
     const tier = EPISTEMIC_TIERS[body.basis];
@@ -101,6 +105,14 @@ export function bodyFactRows(body) {
     return rows;
 }
 
+const hasSimulatedOrbit = body => body?.focusKey === "earth" ||
+    (Number.isInteger(body?.planetIndex) && !!PL[body.planetIndex]);
+
+// The measured tier's shared copy promises real planetary positions, which
+// the Simulated rows cannot keep, so these bodies say what is measured instead.
+const SIMULATED_ORBIT_BASIS = "Radius, mass and surface gravity are measured. Simulated rows follow this model's approximate orbits and can differ from real values.";
+
 export function basisDescription(body) {
+    if (hasSimulatedOrbit(body)) return SIMULATED_ORBIT_BASIS;
     return EPISTEMIC_TIERS[body?.basis]?.description || "";
 }
