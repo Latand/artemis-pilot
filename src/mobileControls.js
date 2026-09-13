@@ -10,6 +10,8 @@ import { requestRealSkyLoad } from "./bodies.js";
 import { toggleHelp } from "./hud.js";
 import { toggleScenarioMenu } from "./scenarios.js";
 import { toggleBHPlacementMode } from "./blackholes.js";
+import { setUiMode } from "./uiMode.js";
+import { setPaused, setWarp } from "./timeCtl.js";
 
 const $ = id => document.getElementById(id);
 
@@ -141,9 +143,9 @@ function initMenu(hooks) {
     $("mMenuClose")?.addEventListener("click", () => setMenu(false));
     menu?.addEventListener("click", e => { if (e.target === menu) setMenu(false); });
 
-    bindTap("mWarpDown", () => { G.warp = Math.max(1, G.warp / 2); });
-    bindTap("mWarpUp", () => { G.warp = Math.min(WARP_MAX, G.warp * 2); });
-    bindTap("mPause", () => { G.paused = !G.paused; });
+    bindTap("mWarpDown", () => { setWarp(Math.max(1, G.warp / 2), "mobile"); });
+    bindTap("mWarpUp", () => { setWarp(Math.min(WARP_MAX, G.warp * 2), "mobile"); });
+    bindTap("mPause", () => { setPaused(!G.paused, "mobile"); });
     bindTap("mFocusBtn", hooks.cycleFocus);
     bindTap("mScaleBtn", hooks.cycleScale);
     bindTap("mPredict", () => { G.predict = !G.predict; computePrediction(); });
@@ -154,7 +156,7 @@ function initMenu(hooks) {
         setConstellationsVisible(G.constellations);
     });
     bindTap("mNav", () => { setMenu(false); hooks.openNavigator?.(); });
-    bindTap("mBH", () => { setMenu(false); toggleBHPlacementMode(); });
+    bindTap("mBH", () => { setMenu(false); if (G.uiMode !== "direct") setUiMode("direct"); toggleBHPlacementMode(); });
     bindTap("mCatalog", () => { setMenu(false); hooks.openCatalogSearch?.(); });
     bindTap("mAuto", () => { setMenu(false); apTravelToFocus(toast); });
     bindTap("mApOff", () => apOff("cancelled", toast));

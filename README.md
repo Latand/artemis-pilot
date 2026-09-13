@@ -1,6 +1,6 @@
 # Artemis Pilot
 
-A physics-true VR travel simulator in Three.js. The framing: far-future AI-human hybrids cross between stars for centuries, living inside a simulation of the gravity outside the hull — this is that simulation. Fly from low Earth orbit to the Moon, Mars, Proxima Centauri, or the supermassive black hole at the galactic center; warp time up to a billion years per second; hand the stick to the autopilot and take it back at any keystroke; and watch the spacetime river field respond around planets and singularities.
+Artemis Pilot is a layered live-universe simulator in Three.js. The framing: far-future AI-human hybrids cross between stars for centuries, living inside the ship's simulation of the gravity outside the hull — this is that simulation. Fly from low Earth orbit to the Moon, Mars, Proxima Centauri, or the supermassive black hole at the galactic center; warp time to a billion years per second; hand the stick to the autopilot and take it back at any keystroke; and watch the spacetime river respond around planets and singularities. The simulation runs in layers — integrated local dynamics, analytic handoffs, reduced-order deep-time models, and labeled visual metaphors; the Model scope section states exactly what each layer covers.
 
 ![Artemis Pilot: Earth orbit with spacetime river flow](docs/screenshots/01-earth-orbit-river.png)
 
@@ -10,8 +10,8 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 - **WebXR / PSVR2 support**: sit inside the cockpit with full head tracking and fly on the Sense sticks, or switch to god mode and grab the solar system with your hands — one grip drags space, both grips zoom and twist it from tabletop Earth–Moon scale out to the Local Group. Controller haptics carry engine rumble and aero buffeting.
 - **Autopilot you can interrupt** (⇧T travel to focus, ⇧C circularize, ⇧X off): climbs out of the local gravity well, flies a flip-and-burn intercept, brakes, captures, and circularizes — any manual input returns control instantly.
 - **Travel simulations** (⇧S): curated pre-flight states with physics explainer cards — Hohmann to Mars, lunar free-return figure-8, Jupiter slingshot, photon-sphere dive, Local Group expansion, the voyage to Proxima, and the dive to SGR A*.
-- **Real-date 3D ephemerides**: planets and the Moon are seeded to today's sky, then propagated on their real inclinations with a symplectic KDK integrator and bounded energy at any warp. The HUD shows Gregorian calendar date next to MET, and the 2026-08-12 total solar eclipse emerges from the ephemeris within +-2 days.
-- **One clock at every scale**: past the integrator budget the system rides exact osculating Kepler orbits (barycenter coasting), so planets stay on their tracks and T+ runs at the commanded warp from real time to Myr/s — the MET reads years/kyr/Myr/Gyr at deep time.
+- **Real-date 3D ephemerides**: 3-D KDK or velocity-Verlet integration propagates Solar System bodies from orbital elements seeded to today's sky. Smoke tests bound selected trajectories; the 2026-08-12 total solar eclipse emerges from the ephemeris within ±2 days.
+- **One clock across model regimes**: high warp uses analytic osculating Kepler transitions with barycenter coasting after the integration step budget. The MET reports years, kyr, Myr, and Gyr at deep time.
 - **Visible gravitational lensing**: a screen-space point-mass lens around every black hole and SGR A* — Einstein ring, flipped background, magnified shadow — applied before bloom so the warped disk light glows.
 - **Stellar destinations with physics**: curated nearby/famous stars, a capped HYG tier-0 physical subset, plus SGR A* (4.15M solar masses, accretion disk, polar jets) as real-distance 3D RA/declination destinations with live gravity and contact surfaces — fly there and die in a photosphere or photon sphere of your choosing.
 - **Real catalog sky by default**: the Solar System sky and cosmic view load the real naked-eye HYG v4.1 layer on startup, with readable constellation/asterism guide linework and `?realsky=0` as the opt-out. Observer-relative photometry is used throughout: fly toward a star and it brightens by inverse-square, while the Sun dims by 1/d2 as you leave it behind.
@@ -20,13 +20,28 @@ A physics-true VR travel simulator in Three.js. The framing: far-future AI-human
 - **Streaming full-scale stellar field**: a bounded active-neighborhood layer keeps curated stars and indexed catalog rows in priority, then fills the ship's local sphere with deterministic seed-generated Milky Way stars past the per-type completeness handoff. The active set feeds gravity, contact, dominant-well orbit/capture, clock-rate, river, prediction, and lensing paths while staying capped for browser frame budgets.
 - **Durable catalog travel**: Shift+U browses the ship's active procedural/HYG neighborhood, HYG search focuses stable `hyg:<index>` targets directly, quicksave preserves those focus tokens, and older promoted HYG destinations still restore with their physical fields after a refresh.
 - **Mouse inertial control**: hold the ship marker deliberately, pull it through space, and release; the damped release velocity becomes the ship's new momentum.
-- **Cosmology fields**: physical Planck18-scale dark energy, suppressed inside bound systems where gravity dominates, plus a differential NFW Milky Way dark-matter halo with green acceleration vectors and Gyr/s-safe smooth-field jumps. The solar system rides its real 219-Myr galactic orbit.
-- **Deep-time cosmic evolution**: the Milky Way-Andromeda first passage lands around 3.9 Gyr and the merger by about 7.1 Gyr; the Sun runs through red giant, white dwarf, and inner-planet engulfment phases; star formation quenches into the degenerate era; and an extragalactic Schechter deep field with cosmic-web clustering reaches out to roughly 1 Gly.
+- **Cosmology fields**: Planck18-scale dark-energy terms are suppressed inside bound systems. Shift+O exposes a modeled differential NFW Milky Way surface with acceleration vectors. The NFW application remains under R2 physics review. Bound-system handling suppresses much of the applied effect in disk-regime states.
+- **Deep-time cosmic evolution**: the Milky Way and Andromeda dates form a contingent deterministic scenario under the chosen reduced-order equations and parameters. The scenario places first passage around 3.9 Gyr and merger around 7.1 Gyr. A Sun-only evolution track covers red-giant and white-dwarf phases. A Schechter deep field extends the rendered scene to about 1 Gly.
 - **Scale-aware universe rendering**: Solar System, Milky Way, and Local Group views use separate LOD cadences so zoomed-out frames skip near-field body/river/star updates while keeping the HYG sky, procedural Milky Way, and moving Local Group galaxies visible.
-- **Spacetime river view** with GPU particle flow around Earth, Moon, Sun, planets, black holes, physical dark-energy expansion, and halo readouts.
-- **Dynamic black holes** with configurable Schwarzschild radius, Paczynski-Wiita capture behavior, mergers, Hawking readouts, accretion visuals, and dark event-horizon cores.
+- **Spacetime river view**: a velocity-field visualization renders GPU particle flow around integrated bodies and compact objects. It also renders modeled dark-energy and halo terms.
+- **Dynamic black holes**: player-placed holes use configurable Schwarzschild radii and the Paczynski-Wiita pseudo-Newtonian approximation. Catalog and special-object black holes, including SGR A*, use the capped active-star Newtonian field. Merger bookkeeping, Hawking readouts, and accretion visuals cover the remaining black-hole features.
 - **Earth that looks alive**: day/night terminator with real city-lights map, ocean sun glint, camera-aware atmosphere; limb-darkened granulated Sun with an animated corona; magnitude/color-varied starfield; ACES filmic tone mapping.
 - **Contextual onboarding**: a one-time title overlay with the voyage lore, milestone hint cards, and persistence of camera, focus, warp, and UI state across refreshes.
+
+## Model scope
+
+- **Integrated dynamics**: 3-D KDK or velocity-Verlet advances Solar System ephemerides within the integration budget. RK4 advances the ship from all Solar System and player-placed-hole sources plus a capped, priority-ranked stellar subset. A separate RK4 path advances player-placed holes from Solar System bodies, gravitational debris, and other placed holes.
+- **Analytic handoffs**: analytic osculating Kepler transitions carry Solar System trajectories at high warp. Each handoff follows its own assumptions and test bounds.
+- **Reduced-order models**: deep-time galaxy motion, stellar population changes, and cosmic-era transitions use deterministic equations with fixed parameters. The Milky Way and Andromeda scenario depends on those choices.
+- **Visual metaphors**: the spacetime river is a velocity-field visualization. Particle flow and color encode terms in the active model.
+
+Current limits:
+
+- **General relativity**: support consists of weak-field Sun-only 1PN terms and the Paczynski-Wiita pseudo-Newtonian approximation for player-placed holes. Catalog and special-object black holes remain Newtonian in the capped active-star field. The simulator omits a general spacetime solver.
+- **Collisions**: spherical collision and contact classification omits hydrodynamics and fragmentation.
+- **Stellar evolution**: Sun-only stellar evolution changes rendered state and contact radii while solar gravitational mass stays fixed.
+- **Gravitational waves**: merger energy bookkeeping omits waveform generation and strain propagation.
+- **Gravity scale**: the model has bounded local active gravity and no galaxy-wide N-body integration.
 
 ## Screenshots
 

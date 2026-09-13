@@ -121,10 +121,10 @@ assert(
 
 const inputSrc = readFileSync(new URL("../src/input.js", import.meta.url), "utf8");
 assert(
-  inputSrc.includes('case "KeyB": toggleBHPlacementMode(); break;') &&
+  /case "KeyB":[^]*?toggleBHPlacementMode\(\);[^]*?break;/.test(inputSrc) &&
     inputSrc.includes('case "Escape":') &&
     inputSrc.includes("cancelBHPlacementMode()"),
-  "B should arm black-hole placement mode and Escape should cancel it",
+  "B should arm black-hole placement mode (now via the DIRECT-mode auto-switch) and Escape should cancel it",
 );
 
 const indexSrc = readFileSync(new URL("../index.html", import.meta.url), "utf8");

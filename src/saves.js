@@ -16,6 +16,7 @@ import {
 } from "./universe/activeStars.js";
 import { getSeed, setSeed } from "./universe/galaxy.js";
 import { getEpochMs, setEpochMs } from "./epoch.js";
+import { cancelTimeJump, jumpActive, jumpSaveWarp } from "./timeCtl.js";
 
 const SLOT = "artemis.quicksave.v1";
 const DEFAULT_SEED = 0x9e3779b9;
@@ -70,7 +71,7 @@ export function saveState() {
         v: 11,
         galaxySeed: getSeed(),
         epochMs,
-        g: Object.fromEntries(G_FIELDS.map(k => [k, G[k]])),
+        g: Object.fromEntries(G_FIELDS.map(k => [k, k === "warp" && jumpActive() ? jumpSaveWarp() : G[k]])),
         focusCatalog: focusStar && focusStar.catalog === "hyg-v41-promoted"
             ? { hygIndex: focusStar.hygIndex, name: focusStar.name }
             : null,
@@ -123,6 +124,8 @@ export async function loadState() {
     applyEpochMs(data.v >= 9 ? data.epochMs : null);
     const restoredStars = data.v >= 5 ? await restorePromotedCatalogStars(data.hygStars) : [];
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
+    // Saves restore wall-time values directly; loading cancels any jump in flight. ap_uiMode stays a device preference outside the save format.
+    cancelTimeJump("quickload");
     Object.assign(G, data.g);
     if (data.v >= 10 && data.log) restoreLog(data.log);
     else restoreLog(null);

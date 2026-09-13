@@ -2,27 +2,28 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
-  <meta name="description" content="Pilot a spacecraft through a live Three.js Earth-Moon and Solar System gravity sandbox with trajectory prediction, time warp, planets, black holes, and spacetime river flow." />
-  <meta property="og:title" content="Artemis Pilot" />
-  <meta property="og:description" content="Real-time Earth-Moon and Solar System gravity sandbox in Three.js." />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="Live universe simulator: fly from Earth orbit to black holes, warp time to a billion years per second, and watch a modeled universe evolve." />
+  <meta property="og:title" content="Artemis — Live Universe Simulator" />
+  <meta property="og:description" content="Live universe simulator: fly from Earth orbit to black holes, warp time to a billion years per second, and watch a modeled universe evolve." />
   <meta property="og:type" content="website" />
-  <meta property="og:image" content="/social-preview.jpg" />
+  <meta property="og:image" content="https://latand.github.io/artemis-pilot/social-preview.jpg" />
   <meta property="og:image:width" content="1280" />
   <meta property="og:image:height" content="640" />
   <meta property="og:image:alt" content="Artemis Pilot spacecraft orbiting Earth through a spacetime river field." />
   <meta name="twitter:card" content="summary_large_image" />
-  <meta name="twitter:title" content="Artemis Pilot" />
-  <meta name="twitter:description" content="Real-time Earth-Moon and Solar System gravity sandbox in Three.js." />
-  <meta name="twitter:image" content="/social-preview.jpg" />
+  <meta name="twitter:title" content="Artemis — Live Universe Simulator" />
+  <meta name="twitter:description" content="Live universe simulator: fly from Earth orbit to black holes, warp time to a billion years per second, and watch a modeled universe evolve." />
+  <meta name="twitter:image" content="https://latand.github.io/artemis-pilot/social-preview.jpg" />
   <meta name="twitter:image:alt" content="Artemis Pilot spacecraft orbiting Earth through a spacetime river field." />
   <meta name="theme-color" content="#04060a" />
-  <title>Artemis Pilot — Earth–Moon Gravity Sandbox</title>
+  <title>Artemis — Live Universe Simulator</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='42' cy='28' r='8' fill='%238b95a3'/%3E%3Cpath d='M7 52 C 24 51, 54 43, 59 18' stroke='%23ff4226' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Orbitron:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/src/style.css" />
+  <link rel="stylesheet" href="/src/explorerUI.css" />
   <style>
     #cinePanel { position: absolute; right: 18px; top: 166px; width: 260px; display: none; z-index: 7; padding: 12px; }
     #cinePanel .cineGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
@@ -36,7 +37,8 @@
     body.mode-clean #simsBtn, body.mode-clean #simsMenu, body.mode-clean #navBtn,
     body.mode-clean #navPanel, body.mode-clean #hygSearch, body.mode-clean #cinePanel,
     body.mode-clean #mobileUI, body.mode-clean .lbl, body.mode-clean #cosmicScale,
-    body.mode-clean #banner, body.mode-clean #toasts, body.mode-clean #navBall { display: none !important; }
+    body.mode-clean #banner, body.mode-clean #toasts, body.mode-clean #navBall,
+    body.mode-clean #timeDock { display: none !important; }
   </style>
 </head>
 <body>
@@ -57,7 +59,7 @@
             <path d="M2 17 C 10 17, 26 14, 27.5 7" stroke="#ff4226" stroke-width="2.1" fill="none" stroke-linecap="round"></path>
           </svg>
         </span>
-        <span class="brand__word">ARTEMIS<i>PILOT</i></span>
+        <span class="brand__word">ARTEMIS<i id="brandMode">PILOT</i></span>
       </div>
 
       <div class="met" id="met">T+ 00:00:00:00</div>
@@ -102,6 +104,47 @@
       <div id="navRead">HDG — · PRO —</div>
     </div>
 
+    <header id="exploreBar" aria-label="Exploration toolbar">
+      <button id="exploreHome" class="exploreBrand" type="button" aria-label="Explore Earth">ARTEMIS <span>SPACE EXPLORER</span></button>
+      <nav class="exploreModes" aria-label="Experience mode">
+        <button type="button" data-ui-mode="observe" aria-pressed="true">Explore</button>
+        <button type="button" data-ui-mode="pilot" aria-pressed="false">Pilot</button>
+        <button type="button" data-ui-mode="direct" aria-pressed="false">Create</button>
+      </nav>
+      <button id="exploreSearch" type="button">Find a world <span aria-hidden="true">↗</span></button>
+      <button id="exploreHelp" type="button" aria-label="Controls and help">?</button>
+    </header>
+    <aside id="explorePanel" aria-label="Explore space">
+      <div class="exploreEyebrow">YOUR VIEW <span id="exploreFollow">Following object</span></div>
+      <h1 id="exploreObject">Earth</h1><p id="exploreKind">Home planet</p>
+      <details id="exploreInfo" class="exploreInfo" open><summary>Object details</summary><dl class="exploreFacts" id="exploreFacts"></dl><p class="exploreBasis" id="exploreBasis"></p></details>
+      <button id="exploreRefocus" type="button" hidden>Return to object</button>
+      <details id="exploreDestinations" open><summary>Places to explore</summary>
+        <div class="explorePlaces">
+          <button type="button" data-destination="earth">Earth <span>Our world</span></button>
+          <button type="button" data-destination="moon">Moon <span>Nearby</span></button>
+          <button type="button" data-destination="jupiter">Jupiter <span>Giant planets</span></button>
+          <button type="button" data-destination="saturn">Saturn <span>Rings</span></button>
+          <button type="button" data-destination="sun">Sun <span>Watch a star age</span></button>
+          <button type="button" data-destination="proxima">Proxima <span>Beyond the Sun</span></button>
+        </div>
+        <button id="exploreScale" class="exploreTextButton" type="button">View the Milky Way ↗</button>
+        <button id="exploreCatalog" class="exploreTextButton" type="button">Search the star catalog ↗</button>
+      </details>
+      <button id="exploreGravity" type="button" aria-pressed="false">Gravity flow <span id="exploreGravityStatus">Natural view</span></button>
+      <p class="exploreNote">Gravity flow is a visual metaphor. Object motion follows the simulation.</p>
+    </aside>
+    <div id="exploreCamera" aria-label="Free camera controls">
+      <span>Drag to look · scroll to approach · WASD to move · Q/E up/down</span>
+      <div class="exploreMoveButtons">
+        <button type="button" data-camera-move="forward" aria-label="Move camera forward">Forward</button>
+        <button type="button" data-camera-move="back" aria-label="Move camera backward">Back</button>
+        <button type="button" data-camera-move="left" aria-label="Move camera left">Left</button>
+        <button type="button" data-camera-move="right" aria-label="Move camera right">Right</button>
+        <button type="button" data-camera-move="up" aria-label="Move camera up">Up</button>
+        <button type="button" data-camera-move="down" aria-label="Move camera down">Down</button>
+      </div>
+    </div>
     <!-- ============ TOP-RIGHT · MISSION + INSTRUMENTS ============ -->
     <div id="hudTR">
       <div class="panel panel--amber" id="objPanel">
@@ -124,6 +167,33 @@
 
       <div id="toasts"></div>
     </div>
+
+    <div id="evDock">
+      <button id="evBtn" type="button" aria-controls="evPanel" aria-expanded="false"><i id="evBtnDot" aria-hidden="true"></i>EVENTS</button>
+      <div id="evJumpChip" hidden>
+        <span id="evJumpChipLabel" aria-live="polite"></span>
+        <b id="evJumpChipEta"></b>
+        <button id="evJumpCancel" type="button" aria-label="Cancel time jump">CANCEL</button>
+      </div>
+    </div>
+
+    <aside id="evPanel" class="panel panel--amber" aria-label="Universe events">
+      <div class="panel__head"><span>EVENTS</span><span class="evPanel__mode">OBSERVE</span><button id="evClose" type="button" aria-label="Close events">×</button></div>
+      <section class="evSection" aria-labelledby="evLiveHead">
+        <h2 id="evLiveHead">LIVE</h2>
+        <div id="evLive"></div>
+        <div id="evLiveEmpty" class="evEmpty">NO ACTIVE CATACLYSM</div>
+      </section>
+      <section class="evSection" aria-labelledby="evTimelineHead">
+        <h2 id="evTimelineHead">TIMELINE</h2>
+        <div id="evTimeline"></div>
+      </section>
+      <section class="evSection" aria-labelledby="evRecentHead">
+        <h2 id="evRecentHead">RECENT</h2>
+        <div id="evRecent"></div>
+        <div id="evRecentEmpty" class="evEmpty">DISCOVERIES AND CATACLYSMS WILL APPEAR HERE</div>
+      </section>
+    </aside>
 
     <!-- go-to navigator: direct destination picker (ship / planets+moons / stars / holes) -->
     <button id="navBtn" class="uiBtn" type="button">◎ GO TO</button>
@@ -178,18 +248,39 @@
 
     <div id="banner"></div>
 
+    <div id="timeDock" class="panel" aria-label="Time controls">
+      <div class="tdHeading"><span>TIME</span><button id="exploreEvents" type="button">Explore events ↗</button></div>
+      <div id="tdDate">—</div>
+      <div id="tdRow">
+        <button id="tdStepDown" type="button" aria-label="Slower">◀◀</button>
+        <button id="tdPause" type="button" aria-label="Pause">▶</button>
+        <button id="tdStepUp" type="button" aria-label="Faster">▶▶</button>
+        <b id="tdWarpLabel">—</b>
+        <button id="tdRev" type="button" aria-label="Reverse time">Reverse</button>
+      </div>
+      <div class="tdSpeedRow"><label for="tdSpeed">Time per second</label><select id="tdSpeed" aria-label="Time per second"></select><span id="tdDirection">Forward</span></div>
+      <details class="tdFine"><summary>All speeds</summary><div id="tdRail" aria-label="Warp ladder"></div></details>
+      <div id="tdBlocked" role="status" aria-live="polite" hidden></div>
+      <div id="tdJump" hidden><span id="tdJumpLabel"></span><button id="tdCancel" type="button" aria-label="Cancel time jump">CANCEL</button></div>
+    </div>
+
     <!-- ============ CONTROLS REFERENCE ============ -->
     <div id="help">
       <div class="help__inner panel">
         <div class="help__title">CONTROLS<button id="helpClose" class="help__dismiss" type="button">✕ CLOSE</button></div>
         <div class="help__keys">
+          <div class="kb__sec">EXPLORATION</div>
+          <div class="kb"><span class="kb__k">W A S D / Q E</span><span class="kb__d">free camera: move forward, sideways, up and down in Explore</span></div>
+          <div class="kb"><span class="kb__k">DRAG / SCROLL</span><span class="kb__d">look around / approach an object; two fingers pan on touch screens</span></div>
+          <div class="kb"><span class="kb__k">SPACE / , .</span><span class="kb__d">pause time / change its speed; use Events for time jumps</span></div>
+          <div class="kb"><span class="kb__k">TAB</span><span class="kb__d">move keyboard focus between controls</span></div>
           <div class="kb__sec">FLIGHT</div>
-          <div class="kb"><span class="kb__k">W / ↑</span><span class="kb__d">main engine — thrust along the nose</span></div>
+          <div class="kb"><span class="kb__k">W / ↑</span><span class="kb__d">main engine: thrust along the nose</span></div>
           <div class="kb"><span class="kb__k">S / ↓</span><span class="kb__d">reverse thrust</span></div>
           <div class="kb"><span class="kb__k">A / D, ← / →</span><span class="kb__d">rotate ship</span></div>
           <div class="kb"><span class="kb__k">Q / E</span><span class="kb__d">RCS lateral translation</span></div>
           <div class="kb"><span class="kb__k">SHIFT</span><span class="kb__d">×4 boost (needed to lift off Earth)</span></div>
-          <div class="kb"><span class="kb__k">Z / X</span><span class="kb__d">throttle ÷ / × — no upper limit</span></div>
+          <div class="kb"><span class="kb__k">Z / X</span><span class="kb__d">throttle ÷ / ×; no upper limit</span></div>
           <div class="kb"><span class="kb__k">T / Y</span><span class="kb__d">hold prograde / retrograde</span></div>
 
           <div class="kb__sec">AUTOPILOT</div>
@@ -199,7 +290,7 @@
 
           <div class="kb__sec">TIME</div>
           <div class="kb"><span class="kb__k">1 – 9</span><span class="kb__d">time warp presets: real time … 1 yr/s</span></div>
-          <div class="kb"><span class="kb__k">, / .</span><span class="kb__d">warp ÷2 / ×2 — up to 1 Byr/s</span></div>
+          <div class="kb"><span class="kb__k">, / .</span><span class="kb__d">warp ÷2 / ×2; up to 1 Byr/s</span></div>
           <div class="kb"><span class="kb__k">SPACE</span><span class="kb__d">pause</span></div>
 
           <div class="kb__sec">CAMERA &amp; SCALE</div>
@@ -211,7 +302,7 @@
           <div class="kb"><span class="kb__k">J</span><span class="kb__d">toggle in-ship cabin view</span></div>
           <div class="kb"><span class="kb__k">0 / click label</span><span class="kb__d">focus ship / focus body</span></div>
           <div class="kb"><span class="kb__k">hold-drag ship</span><span class="kb__d">grab the ship, release with damped velocity</span></div>
-          <div class="kb"><span class="kb__k">RMB drag</span><span class="kb__d">pan — free camera, detached from any body</span></div>
+          <div class="kb"><span class="kb__k">RMB drag</span><span class="kb__d">pan the free camera (detached from any body)</span></div>
 
           <div class="kb__sec">VISUALIZATION</div>
           <div class="kb"><span class="kb__k">P</span><span class="kb__d">trajectory prediction on/off</span></div>
@@ -240,24 +331,12 @@
           <span class="fl--cyan">cyan</span> space infall ·
           <span class="fl--violet">violet</span> dark-energy expansion ·
           <span class="fl--mint">green</span> Milky Way halo ·
-          <span class="fl--amber">yellow</span> the nose. When cyan rivals red, the river wins — that's the turn.
+          <span class="fl--amber">yellow</span> the nose. When cyan rivals red, the river takes the turn.
         </div>
         <div class="help__note">
-          Physics runs live: RK4 world motion for Earth, Sun, Moon, planets, and
-          black holes, with Earth-local high-precision ship dynamics for launch,
-          landing, and atmosphere. All seven planets are in, true radii and μ,
-          each with its own SOI; you can land on the rocky ones.
-          Exponential Earth atmosphere below 160 km.
-          Black holes are real point masses (μ = r_s·c²/2) with the Paczyński–Wiita
-          potential for ISCO and capture. The river view follows v = √(2μ/r) and
-          uses a small visual core for tiny holes so their local direction stays readable. Dark energy adds the physical ΛCDM a = ΩΛH₀²r term,
-          visible from stellar-balance scale upward, and Shift+O adds the Milky Way dark-matter halo. Cosmic scale adds HYG real-star catalog points with estimated mass/radius/luminosity/temperature,
-          generated world-space stars, nearby named stars,
-          the Milky Way disk, Andromeda, Triangulum, and Local Group dwarf bodies.
-          Nearby named stars and a capped HYG physical subset are destinations with true light-year 3D RA/declination positions,
-          photosphere contact, and gravity in the live field. Holes and planets move through the live n-body field.
-          Drag to orbit the camera, scroll to zoom.
-          Aim for the Moon, capture orbit, land, come home — or dive into something dark.
+          <p>Planet and Moon motion comes from Solar System ephemerides advanced by KDK or velocity-Verlet integration; the sim hands off to analytic osculating Kepler orbits at high warp so planets stay on their tracks. RK4 advances your ship from all Solar System bodies and player-placed holes, plus a capped, priority-ranked subset of nearby stellar sources. A separate RK4 path advances player-placed holes from Solar System bodies, gravitational debris, and other placed holes. Deep-time events such as galaxy passages and stellar eras follow reduced-order equations: simplified models with fixed parameters.</p>
+          <p>The spacetime river is a velocity-field visualization, an honest picture of the pulls around you. Player-placed holes use the Paczynski-Wiita pseudo-Newtonian approximation. Catalog and special-object black holes, including SGR A*, use the capped active-star Newtonian field. Limited 1PN corrections cover weak-field motion near the Sun. Collisions are classified between simple spheres, with no melting or fragments. Only the Sun evolves as a star, changing its appearance and contact radius. Merger energy loss is bookkeeping; the engine carries no gravitational waveforms.</p>
+          <p>Galaxy-scale views skip galaxy-wide N-body integration, and the Milky Way and Andromeda dates play one modeled scenario whose real outcome stays uncertain. Shift+O toggles the modeled NFW dark-matter halo; its applied strength is under physics review and currently changes little inside the galactic disk. Drag to orbit the camera; scroll to zoom. You can land on the rocky planets. Aim for the Moon, capture orbit, land, and come home, or dive into something dark.</p>
         </div>
         <div class="help__cta">PRESS H OR START FLYING</div>
       </div>
@@ -377,13 +456,13 @@
             <path d="M2 17 C 10 17, 26 14, 27.5 7" stroke="#ff4226" stroke-width="2.1" fill="none" stroke-linecap="round"></path>
           </svg>
         </div>
-        <div id="introTitle">ARTEMIS PILOT</div>
-        <div id="introSub">VR TRAVEL SIMULATOR · LIVE PHYSICS</div>
+        <div id="introTitle">ARTEMIS</div>
+        <div id="introSub">EXPLORE SPACE &amp; TIME · MODELED PHYSICS</div>
         <div id="introLore">
-          The crossing takes centuries. Your body will be regrown at the far end;
-          your mind rides the ship. While the hull coasts between stars you live here,
-          inside a physics-true simulation of the gravity outside the wall.
-          Fly it, warp it, break it — the autopilot hands you the stick and takes it back whenever you ask.
+          Explore planets, stars and gravity at your own pace.
+          Move freely around a world and watch an orbit unfold in seconds.
+          Use time controls and Events to follow a star through billions of years.
+          Press H for the physics models and their limits, or switch to Pilot to fly the spacecraft.
         </div>
         <div id="introBtns">
           <button id="introEnter" class="uiBtn uiBtnHot">ENTER SIMULATION</button>

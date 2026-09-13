@@ -17,6 +17,7 @@ export const BH_META = []; // visual groups, parallel to the data arrays
 let H = {
     toast: () => { }, predict: () => { }, cataclysm: () => { },
     disrupt: () => "", absorbed: () => { },
+    event: () => { },
 };
 export function initBHHooks(hooks) { H = { ...H, ...hooks }; }
 
@@ -982,6 +983,7 @@ function tryMerge() {
                 addBlackHole(x, y, rs, vx, vy, false, ev);
                 WORLD.irreversibleFloorT = Math.max(WORLD.irreversibleFloorT, EPHT.t);
                 H.toast("⚫ Black-hole merger → r_s " + fmtKm(rs) + " · GW loss " + (gwLossFrac * 100).toFixed(1) + "%");
+                H.event?.("merger", "⚫ Black-hole merger → r_s " + fmtKm(rs) + " · GW loss " + (gwLossFrac * 100).toFixed(1) + "%");
                 return true;
             }
         }
@@ -1205,8 +1207,9 @@ function advanceDisruptions(dt) {
             continue;
         }
         const simDone = d.age >= d.duration;
-        const visibleDone = d.visual >= .96 && performance.now() - d.bornRt > 5000;
-        if (simDone && visibleDone) {
+        // Presentation progress may lag or race simulated completion; physical
+        // state changes publish as soon as the simulated disruption is done.
+        if (simDone) {
             const dx = d.x - BH.x[d.bh], dy = d.y - BH.y[d.bh];
             const r = Math.max(1e-9, Math.hypot(dx, dy));
             const horizon = Math.max(BH.rs[d.bh] * 1.08, 1e-6);

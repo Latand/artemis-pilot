@@ -1,0 +1,83 @@
+[
+  {
+    "command": "bun run smoke:brightness",
+    "exitCode": 0,
+    "tail": [
+      "============================================================",
+      "  51 PASSED   0 FAILED   (51 checks)",
+      "============================================================"
+    ]
+  },
+  {
+    "command": "bun run smoke:relview",
+    "exitCode": 0,
+    "tail": [
+      "  PASS  GLSL beaming formula parity guard",
+      "",
+      "relview smoke: 95 PASS, 0 FAIL"
+    ]
+  },
+  {
+    "command": "bun run smoke:core",
+    "exitCode": 0,
+    "tail": [
+      "core smoke passed"
+    ]
+  },
+  {
+    "command": "bun run smoke:universe",
+    "exitCode": 0,
+    "tail": [
+      "============================================================",
+      "  53 PASSED   0 FAILED   (53 checks)",
+      "============================================================"
+    ]
+  },
+  {
+    "command": "bun run smoke:xrperf",
+    "exitCode": 0,
+    "tail": [
+      "smoke-xrperf: all assertions passed"
+    ]
+  },
+  {
+    "command": "bun run smoke:tier1-runtime",
+    "exitCode": 0,
+    "tail": [
+      "group capacity math passed: 48 groups, total capacity 2372677",
+      "global priority order permutation check passed",
+      "tier1-runtime smoke passed"
+    ]
+  },
+  {
+    "command": "bun run smoke:saves",
+    "exitCode": 0,
+    "tail": [
+      "saves smoke passed"
+    ]
+  },
+  {
+    "command": "node scripts/smoke-realism-data.mjs",
+    "exitCode": 0,
+    "tail": [
+      "33 curated photometry records, temperature/magnitude ordering and continuous exposure: passed"
+    ]
+  },
+  {
+    "command": "bun run smoke:catalog",
+    "exitCode": 0,
+    "tail": [
+      "catalog smoke passed",
+      "$ node scripts/smoke-catalog.mjs"
+    ]
+  },
+  {
+    "command": "bun run smoke:physics3d",
+    "exitCode": 0,
+    "tail": [
+      "(f) determinism digest: -244107.734655,317788.030484,36266.9336653,-149443403.971,-11955472.3177,0.00000000000,-116960504.512,-253361850.784,-124922688.262,-937849713.434,-786878587.056,2802034286.03,3982807042.45,-68131906.8510,-40374144.7784,-226236506.989,178337035.423,1190804715.62,492539234.568,1711051889.79,-7570488.55781,5610539.10235,-5092427.69363,16848410.9224,4392850.02706,-36404972.0818,-130695864.927",
+      "physics3d smoke passed",
+      "$ node scripts/smoke-physics3d.mjs"
+    ]
+  }
+]

@@ -1,7 +1,7 @@
 {
   "name": "artemis-pilot",
   "version": "1.0.0",
-  "description": "Real-time Earth-Moon and Solar System gravity sandbox in Three.js.",
+  "description": "Layered live-universe simulator with local dynamics and scale-aware deep-time models.",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "catalog:athyg": "node scripts/build-athyg-tier1.mjs",
     "smoke:catalog": "node scripts/smoke-catalog.mjs",
     "smoke:core": "node scripts/smoke-core.mjs",
+    "smoke:science-copy": "node scripts/smoke-science-copy.mjs",
     "smoke:saves": "node scripts/smoke-saves.mjs",
     "smoke:stellar-live": "node scripts/smoke-stellar-live.mjs",
     "smoke:universe": "node scripts/smoke-universe.mjs",
@@ -26,7 +27,12 @@
     "smoke:lunar-elp": "node scripts/smoke-lunar-elp.mjs",
     "smoke:minor": "node scripts/smoke-minor.mjs",
     "smoke:tde": "node scripts/smoke-tde.mjs",
+    "smoke:contacts": "node scripts/smoke-contacts.mjs",
+    "smoke:events": "node scripts/smoke-events.mjs",
+    "smoke:approach": "node scripts/smoke-approach.mjs",
+    "test": "npm run smoke:approach && npm run smoke:events",
     "smoke:reverse": "node scripts/smoke-reverse.mjs",
+    "smoke:time-dock": "node scripts/smoke-time-dock.mjs",
     "smoke:relview": "node scripts/smoke-relview.mjs",
     "smoke:scaleladder": "node scripts/smoke-scaleladder.mjs",
     "smoke:ambient": "node scripts/smoke-ambient.mjs",
@@ -45,7 +51,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "smoke:determinism": "node scripts/smoke-determinism.mjs",
-    "smoke:exotic": "node scripts/smoke-exotic.mjs"
+    "smoke:exotic": "node scripts/smoke-exotic.mjs",
+    "smoke:explore-facts": "node scripts/smoke-explore-facts.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

@@ -1,28 +1,14 @@
 import * as THREE from "three";
+import { stellarExposure, STELLAR_PSF_GLSL, linearStarColor } from "./render/stellarAppearance.js";
 import { STAR_CATALOG_META } from "./constants.js";
 import { G } from "./state.js";
-import { dotTexture } from "./textures.js";
 import { PERF, markPerf } from "./perf.js";
-import { SKY_CURVE, bvToTeff, teffToRGB, sizePxForMag, skyDomeFade } from "./render/viewBrightness.js";
+import { bvToTeff, teffToRGB, skyDomeFade } from "./render/viewBrightness.js";
 
 const SKY_R = 5.92e6;
 const MAG_LIMIT = 6.5;
 const LABEL_R = SKY_R * 0.985;
 const LINE_R = SKY_R * 0.992;
-
-// Per-band size/opacity now come straight from the shared SKY_CURVE
-// (WP16 a3: constellation readability) instead of hand-tuned numbers, so a
-// bright star's dominance over a faint one is the same photometric ranking
-// every other star layer uses. Bands still exist to keep the draw-call
-// budget at 6 (one THREE.Points per band) — only their per-band size/opacity
-// values are now curve-derived, at each band's brightest (most legible) edge.
-const MAG_BAND_EDGES = [0.5, 1.5, 2.5, 3.5, 5.0, MAG_LIMIT];
-const MAG_BAND_OPACITY = [1.0, 1.0, .96, .88, .76, .6];
-const MAG_BANDS = MAG_BAND_EDGES.map((max, i) => ({
-    max,
-    size: sizePxForMag(i === 0 ? -1.2 : MAG_BAND_EDGES[i - 1], SKY_CURVE),
-    opacity: MAG_BAND_OPACITY[i],
-}));
 
 const ASTERISMS = [
     {
@@ -205,13 +191,11 @@ function dirFromRecord(vals, j, ix, iy, iz, out = new THREE.Vector3()) {
     return out.normalize();
 }
 
-// True Teff-based hue via the shared blackbody LUT (WP16 b): color is
-// intrinsic to the star, not brightened/dimmed by its apparent magnitude —
-// that job now belongs entirely to the per-band size/opacity curve above.
+// Temperature sets hue; every source retains its own measured magnitude.
 const _teffRGB = [1, 1, 1];
 function colorFromTemp(tempK, bv, c = new THREE.Color()) {
     teffToRGB(tempK > 0 ? tempK : bvToTeff(bv), _teffRGB);
-    c.setRGB(_teffRGB[0], _teffRGB[1], _teffRGB[2]);
+    linearStarColor(_teffRGB, c);
     return c;
 }
 
@@ -265,11 +249,6 @@ async function yieldIfNeeded(slice, budget = 6) {
     await idleSlice();
     slice.t = performance.now();
 }
-function magBandIndex(mag) {
-    for (let i = 0; i < MAG_BANDS.length; i++) if (mag <= MAG_BANDS[i].max) return i;
-    return -1;
-}
-
 function buildNameMap(meta, wanted = null) {
     const map = new Map();
     for (const row of meta.labels || []) {
@@ -362,7 +341,7 @@ async function addConstellations(parent, meta, vals, indexes) {
 
 async function addRealStars(parent, meta, vals, indexes) {
     const t0 = performance.now();
-    const bands = MAG_BANDS.map(() => ({ pos: [], col: [] }));
+    const bands = [{ pos: [], col: [], mag: [] }];
     const dir = new THREE.Vector3();
     const color = new THREE.Color();
     let visible = 0;
@@ -372,38 +351,62 @@ async function addRealStars(parent, meta, vals, indexes) {
         const mag = vals[j + indexes.mag];
         if (!Number.isFinite(mag) || mag > MAG_LIMIT) continue;
         dirFromRecord(vals, j, indexes.xPc, indexes.yPc, indexes.zPc, dir);
-        const bandIndex = magBandIndex(mag);
-        if (bandIndex < 0) continue;
-        const band = bands[bandIndex];
+        const band = bands[0];
         band.pos.push(dir.x * SKY_R, dir.y * SKY_R, dir.z * SKY_R);
         const bv = vals[j + indexes.bv];
         const tempK = indexes.tempK != null ? vals[j + indexes.tempK] : NaN;
         const c = colorFromTemp(tempK, Number.isFinite(bv) ? bv : .65, color);
         band.col.push(c.r, c.g, c.b);
+        band.mag.push(mag);
         visible++;
         if ((i & 2047) === 0) await yieldIfNeeded(slice);
     }
 
-    const sprite = dotTexture("rgba(255,255,255,1)", "rgba(190,210,255,0.48)");
     for (let i = 0; i < bands.length; i++) {
         const band = bands[i];
         if (!band.pos.length) continue;
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(band.pos), 3));
         g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(band.col), 3));
-        const mat = new THREE.PointsMaterial({
+        g.setAttribute("magnitude", new THREE.BufferAttribute(new Float32Array(band.mag), 1));
+        const mat = new THREE.ShaderMaterial({
+            uniforms: { uStellarExposure:stellarExposure, uFade:{value:1}, uDpr:{value:1} },
+            vertexShader: /* glsl */`
+                attribute float magnitude;
+                varying vec3 vColor;
+                varying float vFlux;
+                uniform float uDpr;
+                void main() {
+                    float size = clamp(2.5 * pow(10.0, -0.12 * (magnitude - 2.0)), 3.0, 7.0);
+                    gl_PointSize = size * uDpr;
+                    vFlux = pow(10.0, -0.4 * (magnitude - 3.0)) * 4.0 / (size * size);
+                    vColor = color;
+                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                }`,
+            fragmentShader: /* glsl */`
+                varying vec3 vColor;
+                varying float vFlux;
+                uniform float uFade;
+                ${STELLAR_PSF_GLSL}
+                void main() {
+                    float g = stellarPSF(gl_PointCoord);
+                    if (g < 0.001) discard;
+                    gl_FragColor = vec4(vColor * min(vFlux, 16.0) * uStellarExposure, g * uFade);
+                    #include <tonemapping_fragment>
+                    #include <colorspace_fragment>
+                }`,
             vertexColors: true,
-            size: MAG_BANDS[i].size,
-            sizeAttenuation: false,
-            transparent: true,
-            opacity: MAG_BANDS[i].opacity,
-            depthTest: false,
-            depthWrite: false,
-            map: sprite,
+            // Draw the infinite background in the opaque pass before bodies.
+            // Transparent sorting would otherwise paint it over a planet.
+            transparent: false, depthTest: false, depthWrite: false,
             blending: THREE.AdditiveBlending,
         });
-        mat.userData.baseOpacity = MAG_BANDS[i].opacity;
+        mat.userData.baseOpacity = 1;
         const pts = new THREE.Points(g, mat);
+        pts.onBeforeRender = renderer => {
+            mat.uniforms.uDpr.value = renderer.getPixelRatio();
+            mat.uniforms.uFade.value = mat.opacity;
+        };
         pts.frustumCulled = false;
         pts.renderOrder = -2;
         parent.add(pts);

@@ -62,11 +62,33 @@ const v10 = { v: 10, log: snapshot };
 log.restoreLog(JSON.parse(JSON.stringify(v10)).log);
 assert.deepEqual(log.serializeLog(), snapshot, "v10 save-style blob should carry log data");
 
+// The save format is versioned, so this asserts the contract rather than one
+// frozen number: whatever version saveState writes, loadState must accept it,
+// and the discovery log must still restore from LOG_FLOOR upwards. Pinning a
+// literal here is what went stale when the format moved from v10 to v11.
+const LOG_FLOOR = 10; // version at which the discovery log entered the format
 const savesSrc = readFileSync(new URL("../src/saves.js", import.meta.url), "utf8");
-assert.match(savesSrc, /v:\s*10/, "saveState should write v10");
-assert.match(savesSrc, /data\.v\s*>\s*10/, "loadState guard should accept v10");
+
+const written = savesSrc.match(/\bv:\s*(\d+)\b/);
+assert.ok(written, "saveState should write a numeric format version");
+const CURRENT = Number(written[1]);
+assert.ok(CURRENT >= LOG_FLOOR, `save version ${CURRENT} should not predate the discovery log`);
+
+const guard = savesSrc.match(/data\.v\s*>\s*(\d+)/);
+assert.ok(guard, "loadState should reject versions newer than it understands");
+assert.equal(Number(guard[1]), CURRENT,
+  `loadState guard accepts up to v${guard[1]} but saveState writes v${CURRENT}`);
+
+const floor = savesSrc.match(/data\.v\s*>=\s*(\d+)\s*&&\s*data\.log\)\s*restoreLog\(data\.log\)/);
+assert.ok(floor, "loadState should restore the discovery log from versioned saves");
+assert.equal(Number(floor[1]), LOG_FLOOR,
+  `discovery-log restore floor moved to v${floor?.[1]}, expected v${LOG_FLOOR}`);
+
 assert.match(savesSrc, /log:\s*serializeLog\(\)/, "saveState should include discovery log");
-assert.match(savesSrc, /data\.v\s*>=\s*10\s*&&\s*data\.log\)\s*restoreLog\(data\.log\)/, "v10 load should restore discovery log");
-assert.match(savesSrc, /else\s+restoreLog\(null\)/, "v9 load should migrate to empty log");
+assert.match(savesSrc, /else\s+restoreLog\(null\)/, "pre-log saves should migrate to an empty log");
+
+// A blob at the version saveState actually writes must round-trip the log.
+log.restoreLog(JSON.parse(JSON.stringify({ v: CURRENT, log: snapshot })).log);
+assert.deepEqual(log.serializeLog(), snapshot, `v${CURRENT} save-style blob should carry log data`);
 
 console.log("smoke-discovery ok");

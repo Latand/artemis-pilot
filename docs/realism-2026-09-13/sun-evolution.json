@@ -1,0 +1,17 @@
+{
+  "command": "bun run smoke:sun-evolution",
+  "exitCode": 0,
+  "rgbTip": {
+    "gyr": 7.5,
+    "radiusSolar": 170.08092343687977,
+    "engulfedPlanets": [
+      "Mercury",
+      "Venus"
+    ]
+  },
+  "whiteDwarf": {
+    "gyr": 9,
+    "radiusSolar": 0.0123,
+    "massSolar": 0.54
+  }
+}

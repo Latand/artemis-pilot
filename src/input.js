@@ -1,4 +1,4 @@
-import { WARPS, WARP_DIGIT_OFFSET, warpStepDown, warpStepUp, PL, STARS, BH_SIZES, K, LY_SCENE } from "./constants.js";
+import { WARPS, WARP_DIGIT_OFFSET, PL, STARS, BH_SIZES, K, LY_SCENE } from "./constants.js";
 import { MOONS, moonFocusIndex } from "./moons.js";
 import { G, keys, BH } from "./state.js";
 import { cam } from "./scene.js";
@@ -19,8 +19,10 @@ import { getCachedFocusedSystem } from "./universe/activeStars.js";
 import { planetFocusIndex, planetFocusValue } from "./universe/planetarySystem.js";
 import { setConstellationsVisible } from "./realSky.js";
 import { requestPlanetTexture, requestRealSkyLoad } from "./bodies.js";
-import { toggleCine } from "./cinematic.js";
+import { setCineOpen, toggleCine } from "./cinematic.js";
 import { toggleLog } from "./discoveryLog.js";
+import { isXrPresenting, setUiMode } from "./uiMode.js";
+import { setPaused, setWarp, stepWarp } from "./timeCtl.js";
 
 export function setFocus(f) {
     G.focus = f;
@@ -77,22 +79,27 @@ export function initInput(hooks) {
     window.addEventListener("blur", () => keys.clear());
 }
 function onKeyDown(e) {
+    const target = e.target;
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.code === "Tab" ||
+        target?.closest?.('input,textarea,select,button,a,summary,[contenteditable="true"]')) return;
     if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
     initAudio();
     if (thrustGain?.context) { initAmbient(thrustGain.context); resumeAmbient(); }
     keys.add(e.code);
     if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code) && help.shown) hideHelp();
+    if (G.uiMode === "observe" && !isXrPresenting() &&
+        ["KeyW", "KeyA", "KeyS", "KeyD", "KeyQ", "KeyE"].includes(e.code) && !e.shiftKey) return;
     if (e.code === "KeyZ" && !e.shiftKey) G.throttle = Math.max(.05, G.throttle / 1.3);
     if (e.code === "KeyX" && !e.shiftKey) G.throttle = Math.min(100, G.throttle * 1.3);
     if (e.code === "KeyX" && e.shiftKey) apOff("cancelled", toast);
-    if (e.code === "Comma") G.warp = warpStepDown(G.warp);
-    if (e.code === "Period") G.warp = warpStepUp(G.warp);
+    if (e.code === "Comma") stepWarp(-1, "keys");
+    if (e.code === "Period") stepWarp(1, "keys");
     if (e.repeat) return;
     switch (e.code) {
         case "Escape":
             if (isBHPlacementMode()) cancelBHPlacementMode();
             break;
-        case "Space": G.paused = !G.paused; break;
+        case "Space": setPaused(!G.paused, "keys"); break;
         case "KeyT":
             if (e.shiftKey) apTravelToFocus(toast);
             else G.hold = G.hold === "pro" ? null : "pro";
@@ -118,7 +125,10 @@ function onKeyDown(e) {
         case "Digit0": setFocus("ship"); break;
         case "KeyP":
             if (e.shiftKey) {
-                toggleCine();
+                if (G.uiMode !== "direct") {
+                    setUiMode("direct");
+                    setCineOpen(true);
+                } else toggleCine();
                 toast("Director panel");
             } else {
                 G.predict = !G.predict;
@@ -183,14 +193,17 @@ function onKeyDown(e) {
             }
             else focusNextStar();
             break;
-        case "KeyB": toggleBHPlacementMode(); break;
+        case "KeyB":
+            if (G.uiMode !== "direct") setUiMode("direct");
+            toggleBHPlacementMode();
+            break;
         case "KeyV": removeLastBH(); break;
         case "BracketLeft": BH.sizeIdx = Math.max(0, BH.sizeIdx - 1); break;
         case "BracketRight": BH.sizeIdx = Math.min(BH_SIZES.length - 1, BH.sizeIdx + 1); break;
         case "KeyH": toggleHelp(); break;
         default: {
             const m = e.code.match(/^Digit([1-9])$/);
-            if (m) G.warp = WARPS[Number(m[1]) - 1 + WARP_DIGIT_OFFSET];
+            if (m) setWarp(WARPS[Number(m[1]) - 1 + WARP_DIGIT_OFFSET], "keys");
         }
     }
 }

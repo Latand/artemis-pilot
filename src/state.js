@@ -5,6 +5,7 @@ export const G = {
     t: 0, tau: 0, x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
     heading: 0, pitch: 0, throttle: 1,
     warp: 60, paused: false,
+    uiMode: "observe",
     fuel: FUEL_DV0, infinite: true, dvUsed: 0,
     hold: null,                // 'pro' | 'retro' | null
     landed: null,              // null | {body:'earth'|'moon'|'planet', ang, i?}

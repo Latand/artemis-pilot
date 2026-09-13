@@ -34,6 +34,7 @@
 // how bright it happens to look from Sol.
 
 import * as THREE from "three";
+import { stellarExposure, STELLAR_VISIBILITY_GLSL, STELLAR_PSF_GLSL, linearStarColor } from "./stellarAppearance.js";
 import { PC_KM, K } from "../constants.js";
 import { worldToResidualArr } from "../universe/renderOrigin.js";
 import { relUniforms } from "../relView.js";
@@ -82,9 +83,11 @@ export function addTileToLayout(layout, tileId, count) {
 // hue comes from the Ballesteros B-V->Teff estimate feeding the same LUT the
 // other star layers use — replaces the old ad hoc 3-stop piecewise ramp.
 const _teffRGB = [1, 1, 1];
+const _linearColor = new THREE.Color();
 function ciColor(ci, out) {
     teffToRGB(bvToTeff(ci), _teffRGB);
-    out[0] = _teffRGB[0]; out[1] = _teffRGB[1]; out[2] = _teffRGB[2];
+    linearStarColor(_teffRGB, _linearColor);
+    out[0] = _linearColor.r; out[1] = _linearColor.g; out[2] = _linearColor.b;
 }
 
 // --- observer-relative magnitude -> size/alpha/HDR shader (WP16 a1) --------
@@ -111,40 +114,43 @@ uniform float uMaxPx;
 uniform float uMagLimit;
 uniform float uPcScene;
 uniform float uMagPenalty;
+uniform float uStellarExposure;
 ${VIEW_BRIGHTNESS_GLSL}
+${STELLAR_VISIBILITY_GLSL}
 ${RELATIVISTIC_VIEW_GLSL}
 void main() {
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     float dopplerD;
     vec3 abPos = relApplyView(mvPosition.xyz, teffK, dopplerD);
     vDoppler = dopplerD;
-    vColor = uBeta > 0.0 ? relTeffToRGB(teffK * dopplerD) : color;
+    vColor = color;
+    if (uBeta > 0.0) {
+        vec3 rgb = relTeffToRGB(teffK * dopplerD);
+        vColor = mix(rgb / 12.92, pow((rgb + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), rgb));
+    }
     float camDistPc = length(abPos) / uPcScene;
     float mag = obmApparentMagAt(absMag + uMagPenalty, camDistPc);
     gl_PointSize = hidden > 0.5 ? 0.0 : obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
-    vHdr = obmHdrIntensity(mag, uMagLimit) * pow(dopplerD, 4.0);
+    vHdr = stellarDisplayFlux(obmHdrIntensity(mag, uMagLimit) * pow(dopplerD, 4.0), uStellarExposure);
     gl_Position = projectionMatrix * vec4(abPos, 1.0);
+    // Sub-display flux can be rejected before rasterization. No catalog rows
+    // or physical sources are removed by this display-only cull.
+    if (hidden > 0.5 || vHdr * uStellarExposure < 0.001) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 }
 `;
 
-// PSF-style soft gaussian falloff (not a hard disc) with an HDR-boosted core
-// for the brightest stars, so they saturate toward white instead of clipping
-// into a flat disc (WP16 b).
 const FRAG = /* glsl */`
 varying vec3 vColor;
 varying float vHdr;
 uniform float uFade;
 uniform float uDim;
+${STELLAR_PSF_GLSL}
 void main() {
-    vec2 uv = gl_PointCoord - 0.5;
-    float r2 = dot(uv, uv);
-    float g = exp(-r2 * 14.0) + exp(-r2 * 60.0) * max(0.0, vHdr - 1.0) * 0.6;
-    if (g < 0.006) discard;
-    // uFade dissolves the whole Sun-bubble tier-1 field as the camera pulls out
-    // to galactic scale, where these ~2.5M near-Sun points would otherwise
-    // additively stack into a white ball brighter than the galactic core. The
-    // disk cloud already carries the statistical star field at that range.
-    gl_FragColor = vec4(vColor * max(vHdr, 1.0) * uDim, clamp(g, 0.0, 4.0) * uFade * uDim);
+    float g = stellarPSF(gl_PointCoord);
+    if (g < 0.001) discard;
+    gl_FragColor = vec4(vColor * min(vHdr, 16.0) * uStellarExposure, g * uFade * uDim);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
 }
 `;
 
@@ -158,6 +164,7 @@ function makeTier1Material({ dim = 1, magPenalty = 0 } = {}) {
             uMagLimit: { value: BRIGHTNESS_CURVE.magLimit },
             uPcScene: { value: PC_KM * K },
             uFade: { value: 1 },
+            uStellarExposure: stellarExposure,
             uDim: { value: dim },
             uMagPenalty: { value: magPenalty },
             uBeta: relUniforms.uBeta,
