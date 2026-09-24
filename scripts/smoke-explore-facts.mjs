@@ -62,17 +62,33 @@ async function focus(page, value, name) {
     return facts(page);
 }
 
-// Earth's and the planets' Sun distance and orbital speed come from the
-// simulation's approximate orbital phases. Those rows must say Simulated, the
-// unqualified rows must be gone, and the copy must not claim real positions.
-function simulatedOrbit(name, snapshot) {
-    check(/^\d+\.\d{3} AU$/.test(snapshot.rows['Simulated Sun distance']), `${name} labels its Sun distance as simulated, in AU`);
-    check(/^\d+\.\d{2} km\/s$/.test(snapshot.rows['Simulated orbital speed']), `${name} labels its orbital speed as simulated, in km/s`);
-    for (const unqualified of ['Distance from the Sun', 'Orbital speed']) {
-        check(!(unqualified in snapshot.rows), `${name} shows no unqualified "${unqualified}" row`);
+// Earth's and the planets' Sun distance and orbital speed come from the live
+// n-body state seeded from JPL's J2000 mean elements (issue #6). The rows use
+// plain labels, the copy names the source, and the values must match the
+// reference evaluated in-page for the same epoch to within 0.5%.
+function ephemerisOrbit(name, snapshot) {
+    check(/^\d+\.\d{3} AU$/.test(snapshot.rows['Sun distance']), `${name} reports its Sun distance in AU`);
+    check(/^\d+\.\d{2} km\/s$/.test(snapshot.rows['Orbital speed']), `${name} reports its orbital speed in km/s`);
+    for (const stale of ['Simulated Sun distance', 'Simulated orbital speed']) {
+        check(!(stale in snapshot.rows), `${name} no longer shows "${stale}"`);
     }
-    check(/simulated/i.test(snapshot.basis) && /approximate/i.test(snapshot.basis), `${name} copy says its simulated rows are approximate`);
-    check(!/planetary positions computed to today/i.test(snapshot.basis), `${name} copy does not claim real planetary positions`);
+    check(/JPL/.test(snapshot.basis) && /mean orbital elements/i.test(snapshot.basis), `${name} copy names the JPL mean-element source`);
+}
+async function referenceOrbit(page, key) {
+    return page.evaluate(async key => {
+        const { heliocentricPositionAt } = await import('/src/universe/planetElements.js');
+        const { epochOffsetSeconds } = await import('/src/epoch.js');
+        const { AU_KM, MU_S } = await import('/src/constants.js');
+        const t = epochOffsetSeconds() + (window.__G?.t || 0);
+        const p = heliocentricPositionAt(key, t, AU_KM);
+        return { rAu: p.r / AU_KM, vKmS: Math.sqrt(MU_S * (2 / p.r - 1 / p.a)) };
+    }, key);
+}
+function withinHalfPercent(name, snapshot, ref) {
+    const rAu = parseFloat(snapshot.rows['Sun distance']);
+    const v = parseFloat(snapshot.rows['Orbital speed']);
+    check(Math.abs(rAu / ref.rAu - 1) < 0.005, `${name} Sun distance ${rAu} AU within 0.5% of JPL ${ref.rAu.toFixed(4)} AU`);
+    check(Math.abs(v / ref.vKmS - 1) < 0.005, `${name} orbital speed ${v} km/s within 0.5% of JPL ${ref.vKmS.toFixed(3)} km/s`);
 }
 
 try {
@@ -95,7 +111,8 @@ try {
     check(/^5\.9\de24 kg$/.test(earth.rows.Mass), 'Earth reports mass in kg from its gravitational parameter');
     check(/^9\.8\d m\/s²$/.test(earth.rows['Surface gravity']), 'Earth reports surface gravity in m/s²');
     check(earth.rows.Basis === 'MEASURED', 'Earth is labelled as measured data');
-    simulatedOrbit('Earth', earth);
+    ephemerisOrbit('Earth', earth);
+    withinHalfPercent('Earth', earth, await referenceOrbit(page, 'EMB'));
 
     // ---- Earth's Moon: the one moon with its own gravitational parameter ----
     const moon = await visit(page, 'moon', () => __G.focus === 'moon');
@@ -134,7 +151,8 @@ try {
     check(/^6\.4\de23 kg$/.test(mars.rows.Mass), 'Mars reports mass in kg');
     check(/^3\.7\d m\/s²$/.test(mars.rows['Surface gravity']), 'Mars reports surface gravity');
     check(mars.rows.Basis === 'MEASURED', 'Mars is labelled as measured data');
-    simulatedOrbit('Mars', mars);
+    ephemerisOrbit('Mars', mars);
+    withinHalfPercent('Mars', mars, await referenceOrbit(page, 'MARS'));
 
     // ---- Jupiter: a planet from the PL table ----
     const jupiter = await visit(page, 'jupiter', () => __G.focus === 3);
@@ -142,7 +160,7 @@ try {
     check(/^1\.9\de27 kg$/.test(jupiter.rows.Mass), 'Jupiter reports mass in kg');
     check(/^2\d\.\d\d m\/s²$/.test(jupiter.rows['Surface gravity']), 'Jupiter reports surface gravity');
     check(jupiter.rows.Basis === 'MEASURED', 'Jupiter is labelled as measured data');
-    simulatedOrbit('Jupiter', jupiter);
+    ephemerisOrbit('Jupiter', jupiter);
 
     // ---- Sun: a modeled body, so its numbers come from the evolution model ----
     const sun = await visit(page, 'sun', () => __G.focus === 'sun');

@@ -421,7 +421,10 @@ body.mode-xr { --time-dock-bottom: 76px; }
   padding: 7px 9px; font-size: 10px; line-height: 1.35; letter-spacing: .06em; }
 #tdJump { display: flex; justify-content: center; align-items: center; gap: 10px;
   border-color: rgba(84,198,255,.4); background: rgba(8,28,40,.6); color: var(--ice); }
-#tdJump[hidden], #tdBlocked[hidden] { display: none !important; }
+#tdLimited { margin-top: 8px; border: 1px solid rgba(255,196,92,.42);
+  border-radius: var(--r-xs); background: rgba(52,38,10,.58); color: #ffd79a;
+  padding: 7px 9px; font-size: 10px; line-height: 1.35; letter-spacing: .06em; }
+#tdJump[hidden], #tdBlocked[hidden], #tdLimited[hidden] { display: none !important; }
 #tdCancel { padding: 5px 8px; font-size: 9px; letter-spacing: .12em; color: var(--ink-2); }
 
 /* ---- attitude / heading dial (navball) ---- */

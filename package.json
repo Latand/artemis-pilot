@@ -53,7 +53,14 @@
     "preview": "vite preview",
     "smoke:determinism": "node scripts/smoke-determinism.mjs",
     "smoke:exotic": "node scripts/smoke-exotic.mjs",
-    "smoke:explore-facts": "node scripts/smoke-explore-facts.mjs"
+    "smoke:explore-facts": "node scripts/smoke-explore-facts.mjs",
+    "smoke:planet-phases": "node scripts/smoke-planet-phases.mjs",
+    "smoke:galaxy-model": "node scripts/smoke-galaxy-model.mjs",
+    "catalog:galaxies": "node scripts/build-galaxy-catalogs.mjs",
+    "smoke:galaxy-catalogs": "node scripts/smoke-galaxy-catalogs.mjs",
+    "smoke:deep-clock": "node scripts/smoke-deep-clock.mjs",
+    "smoke:deep-time": "node scripts/smoke-deep-time.mjs",
+    "smoke:deep-stars": "node scripts/smoke-deep-stars.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

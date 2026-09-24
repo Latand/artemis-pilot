@@ -1,7 +1,8 @@
 import { K, LY_KM, MU_S, R_SUN } from "../constants.js";
 import { hygCatalogMetaUrl, loadHygCatalogData } from "./catalogData.js";
-import { equatorialKmToGal, galToEquatorialKmInto } from "./coords.js";
-import { starPositionAt } from "./galaxy.js";
+import { SUN_GAL, worldKmToGalFromInto, galToWorldKmFromInto } from "./coords.js";
+import { starPositionAt, DEEP_CATALOG, deepCatalogReachPc } from "./galaxy.js";
+import { solarGalacticStateAt } from "./solarOrbit.js";
 import { DISP, vCirc } from "./astroConstants.js";
 import { gaussian, hashInts, makeRNG, splitSeed } from "./prng.js";
 
@@ -33,7 +34,9 @@ const INDEX_APPLY_STEP_MAX = 4096;
 // starPositionAt itself (which IS exported) still does the actual per-frame
 // trig; this only derives the (Rg,X,phi0,Omega0,kappa0) input it needs.
 const TIER0_VEL_SALT = 0x54494552; // 'TIER', arbitrary fixed salt
-const TIER0_MOTION = new Map(); // index -> {epiRg,epiX,epiPhi0,epiOmega0,epiKappa0,epiNu,vz}, derived once per row and cached
+// index -> {gx,gy,gz (epoch galactocentric pc), epiRg,epiX,epiPhi0,epiOmega0,epiKappa0,epiNu,vz},
+// derived once per row and cached (cleared when a different catalog registers)
+const TIER0_MOTION = new Map();
 
 // Sun's own vertical epicyclic frequency ν=sqrt(4πGρ_mid), reused as a shared
 // approximation for every tier-0 row: galaxy.js derives ν per-position from
@@ -81,7 +84,7 @@ function tier0SeedInts(index) {
     return [0, index];
 }
 
-function tier0MotionFor(index, gx, gy) {
+function tier0MotionFor(index, gx, gy, gz) {
     let m = TIER0_MOTION.get(index);
     if (m) return m;
     const [tag, seedId] = tier0SeedInts(index);
@@ -100,9 +103,17 @@ function tier0MotionFor(index, gx, gy) {
     const phi0 = Math.atan2(yKm, xKm);
     let Rg = Rpc - xKm / PC_KM, X = Xkm / PC_KM;
     if (!(Rg > 0) || X > 0.5 * Rg) { Rg = Rpc; X = 0; } // same linearization-breakdown guard as galaxy.js's computeEpicyclic
-    m = { epiRg: Rg, epiX: X, epiPhi0: phi0, epiOmega0: Omega0, epiKappa0: kappa0, epiNu: TIER0_NU_S, vz: W };
+    m = { gx, gy, gz, epiRg: Rg, epiX: X, epiPhi0: phi0, epiOmega0: Omega0, epiKappa0: kappa0, epiNu: TIER0_NU_S, vz: W };
     TIER0_MOTION.set(index, m);
     return m;
+}
+
+// The Sun (galactocentric pc) at the instant positions are being evaluated
+// for; one closed-form evaluation per distinct simT.
+const SUN_AT = { t: 0, x: SUN_GAL[0], y: SUN_GAL[1], z: SUN_GAL[2], vx: 0, vy: 0, vz: 0 };
+function sunAt(simT) {
+    if (SUN_AT.t !== simT) { solarGalacticStateAt(simT, SUN_AT); SUN_AT.t = simT; }
+    return SUN_AT;
 }
 
 // Advances a catalog star's epoch position (xKm,yKm,zKm) to simT seconds,
@@ -112,12 +123,22 @@ function tier0MotionFor(index, gx, gy) {
 // position untouched (no round-trip through the galactocentric frame at
 // all), matching the "positions must remain EXACTLY the catalog position at
 // simT=0" contract.
+//
+// The catalog is a snapshot around the Sun AT THE EPOCH, so its initial
+// galactocentric state uses the epoch Sun (SUN_GAL), is propagated on the
+// star's own orbit, and is expressed relative to the Sun at simT. Converting
+// with the moving anchor instead counted the Galactic rotation twice: stars
+// within 20 pc sat ~230 pc away after 1 Myr and 12-18 kpc away after 100 Myr.
 function tier0PositionAt(index, xKm, yKm, zKm, simT, out) {
     if (simT === 0) { out[0] = xKm; out[1] = yKm; out[2] = zKm; return out; }
-    const [gx, gy, gz] = equatorialKmToGal(xKm, yKm, zKm);
-    const mot = tier0MotionFor(index, gx, gy);
-    starPositionAt({ gx, gy, gz, ...mot }, simT, GAL_MOTION_SCRATCH);
-    galToEquatorialKmInto(GAL_MOTION_SCRATCH[0], GAL_MOTION_SCRATCH[1], GAL_MOTION_SCRATCH[2], out);
+    let mot = TIER0_MOTION.get(index);
+    if (!mot) {
+        worldKmToGalFromInto(xKm, yKm, zKm, SUN_GAL[0], SUN_GAL[1], SUN_GAL[2], GAL_MOTION_SCRATCH);
+        mot = tier0MotionFor(index, GAL_MOTION_SCRATCH[0], GAL_MOTION_SCRATCH[1], GAL_MOTION_SCRATCH[2]);
+    }
+    starPositionAt(mot, simT, GAL_MOTION_SCRATCH);
+    const sun = sunAt(simT);
+    galToWorldKmFromInto(GAL_MOTION_SCRATCH[0], GAL_MOTION_SCRATCH[1], GAL_MOTION_SCRATCH[2], sun.x, sun.y, sun.z, out);
     return out;
 }
 
@@ -413,6 +434,7 @@ export function registerHygCatalog(meta, values, options = {}) {
     if (!(count > 0) || count < meta.count) return false;
     const sig = catalogSignature(meta, vals);
     const sameCatalog = sig === SIGNATURE;
+    if (!sameCatalog) TIER0_MOTION.clear(); // row indices name different stars now
     META = meta;
     VALS = vals;
     LABELS = new Map((meta.labels || []).map(row => [row[0], row]));
@@ -511,6 +533,15 @@ export function hygStarByIndex(index, simT = 0) {
     };
 }
 
+// Catalog stars within radiusPc of the Sun-relative world point (wx,wy,wz)
+// AT sim time simT. The spatial index holds epoch positions, so in deep time
+// the scan reaches further (galaxy.js deepCatalogReachPc: stars that drifted
+// in from up to DEEP_CATALOG.marginMaxPc beyond the radius) and filters on
+// each star's position at simT. Past DEEP_CATALOG.cutoffSec the catalog has
+// dispersed (< 0.2 stars expected within reach) and the local procedural
+// tier, whose thinned candidates return as the coverage fades
+// (catalogRetentionAt), supplies the neighbourhood alone.
+const DEEP_SCRATCH = [0, 0, 0];
 export function sampleHygStarsNear(wx, wy, wz, radiusPc = 20, limit = 96, simT = 0) {
     if (!META || !VALS || !INDEX_READY) return [];
     const gx = wx / PC_KM, gy = wy / PC_KM, gz = wz / PC_KM;
@@ -524,12 +555,20 @@ export function sampleHygStarsNear(wx, wy, wz, radiusPc = 20, limit = 96, simT =
         tier0SimTBucket(simT),
     ].join(":");
     if (SAMPLE_CACHE.key === key) return SAMPLE_CACHE.stars;
+    const deep = simT !== 0;
+    if (deep && Math.abs(simT) >= DEEP_CATALOG.cutoffSec) {
+        SAMPLE_CACHE.key = key;
+        SAMPLE_CACHE.stars = [];
+        return SAMPLE_CACHE.stars;
+    }
     const stride = META.stride || 10;
     const r2 = radiusPc * radiusPc;
+    const scan = deep ? radiusPc + (deepCatalogReachPc(simT) - DEEP_CATALOG.radiusPc) : radiusPc;
+    const scan2 = scan * scan;
     const found = [];
-    const ciLo = Math.floor((gx - radiusPc) / INDEX_CELL_PC), ciHi = Math.floor((gx + radiusPc) / INDEX_CELL_PC);
-    const cjLo = Math.floor((gy - radiusPc) / INDEX_CELL_PC), cjHi = Math.floor((gy + radiusPc) / INDEX_CELL_PC);
-    const ckLo = Math.floor((gz - radiusPc) / INDEX_CELL_PC), ckHi = Math.floor((gz + radiusPc) / INDEX_CELL_PC);
+    const ciLo = Math.floor((gx - scan) / INDEX_CELL_PC), ciHi = Math.floor((gx + scan) / INDEX_CELL_PC);
+    const cjLo = Math.floor((gy - scan) / INDEX_CELL_PC), cjHi = Math.floor((gy + scan) / INDEX_CELL_PC);
+    const ckLo = Math.floor((gz - scan) / INDEX_CELL_PC), ckHi = Math.floor((gz + scan) / INDEX_CELL_PC);
     for (let ci = ciLo; ci <= ciHi; ci++)
         for (let cj = cjLo; cj <= cjHi; cj++)
             for (let ck = ckLo; ck <= ckHi; ck++) {
@@ -537,10 +576,18 @@ export function sampleHygStarsNear(wx, wy, wz, radiusPc = 20, limit = 96, simT =
                 if (!bucket) continue;
                 for (const i of bucket) {
                     const base = i * stride;
-                    const dx = VALS[base + FIELD.x] - gx;
-                    const dy = VALS[base + FIELD.y] - gy;
-                    const dz = VALS[base + FIELD.z] - gz;
-                    const d2 = dx * dx + dy * dy + dz * dz;
+                    let dx = VALS[base + FIELD.x] - gx;
+                    let dy = VALS[base + FIELD.y] - gy;
+                    let dz = VALS[base + FIELD.z] - gz;
+                    let d2 = dx * dx + dy * dy + dz * dz;
+                    if (deep) {
+                        if (d2 > scan2) continue;
+                        tier0PositionAt(i, VALS[base + FIELD.x] * PC_KM, VALS[base + FIELD.y] * PC_KM, VALS[base + FIELD.z] * PC_KM, simT, DEEP_SCRATCH);
+                        dx = DEEP_SCRATCH[0] / PC_KM - gx;
+                        dy = DEEP_SCRATCH[1] / PC_KM - gy;
+                        dz = DEEP_SCRATCH[2] / PC_KM - gz;
+                        d2 = dx * dx + dy * dy + dz * dz;
+                    }
                     if (d2 <= r2) {
                         const mass = VALS[base + FIELD.mass];
                         found.push({ index: i, d2, score: mass / Math.max(d2, .0001) });

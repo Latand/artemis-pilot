@@ -4,6 +4,7 @@ import { STAR_CATALOG_META } from "./constants.js";
 import { G } from "./state.js";
 import { PERF, markPerf } from "./perf.js";
 import { bvToTeff, teffToRGB, skyDomeFade } from "./render/viewBrightness.js";
+import { ensureWorldFrameRecords } from "./universe/coords.js";
 
 const SKY_R = 5.92e6;
 const MAG_LIMIT = 6.5;
@@ -430,6 +431,8 @@ async function loadRealSky() {
         count: Math.floor(vals.length / HYG_FIELDS.length),
         labels: SKY_LABEL_ROWS,
     };
+    // Equatorial catalog -> world (ecliptic J2000) frame, like every layer.
+    ensureWorldFrameRecords(meta, vals, meta.stride, fieldIndex(meta, "xPc"), fieldIndex(meta, "yPc"), fieldIndex(meta, "zPc"));
     const indexes = {
         xPc: fieldIndex(meta, "xPc"),
         yPc: fieldIndex(meta, "yPc"),

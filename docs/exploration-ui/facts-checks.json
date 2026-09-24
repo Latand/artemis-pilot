@@ -4,12 +4,13 @@
     "Earth reports mass in kg from its gravitational parameter",
     "Earth reports surface gravity in m/s²",
     "Earth is labelled as measured data",
-    "Earth labels its Sun distance as simulated, in AU",
-    "Earth labels its orbital speed as simulated, in km/s",
-    "Earth shows no unqualified \"Distance from the Sun\" row",
-    "Earth shows no unqualified \"Orbital speed\" row",
-    "Earth copy says its simulated rows are approximate",
-    "Earth copy does not claim real planetary positions",
+    "Earth reports its Sun distance in AU",
+    "Earth reports its orbital speed in km/s",
+    "Earth no longer shows \"Simulated Sun distance\"",
+    "Earth no longer shows \"Simulated orbital speed\"",
+    "Earth copy names the JPL mean-element source",
+    "Earth Sun distance 1.003 AU within 0.5% of JPL 1.0032 AU",
+    "Earth orbital speed 29.68 km/s within 0.5% of JPL 29.689 km/s",
     "Moon reports its radius",
     "Moon reports mass 7.35e22 kg",
     "Moon reports surface gravity 1.62 m/s²",
@@ -25,21 +26,21 @@
     "Mars reports mass in kg",
     "Mars reports surface gravity",
     "Mars is labelled as measured data",
-    "Mars labels its Sun distance as simulated, in AU",
-    "Mars labels its orbital speed as simulated, in km/s",
-    "Mars shows no unqualified \"Distance from the Sun\" row",
-    "Mars shows no unqualified \"Orbital speed\" row",
-    "Mars copy says its simulated rows are approximate",
-    "Mars copy does not claim real planetary positions",
+    "Mars reports its Sun distance in AU",
+    "Mars reports its orbital speed in km/s",
+    "Mars no longer shows \"Simulated Sun distance\"",
+    "Mars no longer shows \"Simulated orbital speed\"",
+    "Mars copy names the JPL mean-element source",
+    "Mars Sun distance 1.55 AU within 0.5% of JPL 1.5499 AU",
+    "Mars orbital speed 23.72 km/s within 0.5% of JPL 23.719 km/s",
     "Jupiter reports mass in kg",
     "Jupiter reports surface gravity",
     "Jupiter is labelled as measured data",
-    "Jupiter labels its Sun distance as simulated, in AU",
-    "Jupiter labels its orbital speed as simulated, in km/s",
-    "Jupiter shows no unqualified \"Distance from the Sun\" row",
-    "Jupiter shows no unqualified \"Orbital speed\" row",
-    "Jupiter copy says its simulated rows are approximate",
-    "Jupiter copy does not claim real planetary positions",
+    "Jupiter reports its Sun distance in AU",
+    "Jupiter reports its orbital speed in km/s",
+    "Jupiter no longer shows \"Simulated Sun distance\"",
+    "Jupiter no longer shows \"Simulated orbital speed\"",
+    "Jupiter copy names the JPL mean-element source",
     "Sun reports an effective temperature",
     "Sun reports luminosity in solar units",
     "Sun reports mass in solar units",
@@ -54,9 +55,9 @@
     "Catalog star does not invent orbital speed",
     "Catalog star does not invent simulated orbital speed",
     "No fact renders NaN, undefined or Infinity",
-    "interstellar viewing distance uses a light-year unit (0.89 ly)",
+    "interstellar viewing distance uses a light-year unit (0.93 ly)",
     "galactic viewing distance uses a light-year unit (1.3 kly)",
-    "intergalactic viewing distance uses a light-year unit (126.3 kly)",
+    "intergalactic viewing distance uses a light-year unit (94.6 kly)",
     "Viewing distance never prints a raw kilometre figure at interstellar scale",
     "Object details opens on a 390 px phone",
     "Earth: all 7 values sit on one line at 390×844 without overlap or overflow",
@@ -74,21 +75,21 @@
         "Radius": "6,371 km",
         "Mass": "5.97e24 kg",
         "Surface gravity": "9.82 m/s²",
-        "Simulated Sun distance": "1.015 AU",
-        "Simulated orbital speed": "29.33 km/s",
+        "Sun distance": "1.003 AU",
+        "Orbital speed": "29.68 km/s",
         "Basis": "MEASURED",
         "Viewing distance": "34,000 km"
       },
-      "basis": "Radius, mass and surface gravity are measured. Simulated rows follow this model's approximate orbits and can differ from real values."
+      "basis": "Radius, mass and surface gravity are measured. Sun distance and orbital speed come from the live n-body simulation, started from JPL's J2000 mean orbital elements for today's date (within about 0.5% of the reference near the present); they evolve with the simulation."
     },
     "moon": {
       "rows": {
         "Radius": "1,737 km",
         "Mass": "7.35e22 kg",
         "Surface gravity": "1.62 m/s²",
-        "Distance from Earth": "387,662 km",
+        "Distance from Earth": "390,101 km",
         "Basis": "MEASURED",
-        "Viewing distance": "10,214 km"
+        "Viewing distance": "10,231 km"
       },
       "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
     },
@@ -212,24 +213,24 @@
         "Radius": "3,390 km",
         "Mass": "6.42e23 kg",
         "Surface gravity": "3.73 m/s²",
-        "Simulated Sun distance": "1.391 AU",
-        "Simulated orbital speed": "26.33 km/s",
+        "Sun distance": "1.550 AU",
+        "Orbital speed": "23.72 km/s",
         "Basis": "MEASURED",
         "Viewing distance": "23,727 km"
       },
-      "basis": "Radius, mass and surface gravity are measured. Simulated rows follow this model's approximate orbits and can differ from real values."
+      "basis": "Radius, mass and surface gravity are measured. Sun distance and orbital speed come from the live n-body simulation, started from JPL's J2000 mean orbital elements for today's date (within about 0.5% of the reference near the present); they evolve with the simulation."
     },
     "jupiter": {
       "rows": {
         "Radius": "69,911 km",
         "Mass": "1.90e27 kg",
         "Surface gravity": "25.92 m/s²",
-        "Simulated Sun distance": "5.343 AU",
-        "Simulated orbital speed": "12.71 km/s",
+        "Sun distance": "5.302 AU",
+        "Orbital speed": "12.82 km/s",
         "Basis": "MEASURED",
         "Viewing distance": "489,377 km"
       },
-      "basis": "Radius, mass and surface gravity are measured. Simulated rows follow this model's approximate orbits and can differ from real values."
+      "basis": "Radius, mass and surface gravity are measured. Sun distance and orbital speed come from the live n-body simulation, started from JPL's J2000 mean orbital elements for today's date (within about 0.5% of the reference near the present); they evolve with the simulation."
     },
     "sun": {
       "rows": {
@@ -238,7 +239,7 @@
         "Luminosity": "1.000 L☉",
         "Mass": "1.000 M☉",
         "Basis": "MODELED",
-        "Viewing distance": "2,600,000 km"
+        "Viewing distance": "2,540,436 km"
       },
       "basis": "A published physical model, simplified to run live. Right shape, approximate numbers."
     },
@@ -257,7 +258,7 @@
         "Mass": "0.122 M☉",
         "Distance from the Sun": "4.25 ly",
         "Basis": "MEASURED",
-        "Viewing distance": "5,916,539 km"
+        "Viewing distance": "6,722,121 km"
       },
       "basis": "Real data: catalog stars, real exoplanets, planetary positions computed to today's date."
     },
@@ -265,7 +266,7 @@
       {
         "name": "interstellar",
         "ly": 20,
-        "value": "0.89 ly"
+        "value": "0.93 ly"
       },
       {
         "name": "galactic",
@@ -275,7 +276,7 @@
       {
         "name": "intergalactic",
         "ly": 5000000,
-        "value": "126.3 kly"
+        "value": "94.6 kly"
       }
     ],
     "phoneLayout": {
@@ -306,20 +307,20 @@
             "labelRight": 110
           },
           {
-            "label": "Simulated Sun distance",
-            "value": "1.015 AU",
+            "label": "Sun distance",
+            "value": "1.003 AU",
             "valueLines": 1,
-            "valueLeft": 156,
+            "valueLeft": 152,
             "valueRight": 199,
-            "labelRight": 144
+            "labelRight": 97
           },
           {
-            "label": "Simulated orbital speed",
-            "value": "29.33 km/s",
+            "label": "Orbital speed",
+            "value": "29.68 km/s",
             "valueLines": 1,
             "valueLeft": 141,
             "valueRight": 199,
-            "labelRight": 129
+            "labelRight": 99
           },
           {
             "label": "Basis",
@@ -371,11 +372,11 @@
           },
           {
             "label": "Distance from Earth",
-            "value": "387,663 km",
+            "value": "390,100 km",
             "valueLines": 1,
-            "valueLeft": 139,
+            "valueLeft": 137,
             "valueRight": 199,
-            "labelRight": 127
+            "labelRight": 125
           },
           {
             "label": "Basis",
@@ -458,20 +459,20 @@
             "labelRight": 110
           },
           {
-            "label": "Simulated Sun distance",
-            "value": "1.391 AU",
+            "label": "Sun distance",
+            "value": "1.550 AU",
             "valueLines": 1,
-            "valueLeft": 157,
+            "valueLeft": 153,
             "valueRight": 199,
-            "labelRight": 145
+            "labelRight": 97
           },
           {
-            "label": "Simulated orbital speed",
-            "value": "26.33 km/s",
+            "label": "Orbital speed",
+            "value": "23.72 km/s",
             "valueLines": 1,
-            "valueLeft": 141,
+            "valueLeft": 144,
             "valueRight": 199,
-            "labelRight": 129
+            "labelRight": 99
           },
           {
             "label": "Basis",
@@ -501,7 +502,7 @@
             "label": "Radius",
             "value": "696,340 km · 1.00 R☉",
             "valueLines": 1,
-            "valueLeft": 85,
+            "valueLeft": 85.125,
             "valueRight": 199,
             "labelRight": 63
           },
@@ -517,7 +518,7 @@
             "label": "Luminosity",
             "value": "1.000 L☉",
             "valueLines": 1,
-            "valueLeft": 150,
+            "valueLeft": 150.125,
             "valueRight": 199,
             "labelRight": 85
           },
@@ -525,7 +526,7 @@
             "label": "Mass",
             "value": "1.000 M☉",
             "valueLines": 1,
-            "valueLeft": 147,
+            "valueLeft": 147.125,
             "valueRight": 199,
             "labelRight": 53
           },
@@ -557,7 +558,7 @@
             "label": "Mass",
             "value": "4,151,359 M☉",
             "valueLines": 1,
-            "valueLeft": 132,
+            "valueLeft": 132.125,
             "valueRight": 199,
             "labelRight": 53
           },
@@ -597,7 +598,7 @@
             "label": "Radius",
             "value": "107,376 km · 0.15 R☉",
             "valueLines": 1,
-            "valueLeft": 94,
+            "valueLeft": 94.125,
             "valueRight": 199,
             "labelRight": 63
           },
@@ -605,7 +606,7 @@
             "label": "Mass",
             "value": "0.122 M☉",
             "valueLines": 1,
-            "valueLeft": 152,
+            "valueLeft": 152.125,
             "valueRight": 199,
             "labelRight": 53
           },

@@ -13,6 +13,7 @@ import { eraModulation, setMergerEpochGyr } from "./universe/cosmicEra.js";
 import { registerHygCatalog } from "./universe/hygActiveCatalog.js";
 import { PERF, markPerf } from "./perf.js";
 import { relUniforms } from "./relView.js";
+import { galaxyVolumeEnabled } from "./render/galaxyVolume.js";
 import {
     BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, RELATIVISTIC_VIEW_GLSL, bvToTeff, teffToRGB, absMagFromApparent,
 } from "./render/viewBrightness.js";
@@ -507,13 +508,14 @@ function scheduleCatalogLoad() {
     else setTimeout(start, 0);
 }
 
+// World-frame (ecliptic J2000) parsec positions of curated destinations, used
+// to drop their catalog twins from the cloud (the catalog worker compares in
+// the same frame after rotating the HYG values).
 function destinationSuppressPc() {
     const out = [];
     for (const star of STARS) {
         if (!Number.isFinite(star.raDeg) || !Number.isFinite(star.decDeg) || !Number.isFinite(star.dLy)) continue;
-        const ra = star.raDeg * Math.PI / 180, dec = star.decDeg * Math.PI / 180;
-        const dPc = star.dLy / PC_LY, cd = Math.cos(dec);
-        out.push(Math.cos(ra) * cd * dPc, Math.sin(ra) * cd * dPc, Math.sin(dec) * dPc);
+        out.push(star.x / PC_KM, star.y / PC_KM, (star.z || 0) / PC_KM);
     }
     return out;
 }
@@ -1219,7 +1221,10 @@ export function updateCosmicLayer() {
     diskRoot.visible = galaxyVisible || catalogVisible || nearVisible;
     catalogRoot.visible = catalogVisible;
     nearStarRoot.visible = nearVisible;
-    galaxyRoot.visible = galaxyVisible;
+    // The Milky Way's own light now comes from the volumetric model
+    // (render/galaxyVolume.js); this legacy point cloud remains only as the
+    // fallback when that layer is disabled (?galaxyvol=0).
+    galaxyRoot.visible = galaxyVisible && !galaxyVolumeEnabled();
     localRoot.visible = groupVisible;
     deepRoot.visible = deepVisible;
     if (deepRoot.visible) deepRoot.position.copy(camera.position);
@@ -1237,7 +1242,7 @@ export function updateCosmicLayer() {
     // camera-distance LOD factors haven't crossed a bucket boundary.
     const era = eraModulation(G.t);
     for (const child of galaxyRoot.children) {
-        child.visible = galaxyVisible;
+        child.visible = galaxyVisible && !galaxyVolumeEnabled();
         if (child.material) {
             // mwDisk/rings historically render at the raw LOD value (their
             // authored baseOpacity was never actually consumed on this

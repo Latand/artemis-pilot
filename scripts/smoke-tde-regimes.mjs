@@ -49,7 +49,7 @@ function resetAll() {
     resetEphem();
     resetShip();
     GS.length = 0;
-    G.t = 0; EPHT.t = 0;
+    state.setSimTime(0); // both clocks (sim and ephemeris), residues cleared
     G.dead = true; // world-only advance: the ship stays out of the encounter
     G.darkEnergy = false; G.darkMatter = false;
     log.length = 0;
@@ -86,13 +86,16 @@ function placeEncounter({ target, msun, rsKm, kind = 0, rp, e = 1, d0, phi = .7,
     const rel = { x: px, y: py * ci, z: py * si, vx, vy: vy * ci, vz: vy * si };
     return enc.addHoleData(b.x - rel.x, b.y - rel.y, rs, b.vx - rel.vx, b.vy - rel.vy, null, kind, kind === 2 ? .0334 : 0, b.z - rel.z, b.vz - rel.vz);
 }
+// frames of frameDt through the world step's dead/landed path; a frame may
+// deliver less than it asked (the bodies' per-call step budget with a hole in
+// play), so the loop counts what was delivered
 function run(total, frameDt) {
-    let t = 0;
-    while (t < total - 1e-9) {
-        const dt = Math.min(frameDt, total - t);
-        physics.advanceWorld(dt);
-        t += dt;
+    let t = 0, stall = 0;
+    while (t < total - 1e-9 && stall < 4) {
+        const got = physics.advanceWorld(Math.min(frameDt, total - t));
+        if (got > 0) { t += got; stall = 0; } else stall++;
     }
+    return t;
 }
 function holeState(i = 0) {
     return { x: BH.x[i], y: BH.y[i], z: BH.z[i], vx: BH.vx[i], vy: BH.vy[i], vz: BH.vz[i], mu: BH.mu[i] };
@@ -285,10 +288,10 @@ console.log("[D] 3390 Msun hole through the inner Solar System");
         const lRatio = {};
         let t = 0;
         const frame = warp / fps;
-        while (t < span - 1e-9) {
-            const dt = Math.min(frame, span - t);
-            physics.advanceWorld(dt);
-            t += dt;
+        let stall = 0;
+        while (t < span - 1e-9 && stall < 4) {
+            const got = physics.advanceWorld(Math.min(frame, span - t));
+            if (got > 0) { t += got; stall = 0; } else stall++;
             for (const r of ENC) if (r.pending && r.cls) lRatio[enc.bodyLabel(r.target)] = r.el.h / (4 * r.muHole / C_LIGHT);
         }
         const outcomes = [];
@@ -334,7 +337,7 @@ console.log("[E] lifecycle: removal, merge, quickload, reverse, pulsars, 3-D");
     const restoreWorld = json => {
         const d = JSON.parse(json);
         resetAll();
-        G.t = d.t;
+        state.setSimTime(d.t);
         ephem.loadEphemSnapshot({
             x: Float64Array.from(d.eph.x), y: Float64Array.from(d.eph.y), z: Float64Array.from(d.eph.z),
             vx: Float64Array.from(d.eph.vx), vy: Float64Array.from(d.eph.vy), vz: Float64Array.from(d.eph.vz),

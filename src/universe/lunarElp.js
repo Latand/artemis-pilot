@@ -133,6 +133,23 @@ export function sunEclipticLongitude(secondsSinceJ2000) {
     return degMod(lambda) * DEG;
 }
 
+// Geometric (no aberration, no nutation) solar longitude referred to the mean
+// ecliptic and equinox of J2000 -- the frame the simulator's world coordinates
+// use. Meeus ch. 25's true longitude L0 + C is of date; subtracting the
+// general precession in longitude (the same polynomial moonEcliptic uses)
+// refers it back to J2000.
+export function sunGeometricLongitudeJ2000(secondsSinceJ2000) {
+    const T = secondsSinceJ2000 / SEC_PER_CENTURY;
+    const T2 = T * T;
+    const L0 = 280.46646 + 36000.76983 * T + 0.0003032 * T2;
+    const M = 357.52911 + 35999.05029 * T - 0.0001537 * T2;
+    const C = (1.914602 - 0.004817 * T - 0.000014 * T2) * sinDeg(M) +
+        (0.019993 - 0.000101 * T) * sinDeg(2 * M) +
+        0.000289 * sinDeg(3 * M);
+    const precessionDeg = 1.396971 * T + 0.0003086 * T2;
+    return degMod(L0 + C - precessionDeg) * DEG;
+}
+
 export function moonGeocentricState(secondsSinceJ2000, out = {}) {
     moonGeocentricCartesian(secondsSinceJ2000, out);
     const x = out.x, y = out.y, z = out.z;

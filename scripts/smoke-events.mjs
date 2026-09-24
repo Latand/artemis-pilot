@@ -16,6 +16,8 @@ import {
     pickJumpWarp,
     maxFeasibleWarp,
     maxFeasibleWarpScalar,
+    BH_FEASIBLE_WARP,
+    BH_REASON,
     JUMP_HOLD_WARP,
     JUMP_LEAD_SEC,
     createJumpRuntime,
@@ -137,10 +139,19 @@ ok(
 
 const feas = maxFeasibleWarp({ gsCount: 0, landed: false, dead: false, bhN: 0 });
 ok(feas === WARP_MAX, "clean state reaches the full ladder");
-ok(
-    maxFeasibleWarp({ gsCount: 0, landed: false, dead: false, bhN: 1 }) === WARP_MAX,
-    "placed black holes retain deep-time bridge access",
-);
+// Re-pinned: black holes are integrated step by step inside a per-frame
+// budget (bridges subcycle, the shortfall is reported), which delivers
+// years per second, not 1 Gyr/s. The planner now plans BH scenes at the rung
+// they can actually deliver instead of promising WARP_MAX and delivering
+// ~1e-9 of it; manual warp stays unclamped (smoke-core checks the bridge).
+const bhFeas = maxFeasibleWarp({ gsCount: 0, landed: false, dead: false, bhN: 1 });
+ok(bhFeas === BH_FEASIBLE_WARP && BH_FEASIBLE_WARP === SEC_YEAR && WARPS.includes(bhFeas),
+    "placed black holes plan at the step-by-step rung they can deliver (1 yr/s)");
+const bhDeep = planJump(0, 6.3 * GYR, bhFeas);
+ok(!bhDeep.ok && bhDeep.reason === BH_REASON, "deep jumps with black holes are refused with the black-hole reason");
+const bhShort = planJump(0, 30 * SEC_YEAR, bhFeas);
+ok(bhShort.ok && bhShort.etaWallSec <= 60 && bhShort.legs.every(leg => leg.warp <= bhFeas),
+    "short jumps with black holes stay available at a deliverable warp");
 const target = 6.3 * GYR;
 const plan = planJump(0, target, feas);
 ok(plan.ok, "Gyr jump plans on a clean state");

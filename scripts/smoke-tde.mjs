@@ -109,7 +109,7 @@ async function runLifecycleGate() {
         resetEphem();
         resetShip();
         GS.length = 0;
-        G.t = 0; EPHT.t = 0;
+        state.setSimTime(0); // both clocks, residues cleared
         G.dead = true;
         G.darkEnergy = false; G.darkMatter = false;
         updEphem();

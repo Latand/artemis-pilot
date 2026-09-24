@@ -90,13 +90,55 @@ try {
 
     const shots = [];
     const only = args.only ? new Set(args.only.split(",")) : null;
-    for (let i = 0; i < rungs; i++) {
+    if (args.sky) {
+        // --sky=name:l:b[:fovDeg];... look from Earth toward galactic (l, b).
+        for (const spec of args.sky.split(";")) {
+            const [name, l, b] = spec.split(":");
+            shots.push({ name, sky: [Number(l), Number(b)], dist: 1e6 });
+        }
+    } else for (let i = 0; i < rungs; i++) {
         const d = from * Math.pow(to / from, rungs === 1 ? 0 : i / (rungs - 1));
         shots.push({ name: String(i).padStart(3, "0"), dist: d });
     }
     for (const shot of shots) {
         if (only && !only.has(shot.name)) continue;
-        await page.evaluate(({ shot, focus, yaw, pitch }) => {
+        await page.evaluate(async ({ shot, focus, yaw, pitch }) => {
+            if (shot.sky) {
+                const { galacticToWorld } = await import("/src/universe/coords.js");
+                const { K } = await import("/src/constants.js");
+                const l = shot.sky[0] * Math.PI / 180, b = shot.sky[1] * Math.PI / 180;
+                const w = galacticToWorld([Math.cos(b) * Math.cos(l), Math.cos(b) * Math.sin(l), Math.sin(b)]);
+                const D = [w[0], w[2], -w[1]]; // scene axes
+                const e = window.__eph;
+                const ex = e.earthX * K, ey = 0, ez = -e.earthY * K;
+                // Camera 30,000 km sunward-agnostic offset opposite the view
+                // direction; the orbit rig then looks along D.
+                const dist = 3e4;
+                __G.focus = "free";
+                // Camera 100 units (100,000 km) from Earth on the sky side,
+                // looking outward along D.
+                __cam.tgt.set(ex + D[0] * (dist + 100), ey + D[1] * (dist + 100), ez + D[2] * (dist + 100));
+                __cam.dist = dist; __cam.distTarget = null;
+                __cam.pitch = Math.asin(Math.max(-1, Math.min(1, -D[1])));
+                __cam.yaw = Math.atan2(-D[2], -D[0]);
+                return;
+            }
+            if (focus === "galpole" || focus === "galside") {
+                // Orbit the Galactic centre, looking down the NGP axis (face-on)
+                // or along the disk from l = 90 deg (edge-on).
+                const { galacticToWorld, galToSceneUnitsInto } = await import("/src/universe/coords.js");
+                const { K } = await import("/src/constants.js");
+                const gc = galToSceneUnitsInto(0, 0, 0, [0, 0, 0], 0, K);
+                const w = galacticToWorld(focus === "galpole" ? [0.02, 0, 1] : [0, 1, 0.08]);
+                const n = [w[0], w[2], -w[1]];
+                const l = Math.hypot(n[0], n[1], n[2]);
+                __G.focus = "free";
+                __cam.tgt.set(gc[0], gc[1], gc[2]);
+                __cam.dist = shot.dist; __cam.distTarget = null;
+                __cam.pitch = Math.asin(n[1] / l);
+                __cam.yaw = Math.atan2(n[2], n[0]);
+                return;
+            }
             __G.focus = /^\d+$/.test(focus) ? Number(focus) : focus;
             __cam.dist = shot.dist; __cam.distTarget = null;
             __cam.yaw = yaw; __cam.pitch = pitch;

@@ -4,15 +4,18 @@ import {
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS, PC_KM,
     OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM,
 } from "./constants.js";
-import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
+import {
+    G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents, setSimTime,
+} from "./state.js";
 import { eph, moonState, planetVel, sunVel, resetEphem } from "./ephemeris.js";
-import { initPhysicsHooks, advance, advanceWorld, snapLanded, orbitInfo, sampleAero } from "./physics.js";
+import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero, followMovingStars } from "./physics.js";
+import { stepWorld, WORLD_STEP } from "./worldStep.js";
 import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.js";
 import { loadAllMaps, dotTexture } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
     renderQuality, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
-    farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll,
+    farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
     buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
@@ -24,7 +27,7 @@ import { addStarVisual, buildStars, updateStars, starVisualAlpha } from "./stars
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff, targetState } from "./autopilot.js";
-import { REL, relTravelStep, relCancel } from "./relTravel.js";
+import { REL, relCancel } from "./relTravel.js";
 import {
     shipG, craft, dot, flame, plasma, updateHeadingArrow,
     EXN, exPos, exVel, exLife, exMax, exCol, exPosAttr, exColAttr, exMat, exhaust, spawnExhaust,
@@ -38,7 +41,9 @@ import {
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
-import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState } from "./cosmic.js";
+import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt } from "./cosmic.js";
+import { updateGalaxyVolume, renderGalaxyVolume } from "./render/galaxyVolume.js";
+import { eraModulation } from "./universe/cosmicEra.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
@@ -67,8 +72,7 @@ import { moonWorldState, planetFocusIndex, planetMoonFocusIndex, planetWorldStat
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
-import { equatorialKmToGal, setSunGalAnchor } from "./universe/coords.js";
-import { solarGalacticStateAt } from "./universe/solarOrbit.js";
+import { worldKmToGal } from "./universe/coords.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
 import { setObserver } from "./universe/observerTime.js";
 import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
@@ -82,7 +86,7 @@ import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
 import { initExplorerUI, moveExplorerCamera, updateExplorerUI } from "./explorerUI.js";
 import { initUiMode, setXrPresenting } from "./uiMode.js";
-import { cancelTimeJump, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
+import { cancelTimeJump, noteFrameDelivery, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
 import { initTimeDock, renderTimeDock, sampleTimeDock } from "./timeDock.js";
 import { classifyContact } from "./universe/contactMath.js";
 import { initEvents, noteEvent, updateEvents } from "./events.js";
@@ -385,6 +389,7 @@ const cosmicInitT0 = perfStart();
 // entire cosmic layer (catalog/procedural galaxy clouds, Local Group) and
 // the whole tier-1 streaming field into the far tier for free.
 initCosmicLayer(farTierGroup);
+addBackgroundHook(renderGalaxyVolume);
 perfEnd("startup.initCosmicLayer", cosmicInitT0);
 // Tier-1 AT-HYG streaming star layer (WP9/WP10): fetches its manifest and
 // streams tiles over ~25 minutes, so it's fired without an `await` to avoid
@@ -607,7 +612,6 @@ const _focusOrigin = new THREE.Vector3(), _focusPos = new THREE.Vector3();
 const _bhFocusPos = new THREE.Vector3(), _bhLabelPos = new THREE.Vector3();
 const _starFocusPos = new THREE.Vector3(), _starLabelPos = new THREE.Vector3();
 const _moonOff = { x: 0, y: 0 };
-const _sunOrbitState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 const bhFocusValue = i => "bh:" + i;
 const starFocusValue = i => "star:" + i;
 function bhScenePos(i, out = _bhFocusPos) {
@@ -1241,6 +1245,7 @@ function updateFocusVelocityVector(alpha = 1) {
 // ============================ MAIN LOOP ============================
 const clock = new THREE.Clock();
 const earthV = new THREE.Vector3(), moonV = new THREE.Vector3(), velV = new THREE.Vector3(), upV = new THREE.Vector3(0, 1, 0), dirV = new THREE.Vector3();
+const _moonRingN = new THREE.Vector3();
 const moonBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
     map: dotTexture("rgba(220,230,245,1)", "rgba(150,170,200,0)"),
     color: 0xaeb9c8, transparent: true, opacity: .5, depthWrite: false,
@@ -1361,8 +1366,8 @@ function updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cd, alpha = 1)
             cosmoDMAcc[2] * DARK_MATTER.ARROW_SECONDS,
             cosmoDMVec,
         );
-        const [gx, gy, gz] = equatorialKmToGal(eph.earthX + G.x, eph.earthY + G.y, G.z);
-        const [ex, ey, ez] = equatorialKmToGal(eph.earthX, eph.earthY, 0);
+        const [gx, gy, gz] = worldKmToGal(eph.earthX + G.x, eph.earthY + G.y, G.z);
+        const [ex, ey, ez] = worldKmToGal(eph.earthX, eph.earthY, 0);
         const fade = darkMatterVisibleFractionPc(Math.hypot(gx - ex, gy - ey, gz - ez));
         if (fade > .01 && setLineVector(haloArrPos, haloArrAttr, oriX, oriY, oriZ, cosmoDMVec[0], cosmoDMVec[1], cosmoDMVec[2], lenScale, maxLen)) {
             haloArrow.material.opacity = Math.min(.9, .16 + .7 * fade) * alpha;
@@ -1627,27 +1632,15 @@ function frame() {
     setExternalTimeDriver(cinematic.isPlaying() || REL.active);
     const jumpFrame = tickJump(rawDtR, dtR, aMag > 0);
     const frameSimAdvance = jumpFrame ? jumpFrame.advanceSec : dtR * G.warp;
+    // one world step for every mode (flight, landed, dead, relativistic):
+    // Sun evolution + engulfment, reverse guards, budgeted integration, and
+    // the delivered time the jump runtime and Time Dock report
     if (!G.paused) {
-        if (REL.active) {
-            advanced = frameSimAdvance;
-            if (G.warp < 0) relCancel("reverse warp", toast);
-            if (REL.active) {
-                relTravelStep(advanced);
-                activeStarsFresh = false;
-            } else {
-                advanced = advance(advanced, atx, aty, atz, aMag);
-                activeStarsFresh = true;
-            }
-        } else if (G.dead || G.landed) {
-            // world-only advance with the same reverse guards as the ship path
-            advanced = advanceWorld(frameSimAdvance);
-        } else {
-            advanced = advance(frameSimAdvance, atx, aty, atz, aMag);
-            activeStarsFresh = true;
-        }
-    }
+        advanced = stepWorld(frameSimAdvance, atx, aty, atz, aMag, toast);
+        activeStarsFresh = WORLD_STEP.activeStarsFresh;
+    } else noteFrameDelivery(0, 0);
     const jumpSettlement = jumpFrame ? settleTimeJump(jumpFrame, advanced, aMag > 0) : null;
-    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) G.t = jumpSettlement.syncTimeSec;
+    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) setSimTime(jumpSettlement.syncTimeSec);
     snapLanded();
     const oi = orbitInfo();
     perfEnd("frame.physics", physicsT0, PERF.enabled ? { advanced, warp: G.warp, dtR, rawDtR, dtRCap } : null);
@@ -1692,8 +1685,17 @@ function frame() {
     if (nearFieldDue) {
         earthG.position.copy(earthV);
         moonOrbitRing.position.copy(earthV);
+        // Orient the (illustrative, fixed-shape) lunar ring in the Moon's live
+        // osculating plane: normal = r x v, scene axis map (x, z, -y).
+        {
+            const hx = eph.moonY * eph.moonVz - eph.moonZ * eph.moonVy;
+            const hy = eph.moonZ * eph.moonVx - eph.moonX * eph.moonVz;
+            const hz = eph.moonX * eph.moonVy - eph.moonY * eph.moonVx;
+            const hl = Math.hypot(hx, hy, hz);
+            if (hl > 0) moonOrbitRing.quaternion.setFromUnitVectors(upV, _moonRingN.set(hx / hl, hz / hl, -hy / hl));
+        }
         moonState(G.t, _m);
-        moonV.set((eph.earthX + _m.mx) * K, 0, -(eph.earthY + _m.my) * K);
+        moonV.set((eph.earthX + _m.mx) * K, (eph.moonZ || 0) * K, -(eph.earthY + _m.my) * K);
         moon.position.copy(moonV);
         moon.rotation.y = _m.ang + Math.PI * .5;
         moonSoiRing.position.copy(moonV);
@@ -1716,7 +1718,7 @@ function frame() {
     else if (!detailShed) moon.visible = true;
     // sun & planets follow the live ephemeris (cache refreshed by orbitInfo above)
     if (nearFieldDue) {
-        sunPos.set((eph.earthX + eph.sunX) * K, 0, -(eph.earthY + eph.sunY) * K);
+        sunPos.set((eph.earthX + eph.sunX) * K, (eph.sunZ || 0) * K, -(eph.earthY + eph.sunY) * K);
         sunCore.position.copy(sunPos);
         sunGlow.position.copy(sunPos);
         sunLight.position.copy(sunPos);
@@ -1742,10 +1744,11 @@ function frame() {
     if (nearFieldDue) {
         for (let i = 0; i < PL.length; i++) {
             const px = (eph.earthX + eph.plX[i]) * K, pz = -(eph.earthY + eph.plY[i]) * K;
-            plGroups[i].position.set(px, 0, pz);
+            const py = (eph.plZ[i] || 0) * K; // real inclined orbits (ecliptic J2000 z)
+            plGroups[i].position.set(px, py, pz);
             flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
             if (nearVisualDue) {
-                plGlows[i].position.set(px, 0, pz);
+                plGlows[i].position.set(px, py, pz);
                 plOrbitRings[i].position.copy(sunPos);
                 plGroups[i].rotation.z = PL[i].visualTilt || 0;
                 plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
@@ -1764,9 +1767,10 @@ function frame() {
             moonOffset(m, G.t, _moonOff);
             const mx = (eph.earthX + eph.plX[m.p] + _moonOff.x) * K;
             const mz = -(eph.earthY + eph.plY[m.p] + _moonOff.y) * K;
-            moonGroups[i].position.set(mx, 0, mz);
+            const my = (eph.plZ[m.p] || 0) * K;
+            moonGroups[i].position.set(mx, my, mz);
             if (nearVisualDue) {
-                moonGlows[i].position.set(mx, 0, mz);
+                moonGlows[i].position.set(mx, my, mz);
                 const dCam = camera.position.distanceTo(moonGroups[i].position);
                 // hold the beacon at a near-constant on-screen size so even tiny
                 // moons (Phobos, Mimas) stay visible as dots; the true sphere
@@ -1812,17 +1816,14 @@ function frame() {
     if (focusNeb >= NEBULAE.length) setFocus("ship");
     const focusStar = starFocusIndex(G.focus);
     if (focusStar >= STARS.length) setFocus("ship");
-    // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time
-    // rather than sitting fixed at SUN_GAL forever — update the anchor every
-    // frame (cheap closed-form epicyclic math, zero-alloc via the reused
-    // scratch object) ahead of the active-star refresh below, which converts
-    // through this same anchor via equatorialKmToGal.
-    solarGalacticStateAt(G.t, _sunOrbitState);
-    setSunGalAnchor(_sunOrbitState.x, _sunOrbitState.y, _sunOrbitState.z);
+    // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time —
+    // bring the galactic anchor and Sgr A* to G.t every frame (a ship bound to
+    // a moving star rides along; physics.followMovingStars).
+    followMovingStars(false);
     if (activeStarsDue) {
         if (proceduralFocusId(G.focus) && !activeStarForFocus(G.focus)) setFocus("ship");
         if (hygCatalogFocusId(G.focus) && hygCatalogStats().loaded && !activeStarForFocus(G.focus)) setFocus("ship");
-        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t);
+        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t, advanced);
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
@@ -1995,6 +1996,9 @@ function frame() {
         activeStarsDue,
     } : null);
     const cosmicT0 = perfStart();
+    // Unresolved Milky Way light: one volumetric integral from the camera's
+    // true galactic position at every scale (render/galaxyVolume.js).
+    updateGalaxyVolume(camera, G.t, eraModulation(G.t), mergerDisruptFractionAt(G.t));
     updateCosmicLayer();
     perfEnd("cosmic.update", cosmicT0, PERF.enabled ? { cosmicView, dist: cam.dist } : null);
     if (cosmicView) {

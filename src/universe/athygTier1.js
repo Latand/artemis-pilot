@@ -23,6 +23,7 @@
 // failure self-heals instead of leaving a permanent hole in the sky.
 
 import { ORDER, NPIX, queryDisc, pix2ang_nest } from "./healpix.js";
+import { equatorialToWorldInto, worldToEquatorialInto } from "./coords.js";
 import { GROUP_TILE_SPAN, createTileGroups, ingestTile, markResidualsDirty, pumpGroupResiduals, disposeGroups, groupStats } from "../render/athygStars.js";
 import { loadAndDecodeTile } from "../workers/athygTileWorker.js";
 import { PC_KM } from "./coords.js";
@@ -79,7 +80,11 @@ export function computeGlobalPriorityOrder(order = ORDER, bands = DEC_BANDS) {
     return out;
 }
 
-function dirToRaDec(x, y, z) {
+// World-frame direction -> J2000 RA/Dec (the HEALPix tiling frame).
+const _eqDir = [0, 0, 0];
+function dirToRaDec(wx, wy, wz) {
+    worldToEquatorialInto(wx, wy, wz, _eqDir);
+    const x = _eqDir[0], y = _eqDir[1], z = _eqDir[2];
     const len = Math.hypot(x, y, z);
     if (!(len > 1e-12)) return null;
     let raDeg = Math.atan2(y, x) * 180 / Math.PI;
@@ -122,8 +127,24 @@ function startWorker(targetState) {
     }
 }
 
+// AT-HYG tiles carry J2000 EQUATORIAL parsecs (HEALPix tiling is equatorial
+// too). Every decoded position is rotated into the world frame (ecliptic
+// J2000, coords.js) exactly once, before the CPU cache or the GPU sees it;
+// tile LOOKUPS convert world directions back to equatorial (dirToRaDec).
+function positionsToWorld(msg) {
+    if (!msg || msg.worldFrame || !msg.positions) return msg;
+    const p = msg.positions instanceof Float32Array ? msg.positions : new Float32Array(msg.positions);
+    for (let i = 0; i + 2 < p.length; i += 3) {
+        equatorialToWorldInto(p[i], p[i + 1], p[i + 2], p, i);
+    }
+    msg.positions = p;
+    msg.worldFrame = true;
+    return msg;
+}
+
 function onTileLoaded(targetState, tileId, msg) {
     if (!targetState) return;
+    positionsToWorld(msg);
     targetState.pending.delete(tileId);
     targetState.loaded[tileId] = 1;
     targetState.stats.tilesLoaded++;
@@ -196,7 +217,7 @@ async function refetchTileCpuData(targetState, tileId) {
     const [byteOffset, count] = entry;
     targetState.cpuPending.add(tileId);
     try {
-        const decoded = await loadAndDecodeTile(tileId, byteOffset, count, targetState.binUrl, targetState.manifest.recordBytes);
+        const decoded = positionsToWorld(await loadAndDecodeTile(tileId, byteOffset, count, targetState.binUrl, targetState.manifest.recordBytes));
         retainTileData(targetState, tileId, decoded);
         resolveTilePromise(targetState, tileId, true);
     } catch (err) {

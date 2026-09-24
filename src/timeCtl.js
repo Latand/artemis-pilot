@@ -194,3 +194,44 @@ export function setExternalTimeDriver(on) {
 export function maxFeasibleWarp({ gsCount = GS.length, landed = !!G.landed, dead = G.dead, bhN = BH.n } = {}) {
     return feasibleWarpForStateScalar(gsCount, landed, dead, bhN);
 }
+
+// ---- delivered-vs-requested time (worldStep.js reports every frame) ----
+// When the physics cannot honour the commanded warp inside a frame's
+// integration budget (black holes integrated step by step, gravity ghosts,
+// thrust at high warp) it delivers less time than requested instead of
+// integrating garbage; the shortfall is published here for the Time Dock.
+// `ratio` is smoothed over ~half a second of frames so the readout is legible;
+// `limited` latches for LIMIT_LATCH_FRAMES after the last short frame.
+const LIMIT_LATCH_FRAMES = 45;
+const deliveryView = {
+    requestedSec: 0,
+    deliveredSec: 0,
+    ratio: 1,
+    limited: false,
+    reason: "",
+    shortFrames: 0,
+    latch: 0,
+};
+export function noteFrameDelivery(requestedSec, deliveredSec, reason = "") {
+    const req = Math.abs(Number(requestedSec) || 0), got = Math.abs(Number(deliveredSec) || 0);
+    deliveryView.requestedSec = requestedSec;
+    deliveryView.deliveredSec = deliveredSec;
+    if (!(req > 0)) { // paused / nothing asked: nothing is being withheld
+        deliveryView.latch = 0; deliveryView.limited = false; deliveryView.reason = ""; deliveryView.ratio = 1;
+        return deliveryView;
+    }
+    const short = got < req * (1 - 1e-6);
+    const frameRatio = Math.min(1, got / req);
+    deliveryView.ratio = deliveryView.latch > 0 || short ? deliveryView.ratio * .85 + frameRatio * .15 : 1;
+    if (short) {
+        deliveryView.shortFrames++;
+        deliveryView.latch = LIMIT_LATCH_FRAMES;
+        deliveryView.reason = reason || "integration budget reached";
+    } else if (deliveryView.latch > 0) deliveryView.latch--;
+    deliveryView.limited = deliveryView.latch > 0;
+    if (!deliveryView.limited) { deliveryView.reason = ""; deliveryView.ratio = 1; }
+    return deliveryView;
+}
+export function deliveryStatus() {
+    return deliveryView;
+}

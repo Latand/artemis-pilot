@@ -1,4 +1,15 @@
 import { STAR_CATALOG_META } from "../constants.js";
+import { ensureWorldFrameRecords } from "./coords.js";
+
+// Every consumer of the shared HYG values sees WORLD-frame (ecliptic J2000)
+// positions: the rotation happens once here (or in catalogWorker.js, which
+// tags meta.frame so this never rotates twice).
+function toWorldFrame(meta, vals) {
+    const fields = meta?.fields || [];
+    const stride = meta?.stride || fields.length || 10;
+    const ix = fields.indexOf("xPc"), iy = fields.indexOf("yPc"), iz = fields.indexOf("zPc");
+    ensureWorldFrameRecords(meta, vals, stride, ix >= 0 ? ix : 0, iy >= 0 ? iy : 1, iz >= 0 ? iz : 2);
+}
 
 let metaPromise = null;
 let dataPromise = null;
@@ -31,6 +42,7 @@ export function rememberHygCatalogData(meta, values, metaUrl = hygCatalogMetaUrl
     if (!meta || !values) return null;
     cachedMeta = meta;
     cachedVals = values instanceof Float32Array ? values : new Float32Array(values);
+    toWorldFrame(cachedMeta, cachedVals);
     cachedMetaUrl = absoluteUrl(metaUrl);
     metaPromise = Promise.resolve(cachedMeta);
     dataPromise = Promise.resolve({ meta: cachedMeta, vals: cachedVals, metaUrl: cachedMetaUrl });

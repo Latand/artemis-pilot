@@ -6,16 +6,20 @@ import {
 import {
     eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance3,
     gravityStarsFor, currentGravityStars, STELLAR_GRAVITY_MIN_R, pairG, pairRadius, liveEarthRadius, liveEarthMu,
+    beginEphemFrame, endEphemFrame, ephemFrameStats, ephemBudgetLeft,
 } from "./ephemeris.js";
-import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody } from "./state.js";
+import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody, advanceSimTime, syncEphemClock } from "./state.js";
+// the encounter pipeline is headless (bhEncounters.js); blackholes.js only
+// re-exports it next to the rendering
 import { bhAdvance } from "./bhEncounters.js";
 import { NS_SURFACE_KM } from "./tde.js";
 import { fmtMET, fmtKm } from "./format.js";
-import { ACTIVE_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
+import { ACTIVE_STARS, GRAVITY_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
 import { strongestActiveStarWell } from "./universe/starDominance.js";
+import { syncGalacticFrame } from "./universe/galacticClock.js";
 import { dominantSystemBody, moonWorldState, planetWorldState } from "./universe/planetarySystem.js";
 import { darkEnergyAccel, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc } from "./cosmology.js";
-import { equatorialKmToGal } from "./universe/coords.js";
+import { worldKmToGal } from "./universe/coords.js";
 import { segmentSphereHit } from "./geometry.js";
 import { PERF, markPerf } from "./perf.js";
 import { sunStateAt, sunMaxRadiusReachedRsunAt } from "./universe/sunEvolution.js";
@@ -83,16 +87,50 @@ function checkSunEngulfment(sunMaxRKmEver) {
         // stepping — exactly backwards for a feature whose entire point is
         // warping through Gyr of Sun evolution.
         destroyBody(i);
+        loseLandedSurface("planet", i, PL[i].name);
         H.engulfed?.(PL[i].name, sunLive.phase);
     }
     // Earth isn't in PL[] (it defines the frame origin, tracked separately
     // via WORLD.earthDestroyed) but is subject to the exact same rule at its
     // own semi-major axis (1 AU) — the AGB tip (R~215 Rsun ~1 AU) is where
-    // the brief's "Earth's fate is marginal" is actually decided.
+    // the brief's "Earth's fate is marginal" is actually decided. The Moon
+    // shares Earth's heliocentric orbit (its semi-major axis about the Sun IS
+    // 1 AU), so the same envelope takes it in the same instant.
     if (!WORLD.earthDestroyed && sunMaxRKmEver > AU_KM) {
         destroyBody("earth");
+        loseLandedSurface("earth", -1, "EARTH");
         H.engulfed?.("EARTH", sunLive.phase);
+        if (!WORLD.moonDestroyed) {
+            destroyBody("moon");
+            loseLandedSurface("moon", -1, "THE MOON");
+            H.engulfed?.("MOON", sunLive.phase);
+        }
     }
+}
+// A ship parked on a body the giant just swallowed goes with it: without
+// this a landed ship kept an engulfed Earth "alive" under its feet until
+// lift-off (snapLanded kept re-placing it on the vanished surface).
+function loseLandedSurface(body, index, name) {
+    const L = G.landed;
+    if (!L || G.dead) return;
+    const hit = body === "planet" ? L.body === "planet" && L.i === index : L.body === body;
+    if (!hit) return;
+    G.landed = null;
+    H.die("Engulfed with " + name + " by the red-giant Sun");
+}
+
+// ONE per-frame entry point for the Sun's evolving state and engulfment,
+// called by worldStep.js for every path (flying, landed, dead, relativistic)
+// before any time is advanced. advance() keeps a fallback call for callers
+// outside the world step (smokes, the startup ?simt loop), skipped when the
+// state is already current for this G.t.
+let sunLiveT = NaN;
+export function updateSunEvolution(t = G.t) {
+    sunLive = sunStateAt(t);
+    sunRKmLive = sunLive.R_Rsun * R_SUN;
+    checkSunEngulfment(sunMaxRadiusReachedRsunAt(t) * R_SUN);
+    sunLiveT = t;
+    return sunLive;
 }
 
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
@@ -519,32 +557,69 @@ const STELLAR_GRAVITY_MIN_R2 = STELLAR_GRAVITY_MIN_R * STELLAR_GRAVITY_MIN_R;
 function stellarGravityActiveAt(wx, wy, wz) {
     return wx * wx + wy * wy + wz * wz >= STELLAR_GRAVITY_MIN_R2;
 }
+// The bound system the cosmology heuristics measure "far from home" from, in
+// Earth-frame km. Earth (the frame origin) while it exists. Once Earth is
+// engulfed the origin is a massless point coasting away from the Sun at
+// Earth's last speed (~1 kpc per 30 Myr): measured from there, a ship parked
+// at 20 AU from the surviving Sun looked intergalactic after ~1 Myr and was
+// handed a gravity-free straight-line cosmology jump. The Sun takes over.
+const _home = [0, 0, 0];
+function homeAnchor(out) {
+    if (WORLD.earthDestroyed && !WORLD.sunDestroyed) { out[0] = eph.sunX; out[1] = eph.sunY; out[2] = eph.sunZ; }
+    else { out[0] = 0; out[1] = 0; out[2] = 0; }
+    return out;
+}
 function cosmologyVisibilityAt(x, y, z) {
-    let vis = G.darkEnergy ? darkEnergyVisibleFractionKm(Math.hypot(x, y, z)) : 0;
+    homeAnchor(_home);
+    let vis = G.darkEnergy ? darkEnergyVisibleFractionKm(Math.hypot(x - _home[0], y - _home[1], z - _home[2])) : 0;
     if (G.darkMatter) {
-        const s = equatorialKmToGal(eph.earthX + x, eph.earthY + y, z);
-        const e = equatorialKmToGal(eph.earthX, eph.earthY, 0);
+        const s = worldKmToGal(eph.earthX + x, eph.earthY + y, z);
+        const e = worldKmToGal(eph.earthX + _home[0], eph.earthY + _home[1], _home[2]);
         vis = Math.max(vis, darkMatterVisibleFractionPc(Math.hypot(s[0] - e[0], s[1] - e[1], s[2] - e[2])));
     }
     return vis;
 }
 function smoothCosmologyAccelAt(x, y, z, out) {
     out[0] = 0; out[1] = 0; out[2] = 0;
-    if (G.darkEnergy) darkEnergyAccel(x, y, out, undefined, z);
+    homeAnchor(_home);
+    if (G.darkEnergy) darkEnergyAccel(x - _home[0], y - _home[1], out, undefined, z - _home[2]);
     if (G.darkMatter) {
-        darkMatterRelativeAccel(x, y, z, eph.earthX, eph.earthY, 0, _cosTmp);
+        darkMatterRelativeAccel(x - _home[0], y - _home[1], z - _home[2], eph.earthX + _home[0], eph.earthY + _home[1], _home[2], _cosTmp);
         out[0] += _cosTmp[0]; out[1] += _cosTmp[1]; out[2] += _cosTmp[2];
     }
     return out;
 }
 function cosmologyJumpLocalClear(x0, y0, z0, x1, y1, z1, dt) {
-    if (!WORLD.earthDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, Math.max(SOI_E, R_EARTH + ATM_TOP))) return false;
-    if (!WORLD.moonDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, A_MOON + SOI_M)) return false;
-    if (!WORLD.sunDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, AU_KM + 3 * sunRKmLive)) return false;
-    for (let i = 0; i < PL.length; i++) {
-        if (WORLD.plDestroyed[i]) continue;
-        const p = PL[i];
-        if (segmentSphereHit(x0, y0, z0, x1, y1, z1, AU_KM + p.a + p.soi)) return false;
+    if (WORLD.earthDestroyed) {
+        // no Earth at the origin: keep the bridge out of whatever survives,
+        // centred on the bodies themselves rather than on the coasting origin
+        if (!WORLD.sunDestroyed) {
+            const sx = eph.sunX, sy = eph.sunY, sz = eph.sunZ;
+            let R = 3 * sunRKmLive;
+            if (!WORLD.moonDestroyed) R = Math.max(R, Math.hypot(eph.moonX - sx, eph.moonY - sy, eph.moonZ - sz) + SOI_M);
+            for (let i = 0; i < PL.length; i++) {
+                if (WORLD.plDestroyed[i]) continue;
+                R = Math.max(R, Math.hypot(eph.plX[i] - sx, eph.plY[i] - sy, eph.plZ[i] - sz) + PL[i].soi);
+            }
+            if (segmentSphereHit(x0 - sx, y0 - sy, z0 - sz, x1 - sx, y1 - sy, z1 - sz, R)) return false;
+        } else {
+            if (!WORLD.moonDestroyed && segmentSphereHit(x0 - eph.moonX, y0 - eph.moonY, z0 - eph.moonZ,
+                x1 - eph.moonX, y1 - eph.moonY, z1 - eph.moonZ, SOI_M)) return false;
+            for (let i = 0; i < PL.length; i++) {
+                if (WORLD.plDestroyed[i]) continue;
+                if (segmentSphereHit(x0 - eph.plX[i], y0 - eph.plY[i], z0 - eph.plZ[i],
+                    x1 - eph.plX[i], y1 - eph.plY[i], z1 - eph.plZ[i], PL[i].soi)) return false;
+            }
+        }
+    } else {
+        if (segmentSphereHit(x0, y0, z0, x1, y1, z1, Math.max(SOI_E, R_EARTH + ATM_TOP))) return false;
+        if (!WORLD.moonDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, A_MOON + SOI_M)) return false;
+        if (!WORLD.sunDestroyed && segmentSphereHit(x0, y0, z0, x1, y1, z1, AU_KM + 3 * sunRKmLive)) return false;
+        for (let i = 0; i < PL.length; i++) {
+            if (WORLD.plDestroyed[i]) continue;
+            const p = PL[i];
+            if (segmentSphereHit(x0, y0, z0, x1, y1, z1, AU_KM + p.a + p.soi)) return false;
+        }
     }
     for (let i = 0; i < BH.n; i++) {
         const xBH1 = BH.x[i] + BH.vx[i] * dt, yBH1 = BH.y[i] + BH.vy[i] * dt, zBH1 = BH.z[i] + BH.vz[i] * dt;
@@ -604,26 +679,34 @@ function cosmologyJumpStarClear(x1, y1, z1) {
     }
     return true;
 }
+// Returns the time actually bridged: the ephemeris may deliver less than dt
+// (per-frame step budget), and the ship then kicks and drifts for exactly
+// what the bodies did.
 function shipCosmologyJump(dt) {
-    if (dt <= 1e-9 || cosmologyVisibilityAt(G.x, G.y, G.z) <= .01) return 0;
+    if (!(Math.abs(dt) > 1e-9) || cosmologyVisibilityAt(G.x, G.y, G.z) <= .01) return 0;
     smoothCosmologyAccelAt(G.x, G.y, G.z, _cosA0);
-    const hvx = G.vx + _cosA0[0] * dt * .5;
-    const hvy = G.vy + _cosA0[1] * dt * .5;
-    const hvz = G.vz + _cosA0[2] * dt * .5;
-    const nx = G.x + hvx * dt;
-    const ny = G.y + hvy * dt;
-    const nz = G.z + hvz * dt;
+    let hvx = G.vx + _cosA0[0] * dt * .5;
+    let hvy = G.vy + _cosA0[1] * dt * .5;
+    let hvz = G.vz + _cosA0[2] * dt * .5;
+    let nx = G.x + hvx * dt;
+    let ny = G.y + hvy * dt;
+    let nz = G.z + hvz * dt;
     if (!cosmologyJumpStarClear(nx, ny, nz)) return 0;
     if (!cosmologyJumpClear(G.x, G.y, G.z, nx, ny, nz, dt)) return 0;
-    advanceEphem(dt);
-    bhAdvance(dt, G.t);
-    G.t += dt;
+    const d = advanceEphem(dt);
+    if (!(Math.abs(d) > 1e-9)) return 0;
+    if (d !== dt) {
+        hvx = G.vx + _cosA0[0] * d * .5; hvy = G.vy + _cosA0[1] * d * .5; hvz = G.vz + _cosA0[2] * d * .5;
+        nx = G.x + hvx * d; ny = G.y + hvy * d; nz = G.z + hvz * d;
+    }
+    bhAdvance(d, G.t);
+    advanceSimTime(d);
     smoothCosmologyAccelAt(nx, ny, nz, _cosA1);
     G.x = nx; G.y = ny; G.z = nz;
-    G.vx = hvx + _cosA1[0] * dt * .5;
-    G.vy = hvy + _cosA1[1] * dt * .5;
-    G.vz = hvz + _cosA1[2] * dt * .5;
-    return dt;
+    G.vx = hvx + _cosA1[0] * d * .5;
+    G.vy = hvy + _cosA1[1] * d * .5;
+    G.vz = hvz + _cosA1[2] * d * .5;
+    return d;
 }
 // Inside any of these zones the ephemeris must be exact (contact checks, SOI
 // dynamics, bullet time); outside, the ship integrates on extrapolated body
@@ -662,7 +745,148 @@ function markAdvancePerf(t0, simAdv, advanced, stats) {
     if (PERF.enabled) markPerf("physics.advance", performance.now() - t0, { simAdv, advanced, ...stats });
     return advanced;
 }
+// Every exit leaves the ephemeris caught up with the ship (final flush), so
+// the ephemeris clock is re-synced to the authoritative clock here: one clock
+// for G.t, gravity fronts and ghost stamps.
+// Reverse time never crosses an irreversible event and never runs while
+// matter is in flight (debris phantoms, gravity ghosts, a live TDE). Shared by
+// every path through worldStep.js; returns the admissible (clamped) advance.
+export function clampReverseAdvance(simAdv) {
+    if (!(simAdv < 0)) return simAdv;
+    if (GS.length > 0 || WORLD.tdeInProgress) {
+        WORLD.reverseBlocked = true;
+        return 0;
+    }
+    if (G.t + simAdv < WORLD.irreversibleFloorT) {
+        WORLD.reverseBlocked = true;
+        return Math.min(0, WORLD.irreversibleFloorT - G.t);
+    }
+    return simAdv;
+}
+
+// Advance only the world (bodies, holes, clock) — the dead and landed paths
+// and the world under a relativistic cruise. Returns the time delivered: the
+// bodies' per-frame step budget can cut a black-hole scene short, and the
+// clock and holes then advance by exactly what the ephemeris integrated.
+export function advanceBodiesOnly(dt) {
+    const d = advanceEphem(dt);
+    if (!(Math.abs(d) > 0)) return 0;
+    bhAdvance(d, G.t);
+    advanceSimTime(d);
+    syncEphemClock();
+    return d;
+}
+
+// A call outside worldStep.js (smokes, the startup ?simt loop) gets its own
+// one-frame integration budget, so a bulk advance stays bounded there too.
 export function advance(simAdv, atx, aty, atz, aMag) {
+    const ownFrame = !ephemFrameStats().active;
+    if (ownFrame) beginEphemFrame(Math.abs(simAdv) * 60); // a direct call counts as one 60 fps frame
+    try {
+        return advanceFlight(simAdv, atx, aty, atz, aMag);
+    } finally {
+        syncEphemClock();
+        if (ownFrame) endEphemFrame();
+        recordBoundHost();
+    }
+}
+
+// ---- moving stars ----
+// Stars move with sim time: the Sun's galactic anchor and Sgr A* follow the
+// Sun's orbit around the Galaxy (galacticClock.js), and catalog/procedural
+// neighbours are re-evaluated every ~20-year bucket at the real clock (the
+// flight path used to refresh them at t = 0 forever, so a flying ship never
+// saw them move while a landed one did). A ship deep in one star's well
+// rides along with it; otherwise every re-evaluation would pull its host out
+// from under it (~120 AU per bucket at 30 km/s; Sgr A* sweeps ~50 AU a year
+// through the Sun-centred frame). The host is recorded after each flight
+// step and after each carry; any later move of that star -- here, in
+// main.js's per-frame sync, or from a UI refresh -- is applied to the ship at
+// the next sync, unless the ship itself was moved by something else (load,
+// drag, teleport).
+const _host = { id: "", star: null, x: 0, y: 0, z: 0, sx: 0, sy: 0, sz: 0 };
+const hostKey = star => star.id || star.name || "";
+function recordBoundHost() {
+    _host.id = ""; _host.star = null;
+    if (G.dead || G.landed) return;
+    updEphem();
+    const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
+    if (!stellarGravityActiveAt(wx, wy, wz)) return;
+    const sdx = G.x - eph.sunX, sdy = G.y - eph.sunY, sdz = G.z - eph.sunZ;
+    const sunAcc = WORLD.sunDestroyed ? 0 : MU_S / Math.max(1, sdx * sdx + sdy * sdy + sdz * sdz);
+    const well = strongestActiveStarWell(GRAVITY_STARS, wx, wy, wz, sunAcc);
+    if (!well?.dominant || !hostKey(well.star)) return;
+    const st = well.star;
+    // bound to it, not merely passing through its well (stars are static
+    // between re-evaluations, so the ship's world velocity is the relative one)
+    const vx = G.vx + eph.earthVx, vy = G.vy + eph.earthVy, vz = G.vz + (eph.earthVz || 0);
+    if (!(.5 * (vx * vx + vy * vy + vz * vz) < st.mu / Math.max(well.d, 1))) return;
+    _host.id = hostKey(st); _host.star = st;
+    _host.x = st.x; _host.y = st.y; _host.z = st.z || 0;
+    _host.sx = G.x; _host.sy = G.y; _host.sz = G.z;
+}
+function carryBoundShip() {
+    if (!_host.id) return 0;
+    if (G.dead || G.landed || G.x !== _host.sx || G.y !== _host.sy || G.z !== _host.sz) {
+        _host.id = ""; _host.star = null;
+        return 0;
+    }
+    let star = _host.star;
+    if (!star || hostKey(star) !== _host.id || !ACTIVE_STARS.includes(star)) {
+        star = null;
+        for (const s of ACTIVE_STARS) if (hostKey(s) === _host.id) { star = s; break; }
+    }
+    if (!star) return 0;
+    const dx = star.x - _host.x, dy = star.y - _host.y, dz = (star.z || 0) - _host.z;
+    G.x += dx; G.y += dy; G.z += dz;
+    _host.star = star;
+    _host.x = star.x; _host.y = star.y; _host.z = star.z || 0;
+    _host.sx = G.x; _host.sy = G.y; _host.sz = G.z;
+    return Math.hypot(dx, dy, dz);
+}
+// Brings the galactic frame (and, with refresh, the active stars) to G.t and
+// carries a bound ship with its host. frameAdvanceSec: the sim time this
+// frame covers (refreshActiveStars samples only the nearest stars when a
+// frame replaces the whole neighbourhood). Returns the carry distance (km).
+export function followMovingStars(refresh = true, frameAdvanceSec = 0) {
+    syncGalacticFrame(G.t);
+    if (refresh) {
+        updEphem();
+        refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t, frameAdvanceSec);
+    }
+    return carryBoundShip();
+}
+
+// Bridge `span` seconds of thrustless coast in as few analytic jumps as the
+// scene allows, returning the time actually bridged. Without holes one jump
+// normally covers everything (the ephemeris rides its conics); with holes the
+// window per jump is short (bhBridgeWindow) and the loop SUBCYCLES within the
+// frame's step budget instead of stopping after one window (which delivered
+// ~4e-10 of a 1 Gyr/s request). Stops early when a jump is refused (the
+// caller falls back to honest RK4) or the budget is spent (a reported
+// shortfall).
+const BRIDGE_MAX_JUMPS = 96;
+function bridgeSpan(span, perfStats, tag) {
+    let done = 0, jumps = 0;
+    while (Math.abs(span - done) > 1e-9 && jumps < BRIDGE_MAX_JUMPS && !G.dead && !G.landed) {
+        const rem = span - done;
+        let step = 0, kind = "";
+        if (BH.n === 0) {
+            step = shipCosmologyJump(rem); kind = "cosmology";
+            if (!(Math.abs(step) > 1e-9)) { step = shipDeepJump(rem); kind = "kepler"; }
+        } else {
+            if (ephemBudgetLeft() <= 0) break;
+            step = tryBHBridgeJump(rem); kind = "bh-bridge";
+        }
+        if (!(Math.abs(step) > 1e-9)) break;
+        done += step;
+        jumps++;
+        if (perfStats) { perfStats.jump = kind + "-" + tag; perfStats.bridgeJumps = jumps; }
+        if (ephemBudgetLeft() <= 0) break;
+    }
+    return done;
+}
+function advanceFlight(simAdv, atx, aty, atz, aMag) {
     const perfOn = PERF.enabled;
     const perfT0 = perfOn ? performance.now() : 0;
     const perfStats = perfOn ? {
@@ -677,25 +901,17 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     WORLD.reverseBlocked = false;
     if (simAdv < 0) {
         atx = 0; aty = 0; atz = 0; aMag = 0;
-        if (GS.length > 0 || WORLD.tdeInProgress) {
-            simAdv = 0;
-            WORLD.reverseBlocked = true;
-        } else if (G.t + simAdv < WORLD.irreversibleFloorT) {
-            simAdv = WORLD.irreversibleFloorT - G.t;
-            WORLD.reverseBlocked = true;
-        }
+        simAdv = clampReverseAdvance(simAdv);
     }
     let adv = simAdv, steps = 0, lag = 0;
     const s = _gs;
-    s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
     updEphem(G.t);
-    refreshActiveStars(eph.earthX + s[0], eph.earthY + s[1], s[2], G.focus);
-    // WP23b: refresh the Sun's evolving state once per frame (Gyr-scale
-    // slow — no need to recompute per RK4 substep) and engulf any inner
-    // planet the growing giant has swallowed.
-    sunLive = sunStateAt(G.t);
-    sunRKmLive = sunLive.R_Rsun * R_SUN;
-    checkSunEngulfment(sunMaxRadiusReachedRsunAt(G.t) * R_SUN);
+    followMovingStars(true, simAdv); // stars at the real clock; may carry a bound ship
+    s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
+    // WP23b: the Sun's evolving state and engulfment. worldStep.js runs this
+    // once per frame for every path before advancing; this is only the
+    // fallback for callers outside the world step.
+    if (sunLiveT !== G.t) updateSunEvolution(G.t);
     // Hour/s+ warp can ask for dozens of local RK4 substeps in one browser
     // frame. If the coast is safely conic, bridge it in O(1) so rendering
     // and HUD cadence stay smooth while the clock keeps its requested rate.
@@ -709,22 +925,21 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         const dt0 = stepSize(rE0, dm0, ds0, rE0 - R_EARTH, Math.hypot(s[3], s[4], s[5]), s[0], s[1], s[2], s[3], s[4], s[5]);
         if (perfStats) perfStats.dtMax = Math.max(perfStats.dtMax, dt0);
         const frameBridge = Math.abs(G.warp) > 600 && Math.abs(simAdv) > Math.max(18, dt0 * 8);
-        // reverse uses the reversible stepped/Kepler path only; deep-time analytic jumps are forward-only.
-        if (simAdv > 0 && (frameBridge || Math.abs(simAdv) > MAX_STEPS_FRAME * dt0)) {
-            if (BH.n === 0 && shipCosmologyJump(simAdv) > 0) {
-                if (perfStats) perfStats.jump = frameBridge ? "cosmology-frame" : "cosmology-full";
-                return markAdvancePerf(perfT0, simAdv, simAdv, perfStats || {});
-            }
-            if (BH.n === 0 && shipDeepJump(simAdv) > 0) {
-                if (perfStats) perfStats.jump = frameBridge ? "kepler-frame" : "deep-full";
-                return markAdvancePerf(perfT0, simAdv, simAdv, perfStats || {});
-            }
-            if (BH.n > 0) {
-                const jumped = tryBHBridgeJump(simAdv);
-                if (jumped > 0) {
-                    if (perfStats) perfStats.jump = frameBridge ? "bh-bridge-frame" : "bh-bridge-full";
-                    return markAdvancePerf(perfT0, simAdv, jumped, perfStats || {});
+        // Reverse bridges too (conics and the cosmology kick-drift-kick are
+        // time-symmetric): -1 Gyr/s used to crawl at RK4 speed (~0.4 yr/s).
+        // clampReverseAdvance has already kept simAdv above the irreversible
+        // floor and blocked it while matter is in flight.
+        if (simAdv !== 0 && (frameBridge || Math.abs(simAdv) > MAX_STEPS_FRAME * dt0)) {
+            const bridged = bridgeSpan(simAdv, perfStats, frameBridge ? "frame" : "full");
+            if (bridged !== 0) {
+                adv = simAdv - bridged;
+                // done, or out of this frame's budget: report what was delivered
+                if (!(Math.abs(adv) > 1e-9) || ephemBudgetLeft() <= 0 || G.dead || G.landed) {
+                    if (!(Math.abs(adv) > 1e-9)) adv = 0;
+                    return markAdvancePerf(perfT0, simAdv, simAdv - adv, perfStats || {});
                 }
+                // a later jump was refused: honest RK4 takes over from here
+                s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
             }
         }
     }
@@ -742,7 +957,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
             perfStats.dtMax = Math.max(perfStats.dtMax, mag);
         }
         rk4Step(s, lag, dt, atx, aty, atz);
-        G.t += dt; adv -= dt; lag += dt; steps++;
+        advanceSimTime(dt); adv -= dt; lag += dt; steps++;
         if (aMag > 0) {
             const dv = aMag * dt * 1000;
             G.dvUsed += dv;
@@ -850,30 +1065,10 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     // Destruction flags must not gate the jump (see the frame-bridge gate
     // above): a permanently-closed gate froze deep warp after Earth's
     // engulfment (BUG D).
-    if (adv > 1e-9 && !G.dead && !G.landed && aMag === 0 &&
+    if (Math.abs(adv) > 1e-9 && !G.dead && !G.landed && aMag === 0 &&
         GS.length === 0) {
-        if (BH.n === 0) {
-            const cosJump = shipCosmologyJump(adv);
-            if (cosJump > 0) {
-                adv -= cosJump;
-                if (perfStats) perfStats.jump = "cosmology-tail";
-            } else {
-                const deepJump = shipDeepJump(adv);
-                if (deepJump > 0) {
-                    adv -= deepJump;
-                    if (perfStats) perfStats.jump = "deep-tail";
-                }
-            }
-        }
-        else {
-            let guard = 0;
-            while (adv > 1e-9 && guard++ < 24 && !G.dead && !G.landed) {
-                const jumped = tryBHBridgeJump(adv);
-                if (jumped <= 1e-9) break;
-                adv -= jumped;
-                if (perfStats) perfStats.jump = "bh-bridge-tail";
-            }
-        }
+        adv -= bridgeSpan(adv, perfStats, "tail");
+        if (!(Math.abs(adv) > 1e-9)) adv = 0;
     }
     const rE = Math.sqrt(G.x * G.x + G.y * G.y + G.z * G.z);
     G.maxRE = Math.max(G.maxRE, rE);
@@ -882,26 +1077,14 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     return markAdvancePerf(perfT0, simAdv, simAdv - adv, perfStats || {});
 }
 
-// Advance the world without integrating the ship (dead or landed): the same
-// reverse guards as advance() — live debris, a disruption in progress and the
-// irreversible floor all block or clamp a negative step.
+// Advance the world without integrating the ship (dead or landed) with the
+// same reverse guards as advance(): the world step's dead/landed path, for
+// callers outside worldStep.js (smokes, capture harnesses). Returns the time
+// delivered.
 export function advanceWorld(simAdv) {
     WORLD.reverseBlocked = false;
-    if (simAdv < 0) {
-        if (GS.length > 0 || WORLD.tdeInProgress) {
-            WORLD.reverseBlocked = true;
-            return 0;
-        }
-        if (G.t + simAdv < WORLD.irreversibleFloorT) {
-            simAdv = Math.min(0, WORLD.irreversibleFloorT - G.t);
-            WORLD.reverseBlocked = true;
-        }
-    }
-    if (simAdv === 0) return 0;
-    advanceEphem(simAdv);
-    bhAdvance(simAdv, G.t + simAdv);
-    G.t += simAdv;
-    return simAdv;
+    const dt = clampReverseAdvance(simAdv);
+    return dt !== 0 ? advanceBodiesOnly(dt) : 0;
 }
 
 function bhAccelAtShip(tau, out) {
@@ -959,20 +1142,28 @@ function bhBridgeWindow(dt) {
     return Math.min(dt, Math.max(0, maxDt));
 }
 
+const _bhKick0 = [0, 0, 0];
 function tryBHBridgeJump(dt) {
-    const jump = bhBridgeWindow(dt);
-    if (jump <= 1e-9) return 0;
+    const jump = Math.sign(dt) * bhBridgeWindow(Math.abs(dt)); // signed: reverse bridges too
+    if (!(Math.abs(jump) > 1e-9)) return 0;
     _saveG[0] = G.x; _saveG[1] = G.y; _saveG[2] = G.z;
     _saveG[3] = G.vx; _saveG[4] = G.vy; _saveG[5] = G.vz; _saveG[6] = G.t;
     bhAccelAtShip(0, _bhKick);
+    _bhKick0[0] = _bhKick[0]; _bhKick0[1] = _bhKick[1]; _bhKick0[2] = _bhKick[2];
     G.vx += _bhKick[0] * jump * .5;
     G.vy += _bhKick[1] * jump * .5;
     G.vz += _bhKick[2] * jump * .5;
     const ok = shipDeepJump(jump);
-    if (ok <= 0) {
+    if (!(Math.abs(ok) > 1e-9)) {
         G.x = _saveG[0]; G.y = _saveG[1]; G.z = _saveG[2];
         G.vx = _saveG[3]; G.vy = _saveG[4]; G.vz = _saveG[5]; G.t = _saveG[6];
         return 0;
+    }
+    if (ok !== jump) {
+        // the bodies' step budget ran out inside the window: the opening
+        // half-kick must match the span actually bridged
+        const cut = (jump - ok) * .5;
+        G.vx -= _bhKick0[0] * cut; G.vy -= _bhKick0[1] * cut; G.vz -= _bhKick0[2] * cut;
     }
     bhAdvance(ok, G.t);
     bhAccelAtShip(0, _bhKick);
@@ -984,7 +1175,9 @@ function tryBHBridgeJump(dt) {
 
 const _dj = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
 // Jump the ship dt seconds along the conic around its strongest pull and
-// recompose against that body's post-jump state. Returns dt on success, 0
+// recompose against that body's post-jump state. Returns the time actually
+// bridged (the ephemeris may deliver less than dt when its per-frame step
+// budget runs out; the ship then rides its conic for exactly that long), 0
 // when honest integration must continue: thrustless coast only, clear of
 // atmospheres, periapsis above the surface, no contested three-body zone,
 // and never against a hole's Paczyński–Wiita field.
@@ -1004,11 +1197,13 @@ export function shipDeepJump(dt) {
         keplerAdvance3(oi.rx, oi.ry, oi.rz || 0, oi.rvx, oi.rvy, oi.rvz || 0, st.mu, dt, _dj);
         if (!_dj.ok) return 0;
         if (!stellarJumpClear(st, oi.rx, oi.ry, oi.rz || 0, _dj.x, _dj.y, _dj.z, oi.rp)) return 0;
-        advanceEphem(dt);
+        const got = advanceEphem(dt);
+        if (!(Math.abs(got) > 1e-9)) return 0;
+        if (got !== dt) keplerAdvance3(oi.rx, oi.ry, oi.rz || 0, oi.rvx, oi.rvy, oi.rvz || 0, st.mu, got, _dj);
         G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
         G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy; G.vz = _dj.vz;
-        G.t += dt;
-        return dt;
+        advanceSimTime(got);
+        return got;
     }
     if (starWell?.dominant && starAcc > domAcc) {
         // a named star owns the well; they are static, so recomposition only
@@ -1017,16 +1212,19 @@ export function shipDeepJump(dt) {
         const d = starWell.d;
         if (st.bh && d < st.rs * 200) return 0;
         if (d <= st.R * 1.1) return 0;
-        const rp = osculatingPeriapsis(starWell.rx, starWell.ry, starWell.rz, G.vx + eph.earthVx, G.vy + eph.earthVy, G.vz, st.mu);
+        const rvx = G.vx + eph.earthVx, rvy = G.vy + eph.earthVy, rvz = G.vz;
+        const rp = osculatingPeriapsis(starWell.rx, starWell.ry, starWell.rz, rvx, rvy, rvz, st.mu);
         if (rp <= stellarContactRadius(st) * 1.1) return 0;
-        keplerAdvance3(starWell.rx, starWell.ry, starWell.rz, G.vx + eph.earthVx, G.vy + eph.earthVy, G.vz, st.mu, dt, _dj);
+        keplerAdvance3(starWell.rx, starWell.ry, starWell.rz, rvx, rvy, rvz, st.mu, dt, _dj);
         if (!_dj.ok) return 0;
         if (!stellarJumpClear(st, starWell.rx, starWell.ry, starWell.rz, _dj.x, _dj.y, _dj.z, rp)) return 0;
-        advanceEphem(dt);
+        const got = advanceEphem(dt);
+        if (!(Math.abs(got) > 1e-9)) return 0;
+        if (got !== dt) keplerAdvance3(starWell.rx, starWell.ry, starWell.rz, rvx, rvy, rvz, st.mu, got, _dj);
         G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
         G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy; G.vz = _dj.vz;
-        G.t += dt;
-        return dt;
+        advanceSimTime(got);
+        return got;
     }
     const atmTop = oi.body === "EARTH" ? ATM_TOP : oi.domPl ? (PL[oi.pNear].atmTop || 0) : oi.domSysPlanet ? (oi.sysPlanet?.atmTop || 0) : 0;
     if (oi.r - oi.R < atmTop) return 0;     // inside the drag shell: integrate it
@@ -1035,7 +1233,14 @@ export function shipDeepJump(dt) {
     if (starAcc > domAcc * .02) return 0;
     keplerAdvance3(oi.rx, oi.ry, oi.rz || 0, oi.rvx, oi.rvy, oi.rvz || 0, oi.mu, dt, _dj);
     if (!_dj.ok) return 0;
-    advanceEphem(dt);
+    // validate the procedural host BEFORE the bodies move: bailing out after
+    // advanceEphem would leave the ephemeris ahead of the ship and the clock
+    const sys = oi.domSysPlanet ? getCachedFocusedSystem() : null;
+    if (oi.domSysPlanet && (!sys?.hostStar || sys.starId !== oi.sysStarId ||
+        !planetWorldState(sys, oi.sysPlanetIndex, sys.hostStar, G.t + dt, _pwSnap))) return 0;
+    const got = advanceEphem(dt);
+    if (!(Math.abs(got) > 1e-9)) return 0;
+    if (got !== dt) keplerAdvance3(oi.rx, oi.ry, oi.rz || 0, oi.rvx, oi.rvy, oi.rvz || 0, oi.mu, got, _dj);
     // bx/by/bz default to 0 (world origin): EARTH/DRIFT domination has no
     // separate body offset since Earth's own world z is permanently 0 (see
     // ephemeris.js's earthZ note) and the ship state is already Earth-relative.
@@ -1043,16 +1248,15 @@ export function shipDeepJump(dt) {
     if (oi.domMoon) { bx = eph.moonX; by = eph.moonY; bz = eph.moonZ; bvx = eph.moonVx; bvy = eph.moonVy; bvz = eph.moonVz; }
     else if (oi.domPl) { bx = eph.plX[oi.pNear]; by = eph.plY[oi.pNear]; bz = eph.plZ[oi.pNear]; bvx = eph.plVx[oi.pNear]; bvy = eph.plVy[oi.pNear]; bvz = eph.plVz[oi.pNear]; }
     else if (oi.domSysPlanet) {
-        const sys = getCachedFocusedSystem();
-        if (!sys?.hostStar || sys.starId !== oi.sysStarId || !planetWorldState(sys, oi.sysPlanetIndex, sys.hostStar, G.t + dt, _pwSnap)) return 0;
+        if (got !== dt) planetWorldState(sys, oi.sysPlanetIndex, sys.hostStar, G.t + got, _pwSnap);
         bx = _pwSnap.x - eph.earthX; by = _pwSnap.y - eph.earthY; bz = _pwSnap.z;
         bvx = _pwSnap.vx - eph.earthVx; bvy = _pwSnap.vy - eph.earthVy; bvz = _pwSnap.vz;
     }
     else if (oi.domSun) { bx = eph.sunX; by = eph.sunY; bz = eph.sunZ; bvx = eph.sunVx; bvy = eph.sunVy; bvz = eph.sunVz; }
     G.x = bx + _dj.x; G.y = by + _dj.y; G.z = bz + _dj.z;
     G.vx = bvx + _dj.vx; G.vy = bvy + _dj.vy; G.vz = bvz + _dj.vz;
-    G.t += dt;
-    return dt;
+    advanceSimTime(got);
+    return got;
 }
 
 // ============================ AERO READOUT ============================

@@ -1,9 +1,10 @@
 import { K, LY_KM, MU_S, R_SUN, STARS } from "../constants.js";
-import { equatorialKmToGal, galToEquatorialKmInto, PC_KM } from "./coords.js";
-import { getSeed, localStarById, sampleLocalStarsNear, starPositionAt } from "./galaxy.js";
+import { SUN_GAL, PC_KM, galToWorldKmFromInto, worldKmToGalFromInto } from "./coords.js";
+import { getSeed, localStarById, sampleLocalStarsNow, starPositionNow } from "./galaxy.js";
 import {
     hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, hygStarById, sampleHygStarsNear,
 } from "./hygActiveCatalog.js";
+import { solarGalacticStateAt } from "./solarOrbit.js";
 import { generateSystem, stableStarKey } from "./planetarySystem.js";
 import { tier1MassFor } from "./athygTier1.js";
 
@@ -24,11 +25,36 @@ import { tier1MassFor } from "./athygTier1.js";
 const POSITION_DRIFT_BUDGET_PC = 0.001;
 const TYPICAL_STAR_SPEED_KMS = 50;
 const PROC_REEVAL_DT_S = (POSITION_DRIFT_BUDGET_PC * PC_KM) / TYPICAL_STAR_SPEED_KMS; // ≈ 19.6 years
+export const ACTIVE_STAR_EVAL_DT_S = PROC_REEVAL_DT_S;
 function simTBucket(simT) {
-    return Math.floor(simT / PROC_REEVAL_DT_S);
+    if (!Number.isFinite(simT)) return 0;
+    const q = simT / PROC_REEVAL_DT_S, r = Math.round(q);
+    // snap near-integers so activeStarEvalTime is idempotent ((b*dt)/dt can
+    // land one ulp under b)
+    return Math.abs(q - r) <= 1e-9 * Math.max(1, Math.abs(r)) ? r : Math.trunc(q);
+}
+// Every path (flight, landed, UI) evaluates moving stars at the START of the
+// bucket (toward zero), never at whichever instant a refresh happened to run:
+// positions are then a pure function of the bucket, the paths agree, and
+// |t| below one bucket is exactly the epoch/catalog position.
+export function activeStarEvalTime(simT) {
+    const b = simTBucket(simT);
+    return b === 0 ? 0 : b * PROC_REEVAL_DT_S;
+}
+let LAST_EVAL_T = 0;
+// The evaluation time of the latest refresh: "now" for the active layer.
+export function activeStarsTime() { return LAST_EVAL_T; }
+// The Sun (galactocentric pc) at the evaluation time: star positions are
+// relative to the Sun of the same instant, not to the per-frame anchor.
+const SUN_EVAL = { t: 0, x: SUN_GAL[0], y: SUN_GAL[1], z: SUN_GAL[2], vx: 0, vy: 0, vz: 0 };
+function sunAt(tq) {
+    if (SUN_EVAL.t !== tq) { solarGalacticStateAt(tq, SUN_EVAL); SUN_EVAL.t = tq; }
+    return SUN_EVAL;
 }
 const GAL_POS_SCRATCH = [0, 0, 0];
 const EQ_POS_SCRATCH = [0, 0, 0];
+const SHIP_GAL = [0, 0, 0];
+const COMP_A = [0, 0, 0], COMP_B = [0, 0, 0];
 
 // 25-60 pc M-dwarf ACTIVE density is intentionally delegated to the tier-1
 // visual layer (per-shell floor asserted in smoke-local-tier); follow-up WP
@@ -46,6 +72,12 @@ export const ACTIVE_STAR_CONFIG = {
     gravityLimit: 64,
     gravityRefreshGridPc: 0.25,
     realMaskPc: 0.35,
+    // A frame that advances more than this replaces the whole neighbourhood
+    // (stars move ~20 pc per Myr): re-sampling 8 pc of freshly generated cells
+    // every frame cost 15-30 ms at Gyr/s, so such frames keep only the stars
+    // within decorrelatedRadiusPc (the ones that matter for gravity/contact).
+    decorrelatedFrameSec: 1e6 * 31557600,
+    decorrelatedRadiusPc: 2,
 };
 
 export const ACTIVE_STARS = [];
@@ -71,6 +103,7 @@ let GRAVITY_REFRESH_KEY = "";
 const FAST_REFRESH = {
     wx: Infinity, wy: Infinity, wz: Infinity, focus: undefined,
     pins: -1, seed: undefined, hLoaded: false, hReady: false, hVersion: -1, hCount: -1, simTBucket: undefined,
+    lite: false,
 };
 let _focusSystem = { starId: "", system: null };
 
@@ -160,32 +193,35 @@ function proceduralName(src) {
     return "MW-" + h.toString(36).toUpperCase().padStart(5, "0").slice(-5);
 }
 
-// Evaluates `src`'s (galaxy.js generator record) position at simT seconds and
-// writes the resulting Sol-centred equatorial km into `out` (length-3, reused
-// by callers — zero allocation here). simT===0 skips the trig entirely and
-// copies the birth position directly (matches starPositionAt's own t=0
-// short-circuit), so a freshly generated star and a "moving" one evaluated at
-// t=0 are identical.
-function proceduralPositionAt(src, simT, out) {
-    if (simT === 0) { out[0] = src.x; out[1] = src.y; out[2] = src.z || 0; return out; }
-    starPositionAt(src, simT, GAL_POS_SCRATCH);
-    galToEquatorialKmInto(GAL_POS_SCRATCH[0], GAL_POS_SCRATCH[1], GAL_POS_SCRATCH[2], out);
-    return out;
+// Evaluates `src`'s (galaxy.js generator record) position at evaluation time
+// tq (activeStarEvalTime) and writes Sun-relative world km (relative to the
+// Sun AT tq) into `out` (length-3, reused by callers — zero allocation here).
+// Where the star is comes from galaxy.js's starPositionNow (its epicycle,
+// phase-mixed in the rotating frame in deep time); at tq = 0 it is the birth
+// position, converted with the epoch Sun exactly as generation used to.
+function proceduralPositionAt(src, tq, out) {
+    starPositionNow(src, tq, GAL_POS_SCRATCH);
+    const sun = sunAt(tq);
+    return galToWorldKmFromInto(GAL_POS_SCRATCH[0], GAL_POS_SCRATCH[1], GAL_POS_SCRATCH[2], sun.x, sun.y, sun.z, out);
 }
 
 // Static birth-time separation (Sol-centred equatorial km) between a
 // procedural primary and its companion, from the seeded orientation angle
 // galaxy.js's attachCompanion drew at generation time. No per-frame orbital
 // integration this wave (task carry-forward) — the companion rigidly co-moves
-// with its primary's live position instead.
+// with its primary's live position instead. A pure rotation of the
+// galactocentric separation (both ends through the same Sun).
 function companionOffsetKm(src) {
     const c = src.companion;
     if (!c) return null;
-    return { x: c.x - src.x, y: c.y - src.y, z: c.z - src.z };
+    galToWorldKmFromInto(c.gx, c.gy, c.gz, SUN_GAL[0], SUN_GAL[1], SUN_GAL[2], COMP_A);
+    galToWorldKmFromInto(src.gx, src.gy, src.gz, SUN_GAL[0], SUN_GAL[1], SUN_GAL[2], COMP_B);
+    return { x: COMP_A[0] - COMP_B[0], y: COMP_A[1] - COMP_B[1], z: COMP_A[2] - COMP_B[2] };
 }
 
 function runtimeProceduralStar(src, simT = 0) {
     const radiusKm = Math.max(0.02, src.R) * R_SUN;
+    simT = activeStarEvalTime(simT);
     proceduralPositionAt(src, simT, EQ_POS_SCRATCH);
     const star = {
         id: src.id,
@@ -226,6 +262,7 @@ function runtimeProceduralStar(src, simT = 0) {
 // localStarById (already cache-backed in galaxy.js) rather than storing
 // epicyclic fields on the runtime object itself.
 function repositionProceduralStar(star, simT) {
+    simT = activeStarEvalTime(simT);
     if (star._posSimT === simT) return;
     const src = localStarById(star.id);
     if (!src) return;
@@ -283,12 +320,14 @@ function pushCompanionIfAny(primary) {
     if (comp && !maskedByKnown(comp, STARS)) pushActive(comp, comp.id, "procedural");
 }
 
-export function proceduralStarById(id, simT = 0) {
+// simT defaults to the time of the latest refreshActiveStars (the stars'
+// "now"), not the epoch.
+export function proceduralStarById(id, simT = LAST_EVAL_T) {
     const src = localStarById(id);
     return src ? runtimeProceduralStar(src, simT) : null;
 }
 
-export function pinProceduralStarById(id, simT = 0) {
+export function pinProceduralStarById(id, simT = LAST_EVAL_T) {
     const cached = PINNED_PROC.get(id);
     if (cached) {
         PINNED_PROC.delete(id);
@@ -322,7 +361,7 @@ function trimPinnedProcedural(keepId = "") {
 
 export function activeStarById(id) {
     for (const star of ACTIVE_STARS) if (activeId(star) === id) return star;
-    return PINNED_PROC.get(id) || proceduralStarById(id) || catalogStarById(id);
+    return PINNED_PROC.get(id) || proceduralStarById(id, LAST_EVAL_T) || catalogStarById(id, LAST_EVAL_T);
 }
 
 // A companion's id is always "<primaryId>:B" (see companionActiveStar below),
@@ -407,18 +446,20 @@ function gravityCacheKey(gx, gy, gz, focus, activeKey) {
     ].join(":");
 }
 
-function proceduralStarsFor(wx, wy, wz, simT = 0) {
-    const [gx, gy, gz] = equatorialKmToGal(wx, wy, wz);
-    const key = cacheKey(gx, gy, gz, simT);
+// The procedural neighbours of the ship (galactocentric gx,gy,gz at tq) where
+// they are AT tq (galaxy.js sampleLocalStarsNow), not where they were born.
+function proceduralStarsFor(gx, gy, gz, tq, radiusPc) {
+    const key = cacheKey(gx, gy, gz, tq) + ":" + radiusPc;
     if (PROC_CACHE.key !== key) {
         PROC_CACHE.key = key;
-        PROC_CACHE.stars = sampleLocalStarsNear(
+        PROC_CACHE.stars = sampleLocalStarsNow(
             gx,
             gy,
             gz,
-            ACTIVE_STAR_CONFIG.proceduralRadiusPc,
+            radiusPc,
             ACTIVE_STAR_CONFIG.proceduralLimit,
-        ).map(src => runtimeProceduralStar(src, simT));
+            tq,
+        ).map(src => runtimeProceduralStar(src, tq));
     }
     return PROC_CACHE.stars;
 }
@@ -465,7 +506,7 @@ function knownDuplicateFor(star) {
 }
 
 function catalogStarById(id, simT = 0) {
-    const star = hygStarById(id, simT);
+    const star = hygStarById(id, activeStarEvalTime(simT));
     return knownDuplicateFor(star) || star;
 }
 
@@ -517,17 +558,24 @@ function rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalo
     GRAVITY_REFRESH_KEY = key;
 }
 
-// simT (seconds, sim/mission-elapsed time): when to evaluate moving stars at.
-// Defaults to 0 (every pre-WP8 caller, and physics.js's deep-jump recompute,
-// still gets the exact static birth/epoch pool). main.js threads the real
-// value through once its frame loop is wired up (WP10).
-export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0) {
+// simT (seconds, sim time): when to evaluate moving stars at -- every caller
+// passes the real clock (physics' flight step, main.js's frame, the catalog
+// browser); positions are taken at activeStarEvalTime(simT) and expressed
+// relative to the Sun of that instant. Defaults to 0 (the epoch) only for
+// callers that genuinely mean it (module init, tests). frameAdvanceSec: the
+// sim time the caller's frame covers; past ACTIVE_STAR_CONFIG
+// .decorrelatedFrameSec only the nearest decorrelatedRadiusPc is sampled.
+export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0, frameAdvanceSec = 0) {
+    simT = activeStarEvalTime(simT);
+    LAST_EVAL_T = simT;
+    const lite = Math.abs(frameAdvanceSec) > ACTIVE_STAR_CONFIG.decorrelatedFrameSec;
     const hStats = hygCatalogStats();
-    if (sameFastRefresh(wx, wy, wz, focus, hStats, simT)) return activeStarStats();
+    if (sameFastRefresh(wx, wy, wz, focus, hStats, simT) && FAST_REFRESH.lite === lite) return activeStarStats();
     const forcedIndex = focusStarIndex(focus);
     const forcedProcId = proceduralFocusId(focus);
     const forcedCatalogId = hygCatalogFocusId(focus);
-    const gal = equatorialKmToGal(wx, wy, wz);
+    const sun = sunAt(simT);
+    const gal = worldKmToGalFromInto(wx, wy, wz, sun.x, sun.y, sun.z, SHIP_GAL);
     const refreshKey = [
         cacheKey(gal[0], gal[1], gal[2], simT),
         String(focus),
@@ -536,6 +584,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0)
         hStats.indexReady ? 1 : 0,
         hStats.version || 0,
         hStats.count || 0,
+        lite ? "near" : "full",
     ].join("|");
     const gravKey = gravityCacheKey(gal[0], gal[1], gal[2], focus, refreshKey);
     if (refreshKey === ACTIVE_REFRESH_KEY && ACTIVE_STARS.length > 0) {
@@ -543,6 +592,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0)
             rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalogId, gravKey);
         }
         rememberFastRefresh(wx, wy, wz, focus, hStats, simT);
+        FAST_REFRESH.lite = lite;
         return activeStarStats();
     }
     ACTIVE_STARS.length = 0;
@@ -586,7 +636,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0)
         wx,
         wy,
         wz,
-        ACTIVE_STAR_CONFIG.catalogRadiusPc,
+        lite ? ACTIVE_STAR_CONFIG.decorrelatedRadiusPc : ACTIVE_STAR_CONFIG.catalogRadiusPc,
         Math.min(ACTIVE_STAR_CONFIG.catalogOversampleLimit, ACTIVE_STAR_CONFIG.totalLimit),
         simT,
     )
@@ -602,7 +652,8 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0)
     PROC_NEAREST.length = 0;
     const procLimit = ACTIVE_STAR_CONFIG.totalLimit - ACTIVE_STARS.length;
     if (procLimit > 0) {
-        const procStars = proceduralStarsFor(wx, wy, wz, simT);
+        const procStars = proceduralStarsFor(gal[0], gal[1], gal[2], simT,
+            lite ? ACTIVE_STAR_CONFIG.decorrelatedRadiusPc : ACTIVE_STAR_CONFIG.proceduralRadiusPc);
         for (let i = 0; i < procStars.length; i++) {
             const st = procStars[i];
             if (maskedByKnown(st, ACTIVE_STARS)) continue;
@@ -619,6 +670,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0)
     ACTIVE_REFRESH_KEY = refreshKey;
     rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalogId, gravKey);
     rememberFastRefresh(wx, wy, wz, focus, hStats, simT);
+    FAST_REFRESH.lite = lite;
     return activeStarStats();
 }
 

@@ -11,10 +11,24 @@
 //
 // Tiers asserted here:
 //   T1 (exact):      same-engine reruns are bit-identical, full precision.
-//   T2 (exact):      STRUCTURAL fields — positions (gx,gy,gz), mass, age —
-//                    derive from uniforms via pure arithmetic (inverse-CDF
-//                    tables, rejection sampling) and must hash identically
-//                    at full 64-bit precision on ANY engine.
+//   T2 (structural): split by how each field is derived.
+//     T2a (exact)    positions (gx,gy,gz) and age come from uniforms through
+//                    pure arithmetic (cell origin + u*size, age = u*span) and
+//                    must hash identically at full 64-bit precision on ANY
+//                    engine (hash dd945708, V8 12.4 == JavaScriptCore).
+//     T2b (1e-12)    mass is NOT pure arithmetic: sampleIMFMass returns
+//                    Math.pow(10, logm), an implementation-approximated
+//                    transcendental. V8 12.x changed Math.pow's last bit, so
+//                    52 of the 500 masses moved by 1 ulp and the old 5-field
+//                    exact hash went 392d861 (JSC, older V8) -> 176505a1
+//                    (node 22). Mass is therefore pinned through order-
+//                    sensitive moments (sum m, sum m^2, sum (i+1) m) at a
+//                    1e-12 relative tolerance: immune to last-ulp drift
+//                    (which moves them ~1e-16) yet still broken by any real
+//                    change to the IMF table, the rng streams or the order.
+//                    (A 12- or 14-digit hash is NOT robust: a 1-ulp shift
+//                    crosses a decimal rounding boundary with probability
+//                    ~ulp/bin per value, i.e. a few percent over 500 masses.)
 //   T3 (12 digits):  the FULL record (adding L, Teff, vx, vy, vz, feh) must
 //                    hash identically after rounding to 12 significant
 //                    digits — the same precision bar smoke-physics3d's
@@ -34,6 +48,11 @@ function assert(ok, msg) { if (!ok) { console.error("FAIL: " + msg); process.exi
 
 const SEED = 0x9e3779b9, N = 500;
 const STRUCTURAL = ["gx", "gy", "gz", "mass", "age"];
+const ARITHMETIC = ["gx", "gy", "gz", "age"];
+// Pinned on V8 12.4 (node 22) and JavaScriptCore (bun 1.3); both agree to
+// the printed digits (the weighted sum differs in its 17th digit only).
+const MASS_MOMENTS = { sum: 204.40440747906933, sumSq: 138.83863092264193, weighted: 52257.93605591413 };
+const MASS_REL_TOL = 1e-12;
 const FULL = ["gx", "gy", "gz", "mass", "L", "Teff", "vx", "vy", "vz", "age", "feh"];
 
 function sample() {
@@ -65,11 +84,23 @@ assert(a.length === b.length && a.length >= N, "sample size stable, got " + a.le
 // T1: same-engine rerun, full precision, all fields
 assert(hashExact(a, FULL) === hashExact(b, FULL), "T1 same-engine rerun must be bit-identical");
 
-// T2: structural fields pinned cross-engine at full precision
+// T2a: arithmetic-only structural fields pinned cross-engine at full precision
+const arithmetic = hashExact(a, ARITHMETIC).toString(16);
+assert(arithmetic === "dd945708", "T2a positions+age exact hash must equal dd945708 (V8/JSC verified), got " + arithmetic);
+// T2b: transcendental-derived mass pinned through order-sensitive moments
+let mSum = 0, mSumSq = 0, mWeighted = 0;
+a.forEach((s, i) => { mSum += s.mass; mSumSq += s.mass * s.mass; mWeighted += (i + 1) * s.mass; });
+const rel = (got, want) => Math.abs(got - want) / Math.abs(want);
+for (const [name, got] of [["sum", mSum], ["sumSq", mSumSq], ["weighted", mWeighted]]) {
+    assert(rel(got, MASS_MOMENTS[name]) <= MASS_REL_TOL,
+        "T2b mass moment " + name + " must match " + MASS_MOMENTS[name] + " within " + MASS_REL_TOL + ", got " + got);
+}
+// Informational only: the legacy all-structural exact hash (engine-dependent
+// through mass; 392d861 on JSC/older V8, 176505a1 on V8 12.x).
 const structural = hashExact(a, STRUCTURAL).toString(16);
-assert(structural === "392d861", "T2 structural exact hash must equal 392d861 (V8/JSC verified), got " + structural);
 // T3: full record pinned at 12 significant digits (verified V8 == JSC)
 const full12 = hash12(a, FULL).toString(16);
 assert(full12 === "ef2c1f9a", "T3 full-record 12-digit hash must equal ef2c1f9a (V8/JSC verified), got " + full12);
 
-console.log("determinism smoke passed  structural=" + structural + "  full12=" + full12);
+console.log("determinism smoke passed  arithmetic=" + arithmetic + "  massSum=" + mSum +
+    "  full12=" + full12 + "  (legacy structural=" + structural + ", engine-dependent)");

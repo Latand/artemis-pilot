@@ -1,4 +1,5 @@
 import { bvToTeff, teffToRGB, absMagFromApparent } from "./render/viewBrightness.js";
+import { ensureWorldFrameRecords } from "./universe/coords.js";
 
 // True Teff-based hue (no apparent-magnitude gain baked in — WP16 a1/b: color
 // is intrinsic to the star, brightness comes from observer-relative
@@ -46,6 +47,10 @@ self.onmessage = async e => {
         const iTemp = field("tempK");
         const iAbsMag = field("absMag");
         const count = Math.floor(vals.length / stride);
+        // Catalog positions are J2000 equatorial; rotate once into the world
+        // (ecliptic J2000) frame so the cloud, the gameplay index and the
+        // planets all share one frame. Idempotent via data.frame.
+        ensureWorldFrameRecords(data, vals, stride, iX, iY, iZ);
         const keep = new Uint8Array(count);
         let kept = 0;
         const suppressR2 = 0.18 * 0.18;

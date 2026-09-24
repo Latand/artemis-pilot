@@ -1,0 +1,448 @@
+{
+ "schema": 1,
+ "name": "2MASS Redshift Survey (2MRS) main catalog, redshift-space positions",
+ "generatedBy": "scripts/build-galaxy-catalogs.mjs",
+ "binary": "2mrs.bin",
+ "byteLength": 1741320,
+ "count": 43533,
+ "layout": "columnar",
+ "encoding": "Float32 little-endian; field f occupies bytes [f*count*4, (f+1)*count*4); missing values are NaN (lvIndex uses -1)",
+ "fields": [
+  {
+   "name": "raDeg",
+   "unit": "deg",
+   "description": "right ascension, ICRS/J2000 (2MASS)",
+   "byteOffset": 0
+  },
+  {
+   "name": "decDeg",
+   "unit": "deg",
+   "description": "declination, ICRS/J2000 (2MASS)",
+   "byteOffset": 174132
+  },
+  {
+   "name": "distMpc",
+   "unit": "Mpc",
+   "description": "redshift-space Hubble-flow distance vCmb / H0 (vCmb floored at vFloorKms); NOT a measured distance",
+   "byteOffset": 348264
+  },
+  {
+   "name": "cz",
+   "unit": "km/s",
+   "description": "heliocentric (solar-system barycentre) redshift c*z, as published",
+   "byteOffset": 522396
+  },
+  {
+   "name": "vCmb",
+   "unit": "km/s",
+   "description": "c*z in the CMB rest frame: 1 + z_cmb = (1 + z_hel) / (gamma (1 - beta cos theta)), theta = angle to the CMB dipole apex",
+   "byteOffset": 696528
+  },
+  {
+   "name": "KsMag",
+   "unit": "mag",
+   "description": "2MASS Ks total extrapolated magnitude, Galactic-extinction corrected (2MRS Ktmag)",
+   "byteOffset": 870660
+  },
+  {
+   "name": "type",
+   "unit": null,
+   "description": "ZCAT morphological T-type code (first two characters of the 2MRS type field), -9..20; NaN = no morphology (blank, 98 'never visually examined', or the undocumented 99). See typeCodes",
+   "byteOffset": 1044792
+  },
+  {
+   "name": "ba",
+   "unit": null,
+   "description": "axis ratio b/a of the J+H+Ks super-coadd at the 3-sigma isophote (2MRS)",
+   "byteOffset": 1218924
+  },
+  {
+   "name": "pa",
+   "unit": "deg",
+   "description": "position angle of the same ellipse, east of north, [0, 180) (2MASS XSC sup_phi, joined on the 2MASS ID); NaN = unavailable",
+   "byteOffset": 1393056
+  },
+  {
+   "name": "lvIndex",
+   "unit": null,
+   "description": "row index into local-volume.json when this galaxy duplicates a Local Volume galaxy (prefer that row's measured distance); -1 = none",
+   "byteOffset": 1567188
+  }
+ ],
+ "rowOrder": "2MRS table3 order (ascending isophotal Ks)",
+ "distanceKind": "redshift",
+ "frame": "ICRS/J2000 equatorial positions; distances are redshift-space",
+ "cosmology": {
+  "H0": 67.66,
+  "H0Source": "Planck 2018 (A&A 641, A6); same value as src/constants.js DARK_ENERGY.H0_KM_S_MPC",
+  "cKms": 299792.458,
+  "distance": "distMpc = max(vCmb, vFloorKms) / H0 (linear Hubble law, no peculiar-velocity model)",
+  "vFloorKms": 100,
+  "cmbDipole": {
+   "vKms": 369.82,
+   "lDeg": 264.021,
+   "bDeg": 48.253,
+   "raDeg": 167.9419,
+   "decDeg": -6.9443,
+   "source": "Planck 2018 I (Planck Collaboration I 2020, A&A 641, A1)",
+   "conversion": "(l, b) -> ICRS with the Hipparcos Galactic rotation matrix (ESA 1997 vol. 1 sect. 1.5.3)",
+   "velocityTransform": "1 + z_cmb = (1 + z_hel) / (gamma (1 - beta cos theta)), beta = vKms/c, theta = angle between the galaxy and the apex; first order: vCmb ~ cz + vKms cos theta"
+  }
+ },
+ "luminosity": {
+  "MK_SUN": 3.28,
+  "note": "decode2mrs derives LK = 10^(-0.4 (KsMag - 5 log10(distMpc*1e5) - 3.28)) from the redshift distance (no K-correction; <~0.1 mag at 2MRS depths)"
+ },
+ "caveats": [
+  "Distances are redshift-space (Hubble-flow) estimates, not measurements: every galaxy carries a peculiar-velocity error of typically 200-600 km/s (3-9 Mpc at H0 = 67.66).",
+  "Galaxy clusters appear stretched along the line of sight ('fingers of God'): 2MRS galaxies within 6 deg of the Virgo cluster centre span cz = -261..+2800 km/s (dispersion ~670 km/s, a +-10 Mpc smear in distMpc) although the cluster sits at ~16.5 Mpc; coherent infall squashes structures across the line of sight (Kaiser effect).",
+  "Below vCmb = 100 km/s the redshift distance is meaningless; such rows are pinned to 1.478 Mpc. Most have lvIndex >= 0 (a measured distance in local-volume.json - prefer it); the rest (stats.velocityFloorWithoutLvMatch) are blueshifted Virgo-cluster members (M86, M90, NGC 4419: really ~16.5 Mpc away) and a few unnamed low-latitude sources with unconfirmed negative redshifts.",
+  "Rows with lvIndex >= 0 duplicate a Local Volume galaxy (vCmb < 3000 km/s, within 2 arcmin - or a matching name within 15 arcmin - and |cz - hrv| <= 400 km/s): render them from local-volume.json instead.",
+  "The linear Hubble law ignores the expansion history: vCmb/H0 exceeds the Planck 2018 comoving distance by ~1.2% at z = 0.05 and ~2.3% at z = 0.1 (see stats.zAbove0p1 for the few rows beyond).",
+  "Selection: Ks <= 11.75 mag (isophotal, extinction corrected), |b| >= 5 deg (>= 8 deg toward the bulge); the Galactic plane is empty (zone of avoidance), and number density falls with distance (flux-limited sample).",
+  "Position angles exist only where the 2MRS galaxy is found in the 2MASS XSC under the same designation; morphological types are nearly complete only for Ks <= 11.25 and |b| >= 10 deg."
+ ],
+ "selection": "2MRS main catalog (table3): Ks <= 11.75 mag and |b| >= 5 deg (8 deg toward the bulge); rows without a published cz are omitted",
+ "errata": [
+  {
+   "id": "05332175-2156447",
+   "object": "NGC 1964",
+   "field": "cz",
+   "published": -248,
+   "adopted": 1656,
+   "reference": "SIMBAD radial velocity 1655.7 km/s (Meyer et al. 2004, MNRAS 350, 1195, HIPASS)",
+   "note": "the published cz = -248 km/s (6dFGS) is the spectrum of the superposed foreground star UCAC4 341-008108, 0.8 arcsec from the nucleus of this bright Sb galaxy"
+  }
+ ],
+ "typeCodes": {
+  "0": "S0/a",
+  "1": "Sa",
+  "2": "Sab",
+  "3": "Sb",
+  "4": "Sbc",
+  "5": "Sc",
+  "6": "Scd",
+  "7": "Sd",
+  "8": "Sdm",
+  "9": "Sm",
+  "10": "Im / dwarf irregular",
+  "11": "compact irregular / extragalactic HII region",
+  "12": "extragalactic HI cloud",
+  "15": "peculiar / unclassifiable",
+  "16": "Irr II",
+  "19": "unclassified galaxy",
+  "20": "unclassified spiral",
+  "98": "never visually examined (stored as NaN)",
+  "99": "not defined in the 2MRS ReadMe (stored as NaN; see stats.typeUndocumented99)",
+  "-9": "QSO/AGN",
+  "-7": "unclassified elliptical",
+  "-6": "compact elliptical",
+  "-5": "E, dwarf E",
+  "-4": "E/S0",
+  "-3": "L-, S0-",
+  "-2": "L, S0",
+  "-1": "L+, S0+"
+ },
+ "sources": [
+  {
+   "id": "2MRS",
+   "citation": "Huchra, J. P., Macri, L. M., Masters, K. L., et al. 2012, ApJS, 199, 26, \"The 2MASS Redshift Survey - Description and Data Release\"",
+   "bibcode": "2012ApJS..199...26H",
+   "doi": "10.1088/0067-0049/199/2/26",
+   "vizier": "J/ApJS/199/26",
+   "url": "https://cdsarc.cds.unistra.fr/viz-bin/cat/J/ApJS/199/26"
+  },
+  {
+   "id": "2MASX",
+   "citation": "Skrutskie, M. F., Cutri, R. M., Stiening, R., et al. 2006, AJ, 131, 1163, \"The Two Micron All Sky Survey (2MASS)\"; Jarrett, T. H., et al. 2000, AJ, 119, 2498 (Extended Source Catalog)",
+   "bibcode": "2006AJ....131.1163S",
+   "vizier": "VII/233",
+   "url": "https://cdsarc.cds.unistra.fr/viz-bin/cat/VII/233",
+   "usedFor": "super-coadd position angle (sup_phi) of the 2MRS galaxies"
+  }
+ ],
+ "cosmologySources": [
+  "Planck Collaboration I 2020, A&A, 641, A1 (CMB dipole: 369.82 +/- 0.11 km/s toward l = 264.021, b = 48.253 deg)",
+  "Planck Collaboration VI 2020, A&A, 641, A6 (H0 = 67.66 km/s/Mpc, TT,TE,EE+lowE+lensing+BAO)"
+ ],
+ "license": "Catalog data retrieved from CDS/VizieR. VizieR terms (https://cds.unistra.fr/vizier-org/licences_vizier.html): the data are free to use in a scientific context provided the original authors and publications (including the publisher, here the AAS journals AJ/ApJS) are explicitly cited; commercial reuse is subject to the originating publisher's policy. No separate open licence is declared in these catalogs' ReadMe files. Derived values (see field notes) are this project's computations, not catalog values.",
+ "acknowledgment": [
+  "This research has made use of the VizieR catalogue access tool, CDS, Strasbourg, France (DOI: 10.26093/cds/vizier).",
+  "This publication makes use of data products from the Two Micron All Sky Survey, which is a joint project of the University of Massachusetts and the Infrared Processing and Analysis Center/California Institute of Technology, funded by the National Aeronautics and Space Administration and the National Science Foundation."
+ ],
+ "localVolume": {
+  "file": "local-volume.json",
+  "count": 869,
+  "dupMatch": "vCmb < 3000 km/s and the nearest Local Volume galaxy within 2' (or a matching name, incl. Messier/NGC twins, within 15'), rejected if the LV heliocentric velocity differs from cz by more than 400 km/s"
+ },
+ "stats": {
+  "parsed": 44599,
+  "withCz": 43533,
+  "noCz": 1066,
+  "paJoined": 43425,
+  "baCompared": 43425,
+  "baAgree": 43425,
+  "typeClassified": 25908,
+  "typeNeverExamined": 17611,
+  "typeUndocumented99": 14,
+  "lvDuplicates": 161,
+  "lvDuplicatesByPosition": 160,
+  "lvDuplicatesByNameOnly": 1,
+  "lvNameOnlyMatches": [
+   {
+    "id": "13295269+4711429",
+    "cat": "MESSIER_051a",
+    "lv": "NGC5194",
+    "sepArcmin": 2.35
+   }
+  ],
+  "lvVelocityRejected": [
+   {
+    "id": "13363368+4435572",
+    "cat": "13363368+4435569",
+    "cz": 2564,
+    "lv": "MCG +08-25-028",
+    "lvHrv": 480
+   }
+  ],
+  "velocityFloorApplied": 36,
+  "velocityFloorWithoutLvMatch": [
+   {
+    "id": "12261181+1256454",
+    "cat": "MESSIER_086",
+    "cz": -244,
+    "vCmb": 84.9
+   },
+   {
+    "id": "12364981+1309463",
+    "cat": "MESSIER_090",
+    "cz": -235,
+    "vCmb": 87.8
+   },
+   {
+    "id": "12265643+1502507",
+    "cat": "NGC_4419",
+    "cz": -261,
+    "vCmb": 62.9
+   },
+   {
+    "id": "20475214+5937111",
+    "cat": "20475214+5937111",
+    "cz": -155,
+    "vCmb": -343.8
+   },
+   {
+    "id": "07480088+8533066",
+    "cat": "CGCG_362-045",
+    "cz": 34,
+    "vCmb": 7.1
+   },
+   {
+    "id": "00450137+5521179",
+    "cat": "00450137+5521179",
+    "cz": -122,
+    "vCmb": -350.4
+   },
+   {
+    "id": "04000932+3726113",
+    "cat": "04000932+3726113",
+    "cz": -138,
+    "vCmb": -254.9
+   },
+   {
+    "id": "19261464+4351036",
+    "cat": "19261464+4351036",
+    "cz": -180,
+    "vCmb": -357.6
+   }
+  ],
+  "zAbove0p1": 25,
+  "vCmbMin": -583.6,
+  "vCmbMax": 51430.7,
+  "vCmbMedian": 8402.5
+ },
+ "inputs": [
+  {
+   "file": "J_ApJS_199_26/ReadMe",
+   "url": "https://cdsarc.cds.unistra.fr/ftp/J/ApJS/199/26/ReadMe",
+   "bytes": 18658,
+   "sha256": "b4fc43f8e6c91c835c68f02a98255cbd0ea7ef570edd1094bf12d28057d54590",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "J_ApJS_199_26/table3.dat.gz",
+   "url": "https://cdsarc.cds.unistra.fr/ftp/J/ApJS/199/26/table3.dat.gz",
+   "bytes": 3367217,
+   "sha256": "14a40e14dea131afbc2ff525e42b39fdc4094cf9d06d9a43952257eff80f1790",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra000-015_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=0..15&K.K20e=%3C12.1",
+   "bytes": 83526,
+   "sha256": "3826b33e53681502c4b3c829a171ea212cae0c40daea2ac9d612a3104412ade6",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra015-030_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=15..30&K.K20e=%3C12.1",
+   "bytes": 97566,
+   "sha256": "7683f50793e6f9adfbd28e37580eff39ace6a4570c25f470b45fe33a925ee335",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra030-045_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=30..45&K.K20e=%3C12.0",
+   "bytes": 96986,
+   "sha256": "aec7725d6ea3682250a4f8c22ae7cf0d576b5412ea32c8175119eab2bd679e69",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra045-060_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=45..60&K.K20e=%3C12.1",
+   "bytes": 104436,
+   "sha256": "e24e0a01115484d3c4b6cbfdc44efba394320ea81b804c575310ce06f1a05710",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra060-075_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=60..75&K.K20e=%3C12.1",
+   "bytes": 103221,
+   "sha256": "2a2fa8554b6e28f816707262dac63b22a99ed2063b6f0a8d9a029da9ccb13c9d",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra075-090_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=75..90&K.K20e=%3C12.1",
+   "bytes": 102026,
+   "sha256": "f145a1fcb93c49be25b032150b77ae3830e0fd01445b1429e616853624935fab",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra090-105_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=90..105&K.K20e=%3C12.1",
+   "bytes": 98541,
+   "sha256": "f94d47196f86c01903a6a14ca44ab1df6da28a08ff52fe6462ea97438238fb6e",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra105-120_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=105..120&K.K20e=%3C12.0",
+   "bytes": 80632,
+   "sha256": "2a6926b7dea8994473b665de1e602dfae8062ad7f2d14b0b5e59b6392022d5bf",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra120-135_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=120..135&K.K20e=%3C12.0",
+   "bytes": 75322,
+   "sha256": "a4e9e1c27143f2a01a39b32384156f993fac6c24253abef2e09643ab82b5fb4d",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra135-150_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=135..150&K.K20e=%3C12.0",
+   "bytes": 75545,
+   "sha256": "4e1043d94c6fbd2b53a897d8ac44e181df84ac05cca47e86f11dbf59a353d509",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra150-165_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=150..165&K.K20e=%3C12.0",
+   "bytes": 92751,
+   "sha256": "926e79cec34a62fbfb0d1c96517926417b596a129ea37573d705805387119f64",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra165-180_k11.9.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=165..180&K.K20e=%3C11.9",
+   "bytes": 80255,
+   "sha256": "c559d1c8d27d70d4b498f9d972ba8f60f2b62d74ab3026740c60d042b495667a",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra180-195_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=180..195&K.K20e=%3C12.0",
+   "bytes": 97072,
+   "sha256": "3c8fbe4714f906d318633bf0d21728d33fb04ffcac696bcc9191eb5ee0b29dc6",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra195-210_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=195..210&K.K20e=%3C12.1",
+   "bytes": 126423,
+   "sha256": "6bb94fbb8a800cd6b9536054695c177bda18bb9f9cddde65ce59457be147430f",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra210-225_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=210..225&K.K20e=%3C12.0",
+   "bytes": 84373,
+   "sha256": "5918ea06d055e2aae2b6920f0398479b74dda5d61a19f1d780b292067a80bcc8",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra225-240_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=225..240&K.K20e=%3C12.0",
+   "bytes": 77152,
+   "sha256": "f080ee51a42b761aad6d4ed0b9bee8507c5c156f382829792468aa091ef25670",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra240-255_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=240..255&K.K20e=%3C12.1",
+   "bytes": 98409,
+   "sha256": "3bb054522ea188d4f8cbfc240437074c03aa9bbcb60b65ef2db7ba14f2dca639",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra255-270_k12.2.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=255..270&K.K20e=%3C12.2",
+   "bytes": 90764,
+   "sha256": "1709317e83cf645b3f3b6df951d3a09d51c4421f230d459ebc953b3e45d72d09",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra270-285_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=270..285&K.K20e=%3C12.1",
+   "bytes": 65230,
+   "sha256": "eb0c00fade56cc145b78d79a14751d44dfc7d85c4d9127f3e15e3b9dd7d6d340",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra285-300_k12.1.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=285..300&K.K20e=%3C12.1",
+   "bytes": 69609,
+   "sha256": "8b097c9e06627fc8f4d11d6ca455a43757cb71c5fd4945e17d301b0ea7e7e95c",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra300-315_k12.2.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=300..315&K.K20e=%3C12.2",
+   "bytes": 95793,
+   "sha256": "5979506aef91d6776a48701a531699a3f4b11af669eb67f1fef95e39b994b62f",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra315-330_k12.2.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=315..330&K.K20e=%3C12.2",
+   "bytes": 97539,
+   "sha256": "6da02b8c62ab1b67b5d82d22333871f151e0f3dddb0d1a66a83eb59e874799c3",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra330-345_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=330..345&K.K20e=%3C12.0",
+   "bytes": 73933,
+   "sha256": "9b537c0e71687441d1bd2a972beea6f353f7cf76d6ac1906024b86f3148ee03f",
+   "retrievedUTC": "2026-09-24"
+  },
+  {
+   "file": "VII_233_xsc/ra345-360_k12.0.tsv",
+   "url": "https://vizier.cds.unistra.fr/viz-bin/asu-tsv?-source=VII/233/xsc&-out=2MASX,Sb/a,Spa&-out.max=unlimited&RAJ2000=345..360&K.K20e=%3C12.0",
+   "bytes": 77616,
+   "sha256": "a7f72e5949d38e8a6229b2da86ef28645294792a5ff85a2bf9fc4ecc5646b2f2",
+   "retrievedUTC": "2026-09-24"
+  }
+ ]
+}
