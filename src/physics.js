@@ -677,7 +677,7 @@ function cosmologyJumpStarClear(x1, y1, z1) {
 // (per-frame step budget), and the ship then kicks and drifts for exactly
 // what the bodies did.
 function shipCosmologyJump(dt) {
-    if (dt <= 1e-9 || cosmologyVisibilityAt(G.x, G.y, G.z) <= .01) return 0;
+    if (!(Math.abs(dt) > 1e-9) || cosmologyVisibilityAt(G.x, G.y, G.z) <= .01) return 0;
     smoothCosmologyAccelAt(G.x, G.y, G.z, _cosA0);
     let hvx = G.vx + _cosA0[0] * dt * .5;
     let hvy = G.vy + _cosA0[1] * dt * .5;
@@ -688,7 +688,7 @@ function shipCosmologyJump(dt) {
     if (!cosmologyJumpStarClear(nx, ny, nz)) return 0;
     if (!cosmologyJumpClear(G.x, G.y, G.z, nx, ny, nz, dt)) return 0;
     const d = advanceEphem(dt);
-    if (!(d > 1e-9)) return 0;
+    if (!(Math.abs(d) > 1e-9)) return 0;
     if (d !== dt) {
         hvx = G.vx + _cosA0[0] * d * .5; hvy = G.vy + _cosA0[1] * d * .5; hvz = G.vz + _cosA0[2] * d * .5;
         nx = G.x + hvx * d; ny = G.y + hvy * d; nz = G.z + hvz * d;
@@ -775,7 +775,7 @@ export function advanceBodiesOnly(dt) {
 // one-frame integration budget, so a bulk advance stays bounded there too.
 export function advance(simAdv, atx, aty, atz, aMag) {
     const ownFrame = !ephemFrameStats().active;
-    if (ownFrame) beginEphemFrame(Math.abs(G.warp));
+    if (ownFrame) beginEphemFrame(Math.abs(simAdv) * 60); // a direct call counts as one 60 fps frame
     try {
         return advanceFlight(simAdv, atx, aty, atz, aMag);
     } finally {
@@ -800,7 +800,7 @@ function bridgeSpan(span, perfStats, tag) {
         let step = 0, kind = "";
         if (BH.n === 0) {
             step = shipCosmologyJump(rem); kind = "cosmology";
-            if (!(step > 0)) { step = shipDeepJump(rem); kind = "kepler"; }
+            if (!(Math.abs(step) > 1e-9)) { step = shipDeepJump(rem); kind = "kepler"; }
         } else {
             if (ephemBudgetLeft() <= 0) break;
             step = tryBHBridgeJump(rem); kind = "bh-bridge";
@@ -852,14 +852,17 @@ function advanceFlight(simAdv, atx, aty, atz, aMag) {
         const dt0 = stepSize(rE0, dm0, ds0, rE0 - R_EARTH, Math.hypot(s[3], s[4], s[5]), s[0], s[1], s[2], s[3], s[4], s[5]);
         if (perfStats) perfStats.dtMax = Math.max(perfStats.dtMax, dt0);
         const frameBridge = Math.abs(G.warp) > 600 && Math.abs(simAdv) > Math.max(18, dt0 * 8);
-        // reverse uses the reversible stepped/Kepler path only; deep-time analytic jumps are forward-only.
-        if (simAdv > 0 && (frameBridge || Math.abs(simAdv) > MAX_STEPS_FRAME * dt0)) {
+        // Reverse bridges too (conics and the cosmology kick-drift-kick are
+        // time-symmetric): -1 Gyr/s used to crawl at RK4 speed (~0.4 yr/s).
+        // clampReverseAdvance has already kept simAdv above the irreversible
+        // floor and blocked it while matter is in flight.
+        if (simAdv !== 0 && (frameBridge || Math.abs(simAdv) > MAX_STEPS_FRAME * dt0)) {
             const bridged = bridgeSpan(simAdv, perfStats, frameBridge ? "frame" : "full");
-            if (bridged > 0) {
+            if (bridged !== 0) {
                 adv = simAdv - bridged;
                 // done, or out of this frame's budget: report what was delivered
-                if (!(adv > 1e-9) || ephemBudgetLeft() <= 0 || G.dead || G.landed) {
-                    if (!(adv > 1e-9)) adv = 0;
+                if (!(Math.abs(adv) > 1e-9) || ephemBudgetLeft() <= 0 || G.dead || G.landed) {
+                    if (!(Math.abs(adv) > 1e-9)) adv = 0;
                     return markAdvancePerf(perfT0, simAdv, simAdv - adv, perfStats || {});
                 }
                 // a later jump was refused: honest RK4 takes over from here
@@ -978,10 +981,10 @@ function advanceFlight(simAdv, atx, aty, atz, aMag) {
     // Destruction flags must not gate the jump (see the frame-bridge gate
     // above): a permanently-closed gate froze deep warp after Earth's
     // engulfment (BUG D).
-    if (adv > 1e-9 && !G.dead && !G.landed && aMag === 0 &&
+    if (Math.abs(adv) > 1e-9 && !G.dead && !G.landed && aMag === 0 &&
         GS.length === 0) {
         adv -= bridgeSpan(adv, perfStats, "tail");
-        if (!(adv > 1e-9)) adv = 0;
+        if (!(Math.abs(adv) > 1e-9)) adv = 0;
     }
     const rE = Math.sqrt(G.x * G.x + G.y * G.y + G.z * G.z);
     G.maxRE = Math.max(G.maxRE, rE);
@@ -1048,8 +1051,8 @@ function bhBridgeWindow(dt) {
 
 const _bhKick0 = [0, 0, 0];
 function tryBHBridgeJump(dt) {
-    const jump = bhBridgeWindow(dt);
-    if (jump <= 1e-9) return 0;
+    const jump = Math.sign(dt) * bhBridgeWindow(Math.abs(dt)); // signed: reverse bridges too
+    if (!(Math.abs(jump) > 1e-9)) return 0;
     _saveG[0] = G.x; _saveG[1] = G.y; _saveG[2] = G.z;
     _saveG[3] = G.vx; _saveG[4] = G.vy; _saveG[5] = G.vz; _saveG[6] = G.t;
     bhAccelAtShip(0, _bhKick);
@@ -1058,7 +1061,7 @@ function tryBHBridgeJump(dt) {
     G.vy += _bhKick[1] * jump * .5;
     G.vz += _bhKick[2] * jump * .5;
     const ok = shipDeepJump(jump);
-    if (ok <= 0) {
+    if (!(Math.abs(ok) > 1e-9)) {
         G.x = _saveG[0]; G.y = _saveG[1]; G.z = _saveG[2];
         G.vx = _saveG[3]; G.vy = _saveG[4]; G.vz = _saveG[5]; G.t = _saveG[6];
         return 0;

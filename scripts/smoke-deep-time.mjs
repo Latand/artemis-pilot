@@ -249,6 +249,82 @@ console.log("\nF. relativistic cruise after Earth's engulfment rides the same wo
     ok(finite && clockOk && maxAU < 31, "bodies stay bounded and EPHT.t === G.t under the cruise", "max planet " + maxAU.toFixed(2) + " AU");
 }
 
+console.log("\nG. regime from the warp (hysteresis), secular drift keeps the Moon continuous");
+{
+    const YEARS = 4;
+    const wrapDeg = d => ((d + 540) % 360) - 180;
+    function lunarNode() {
+        const x = eph.moonX, y = eph.moonY, z = eph.moonZ, vx = eph.moonVx, vy = eph.moonVy, vz = eph.moonVz;
+        return Math.atan2(y * vz - z * vy, -(z * vx - x * vz));
+    }
+    function nodeDrift(warpYr, fps) {
+        reset();
+        parkShipHelio(20);
+        G.warp = warpYr * SEC_YEAR;
+        const dt = G.warp / fps;
+        let t = 0, acc = 0, prev = lunarNode();
+        while (t < YEARS * SEC_YEAR - 1) {
+            t += world.stepWorld(Math.min(dt, YEARS * SEC_YEAR - t));
+            const n = lunarNode();
+            acc += wrapDeg((n - prev) * 180 / Math.PI);
+            prev = n;
+        }
+        return { deg: acc, regime: ephem.ephemRegime() };
+    }
+    const expected = -19.3414 * YEARS; // observed 18.6 yr regression
+    const at60 = nodeDrift(1, 60), at58 = nodeDrift(1, 58), at30 = nodeDrift(1, 30);
+    ok(at60.regime === "integrated" && at58.regime === "integrated" && at30.regime === "integrated",
+        "1 yr/s is integrated at 60, 58 and 30 fps (the regime no longer depends on frame rate)");
+    ok(Math.abs(at60.deg - at58.deg) < .5 && Math.abs(at60.deg - at30.deg) < .5,
+        "the lunar node regresses the same at every frame rate",
+        at60.deg.toFixed(2) + " / " + at58.deg.toFixed(2) + " / " + at30.deg.toFixed(2) + " deg (base: " + "-39 deg at 60 fps, 0 at 58 fps over 2 yr)");
+    const fast = nodeDrift(4, 60), faster = nodeDrift(1000, 60);
+    ok(fast.regime === "analytic" && faster.regime === "analytic", "4 yr/s and faster ride the analytic conics");
+    ok([at60, fast, faster].every(r => Math.abs(r.deg - expected) < .06 * Math.abs(expected)) && Math.abs(at60.deg - fast.deg) < 5,
+        "node regression is continuous across the threshold (integrated vs analytic + secular)",
+        at60.deg.toFixed(2) + " vs " + fast.deg.toFixed(2) + " vs " + faster.deg.toFixed(2) + " deg over " + YEARS + " yr, observed " + expected.toFixed(2));
+    // hysteresis: 2 yr/s keeps whichever regime it came from
+    ephem.beginEphemFrame(1 * SEC_YEAR); ephem.advanceEphem(SEC_YEAR / 60); ephem.endEphemFrame();
+    ephem.beginEphemFrame(2 * SEC_YEAR); ephem.advanceEphem(2 * SEC_YEAR / 60); const upTo2 = ephem.ephemRegime(); ephem.endEphemFrame();
+    ephem.beginEphemFrame(4 * SEC_YEAR); ephem.advanceEphem(4 * SEC_YEAR / 60); ephem.endEphemFrame();
+    ephem.beginEphemFrame(2 * SEC_YEAR); ephem.advanceEphem(2 * SEC_YEAR / 60); const downTo2 = ephem.ephemRegime(); ephem.endEphemFrame();
+    ok(upTo2 === "integrated" && downTo2 === "analytic", "2 yr/s sits in the hysteresis band (no flapping)", "up: " + upTo2 + ", down: " + downTo2);
+}
+
+console.log("\nH. reverse time rides the analytic bridges above the irreversible floor");
+{
+    reset();
+    parkShipHelio(20);
+    const snap = () => [eph.sunX, eph.sunY, eph.moonX, eph.moonY, ...eph.plX, ...eph.plY, G.x, G.y];
+    const before = snap(), t0 = G.t;
+    G.warp = 30 * SEC_YEAR;
+    run(30, G.warp / 30);
+    G.warp = -30 * SEC_YEAR;
+    const back = run(30, G.warp / 30);
+    const after = snap();
+    let worst = 0;
+    for (let i = 0; i < before.length; i++) worst = Math.max(worst, Math.abs(after[i] - before[i]) / Math.max(AU_KM * 1e-3, Math.abs(before[i])));
+    ok(Math.abs(back.delivered - back.requested) <= 1e-9 * Math.abs(back.requested) && Math.abs(G.t - t0) < 1,
+        "-30 yr/s is delivered in full and returns the clock", (back.delivered / SEC_YEAR).toFixed(2) + " yr");
+    ok(worst < 1e-6, "a forward/backward pair retraces bodies and ship (secular terms included)", "worst relative error " + worst.toExponential(2));
+    G.warp = -WARP_MAX;
+    const rev = run(15, -FRAME_DT);
+    ok(Math.abs(rev.delivered - rev.requested) <= 1e-9 * Math.abs(rev.requested) && !WORLD.reverseBlocked,
+        "-1 Gyr/s with nothing irreversible is delivered in full", (rev.delivered / GYR).toFixed(3) + " Gyr in 0.5 s (base: ~0.4 yr/s)");
+    // past an engulfment the floor holds
+    reset();
+    parkShipHelio(20);
+    G.warp = WARP_MAX;
+    run(300, FRAME_DT, () => G.t < 9 * GYR);
+    const floor = WORLD.irreversibleFloorT;
+    G.warp = -WARP_MAX;
+    let finite = true;
+    run(90, -FRAME_DT, () => { if (!finiteWorld()) finite = false; });
+    ok(Number.isFinite(floor) && Math.abs(G.t - floor) < 1 && WORLD.reverseBlocked && WORLD.earthDestroyed && finite,
+        "reverse stops at the engulfment floor and nothing un-happens",
+        "floor " + (floor / GYR).toFixed(3) + " Gyr, now " + (G.t / GYR).toFixed(3) + " Gyr");
+}
+
 console.log("\nE. main.js routes every mode through the world step");
 {
     const main = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");

@@ -10,7 +10,7 @@ import { GRAVITY_STARS } from "./universe/activeStars.js";
 import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
 import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
 import { moonGeocentricCartesian, sunGeometricLongitudeJ2000 } from "./universe/lunarElp.js";
-import { meanElementsAt, tableKeyForPlanet } from "./universe/planetElements.js";
+import { meanElementsAt, tableKeyForPlanet, STANDISH_TABLE1, SEC_PER_JULIAN_CENTURY } from "./universe/planetElements.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -803,6 +803,56 @@ const _kjM = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
 const _kjP = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
 const _jx = new Float64Array(NB), _jy = new Float64Array(NB), _jz = new Float64Array(NB);
 const _jvx = new Float64Array(NB), _jvy = new Float64Array(NB), _jvz = new Float64Array(NB);
+
+// ---- secular drift on the analytic path ----
+// A frozen conic loses the slow orientation changes the integrator produces
+// by itself: the Sun drags the Moon's node round in 18.6 yr and its perigee
+// in 8.85 yr, and the planets' mutual pulls precess every perihelion and
+// node. Without these the lunar node regressed below the analytic threshold
+// and froze above it. The conics are rotated by the observed mean rates --
+// lunar node/perigee from Meeus' mean elements, planetary node/perihelion
+// from the same Standish Table 1 rates that seed the planets -- as rigid
+// rotations (node: about the ecliptic pole; perihelion: about the orbit
+// normal), so shapes and energies are untouched and a forward/backward jump
+// pair still cancels exactly. Eccentricity/inclination rates are NOT applied:
+// they are bounded oscillations in reality and a linear rate would run away
+// over Myr.
+const RATE_PER_CY = Math.PI / 180 / SEC_PER_JULIAN_CENTURY; // deg/cy -> rad/s
+const MOON_VARPI_RATE = 4069.0137287 * RATE_PER_CY;  // lunar perigee, +40.69 deg/yr
+const MOON_NODE_RATE = -1934.1362891 * RATE_PER_CY;  // lunar node, -19.34 deg/yr (18.6 yr)
+const EARTH_VARPI_RATE = STANDISH_TABLE1.EMB.rate[4] * RATE_PER_CY;
+const PL_VARPI_RATE = new Float64Array(PL.length), PL_NODE_RATE = new Float64Array(PL.length);
+for (let i = 0; i < PL.length; i++) {
+    const key = tableKeyForPlanet(PL[i].name);
+    if (!key) continue;
+    PL_VARPI_RATE[i] = STANDISH_TABLE1[key].rate[4] * RATE_PER_CY;
+    PL_NODE_RATE[i] = STANDISH_TABLE1[key].rate[5] * RATE_PER_CY;
+}
+// Rotate a conic state in place: the perihelion by (varpi - node) about the
+// orbit normal, then the node about the ecliptic pole (world z).
+function precessConic(o, dt, varpiRate, nodeRate) {
+    const dNode = nodeRate * dt, dArg = (varpiRate - nodeRate) * dt;
+    if (dArg !== 0) {
+        let hx = o.y * o.vz - o.z * o.vy, hy = o.z * o.vx - o.x * o.vz, hz = o.x * o.vy - o.y * o.vx;
+        const h = Math.hypot(hx, hy, hz);
+        if (h > 0) {
+            hx /= h; hy /= h; hz /= h;
+            const c = Math.cos(dArg), s = Math.sin(dArg);
+            // r, v lie in the orbital plane (normal h): u' = u cos + (h x u) sin
+            const x = o.x, y = o.y, z = o.z, vx = o.vx, vy = o.vy, vz = o.vz;
+            o.x = x * c + (hy * z - hz * y) * s; o.y = y * c + (hz * x - hx * z) * s; o.z = z * c + (hx * y - hy * x) * s;
+            o.vx = vx * c + (hy * vz - hz * vy) * s; o.vy = vy * c + (hz * vx - hx * vz) * s; o.vz = vz * c + (hx * vy - hy * vx) * s;
+        }
+    }
+    if (dNode !== 0) {
+        const c = Math.cos(dNode), s = Math.sin(dNode);
+        const x = o.x, vx = o.vx;
+        o.x = x * c - o.y * s; o.y = x * s + o.y * c;
+        o.vx = vx * c - o.vy * s; o.vy = vx * s + o.vy * c;
+    }
+    return o;
+}
+
 function keplerJumpState(st, dt) {
     const muS = bodyMu[IDX_SUN], muE = activeEarthMu(), muM = activeBodyMu(IDX_MOON);
     const sk = IDX_SUN;
@@ -825,13 +875,18 @@ function keplerJumpState(st, dt) {
     }
     const rBx = sWx + ox / M, rBy = sWy + oy / M;
     const vBx = sWvx + ovx / M, vBy = sWvy + ovy / M;
-    // advance every active piece on its own conic
+    // advance every active piece on its own conic, then apply its secular drift
     keplerAdvance3(eHx, eHy, eHz, eHvx, eHvy, eHvz, muS + muE, dt, _kjE);
-    if (muM > 0) keplerAdvance3(st.x[IDX_MOON], st.y[IDX_MOON], st.z[IDX_MOON], st.vx[IDX_MOON], st.vy[IDX_MOON], st.vz[IDX_MOON], muE + bodyMu[IDX_MOON], dt, _kjM);
+    precessConic(_kjE, dt, EARTH_VARPI_RATE, 0);
+    if (muM > 0) {
+        keplerAdvance3(st.x[IDX_MOON], st.y[IDX_MOON], st.z[IDX_MOON], st.vx[IDX_MOON], st.vy[IDX_MOON], st.vz[IDX_MOON], muE + bodyMu[IDX_MOON], dt, _kjM);
+        precessConic(_kjM, dt, MOON_VARPI_RATE, MOON_NODE_RATE);
+    }
     for (let i = 0; i < PL.length; i++) {
         const k = IDX_PLANETS + i;
         if (activeBodyMu(k) <= 0) continue;
         keplerAdvance3(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.z[k] - st.z[sk], st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], st.vz[k] - st.vz[sk], muS + bodyMu[k], dt, _kjP);
+        precessConic(_kjP, dt, PL_VARPI_RATE[i], PL_NODE_RATE[i]);
         _jx[k] = _kjP.x; _jy[k] = _kjP.y; _jz[k] = _kjP.z;
         _jvx[k] = _kjP.vx; _jvy[k] = _kjP.vy; _jvz[k] = _kjP.vz;
     }
@@ -904,6 +959,7 @@ function analyticJumpState(st, dt) {
             if (mu <= 0) continue;
             keplerAdvance3(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.z[k] - st.z[sk],
                 st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], st.vz[k] - st.vz[sk], muS + mu, dt, _kjP);
+            if (k >= IDX_PLANETS) precessConic(_kjP, dt, PL_VARPI_RATE[k - IDX_PLANETS], PL_NODE_RATE[k - IDX_PLANETS]);
             _jx[k] = _kjP.x; _jy[k] = _kjP.y; _jz[k] = _kjP.z;
             _jvx[k] = _kjP.vx; _jvy[k] = _kjP.vy; _jvz[k] = _kjP.vz;
             nx += mu * _kjP.x; ny += mu * _kjP.y; nz += mu * _kjP.z;
@@ -984,6 +1040,29 @@ export function beginEphemFrame(rateSecPerSec = 0, budget = EPHEM_FRAME_STEP_BUD
     return EPHEM_FRAME;
 }
 export function endEphemFrame() { EPHEM_FRAME.active = false; return EPHEM_FRAME; }
+
+// ---- physics regime: analytic conics vs the honest leapfrog ----
+// Chosen from the COMMANDED RATE (the warp, sim-s per wall-s) with
+// hysteresis, never from the per-frame dt. The old per-call test (|dt| >
+// 150 x a ~3600 s step = 540,000 s) put the 1 yr/s preset 2.6% under the
+// threshold at 60 fps and over it at 58 fps, so the Moon's node regressed or
+// froze depending on frame rate. Now 1 yr/s is always integrated, >= 3 yr/s
+// always rides the conics (with the secular drift above keeping the
+// orientation behaviour continuous), and 1.5-3 yr/s keeps whichever regime
+// it was in. Inside a world-step frame the rate is |G.warp|; a direct call
+// outside any frame (smokes, the startup ?simt loop) is treated as one
+// 60 fps frame, rate = |dt| * 60.
+export const ANALYTIC_ON_RATE = 3 * 31557600;
+export const ANALYTIC_OFF_RATE = 1.5 * 31557600;
+const DIRECT_CALL_FPS = 60;
+let analyticRegime = false;
+function analyticRegimeFor(dtTotal) {
+    const rate = EPHEM_FRAME.active ? EPHEM_FRAME.rate : Math.abs(dtTotal) * DIRECT_CALL_FPS;
+    if (analyticRegime) { if (rate < ANALYTIC_OFF_RATE) analyticRegime = false; }
+    else if (rate >= ANALYTIC_ON_RATE) analyticRegime = true;
+    return analyticRegime;
+}
+export function ephemRegime() { return analyticRegime ? "analytic" : "integrated"; }
 export function ephemFrameStats() { return EPHEM_FRAME; }
 export function ephemBudgetLeft() { return EPHEM_FRAME.active ? EPHEM_FRAME.stepsLeft : EPHEM_CALL_STEP_BUDGET; }
 
@@ -1000,8 +1079,8 @@ function advanceState(st, dtTotal, maxStep = 3600, live = false) {
     // through to the integrator; destroyed bodies no longer do (see
     // analyticJumpState) — that gate used to hand a post-engulfment system to
     // 2000 forced steps of ~2.6e11 s each and fling Mars to 1e12 AU.
-    if (live && BH.n === 0 && GS.length === 0 &&
-        Math.abs(dtTotal) > bodyStepSize(st, Math.abs(dtTotal), maxStep) * 150) {
+    if (live && BH.n === 0 && GS.length === 0 && Math.abs(dtTotal) > EPHEM_EXACT_MAX_SEC &&
+        analyticRegimeFor(dtTotal)) {
         analyticJumpState(st, dtTotal);
         st.t += dtTotal;
         if (EPHEM_FRAME.active) EPHEM_FRAME.analyticCalls++;
