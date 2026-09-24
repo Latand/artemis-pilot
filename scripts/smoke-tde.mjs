@@ -149,7 +149,11 @@ async function runLifecycleGate() {
         const flare = activeTde();
         return {
             regime: d.regime, t0: d.t0, tFb: d.tFb, beta: d.beta,
-            sawApproach, gsMax, tdeInProgressAfter: WORLD.tdeInProgress,
+            // the Sun's own encounter must be over; WORLD.tdeInProgress also
+            // tracks later encounters of other bodies (a captured Venus is
+            // partially disrupted at every ~2.5 d pericentre around the hole,
+            // so the global flag at an arbitrary end time is phase luck)
+            sawApproach, gsMax, sunInProgressAfter: enc.ENC.some(r => r.target === "sun" && r.pending),
             sunDestroyed: WORLD.sunDestroyed, floorAtSun, frame,
             accretedEarly: accretedAtPeriPlusHalfDay, accretedLate: d.accreted,
             profileEvent: ev ? { t: ev.t, dmu: ev.dmu, tFb: ev.tFb } : null,
@@ -167,7 +171,7 @@ async function runLifecycleGate() {
         assert(r.gsMax === 0, label + ": the disruption must not stage phantom gravity sources, saw " + r.gsMax);
         assert(r.sunDestroyed, label + ": the Sun should be removed at pericentre");
         assert(r.floorAtSun >= r.t0 && r.floorAtSun <= r.t0 + r.frame, label + ": the irreversible floor should publish at the pericentre time");
-        assert(!r.tdeInProgressAfter, label + ": no disruption should remain in progress afterwards");
+        assert(!r.sunInProgressAfter, label + ": the Sun's disruption should not remain in progress afterwards");
         assert(r.accretedEarly === 0, label + ": nothing may be accreted before t_fb, got " + r.accretedEarly);
         assert(relErr(r.accretedLate, .5 * muStar * accretedFraction(2 * r.tFb, r.tFb)) <= 1e-9,
             label + ": the hole should gain exactly M_acc(t) of the bound half, got " + (r.accretedLate / muStar) + " Msun");
