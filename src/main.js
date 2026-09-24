@@ -12,7 +12,7 @@ import { loadAllMaps, dotTexture } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
     renderQuality, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
-    farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll,
+    farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
     buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
@@ -38,7 +38,9 @@ import {
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
-import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState } from "./cosmic.js";
+import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt } from "./cosmic.js";
+import { updateGalaxyVolume, renderGalaxyVolume } from "./render/galaxyVolume.js";
+import { eraModulation } from "./universe/cosmicEra.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
@@ -383,6 +385,7 @@ const cosmicInitT0 = perfStart();
 // entire cosmic layer (catalog/procedural galaxy clouds, Local Group) and
 // the whole tier-1 streaming field into the far tier for free.
 initCosmicLayer(farTierGroup);
+addBackgroundHook(renderGalaxyVolume);
 perfEnd("startup.initCosmicLayer", cosmicInitT0);
 // Tier-1 AT-HYG streaming star layer (WP9/WP10): fetches its manifest and
 // streams tiles over ~25 minutes, so it's fired without an `await` to avoid
@@ -2011,6 +2014,9 @@ function frame() {
         activeStarsDue,
     } : null);
     const cosmicT0 = perfStart();
+    // Unresolved Milky Way light: one volumetric integral from the camera's
+    // true galactic position at every scale (render/galaxyVolume.js).
+    updateGalaxyVolume(camera, G.t, eraModulation(G.t), mergerDisruptFractionAt(G.t));
     updateCosmicLayer();
     perfEnd("cosmic.update", cosmicT0, PERF.enabled ? { cosmicView, dist: cam.dist } : null);
     if (cosmicView) {

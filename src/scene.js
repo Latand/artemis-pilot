@@ -104,9 +104,25 @@ export function registerNearTierOnly(...objects) {
     for (const o of objects) if (o && !nearTierOnly.includes(o)) nearTierOnly.push(o);
 }
 
+// Background layers drawn before both depth tiers (the volumetric unresolved
+// galaxy light): they need no depth and every star/body draws over them.
+const backgroundHooks = [];
+export function addBackgroundHook(fn) {
+    if (typeof fn === "function" && !backgroundHooks.includes(fn)) backgroundHooks.push(fn);
+}
+
 const tierSavedVis = [];
 export function renderSceneTiered(rendererArg, sceneArg, cameraArg) {
     const savedNear = cameraArg.near, savedFar = cameraArg.far;
+    const directAutoClear = rendererArg.autoClear;
+    if (backgroundHooks.length) {
+        // Clear once up front, paint the background, then let the far pass
+        // draw over it without clearing colour again.
+        if (directAutoClear) rendererArg.clear(true, true, true);
+        rendererArg.autoClear = false;
+        for (let i = 0; i < backgroundHooks.length; i++) backgroundHooks[i](rendererArg, cameraArg);
+        rendererArg.clearDepth();
+    }
     tierSavedVis.length = 0;
     for (let i = 0; i < nearTierOnly.length; i++) {
         tierSavedVis.push(nearTierOnly[i].visible);
@@ -135,6 +151,7 @@ export function renderSceneTiered(rendererArg, sceneArg, cameraArg) {
     cameraArg.near = savedNear;
     cameraArg.far = savedFar;
     cameraArg.updateProjectionMatrix();
+    rendererArg.autoClear = directAutoClear;
 }
 
 // ---- post-processing: bloom / lensing ----

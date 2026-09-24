@@ -13,6 +13,7 @@ import { eraModulation, setMergerEpochGyr } from "./universe/cosmicEra.js";
 import { registerHygCatalog } from "./universe/hygActiveCatalog.js";
 import { PERF, markPerf } from "./perf.js";
 import { relUniforms } from "./relView.js";
+import { galaxyVolumeEnabled } from "./render/galaxyVolume.js";
 import {
     BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, RELATIVISTIC_VIEW_GLSL, bvToTeff, teffToRGB, absMagFromApparent,
 } from "./render/viewBrightness.js";
@@ -1220,7 +1221,10 @@ export function updateCosmicLayer() {
     diskRoot.visible = galaxyVisible || catalogVisible || nearVisible;
     catalogRoot.visible = catalogVisible;
     nearStarRoot.visible = nearVisible;
-    galaxyRoot.visible = galaxyVisible;
+    // The Milky Way's own light now comes from the volumetric model
+    // (render/galaxyVolume.js); this legacy point cloud remains only as the
+    // fallback when that layer is disabled (?galaxyvol=0).
+    galaxyRoot.visible = galaxyVisible && !galaxyVolumeEnabled();
     localRoot.visible = groupVisible;
     deepRoot.visible = deepVisible;
     if (deepRoot.visible) deepRoot.position.copy(camera.position);
@@ -1238,7 +1242,7 @@ export function updateCosmicLayer() {
     // camera-distance LOD factors haven't crossed a bucket boundary.
     const era = eraModulation(G.t);
     for (const child of galaxyRoot.children) {
-        child.visible = galaxyVisible;
+        child.visible = galaxyVisible && !galaxyVolumeEnabled();
         if (child.material) {
             // mwDisk/rings historically render at the raw LOD value (their
             // authored baseOpacity was never actually consumed on this
