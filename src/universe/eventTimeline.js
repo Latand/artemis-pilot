@@ -1,14 +1,11 @@
 import {
     AU_KM,
-    E_EARTH,
-    OM_YEAR,
     PL,
     SEC_YEAR,
-    SUN_TH0,
-    VARPI_EARTH,
     WARPS,
     WARP_MAX,
 } from "../constants.js";
+import { meanElementsAt, tableKeyForPlanet } from "./planetElements.js";
 import { epochOffsetSeconds, meanAnomalyAdvance } from "../epoch.js";
 import { resolveJumpFrameDelivery } from "./jumpFrame.js";
 import { engulfmentEvents, sunPhaseEvents } from "./sunTimeline.js";
@@ -78,25 +75,30 @@ function normalizedBody(body) {
     return Object.freeze(normalized);
 }
 
+// Analytic conics for close-approach predictions, seeded from the same JPL
+// J2000 mean elements (planetElements.js) as ephemeris.js resetEphem, with
+// the tabulated mean motions, so predictions and the live n-body sky agree.
 function defaultElements() {
     const epochOffsetSec = epochOffsetSeconds();
-    const elements = PL.map(planet => normalizedBody({
-        ...planet,
-        phase: planet.phase + meanAnomalyAdvance(epochOffsetSec, TWO_PI / planet.n),
-    }));
-
-    // Keep this Earth M0 seed in sync with ephemeris.js resetEphem.
-    const nu0 = SUN_TH0 + Math.PI - VARPI_EARTH;
-    const E0 = 2 * Math.atan2(Math.sqrt(1 - E_EARTH) * Math.sin(nu0 / 2), Math.sqrt(1 + E_EARTH) * Math.cos(nu0 / 2));
-    const earthPeriod = TWO_PI / OM_YEAR;
-    const earthM0 = (E0 - E_EARTH * Math.sin(E0)) + meanAnomalyAdvance(epochOffsetSec, earthPeriod);
+    const elements = PL.map(planet => {
+        const key = tableKeyForPlanet(planet.name);
+        if (!key) {
+            return normalizedBody({
+                ...planet,
+                phase: meanAnomalyAdvance(epochOffsetSec, TWO_PI / planet.n),
+            });
+        }
+        const el = meanElementsAt(key, epochOffsetSec, AU_KM);
+        return normalizedBody({ name: planet.name, a: el.a, e: el.e, varpi: el.varpi, phase: el.M, n: el.n });
+    });
+    const emb = meanElementsAt("EMB", epochOffsetSec, AU_KM);
     elements.push(normalizedBody({
         name: "EARTH",
-        a: AU_KM,
-        e: E_EARTH,
-        varpi: VARPI_EARTH,
-        phase: earthM0,
-        n: OM_YEAR,
+        a: emb.a,
+        e: emb.e,
+        varpi: emb.varpi,
+        phase: emb.M,
+        n: emb.n,
     }));
     return elements;
 }

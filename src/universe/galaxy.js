@@ -28,7 +28,7 @@
 
 import { hashInts, makeRNG, samplePoisson, splitSeed, gaussian } from "./prng.js";
 import { synthStar, sampleIMFMass, sampleBDMass } from "./stellar.js";
-import { R0_PC, Z_SUN_PC, SUN_GAL, PC_KM, galToEquatorialKmInto } from "./coords.js";
+import { R0_PC, Z_SUN_PC, SUN_GAL, PC_KM, galToWorldKmInto } from "./coords.js";
 import {
     MS_DENSITY_PC3, BD_DENSITY_PC3,
     DISK, HALO, REID_ARMS, ARM_AMP_YOUNG, ARM_AMP_OLD, YOUNG_AGE_GYR, armWidth,
@@ -433,7 +433,7 @@ function attachCompanion(rngBin, star, mass, age, feh, gx, gy, gz) {
     const ct = 2 * rngBin() - 1, st = Math.sqrt(Math.max(0, 1 - ct * ct)), ph = rngBin() * 2 * Math.PI;
     const cgx = gx + aPc * st * Math.cos(ph), cgy = gy + aPc * st * Math.sin(ph), cgz = gz + aPc * ct;
     const ceq = [0, 0, 0];
-    galToEquatorialKmInto(cgx, cgy, cgz, ceq);
+    galToWorldKmInto(cgx, cgy, cgz, ceq);
     star.companion = {
         mass: comp0.mass, L: comp0.L, R: comp0.R, Teff: comp0.Teff,
         color: comp0.color, cls: comp0.cls, kind: comp0.kind,
@@ -519,7 +519,7 @@ function synthesizeCandidate(gx, gy, gz, rng, rngAge, rngKin, rngBin, rngSynth, 
     const nu = verticalFreqAt(R);
 
     const eq = [0, 0, 0];
-    galToEquatorialKmInto(gx, gy, gz, eq);
+    galToWorldKmInto(gx, gy, gz, eq);
     const star = {
         gx, gy, gz,
         x: eq[0], y: eq[1], z: eq[2],
@@ -693,7 +693,7 @@ export function localStarsInCell(ci, cj, ck, seed = SEED) {
                 const vel = drawVelocity(rngBD, R / KPC_PC, betaDeg, "thin", "BD");
                 const epi = computeEpicyclic(R, vel.U, vel.Vpec);
                 const eq = [0, 0, 0];
-                galToEquatorialKmInto(sx, sy, sz, eq);
+                galToWorldKmInto(sx, sy, sz, eq);
                 out.push({
                     gx: sx, gy: sy, gz: sz,
                     x: eq[0], y: eq[1], z: eq[2],

@@ -156,15 +156,26 @@ export function requestEarthNightTexture(delayMs = 2200) {
     else queueIdle();
 }
 
-function orbitEllipseGeometry(aKm, e, varpi = 0, segs = seg(720, 240)) {
+// Conic ring in the world (ecliptic J2000) frame, drawn with the same 3-D
+// orientation (inclination i, node Om, longitude of perihelion varpi) the
+// ephemeris seeds the body with, so the ring passes through the body instead
+// of lying flat in the ecliptic. Scene axis map (x, z, -y)·K.
+function orbitEllipseGeometry(aKm, e, varpi = 0, segs = seg(720, 240), inc = 0, node = 0) {
     const pos = new Float32Array(segs * 3);
     const p = aKm * (1 - e * e);
+    const w = varpi - node;
+    const cO = Math.cos(node), sO = Math.sin(node), ci = Math.cos(inc), si = Math.sin(inc);
     for (let i = 0; i < segs; i++) {
         const nu = i / segs * Math.PI * 2;
         const r = p / Math.max(1e-9, 1 + e * Math.cos(nu));
-        const th = varpi + nu;
-        pos[i * 3] = r * K * Math.cos(th);
-        pos[i * 3 + 2] = -r * K * Math.sin(th);
+        const u = w + nu;
+        const xo = r * Math.cos(u), yo = r * Math.sin(u);
+        const x = xo * cO - yo * ci * sO;
+        const y = xo * sO + yo * ci * cO;
+        const z = yo * si;
+        pos[i * 3] = x * K;
+        pos[i * 3 + 1] = z * K;
+        pos[i * 3 + 2] = -y * K;
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -547,7 +558,7 @@ export function buildBodies(maps) {
             transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .28,
         }));
         scene.add(glow);
-        const og = orbitEllipseGeometry(p.a, p.e, p.varpi);
+        const og = orbitEllipseGeometry(p.a, p.e, p.varpi, undefined, p.i || 0, p.Om || 0);
         const orbit = new THREE.LineLoop(og, new THREE.LineBasicMaterial({ color: 0x2c3a4a, transparent: true, opacity: .5 }));
         scene.add(orbit);
         const sp = document.createElement("span");

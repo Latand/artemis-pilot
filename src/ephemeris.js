@@ -1,5 +1,5 @@
 import {
-    AU_KM, SUN_TH0, E_EARTH, VARPI_EARTH, PL, A_MOON, E_MOON, OMEGA, MOON_ANG0,
+    AU_KM, PL, A_MOON, E_MOON, OMEGA, MOON_ANG0,
     MU_E, MU_M, MU_S, C_LIGHT, BH_MAX, LY_KM, PC_KM, DARK_ENERGY, DARK_MATTER,
     I_EARTH, OM_EARTH, I_MOON, OM_MOON0, OM_MOON_RATE, OM_YEAR,
 } from "./constants.js";
@@ -7,7 +7,8 @@ import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
 import { GRAVITY_STARS } from "./universe/activeStars.js";
 import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
 import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
-import { moonGeocentricCartesian, sunEclipticLongitude } from "./universe/lunarElp.js";
+import { moonGeocentricCartesian, sunGeometricLongitudeJ2000 } from "./universe/lunarElp.js";
+import { meanElementsAt, tableKeyForPlanet } from "./universe/planetElements.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -136,63 +137,72 @@ function safeEpochOffsetSeconds() {
 
 const SEC_PER_DAY = 86400;
 const _kp = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+const _emb = {}, _pel = {};
+const _moon = { x: 0, y: 0, z: 0 }, _moon2 = { x: 0, y: 0, z: 0 };
 export function resetEphem() {
     EPHT.t = 0;
     const epochOffsetSec = safeEpochOffsetSeconds();
 
-    // Earth's heliocentric state from elements, with the initial true anomaly
-    // chosen so the Earth→Sun direction stays exactly at SUN_TH0 at J2000,
-    // then epoch-advanced like every other body; the Sun's Earth-relative
-    // state is its negative (Earth world-state matches it). Earth's elements
-    // are i=Om=0 by construction (constants.js), so keplerInit3 reduces
-    // exactly to the old planar keplerInit here (see the bit-parity note
-    // above) — this call only differs from the pre-WP13 code in M0.
-    const nu0 = SUN_TH0 + Math.PI - VARPI_EARTH;
-    const E0 = 2 * Math.atan2(Math.sqrt(1 - E_EARTH) * Math.sin(nu0 / 2), Math.sqrt(1 + E_EARTH) * Math.cos(nu0 / 2));
-    const earthPeriod = 2 * Math.PI / OM_YEAR;
-    const earthM0 = (E0 - E_EARTH * Math.sin(E0)) + meanAnomalyAdvance(epochOffsetSec, earthPeriod);
-    keplerInit3(AU_KM, E_EARTH, I_EARTH, OM_EARTH, VARPI_EARTH, earthM0, MU_S + MU_E, _kp);
-    earthX = _kp.x;
-    earthY = _kp.y;
-    earthVx = _kp.vx;
-    earthVy = _kp.vy;
-    bodyX[IDX_SUN] = -_kp.x;
-    bodyY[IDX_SUN] = -_kp.y;
-    bodyZ[IDX_SUN] = -_kp.z; // exactly 0: Earth's elements are planar by construction
-    bodyVx[IDX_SUN] = -_kp.vx;
-    bodyVy[IDX_SUN] = -_kp.vy;
-    bodyVz[IDX_SUN] = -_kp.vz;
-    const svx = bodyVx[IDX_SUN], svy = bodyVy[IDX_SUN], svz = bodyVz[IDX_SUN];
-
-    const simSunLon = Math.atan2(bodyY[IDX_SUN], bodyX[IDX_SUN]);
-    const delta = simSunLon - sunEclipticLongitude(epochOffsetSec);
+    // Earth-Moon barycentre from JPL's J2000 mean elements (Standish Table 1,
+    // planetElements.js) advanced to the epoch with the tabulated rates -- the
+    // same source every planet uses, so relative planetary positions are real
+    // (issue #6). The EMB orbit is the J2000 ecliptic by definition, so its
+    // i = Om = 0 here keeps Earth's world z pinned at exactly 0 (see above).
+    const emb = meanElementsAt("EMB", epochOffsetSec, AU_KM, _emb);
+    keplerInit3(emb.a, emb.e, I_EARTH, OM_EARTH, emb.varpi, emb.M, MU_S + MU_E + MU_M, _kp);
+    // Moon from truncated ELP-2000/82 (ecliptic, J2000 equinox). The sim Sun
+    // and the real Sun now share one frame and one epoch, so the residual
+    // rotation delta between the seeded solar longitude and Meeus's geometric
+    // J2000 longitude is only the ~0.01 deg mean-element error; applying it
+    // keeps Sun-Moon elongation (eclipses) exact by construction.
+    const simSunLon = Math.atan2(-_kp.y, -_kp.x);
+    const delta = simSunLon - sunGeometricLongitudeJ2000(epochOffsetSec);
     const dC = Math.cos(delta), dS = Math.sin(delta);
-    moonGeocentricCartesian(epochOffsetSec, _kp);
+    moonGeocentricCartesian(epochOffsetSec, _moon);
     {
-        const x = _kp.x, y = _kp.y;
-        _kp.x = x * dC - y * dS;
-        _kp.y = x * dS + y * dC;
+        const x = _moon.x, y = _moon.y;
+        _moon.x = x * dC - y * dS;
+        _moon.y = x * dS + y * dC;
     }
-    bodyX[IDX_MOON] = _kp.x; bodyY[IDX_MOON] = _kp.y; bodyZ[IDX_MOON] = _kp.z;
-    moonGeocentricCartesian(epochOffsetSec + 60, _kp);
+    moonGeocentricCartesian(epochOffsetSec + 60, _moon2);
     {
-        const x = _kp.x, y = _kp.y;
-        _kp.x = x * dC - y * dS;
-        _kp.y = x * dS + y * dC;
+        const x = _moon2.x, y = _moon2.y;
+        _moon2.x = x * dC - y * dS;
+        _moon2.y = x * dS + y * dC;
     }
-    bodyVx[IDX_MOON] = (_kp.x - bodyX[IDX_MOON]) / 60;
-    bodyVy[IDX_MOON] = (_kp.y - bodyY[IDX_MOON]) / 60;
-    bodyVz[IDX_MOON] = (_kp.z - bodyZ[IDX_MOON]) / 60;
+    const mvx = (_moon2.x - _moon.x) / 60, mvy = (_moon2.y - _moon.y) / 60, mvz = (_moon2.z - _moon.z) / 60;
+    // Earth sits mu_M/(mu_E+mu_M) of the Earth-Moon vector away from the
+    // barycentre, on the far side from the Moon (~4,670 km).
+    const moonShare = MU_M / (MU_E + MU_M);
+    earthX = _kp.x - moonShare * _moon.x;
+    earthY = _kp.y - moonShare * _moon.y;
+    earthVx = _kp.vx - moonShare * mvx;
+    earthVy = _kp.vy - moonShare * mvy;
+    // (Earth's world z stays pinned at 0; the Moon's ~5 deg inclination is
+    // carried entirely by its Earth-relative z below.)
+    bodyX[IDX_SUN] = -earthX;
+    bodyY[IDX_SUN] = -earthY;
+    bodyZ[IDX_SUN] = 0;
+    bodyVx[IDX_SUN] = -earthVx;
+    bodyVy[IDX_SUN] = -earthVy;
+    bodyVz[IDX_SUN] = 0;
+    const svx = bodyVx[IDX_SUN], svy = bodyVy[IDX_SUN], svz = bodyVz[IDX_SUN];
+    bodyX[IDX_MOON] = _moon.x; bodyY[IDX_MOON] = _moon.y; bodyZ[IDX_MOON] = _moon.z;
+    bodyVx[IDX_MOON] = mvx; bodyVy[IDX_MOON] = mvy; bodyVz[IDX_MOON] = mvz;
 
     // planets stored Earth-relative: Sun's Earth-relative state + heliocentric
-    // state from J2000 elements (p.phase is the J2000 mean anomaly, advanced
-    // to the current epoch so planets start where they really are today)
+    // state from the same Table 1 mean elements at the epoch
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];
         const k = IDX_PLANETS + i;
-        const period = 2 * Math.PI / p.n;
-        const M0 = p.phase + meanAnomalyAdvance(epochOffsetSec, period);
-        keplerInit3(p.a, p.e, p.i, p.Om, p.varpi, M0, MU_S, _kp);
+        const key = tableKeyForPlanet(p.name);
+        if (key) {
+            const el = meanElementsAt(key, epochOffsetSec, AU_KM, _pel);
+            keplerInit3(el.a, el.e, el.i, el.Om, el.varpi, el.M, MU_S + p.mu, _kp);
+        } else {
+            const period = 2 * Math.PI / p.n;
+            keplerInit3(p.a, p.e, p.i, p.Om, p.varpi, meanAnomalyAdvance(epochOffsetSec, period), MU_S, _kp);
+        }
         bodyX[k] = bodyX[IDX_SUN] + _kp.x;
         bodyY[k] = bodyY[IDX_SUN] + _kp.y;
         bodyZ[k] = bodyZ[IDX_SUN] + _kp.z;

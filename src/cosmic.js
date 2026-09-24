@@ -507,13 +507,14 @@ function scheduleCatalogLoad() {
     else setTimeout(start, 0);
 }
 
+// World-frame (ecliptic J2000) parsec positions of curated destinations, used
+// to drop their catalog twins from the cloud (the catalog worker compares in
+// the same frame after rotating the HYG values).
 function destinationSuppressPc() {
     const out = [];
     for (const star of STARS) {
         if (!Number.isFinite(star.raDeg) || !Number.isFinite(star.decDeg) || !Number.isFinite(star.dLy)) continue;
-        const ra = star.raDeg * Math.PI / 180, dec = star.decDeg * Math.PI / 180;
-        const dPc = star.dLy / PC_LY, cd = Math.cos(dec);
-        out.push(Math.cos(ra) * cd * dPc, Math.sin(ra) * cd * dPc, Math.sin(dec) * dPc);
+        out.push(star.x / PC_KM, star.y / PC_KM, (star.z || 0) / PC_KM);
     }
     return out;
 }

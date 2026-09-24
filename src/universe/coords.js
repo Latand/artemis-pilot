@@ -1,11 +1,21 @@
 // Coordinate frames and unit conversions for the full-scale universe layer.
 //
-// The existing sim places real stars (constants.js STARS) in a Sol-centred
-// EQUATORIAL (ICRS) kilometre frame: x→(RA 0,Dec 0), y→(RA 90,Dec 0), z→NCP.
-// The procedural galaxy is naturally described in a GALACTOCENTRIC parsec frame
-// (disc in the X–Y plane). This module converts between them so procedural and
-// real stars share one frame and the procedural Milky-Way band lines up with the
-// real one. Unit values mirror constants.js exactly.
+// WORLD FRAME. The simulator has exactly one world frame: heliocentric
+// (barycentric at seed time) kilometres on the mean ECLIPTIC and equinox of
+// J2000 -- x toward the vernal equinox, z toward the north ecliptic pole. The
+// Solar System ephemeris is natively ecliptic (Earth's orbit defines z = 0),
+// so every source that arrives in equatorial (ICRS/J2000) coordinates -- the
+// HYG / AT-HYG catalogs, curated RA/Dec destinations, the galactic transform,
+// external galaxies -- is rotated into this frame exactly once, through
+// equatorialToWorldInto() below. Before this existed the stars stayed
+// equatorial while the planets were ecliptic, so the sky and the Solar System
+// disagreed by the full 23.44 deg obliquity (the Sun and planets appeared in
+// the wrong constellations).
+//
+// EQUATORIAL functions (galToEquatorial*, equatorialKmToGal) are kept as true
+// ICRS conversions for astrometric checks; runtime code uses the *World*
+// variants. The procedural galaxy is described in a GALACTOCENTRIC parsec
+// frame (disc in the X–Y plane). Unit values mirror constants.js exactly.
 
 export const AU_KM = 149597870.7;
 export const LY_KM = 9460730472580.8;
@@ -54,6 +64,48 @@ const EQ2GAL = [
     [-0.8676661490, -0.1980763734, 0.4559837762],
 ];
 
+// --- Equatorial <-> world (ecliptic J2000) --------------------------------
+// IAU 2006 obliquity of the ecliptic at J2000: 84381.406 arcsec.
+export const OBLIQUITY_J2000_RAD = 84381.406 / 3600 * Math.PI / 180;
+export const WORLD_FRAME = "ecliptic-j2000";
+const COS_EPS = Math.cos(OBLIQUITY_J2000_RAD), SIN_EPS = Math.sin(OBLIQUITY_J2000_RAD);
+
+// r_world = R_x(+eps) r_eq. The celestial pole lands at ecliptic longitude
+// 90 deg, latitude 90 - eps; the June solstice point (RA 6h, Dec +eps) lands
+// on the ecliptic at longitude 90 deg.
+export function equatorialToWorldInto(x, y, z, out, o = 0) {
+    out[o] = x;
+    out[o + 1] = COS_EPS * y + SIN_EPS * z;
+    out[o + 2] = -SIN_EPS * y + COS_EPS * z;
+    return out;
+}
+export function worldToEquatorialInto(x, y, z, out, o = 0) {
+    out[o] = x;
+    out[o + 1] = COS_EPS * y - SIN_EPS * z;
+    out[o + 2] = SIN_EPS * y + COS_EPS * z;
+    return out;
+}
+// Unit vector (world frame) for a J2000 right ascension / declination.
+export function raDecToWorldUnitInto(raDeg, decDeg, out, o = 0) {
+    const ra = raDeg * Math.PI / 180, dec = decDeg * Math.PI / 180, cd = Math.cos(dec);
+    return equatorialToWorldInto(cd * Math.cos(ra), cd * Math.sin(ra), Math.sin(dec), out, o);
+}
+
+// Rotate a packed catalog (x/y/z columns in any length unit, equatorial) into
+// the world frame in place. Idempotent through `meta.frame`: loaders call it
+// on every path (worker, fallback, cache) and only the first call rotates.
+export function ensureWorldFrameRecords(meta, vals, stride, ix, iy, iz) {
+    if (meta && meta.frame === WORLD_FRAME) return false;
+    const n = Math.floor(vals.length / stride);
+    for (let i = 0, j = 0; i < n; i++, j += stride) {
+        const y = vals[j + iy], z = vals[j + iz];
+        vals[j + iy] = COS_EPS * y + SIN_EPS * z;
+        vals[j + iz] = -SIN_EPS * y + COS_EPS * z;
+    }
+    if (meta) meta.frame = WORLD_FRAME;
+    return true;
+}
+
 // Galactic Cartesian [toward GC, toward rotation, toward NGP] → equatorial.
 export function galacticToEquatorial(g) {
     return [
@@ -79,15 +131,73 @@ export function galToEquatorialKmInto(gx, gy, gz, out, o = 0) {
     return out;
 }
 
+// Galactocentric parsecs → absolute scene units (world frame, scene axis map
+// (x, z, -y)·K). Rendering only.
 export function galToSceneUnitsInto(gx, gy, gz, out, o = 0, sceneScale = .001) {
     const hx = _sunAnchor[0] - gx, hy = gy - _sunAnchor[1], hz = gz - _sunAnchor[2];
     const sx = PC_KM * sceneScale;
-    const ex = EQ2GAL[0][0] * hx + EQ2GAL[1][0] * hy + EQ2GAL[2][0] * hz;
-    const ey = EQ2GAL[0][1] * hx + EQ2GAL[1][1] * hy + EQ2GAL[2][1] * hz;
-    const ez = EQ2GAL[0][2] * hx + EQ2GAL[1][2] * hy + EQ2GAL[2][2] * hz;
-    out[o] = ex * sx;
-    out[o + 1] = ez * sx;
-    out[o + 2] = -ey * sx;
+    const wx = W2G[0][0] * hx + W2G[1][0] * hy + W2G[2][0] * hz;
+    const wy = W2G[0][1] * hx + W2G[1][1] * hy + W2G[2][1] * hz;
+    const wz = W2G[0][2] * hx + W2G[1][2] * hy + W2G[2][2] * hz;
+    out[o] = wx * sx;
+    out[o + 1] = wz * sx;
+    out[o + 2] = -wy * sx;
+    return out;
+}
+
+// --- Galactic <-> world (ecliptic J2000) ------------------------------------
+// W2G = EQ2GAL · R_x(eps)^T: rows map a world-frame vector onto the galactic
+// axes [toward GC, toward rotation, toward NGP].
+export const W2G = EQ2GAL.map(row => [
+    row[0],
+    COS_EPS * row[1] + SIN_EPS * row[2],
+    -SIN_EPS * row[1] + COS_EPS * row[2],
+]);
+
+export function galacticToWorld(g) {
+    return [
+        W2G[0][0] * g[0] + W2G[1][0] * g[1] + W2G[2][0] * g[2],
+        W2G[0][1] * g[0] + W2G[1][1] * g[1] + W2G[2][1] * g[2],
+        W2G[0][2] * g[0] + W2G[1][2] * g[1] + W2G[2][2] * g[2],
+    ];
+}
+
+// Galactocentric parsecs → world-frame parsecs relative to the (moving) Sun.
+export function galToWorldPcInto(gx, gy, gz, out, o = 0) {
+    const hx = _sunAnchor[0] - gx, hy = gy - _sunAnchor[1], hz = gz - _sunAnchor[2];
+    out[o] = W2G[0][0] * hx + W2G[1][0] * hy + W2G[2][0] * hz;
+    out[o + 1] = W2G[0][1] * hx + W2G[1][1] * hy + W2G[2][1] * hz;
+    out[o + 2] = W2G[0][2] * hx + W2G[1][2] * hy + W2G[2][2] * hz;
+    return out;
+}
+
+export function galToWorldKmInto(gx, gy, gz, out, o = 0) {
+    galToWorldPcInto(gx, gy, gz, out, o);
+    out[o] *= PC_KM;
+    out[o + 1] *= PC_KM;
+    out[o + 2] *= PC_KM;
+    return out;
+}
+
+export function galToWorldKm(gx, gy, gz) {
+    return galToWorldKmInto(gx, gy, gz, [0, 0, 0]);
+}
+
+// World-frame km (Sun-relative) → galactocentric parsecs.
+export function worldKmToGal(x, y, z) {
+    const ex = x / PC_KM, ey = y / PC_KM, ez = z / PC_KM;
+    const gGC = W2G[0][0] * ex + W2G[0][1] * ey + W2G[0][2] * ez;
+    const gRot = W2G[1][0] * ex + W2G[1][1] * ey + W2G[1][2] * ez;
+    const gNGP = W2G[2][0] * ex + W2G[2][1] * ey + W2G[2][2] * ez;
+    return [_sunAnchor[0] - gGC, gRot + _sunAnchor[1], gNGP + _sunAnchor[2]];
+}
+
+// Allocation-free variant writing galactocentric pc into `out`.
+export function worldKmToGalInto(x, y, z, out, o = 0) {
+    const ex = x / PC_KM, ey = y / PC_KM, ez = z / PC_KM;
+    out[o] = _sunAnchor[0] - (W2G[0][0] * ex + W2G[0][1] * ey + W2G[0][2] * ez);
+    out[o + 1] = W2G[1][0] * ex + W2G[1][1] * ey + W2G[1][2] * ez + _sunAnchor[1];
+    out[o + 2] = W2G[2][0] * ex + W2G[2][1] * ey + W2G[2][2] * ez + _sunAnchor[2];
     return out;
 }
 

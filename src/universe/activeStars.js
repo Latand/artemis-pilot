@@ -1,5 +1,5 @@
 import { K, LY_KM, MU_S, R_SUN, STARS } from "../constants.js";
-import { equatorialKmToGal, galToEquatorialKmInto, PC_KM } from "./coords.js";
+import { worldKmToGal, galToWorldKmInto, PC_KM } from "./coords.js";
 import { getSeed, localStarById, sampleLocalStarsNear, starPositionAt } from "./galaxy.js";
 import {
     hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, hygStarById, sampleHygStarsNear,
@@ -169,7 +169,7 @@ function proceduralName(src) {
 function proceduralPositionAt(src, simT, out) {
     if (simT === 0) { out[0] = src.x; out[1] = src.y; out[2] = src.z || 0; return out; }
     starPositionAt(src, simT, GAL_POS_SCRATCH);
-    galToEquatorialKmInto(GAL_POS_SCRATCH[0], GAL_POS_SCRATCH[1], GAL_POS_SCRATCH[2], out);
+    galToWorldKmInto(GAL_POS_SCRATCH[0], GAL_POS_SCRATCH[1], GAL_POS_SCRATCH[2], out);
     return out;
 }
 
@@ -408,7 +408,7 @@ function gravityCacheKey(gx, gy, gz, focus, activeKey) {
 }
 
 function proceduralStarsFor(wx, wy, wz, simT = 0) {
-    const [gx, gy, gz] = equatorialKmToGal(wx, wy, wz);
+    const [gx, gy, gz] = worldKmToGal(wx, wy, wz);
     const key = cacheKey(gx, gy, gz, simT);
     if (PROC_CACHE.key !== key) {
         PROC_CACHE.key = key;
@@ -527,7 +527,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0)
     const forcedIndex = focusStarIndex(focus);
     const forcedProcId = proceduralFocusId(focus);
     const forcedCatalogId = hygCatalogFocusId(focus);
-    const gal = equatorialKmToGal(wx, wy, wz);
+    const gal = worldKmToGal(wx, wy, wz);
     const refreshKey = [
         cacheKey(gal[0], gal[1], gal[2], simT),
         String(focus),

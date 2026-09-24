@@ -14,7 +14,7 @@ import { ACTIVE_STARS, refreshActiveStars, getCachedFocusedSystem } from "./univ
 import { strongestActiveStarWell } from "./universe/starDominance.js";
 import { dominantSystemBody, moonWorldState, planetWorldState } from "./universe/planetarySystem.js";
 import { darkEnergyAccel, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc } from "./cosmology.js";
-import { equatorialKmToGal } from "./universe/coords.js";
+import { worldKmToGal } from "./universe/coords.js";
 import { segmentSphereHit } from "./geometry.js";
 import { PERF, markPerf } from "./perf.js";
 import { sunStateAt, sunMaxRadiusReachedRsunAt } from "./universe/sunEvolution.js";
@@ -519,8 +519,8 @@ function stellarGravityActiveAt(wx, wy, wz) {
 function cosmologyVisibilityAt(x, y, z) {
     let vis = G.darkEnergy ? darkEnergyVisibleFractionKm(Math.hypot(x, y, z)) : 0;
     if (G.darkMatter) {
-        const s = equatorialKmToGal(eph.earthX + x, eph.earthY + y, z);
-        const e = equatorialKmToGal(eph.earthX, eph.earthY, 0);
+        const s = worldKmToGal(eph.earthX + x, eph.earthY + y, z);
+        const e = worldKmToGal(eph.earthX, eph.earthY, 0);
         vis = Math.max(vis, darkMatterVisibleFractionPc(Math.hypot(s[0] - e[0], s[1] - e[1], s[2] - e[2])));
     }
     return vis;

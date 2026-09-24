@@ -110,8 +110,8 @@ hr("Axis map matches galToSceneUnitsInto / main.js worldToScene");
 
     // Recover the equivalent Sol-centred equatorial km the same way
     // galToSceneUnitsInto internally does, then run it through worldToResidual.
-    const { galToEquatorialKm } = await import("../src/universe/coords.js");
-    const [ex, ey, ez] = galToEquatorialKm(8100, 15, 30);
+    const { galToWorldKm } = await import("../src/universe/coords.js");
+    const [ex, ey, ez] = galToWorldKm(8100, 15, 30);
     const sceneB = { x: 0, y: 0, z: 0 };
     worldToResidual(ex, ey, ez, sceneB, K);
 

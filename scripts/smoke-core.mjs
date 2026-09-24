@@ -42,7 +42,8 @@ for (const p of PL) {
   assert(p.i > 0 && p.i < 8 * DEG, `${p.name} inclination should be a small positive angle (< 8°)`);
   assert(p.Om >= 0 && p.Om < 360 * DEG, `${p.name} node should be a longitude in [0, 360)°`);
 }
-assert(PL.find((p) => p.name === "MERCURY").i === 7.005 * DEG, "Mercury should keep the largest planetary inclination (7.005°)");
+assert(Math.abs(PL.find((p) => p.name === "MERCURY").i - 7.00497902 * DEG) < 1e-12, "Mercury should carry its JPL J2000 inclination (7.00497902°)");
+assert(PL.every(p => p.name === "MERCURY" || p.i < PL.find(q => q.name === "MERCURY").i), "Mercury should keep the largest planetary inclination");
 assert(I_EARTH === 0 && OM_EARTH === 0, "Earth defines the ecliptic reference plane: i=Om=0 by construction");
 assert(I_MOON > 0 && I_MOON < 8 * DEG, "Moon inclination to the ecliptic should be a small positive angle (< 8°)");
 assert(OM_MOON0 >= 0 && OM_MOON0 < 360 * DEG, "Moon epoch node should be a longitude in [0, 360)°");

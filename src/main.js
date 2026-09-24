@@ -67,7 +67,7 @@ import { moonWorldState, planetFocusIndex, planetMoonFocusIndex, planetWorldStat
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
-import { equatorialKmToGal, setSunGalAnchor } from "./universe/coords.js";
+import { worldKmToGal, setSunGalAnchor } from "./universe/coords.js";
 import { solarGalacticStateAt } from "./universe/solarOrbit.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
 import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
@@ -1239,6 +1239,7 @@ function updateFocusVelocityVector(alpha = 1) {
 // ============================ MAIN LOOP ============================
 const clock = new THREE.Clock();
 const earthV = new THREE.Vector3(), moonV = new THREE.Vector3(), velV = new THREE.Vector3(), upV = new THREE.Vector3(0, 1, 0), dirV = new THREE.Vector3();
+const _moonRingN = new THREE.Vector3();
 const moonBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
     map: dotTexture("rgba(220,230,245,1)", "rgba(150,170,200,0)"),
     color: 0xaeb9c8, transparent: true, opacity: .5, depthWrite: false,
@@ -1359,8 +1360,8 @@ function updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cd, alpha = 1)
             cosmoDMAcc[2] * DARK_MATTER.ARROW_SECONDS,
             cosmoDMVec,
         );
-        const [gx, gy, gz] = equatorialKmToGal(eph.earthX + G.x, eph.earthY + G.y, G.z);
-        const [ex, ey, ez] = equatorialKmToGal(eph.earthX, eph.earthY, 0);
+        const [gx, gy, gz] = worldKmToGal(eph.earthX + G.x, eph.earthY + G.y, G.z);
+        const [ex, ey, ez] = worldKmToGal(eph.earthX, eph.earthY, 0);
         const fade = darkMatterVisibleFractionPc(Math.hypot(gx - ex, gy - ey, gz - ez));
         if (fade > .01 && setLineVector(haloArrPos, haloArrAttr, oriX, oriY, oriZ, cosmoDMVec[0], cosmoDMVec[1], cosmoDMVec[2], lenScale, maxLen)) {
             haloArrow.material.opacity = Math.min(.9, .16 + .7 * fade) * alpha;
@@ -1697,8 +1698,17 @@ function frame() {
     if (nearFieldDue) {
         earthG.position.copy(earthV);
         moonOrbitRing.position.copy(earthV);
+        // Orient the (illustrative, fixed-shape) lunar ring in the Moon's live
+        // osculating plane: normal = r x v, scene axis map (x, z, -y).
+        {
+            const hx = eph.moonY * eph.moonVz - eph.moonZ * eph.moonVy;
+            const hy = eph.moonZ * eph.moonVx - eph.moonX * eph.moonVz;
+            const hz = eph.moonX * eph.moonVy - eph.moonY * eph.moonVx;
+            const hl = Math.hypot(hx, hy, hz);
+            if (hl > 0) moonOrbitRing.quaternion.setFromUnitVectors(upV, _moonRingN.set(hx / hl, hz / hl, -hy / hl));
+        }
         moonState(G.t, _m);
-        moonV.set((eph.earthX + _m.mx) * K, 0, -(eph.earthY + _m.my) * K);
+        moonV.set((eph.earthX + _m.mx) * K, (eph.moonZ || 0) * K, -(eph.earthY + _m.my) * K);
         moon.position.copy(moonV);
         moon.rotation.y = _m.ang + Math.PI * .5;
         moonSoiRing.position.copy(moonV);
@@ -1721,7 +1731,7 @@ function frame() {
     else if (!detailShed) moon.visible = true;
     // sun & planets follow the live ephemeris (cache refreshed by orbitInfo above)
     if (nearFieldDue) {
-        sunPos.set((eph.earthX + eph.sunX) * K, 0, -(eph.earthY + eph.sunY) * K);
+        sunPos.set((eph.earthX + eph.sunX) * K, (eph.sunZ || 0) * K, -(eph.earthY + eph.sunY) * K);
         sunCore.position.copy(sunPos);
         sunGlow.position.copy(sunPos);
         sunLight.position.copy(sunPos);
@@ -1747,10 +1757,11 @@ function frame() {
     if (nearFieldDue) {
         for (let i = 0; i < PL.length; i++) {
             const px = (eph.earthX + eph.plX[i]) * K, pz = -(eph.earthY + eph.plY[i]) * K;
-            plGroups[i].position.set(px, 0, pz);
+            const py = (eph.plZ[i] || 0) * K; // real inclined orbits (ecliptic J2000 z)
+            plGroups[i].position.set(px, py, pz);
             flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
             if (nearVisualDue) {
-                plGlows[i].position.set(px, 0, pz);
+                plGlows[i].position.set(px, py, pz);
                 plOrbitRings[i].position.copy(sunPos);
                 plGroups[i].rotation.z = PL[i].visualTilt || 0;
                 plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
@@ -1769,9 +1780,10 @@ function frame() {
             moonOffset(m, G.t, _moonOff);
             const mx = (eph.earthX + eph.plX[m.p] + _moonOff.x) * K;
             const mz = -(eph.earthY + eph.plY[m.p] + _moonOff.y) * K;
-            moonGroups[i].position.set(mx, 0, mz);
+            const my = (eph.plZ[m.p] || 0) * K;
+            moonGroups[i].position.set(mx, my, mz);
             if (nearVisualDue) {
-                moonGlows[i].position.set(mx, 0, mz);
+                moonGlows[i].position.set(mx, my, mz);
                 const dCam = camera.position.distanceTo(moonGroups[i].position);
                 // hold the beacon at a near-constant on-screen size so even tiny
                 // moons (Phobos, Mimas) stay visible as dots; the true sphere
@@ -1821,7 +1833,7 @@ function frame() {
     // rather than sitting fixed at SUN_GAL forever — update the anchor every
     // frame (cheap closed-form epicyclic math, zero-alloc via the reused
     // scratch object) ahead of the active-star refresh below, which converts
-    // through this same anchor via equatorialKmToGal.
+    // through this same anchor via worldKmToGal.
     solarGalacticStateAt(G.t, _sunOrbitState);
     setSunGalAnchor(_sunOrbitState.x, _sunOrbitState.y, _sunOrbitState.z);
     if (activeStarsDue) {

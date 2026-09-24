@@ -1,4 +1,5 @@
 // Headless verification of the WP19 curated special-objects overlay:
+const { worldToEquatorialInto } = await import("../src/universe/coords.js");
 //   - Gaia BH3 present with the cited distance/mass and the bh flag
 //   - pulsars present as non-bh compact objects with sane physics (mu, R)
 //   - every RA/Dec position round-trips through the xyz placement to
@@ -83,8 +84,11 @@ hr("RA/Dec round-trip (xyz -> angles within arcminutes)");
     const ARCMIN = 1 / 60;
     for (const src of SPECIAL_OBJECTS) {
         const r = Math.hypot(src.x, src.y, src.z);
-        const decDeg = Math.asin(src.z / r) * 180 / Math.PI;
-        let raDeg = Math.atan2(src.y, src.x) * 180 / Math.PI;
+        // Positions live in the world frame (mean ecliptic of J2000); rotate
+        // back to equatorial before recovering RA/Dec.
+        const eq = worldToEquatorialInto(src.x, src.y, src.z, [0, 0, 0]);
+        const decDeg = Math.asin(eq[2] / r) * 180 / Math.PI;
+        let raDeg = Math.atan2(eq[1], eq[0]) * 180 / Math.PI;
         if (raDeg < 0) raDeg += 360;
         let raErr = Math.abs(raDeg - src.raDeg);
         if (raErr > 180) raErr = 360 - raErr;

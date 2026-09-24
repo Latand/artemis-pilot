@@ -8,9 +8,11 @@
 // "this is zero". Each body also reports which epistemic tier its numbers
 // come from, using the vocabulary in epistemic.js.
 //
-// Earth's and the planets' Sun distance and orbital speed are the exception:
-// they are read from the live n-body state, whose starting orbital phases are
-// approximate, so those rows are labelled Simulated and the copy says so.
+// Earth's and the planets' Sun distance and orbital speed are read from the
+// live n-body state. Since issue #6 that state starts from JPL's J2000 mean
+// orbital elements at the current epoch (planetElements.js), so the values
+// match the reference to ~0.5% near the present; the copy says where they
+// come from and that they evolve with the simulation.
 import { R_SUN, AU_KM, G_SI, PL } from "../constants.js";
 import { eph } from "../ephemeris.js";
 import { fmtDist } from "../format.js";
@@ -90,14 +92,14 @@ export function bodyFactRows(body) {
     }
 
     if (body.focusKey === "earth") {
-        push(rows, "Simulated Sun distance", fmtAu(Math.hypot(eph.sunX, eph.sunY, eph.sunZ)));
-        push(rows, "Simulated orbital speed", Math.hypot(eph.earthVx, eph.earthVy, eph.earthVz).toFixed(2) + " km/s");
+        push(rows, "Sun distance", fmtAu(Math.hypot(eph.sunX, eph.sunY, eph.sunZ)));
+        push(rows, "Orbital speed", sunRelativeSpeed(0, 0, 0) /* Earth-relative frame: Earth is at rest */.toFixed(2) + " km/s");
     } else if (body.focusKey === "moon") {
         push(rows, "Distance from Earth", fmtDist(Math.hypot(eph.moonX, eph.moonY, eph.moonZ)));
     } else if (hasSimulatedOrbit(body)) {
         const i = body.planetIndex;
-        push(rows, "Simulated Sun distance", fmtAu(sunDistanceKm(eph.plX[i], eph.plY[i], eph.plZ[i])));
-        push(rows, "Simulated orbital speed", sunRelativeSpeed(eph.plVx[i], eph.plVy[i], eph.plVz[i]).toFixed(2) + " km/s");
+        push(rows, "Sun distance", fmtAu(sunDistanceKm(eph.plX[i], eph.plY[i], eph.plZ[i])));
+        push(rows, "Orbital speed", sunRelativeSpeed(eph.plVx[i], eph.plVy[i], eph.plVz[i]).toFixed(2) + " km/s");
     }
 
     const tier = EPISTEMIC_TIERS[body.basis];
@@ -108,9 +110,9 @@ export function bodyFactRows(body) {
 const hasSimulatedOrbit = body => body?.focusKey === "earth" ||
     (Number.isInteger(body?.planetIndex) && !!PL[body.planetIndex]);
 
-// The measured tier's shared copy promises real planetary positions, which
-// the Simulated rows cannot keep, so these bodies say what is measured instead.
-const SIMULATED_ORBIT_BASIS = "Radius, mass and surface gravity are measured. Simulated rows follow this model's approximate orbits and can differ from real values.";
+// Say exactly where the orbital rows come from: measured physical constants,
+// plus a live simulation seeded from published mean elements.
+const SIMULATED_ORBIT_BASIS = "Radius, mass and surface gravity are measured. Sun distance and orbital speed come from the live n-body simulation, started from JPL's J2000 mean orbital elements for today's date (within about 0.5% of the reference near the present); they evolve with the simulation.";
 
 export function basisDescription(body) {
     if (hasSimulatedOrbit(body)) return SIMULATED_ORBIT_BASIS;

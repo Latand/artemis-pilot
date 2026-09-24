@@ -147,7 +147,7 @@ async function runHeadlessDeepWarpCheck() {
       const { PC_KM, SEC_YEAR } = await import("/src/constants.js");
       const { eph, updEphem } = await import("/src/ephemeris.js");
       const { advance } = await import("/src/physics.js");
-      const { equatorialKmToGal } = await import("/src/universe/coords.js");
+      const { worldKmToGal } = await import("/src/universe/coords.js");
       const activeStars = await import("/src/universe/activeStars.js");
 
       // Test isolation: neutralize the procedural/real stellar-gravity pool.
@@ -182,7 +182,7 @@ async function runHeadlessDeepWarpCheck() {
       G.warp = 1e9 * SEC_YEAR; // enables the shipCosmologyJump frame-bridge path
 
       const galAt = (x, y, z) => {
-        const g = equatorialKmToGal(eph.earthX + x, eph.earthY + y, z);
+        const g = worldKmToGal(eph.earthX + x, eph.earthY + y, z);
         return Math.hypot(g[0], g[1], g[2]);
       };
       const rGalStart = galAt(G.x, G.y, G.z);

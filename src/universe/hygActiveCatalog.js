@@ -1,6 +1,6 @@
 import { K, LY_KM, MU_S, R_SUN } from "../constants.js";
 import { hygCatalogMetaUrl, loadHygCatalogData } from "./catalogData.js";
-import { equatorialKmToGal, galToEquatorialKmInto } from "./coords.js";
+import { worldKmToGal, galToWorldKmInto } from "./coords.js";
 import { starPositionAt } from "./galaxy.js";
 import { DISP, vCirc } from "./astroConstants.js";
 import { gaussian, hashInts, makeRNG, splitSeed } from "./prng.js";
@@ -114,10 +114,10 @@ function tier0MotionFor(index, gx, gy) {
 // simT=0" contract.
 function tier0PositionAt(index, xKm, yKm, zKm, simT, out) {
     if (simT === 0) { out[0] = xKm; out[1] = yKm; out[2] = zKm; return out; }
-    const [gx, gy, gz] = equatorialKmToGal(xKm, yKm, zKm);
+    const [gx, gy, gz] = worldKmToGal(xKm, yKm, zKm);
     const mot = tier0MotionFor(index, gx, gy);
     starPositionAt({ gx, gy, gz, ...mot }, simT, GAL_MOTION_SCRATCH);
-    galToEquatorialKmInto(GAL_MOTION_SCRATCH[0], GAL_MOTION_SCRATCH[1], GAL_MOTION_SCRATCH[2], out);
+    galToWorldKmInto(GAL_MOTION_SCRATCH[0], GAL_MOTION_SCRATCH[1], GAL_MOTION_SCRATCH[2], out);
     return out;
 }
 
