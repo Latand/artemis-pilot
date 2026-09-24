@@ -91,6 +91,7 @@ const LEVEL_LOCAL_STAR = 4;                 // fine streaming level id
 // draws from its own splitSeed(cellSeed, salt) stream, in this fixed order,
 // so a star's identity never depends on what any other stream consumed).
 const SALT_AGE = 0x41, SALT_KIN = 0x42, SALT_BIN = 0x43, SALT_BD = 0x44, SALT_SYNTH = 0x45;
+const SALT_DEEP = 0x46; // per-candidate stream for thinned candidates resurrected in deep time
 
 // Disc / halo structural parameters (parsecs), from astroConstants.js.
 const HR_THIN = DISK.thinHR, HZ_THIN = DISK.thinHZ;
@@ -121,6 +122,49 @@ const NS_BH_DISP_BOOST = 1.6;
 const DEG2RAD = Math.PI / 180, RAD2DEG = 180 / Math.PI;
 const KPC_PC = 1000;
 const PC_AU = PC_KM / 149597870.7; // AU_KM (constants.js/coords.js value), inlined to avoid a new import
+
+// --- Cached records are galactocentric; world-frame views convert on use ---
+// Cells are generated once and cached, but the Sun they are measured from
+// moves with sim time (coords.js's anchor follows the Sun's galactic orbit).
+// Baking Sun-relative km into the cache pinned every record to whichever Sun
+// was current when its cell was first generated -- a cell first visited at
+// 1 Gyr kept that Sun forever. Records store galactocentric parsecs only
+// (gx/gy/gz); x/y/z are getters through the CURRENT anchor (a record's birth
+// position seen from today's Sun). Code working at another instant converts
+// explicitly (coords.js galToWorldKmFromInto); where a star is at sim time t
+// comes from starPositionNow below.
+const _viewKm = [0, 0, 0];
+function worldView(rec, axis) {
+    galToWorldKmInto(rec.gx, rec.gy, rec.gz, _viewKm);
+    return _viewKm[axis];
+}
+function ownField(rec, key, value) {
+    Object.defineProperty(rec, key, { value, writable: true, enumerable: true, configurable: true });
+}
+class GalRecord {
+    get x() { return worldView(this, 0); }
+    set x(v) { ownField(this, "x", v); }
+    get y() { return worldView(this, 1); }
+    set y(v) { ownField(this, "y", v); }
+    get z() { return worldView(this, 2); }
+    set z(v) { ownField(this, "z", v); }
+}
+// Fields are assigned one by one in a fixed order (one hidden class per
+// record kind); Object.assign onto a prototype-backed object cost ~15% of a
+// cold neighbourhood scan.
+function starRecordOf(gx, gy, gz, s, age, feh, vel) {
+    const Rgal = Math.hypot(gx, gy);
+    const epi = computeEpicyclic(Rgal, vel.U, vel.Vpec);
+    const r = new GalRecord();
+    r.gx = gx; r.gy = gy; r.gz = gz;
+    r.mass = s.mass; r.L = s.L; r.R = s.R; r.Teff = s.Teff;
+    r.color = s.color; r.cls = s.cls; r.kind = s.kind;
+    r.age = age; r.feh = feh;
+    r.vx = vel.vx; r.vy = vel.vy; r.vz = vel.vz;
+    r.epiRg = epi.Rg; r.epiX = epi.X; r.epiPhi0 = epi.phi0; r.epiOmega0 = epi.Omega0; r.epiKappa0 = epi.kappa0;
+    r.epiNu = verticalFreqAt(Rgal);
+    return r;
+}
 
 // --- Vertical epicyclic frequency ν = sqrt(4πGρ_mid) (astro report §5, numerics report §4.4) ---
 // Converts a local mass density (M☉/pc³) into a physical angular frequency
@@ -432,14 +476,12 @@ function attachCompanion(rngBin, star, mass, age, feh, gx, gy, gz) {
     if (!(aPc > 0) || aPc > 0.1) aPc = Math.min(Math.max(aPc, 1e-6), 0.1); // cell-sanity cap
     const ct = 2 * rngBin() - 1, st = Math.sqrt(Math.max(0, 1 - ct * ct)), ph = rngBin() * 2 * Math.PI;
     const cgx = gx + aPc * st * Math.cos(ph), cgy = gy + aPc * st * Math.sin(ph), cgz = gz + aPc * ct;
-    const ceq = [0, 0, 0];
-    galToWorldKmInto(cgx, cgy, cgz, ceq);
-    star.companion = {
-        mass: comp0.mass, L: comp0.L, R: comp0.R, Teff: comp0.Teff,
-        color: comp0.color, cls: comp0.cls, kind: comp0.kind,
-        gx: cgx, gy: cgy, gz: cgz, x: ceq[0], y: ceq[1], z: ceq[2],
-        separationPc: aPc, periodDays: Math.pow(10, logPDays),
-    };
+    const c = new GalRecord();
+    c.mass = comp0.mass; c.L = comp0.L; c.R = comp0.R; c.Teff = comp0.Teff;
+    c.color = comp0.color; c.cls = comp0.cls; c.kind = comp0.kind;
+    c.gx = cgx; c.gy = cgy; c.gz = cgz;
+    c.separationPc = aPc; c.periodDays = Math.pow(10, logPDays);
+    star.companion = c;
 }
 
 // --- Brown dwarf synthesis (local tier only) ------------------------------
@@ -462,8 +504,12 @@ function synthBrownDwarf(mass) {
 // Draws population/age/feh, mass, evolutionary state (synthStar), optional
 // catalog-completeness rejection, kinematics and epicyclic parameters, and
 // an optional binary companion. Returns null if the candidate is rejected
-// (density gradient or, for the local tier, catalog completeness).
-function synthesizeCandidate(gx, gy, gz, rng, rngAge, rngKin, rngBin, rngSynth, applyCompleteness) {
+// (density gradient or, for the local tier, catalog completeness). A
+// completeness-rejected candidate is described into `thinned` (when given)
+// so deep time can bring it back once the catalog stars that stood in for it
+// have dispersed (see catalogRetentionAt); recording it consumes no extra
+// draws, so every kept star is bit-identical with or without the list.
+function synthesizeCandidate(gx, gy, gz, rng, rngAge, rngKin, rngBin, rngSynth, applyCompleteness, thinned = null, k = -1) {
     const R = Math.hypot(gx, gy);
     const betaDeg = Math.atan2(gy, gx) * RAD2DEG;
     const Rkpc = R / KPC_PC;
@@ -511,25 +557,33 @@ function synthesizeCandidate(gx, gy, gz, rng, rngAge, rngKin, rngBin, rngSynth, 
         // (CNS5/Tier-0 already has them all) by design.
         const dPc = Math.hypot(gx - SUN_GAL[0], gy - SUN_GAL[1], gz - SUN_GAL[2]);
         const comp = completeness(s0.cls, dPc);
-        if (comp > 0 && rngAge() < comp) return null;
+        if (comp > 0) {
+            const u = rngAge();
+            if (u < comp) {
+                if (thinned) thinned.push({ k, gx, gy, gz, pop, age, feh, mass, s0, u, comp });
+                return null;
+            }
+        }
     }
 
     const vel = drawVelocity(rngKin, Rkpc, betaDeg, pop, s0.kind);
-    const epi = computeEpicyclic(R, vel.U, vel.Vpec);
-    const nu = verticalFreqAt(R);
-
-    const eq = [0, 0, 0];
-    galToWorldKmInto(gx, gy, gz, eq);
-    const star = {
-        gx, gy, gz,
-        x: eq[0], y: eq[1], z: eq[2],
-        mass: s0.mass, L: s0.L, R: s0.R, Teff: s0.Teff,
-        color: s0.color, cls: s0.cls, kind: s0.kind,
-        age, feh,
-        vx: vel.vx, vy: vel.vy, vz: vel.vz,
-        epiRg: epi.Rg, epiX: epi.X, epiPhi0: epi.phi0, epiOmega0: epi.Omega0, epiKappa0: epi.kappa0, epiNu: nu,
-    };
+    const star = starRecordOf(gx, gy, gz, s0, age, feh, vel);
     attachCompanion(rngBin, star, mass, age, feh, gx, gy, gz);
+    return star;
+}
+
+// A thinned local candidate brought back for deep time. Its kinematics and
+// companion come from its own sub-stream (cell seed, SALT_DEEP, candidate
+// index), so resurrecting it never shifts another star's draws; its id is the
+// candidate id it would always have had.
+function resurrectThinned(d, cellSeed, idPrefix) {
+    const rngDeep = makeRNG(hashInts(cellSeed, SALT_DEEP, d.k));
+    const vel = drawVelocity(rngDeep, Math.hypot(d.gx, d.gy) / KPC_PC, Math.atan2(d.gy, d.gx) * RAD2DEG, d.pop, d.s0.kind);
+    const star = starRecordOf(d.gx, d.gy, d.gz, d.s0, d.age, d.feh, vel);
+    attachCompanion(rngDeep, star, d.mass, d.age, d.feh, d.gx, d.gy, d.gz);
+    star.id = idPrefix + d.k;
+    star.thinU = d.u;
+    star.thinComp = d.comp;
     return star;
 }
 
@@ -637,8 +691,154 @@ export function sampleLocalStarsNear(gx, gy, gz, radiusPc, limit = 512) {
             }
     found.sort((a, b) => a.d2 - b.d2 || (a.id < b.id ? -1 : 1));
     if (found.length > limit) found.length = limit;
-    for (const st of found) delete st.d2;
+    for (const st of found) {
+        delete st.d2;
+        // plain copies: give them the world view explicitly (records derive it)
+        galToWorldKmInto(st.gx, st.gy, st.gz, _viewKm);
+        st.x = _viewKm[0]; st.y = _viewKm[1]; st.z = _viewKm[2];
+    }
     return found;
+}
+
+// --- Where local stars are NOW (deep time) -----------------------------------
+// starPositionAt carries each star on its own epicycle from its t = 0 birth
+// point. Relative to the local standard of rest (the frame rotating at the
+// circular rate at R0, the rate the Sun's guiding centre and the drawn disc
+// turn at) those excursions reach hundreds of pc within a few Myr, so the
+// stars around the ship at 1 Myr were born all over a kpc-sized region:
+// querying the birth cells around the ship's position (what the active layer
+// did) found none of them, and rotating the query back by the orbital phase
+// with any affordable margin still misses almost all of them after ~10 Myr.
+//
+// Deep-time model (statistical, identity-preserving): a star's displacement
+// from its birth point, measured in the LSR frame, is reflected into a box of
+// MIX_BOX_PC around that point -- a triangle wave, so the path stays
+// continuous and a star simply turns back at the box wall. Inside the box
+// (|displacement| <= MIX_BOX_PC/2 per axis, i.e. the first ~60 kyr for a
+// 30 km/s star) the position is exactly starPositionAt's. Reflection keeps
+// the local number density statistically unchanged (a uniform population
+// convolved with any bounded displacement is still uniform), so the Sun
+// meets a steady stream of new neighbours as it moves through the rotating
+// disc, every star keeps its id, and the stars near any point at any time are
+// found by rotating the point back by the LSR phase and scanning the birth
+// cells within the neighbourhood radius plus half a box (a cold 8 pc scan
+// costs ~8 ms; the box is kept small for that reason). Limitation: a star no
+// longer shows its full epicyclic excursion after ~60 kyr; the ensemble's
+// density and speeds are what is kept.
+export const LSR_OMEGA = vCirc(R0_PC / KPC_PC) / (R0_PC * PC_KM); // rad/s (solarOrbit.js OMEGA0)
+export const MIX_BOX_PC = 4;
+const MIX_HALF_PC = MIX_BOX_PC / 2;
+// bound on how far a star can drift from its birth point by a small |t|;
+// only shrinks the scan margin below MIX_BOX_PC/2 at tiny t (faster halo
+// stars can be missed while their displacement is still below the margin)
+const MIX_SCAN_SPEED_KMS = 150;
+
+function reflectIntoBox(d) {
+    if (d >= -MIX_HALF_PC && d <= MIX_HALF_PC) return d;
+    const period = 2 * MIX_BOX_PC;
+    let m = (d + MIX_HALF_PC) % period;
+    if (m < 0) m += period;
+    return m <= MIX_BOX_PC ? m - MIX_HALF_PC : 3 * MIX_HALF_PC - m;
+}
+
+// Galactocentric pc of a local-tier star at sim time simT (see above). Exact
+// birth position at simT === 0.
+export function starPositionNow(star, simT, out) {
+    starPositionAt(star, simT, out);
+    if (simT === 0) return out;
+    const a = LSR_OMEGA * simT, c = Math.cos(a), s = Math.sin(a);
+    const dx = c * out[0] + s * out[1] - star.gx;
+    const dy = -s * out[0] + c * out[1] - star.gy;
+    const dz = out[2] - star.gz;
+    if (Math.abs(dx) <= MIX_HALF_PC && Math.abs(dy) <= MIX_HALF_PC && Math.abs(dz) <= MIX_HALF_PC) return out;
+    const bx = star.gx + reflectIntoBox(dx), by = star.gy + reflectIntoBox(dy);
+    out[0] = c * bx - s * by;
+    out[1] = s * bx + c * by;
+    out[2] = star.gz + reflectIntoBox(dz);
+    return out;
+}
+
+// --- Catalog handoff in deep time --------------------------------------------
+// Within the catalog-complete volume the local tier thins its candidates
+// (completeness(), catalog-strategy.md §2): the real HYG star stands in for
+// the procedural one. Those catalog stars then disperse on their own orbits
+// (hygActiveCatalog.js), and the active layer only looks for them within a
+// bounded reach (DEEP_CATALOG), so the thinned candidates must come back as
+// the catalog coverage near the ship fades. Coverage model: the fraction of a
+// class's catalog stars that are still within reach after time t, for a
+// Gaussian drift of sigmaKms per axis from a ball of the smaller of the
+// class's half-completeness radius and the reach (the chi-3 CDF). At t = 0
+// it is exactly 1 (the t = 0 thinning is unchanged).
+export const DEEP_CATALOG = {
+    radiusPc: 20,            // activeStars.js ACTIVE_STAR_CONFIG.catalogRadiusPc
+    marginMaxPc: 30,         // extra epoch-index reach for stars that drifted in
+    speedKms: 60,            // reach grows at this speed until marginMaxPc
+    sigmaKms: 25,            // per-axis dispersion of catalog motion relative to the LSR (DISP.thin)
+    cutoffSec: 2e7 * 31557600, // beyond 20 Myr < 0.2 catalog stars are expected within reach
+};
+const CATALOG_HALF_COMPLETE_PC = { M: 42.5, K: 150, G: 650, F: 650, A: 3500, B: 3500, O: 3500 };
+
+function erfApprox(x) { // Abramowitz & Stegun 7.1.26, |error| < 1.5e-7
+    const sgn = x < 0 ? -1 : 1, ax = Math.abs(x), t = 1 / (1 + .3275911 * ax);
+    const poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - .284496736) * t + .254829592) * t;
+    return sgn * (1 - poly * Math.exp(-ax * ax));
+}
+function chi3Cdf(x) { // P(|Z| < x sigma), Z ~ N(0, sigma^2 I3)
+    if (!(x > 0)) return 0;
+    if (x > 10) return 1;
+    return Math.min(1, Math.max(0, erfApprox(x / Math.SQRT2) - Math.sqrt(2 / Math.PI) * x * Math.exp(-.5 * x * x)));
+}
+export function deepCatalogReachPc(simT) {
+    return DEEP_CATALOG.radiusPc + Math.min(DEEP_CATALOG.marginMaxPc, DEEP_CATALOG.speedKms * Math.abs(simT) / PC_KM);
+}
+export function catalogRetentionAt(cls, simT) {
+    const t = Math.abs(simT);
+    if (t === 0) return 1;
+    if (t >= DEEP_CATALOG.cutoffSec) return 0;
+    const half = CATALOG_HALF_COMPLETE_PC[cls];
+    if (!half) return 1;
+    const sigmaPc = DEEP_CATALOG.sigmaKms * t / PC_KM;
+    return chi3Cdf(Math.min(half, deepCatalogReachPc(t)) / sigmaPc);
+}
+
+// Local-tier stars within radiusPc of galactocentric (qx,qy,qz) AT sim time
+// simT, nearest first (ties by id), including thinned candidates whose
+// catalog stand-ins have dispersed. Returns the cached records themselves
+// (read-only); their positions at simT come from starPositionNow. At simT = 0
+// this is exactly sampleLocalStarsNear's set and order.
+const _nowScratch = [0, 0, 0];
+export function sampleLocalStarsNow(qx, qy, qz, radiusPc, limit = 512, simT = 0) {
+    const a = LSR_OMEGA * simT, c = Math.cos(a), s = Math.sin(a);
+    // the query point carried back to t = 0 in the LSR frame
+    const bx = c * qx + s * qy, by = -s * qx + c * qy, bz = qz;
+    const margin = simT === 0 ? 0 : Math.min(MIX_HALF_PC, MIX_SCAN_SPEED_KMS * Math.abs(simT) / PC_KM);
+    const reach = radiusPc + margin;
+    const ciLo = Math.floor((bx - reach) / LOCAL_CELL_PC), ciHi = Math.floor((bx + reach) / LOCAL_CELL_PC);
+    const cjLo = Math.floor((by - reach) / LOCAL_CELL_PC), cjHi = Math.floor((by + reach) / LOCAL_CELL_PC);
+    const ckLo = Math.floor((bz - reach) / LOCAL_CELL_PC), ckHi = Math.floor((bz + reach) / LOCAL_CELL_PC);
+    const r2 = radiusPc * radiusPc;
+    const found = [];
+    const consider = st => {
+        if (Math.abs(st.gx - bx) > reach || Math.abs(st.gy - by) > reach || Math.abs(st.gz - bz) > reach) return;
+        starPositionNow(st, simT, _nowScratch);
+        const dx = _nowScratch[0] - qx, dy = _nowScratch[1] - qy, dz = _nowScratch[2] - qz;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 <= r2) found.push({ st, d2 });
+    };
+    for (let ci = ciLo; ci <= ciHi; ci++)
+        for (let cj = cjLo; cj <= cjHi; cj++)
+            for (let ck = ckLo; ck <= ckHi; ck++) {
+                const cell = localStarsInCell(ci, cj, ck);
+                for (let i = 0; i < cell.length; i++) consider(cell[i]);
+                if (simT !== 0 && cell.thinned) {
+                    for (const st of localThinnedInCell(ci, cj, ck)) {
+                        if (st.thinU >= st.thinComp * catalogRetentionAt(st.cls, simT)) consider(st);
+                    }
+                }
+            }
+    found.sort((p, q) => p.d2 - q.d2 || (p.st.id < q.st.id ? -1 : 1));
+    if (found.length > limit) found.length = limit;
+    return found.map(f => f.st);
 }
 
 // Local tier: same physics as starsInCell, plus the catalog-completeness
@@ -665,15 +865,22 @@ export function localStarsInCell(ci, cj, ck, seed = SEED) {
             const expected = Math.min(LOCAL_MATERIALISE_MAX, H_BURNING_DENSITY_PC3 * dens * LOCAL_CELL_VOL);
             const densCenter = Math.max(dens, 1e-9);
             const n = samplePoisson(rng, expected);
+            const idPrefix = "p:" + seed + ":" + ci + ":" + cj + ":" + ck + ":";
+            const thinned = [];
             for (let k = 0; k < n; k++) {
                 const sx = ox + rng() * LOCAL_CELL_PC;
                 const sy = oy + rng() * LOCAL_CELL_PC;
                 const sz = oz + rng() * LOCAL_CELL_PC;
                 if (rng() > densityAt(sx, sy, sz) / densCenter) continue;
-                const star = synthesizeCandidate(sx, sy, sz, rng, rngAge, rngKin, rngBin, rngSynth, true);
+                const star = synthesizeCandidate(sx, sy, sz, rng, rngAge, rngKin, rngBin, rngSynth, true, thinned, k);
                 if (!star) continue;
-                star.id = "p:" + seed + ":" + ci + ":" + cj + ":" + ck + ":" + k;
+                star.id = idPrefix + k;
                 out.push(star);
+            }
+            // completeness-thinned candidates, materialised only if deep time
+            // asks (localThinnedInCell); not part of the cell's star list
+            if (thinned.length) {
+                Object.defineProperty(out, "thinned", { value: { cellSeed, idPrefix, pending: thinned, stars: null } });
             }
 
             // Brown dwarfs: own seeded sub-population, no completeness thinning
@@ -691,20 +898,11 @@ export function localStarsInCell(ci, cj, ck, seed = SEED) {
                 const R = Math.hypot(sx, sy);
                 const betaDeg = Math.atan2(sy, sx) * RAD2DEG;
                 const vel = drawVelocity(rngBD, R / KPC_PC, betaDeg, "thin", "BD");
-                const epi = computeEpicyclic(R, vel.U, vel.Vpec);
-                const eq = [0, 0, 0];
-                galToWorldKmInto(sx, sy, sz, eq);
-                out.push({
-                    gx: sx, gy: sy, gz: sz,
-                    x: eq[0], y: eq[1], z: eq[2],
-                    mass: bd.mass, L: bd.L, R: bd.R, Teff: bd.Teff,
-                    color: bd.color, cls: bd.cls, kind: bd.kind,
-                    age: 5, feh: 0, // BDs don't evolve via synthStar; placeholders so age/feh stay finite for any generic consumer
-                    vx: vel.vx, vy: vel.vy, vz: vel.vz,
-                    epiRg: epi.Rg, epiX: epi.X, epiPhi0: epi.phi0, epiOmega0: epi.Omega0, epiKappa0: epi.kappa0,
-                    epiNu: verticalFreqAt(R),
-                    id: "p:" + seed + ":" + ci + ":" + cj + ":" + ck + ":bd" + k,
-                });
+                // BDs don't evolve via synthStar; age/feh are placeholders so
+                // they stay finite for any generic consumer
+                const rec = starRecordOf(sx, sy, sz, bd, 5, 0, vel);
+                rec.id = "p:" + seed + ":" + ci + ":" + cj + ":" + ck + ":bd" + k;
+                out.push(rec);
             }
         }
     }
@@ -713,13 +911,25 @@ export function localStarsInCell(ci, cj, ck, seed = SEED) {
     return out;
 }
 
+// The completeness-thinned candidates of a local cell as star records (each
+// carrying thinU/thinComp: it is present at time t while thinU >= thinComp *
+// catalogRetentionAt(cls, t), i.e. never at t = 0).
+const NO_STARS = Object.freeze([]);
+export function localThinnedInCell(ci, cj, ck, seed = SEED) {
+    const th = localStarsInCell(ci, cj, ck, seed).thinned;
+    if (!th) return NO_STARS;
+    if (!th.stars) th.stars = th.pending.map(d => resurrectThinned(d, th.cellSeed, th.idPrefix));
+    return th.stars;
+}
+
 export function localStarById(id) {
     const m = String(id || "").match(/^p:(\d+):(-?\d+):(-?\d+):(-?\d+):(\w+)$/);
     if (!m) return null;
     const seed = Number(m[1]) >>> 0;
     const ci = Number(m[2]), cj = Number(m[3]), ck = Number(m[4]);
     const stars = localStarsInCell(ci, cj, ck, seed);
-    return stars.find(st => st.id === id) || null;
+    return stars.find(st => st.id === id) ||
+        localThinnedInCell(ci, cj, ck, seed).find(st => st.id === id) || null;
 }
 
 export function clearCache() { cache.clear(); localCache.clear(); }

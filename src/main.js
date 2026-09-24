@@ -8,7 +8,7 @@ import {
     G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents, setSimTime,
 } from "./state.js";
 import { eph, moonState, planetVel, sunVel, resetEphem } from "./ephemeris.js";
-import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
+import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero, followMovingStars } from "./physics.js";
 import { stepWorld, WORLD_STEP } from "./worldStep.js";
 import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.js";
 import { loadAllMaps, dotTexture } from "./textures.js";
@@ -70,8 +70,7 @@ import { moonWorldState, planetFocusIndex, planetMoonFocusIndex, planetWorldStat
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
-import { worldKmToGal, setSunGalAnchor } from "./universe/coords.js";
-import { solarGalacticStateAt } from "./universe/solarOrbit.js";
+import { worldKmToGal } from "./universe/coords.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
 import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
 import { getSeed } from "./universe/galaxy.js";
@@ -608,7 +607,6 @@ const _focusOrigin = new THREE.Vector3(), _focusPos = new THREE.Vector3();
 const _bhFocusPos = new THREE.Vector3(), _bhLabelPos = new THREE.Vector3();
 const _starFocusPos = new THREE.Vector3(), _starLabelPos = new THREE.Vector3();
 const _moonOff = { x: 0, y: 0 };
-const _sunOrbitState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 const bhFocusValue = i => "bh:" + i;
 const starFocusValue = i => "star:" + i;
 function bhScenePos(i, out = _bhFocusPos) {
@@ -1813,17 +1811,14 @@ function frame() {
     if (focusNeb >= NEBULAE.length) setFocus("ship");
     const focusStar = starFocusIndex(G.focus);
     if (focusStar >= STARS.length) setFocus("ship");
-    // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time
-    // rather than sitting fixed at SUN_GAL forever — update the anchor every
-    // frame (cheap closed-form epicyclic math, zero-alloc via the reused
-    // scratch object) ahead of the active-star refresh below, which converts
-    // through this same anchor via worldKmToGal.
-    solarGalacticStateAt(G.t, _sunOrbitState);
-    setSunGalAnchor(_sunOrbitState.x, _sunOrbitState.y, _sunOrbitState.z);
+    // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time —
+    // bring the galactic anchor and Sgr A* to G.t every frame (a ship bound to
+    // a moving star rides along; physics.followMovingStars).
+    followMovingStars(false);
     if (activeStarsDue) {
         if (proceduralFocusId(G.focus) && !activeStarForFocus(G.focus)) setFocus("ship");
         if (hygCatalogFocusId(G.focus) && hygCatalogStats().loaded && !activeStarForFocus(G.focus)) setFocus("ship");
-        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t);
+        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t, advanced);
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);

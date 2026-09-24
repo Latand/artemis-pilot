@@ -11,8 +11,9 @@ import {
 import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody, advanceSimTime, syncEphemClock } from "./state.js";
 import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
-import { ACTIVE_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
+import { ACTIVE_STARS, GRAVITY_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
 import { strongestActiveStarWell } from "./universe/starDominance.js";
+import { syncGalacticFrame } from "./universe/galacticClock.js";
 import { dominantSystemBody, moonWorldState, planetWorldState } from "./universe/planetarySystem.js";
 import { darkEnergyAccel, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc } from "./cosmology.js";
 import { worldKmToGal } from "./universe/coords.js";
@@ -781,7 +782,74 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     } finally {
         syncEphemClock();
         if (ownFrame) endEphemFrame();
+        recordBoundHost();
     }
+}
+
+// ---- moving stars ----
+// Stars move with sim time: the Sun's galactic anchor and Sgr A* follow the
+// Sun's orbit around the Galaxy (galacticClock.js), and catalog/procedural
+// neighbours are re-evaluated every ~20-year bucket at the real clock (the
+// flight path used to refresh them at t = 0 forever, so a flying ship never
+// saw them move while a landed one did). A ship deep in one star's well
+// rides along with it; otherwise every re-evaluation would pull its host out
+// from under it (~120 AU per bucket at 30 km/s; Sgr A* sweeps ~50 AU a year
+// through the Sun-centred frame). The host is recorded after each flight
+// step and after each carry; any later move of that star -- here, in
+// main.js's per-frame sync, or from a UI refresh -- is applied to the ship at
+// the next sync, unless the ship itself was moved by something else (load,
+// drag, teleport).
+const _host = { id: "", star: null, x: 0, y: 0, z: 0, sx: 0, sy: 0, sz: 0 };
+const hostKey = star => star.id || star.name || "";
+function recordBoundHost() {
+    _host.id = ""; _host.star = null;
+    if (G.dead || G.landed) return;
+    updEphem();
+    const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
+    if (!stellarGravityActiveAt(wx, wy, wz)) return;
+    const sdx = G.x - eph.sunX, sdy = G.y - eph.sunY, sdz = G.z - eph.sunZ;
+    const sunAcc = WORLD.sunDestroyed ? 0 : MU_S / Math.max(1, sdx * sdx + sdy * sdy + sdz * sdz);
+    const well = strongestActiveStarWell(GRAVITY_STARS, wx, wy, wz, sunAcc);
+    if (!well?.dominant || !hostKey(well.star)) return;
+    const st = well.star;
+    // bound to it, not merely passing through its well (stars are static
+    // between re-evaluations, so the ship's world velocity is the relative one)
+    const vx = G.vx + eph.earthVx, vy = G.vy + eph.earthVy, vz = G.vz + (eph.earthVz || 0);
+    if (!(.5 * (vx * vx + vy * vy + vz * vz) < st.mu / Math.max(well.d, 1))) return;
+    _host.id = hostKey(st); _host.star = st;
+    _host.x = st.x; _host.y = st.y; _host.z = st.z || 0;
+    _host.sx = G.x; _host.sy = G.y; _host.sz = G.z;
+}
+function carryBoundShip() {
+    if (!_host.id) return 0;
+    if (G.dead || G.landed || G.x !== _host.sx || G.y !== _host.sy || G.z !== _host.sz) {
+        _host.id = ""; _host.star = null;
+        return 0;
+    }
+    let star = _host.star;
+    if (!star || hostKey(star) !== _host.id || !ACTIVE_STARS.includes(star)) {
+        star = null;
+        for (const s of ACTIVE_STARS) if (hostKey(s) === _host.id) { star = s; break; }
+    }
+    if (!star) return 0;
+    const dx = star.x - _host.x, dy = star.y - _host.y, dz = (star.z || 0) - _host.z;
+    G.x += dx; G.y += dy; G.z += dz;
+    _host.star = star;
+    _host.x = star.x; _host.y = star.y; _host.z = star.z || 0;
+    _host.sx = G.x; _host.sy = G.y; _host.sz = G.z;
+    return Math.hypot(dx, dy, dz);
+}
+// Brings the galactic frame (and, with refresh, the active stars) to G.t and
+// carries a bound ship with its host. frameAdvanceSec: the sim time this
+// frame covers (refreshActiveStars samples only the nearest stars when a
+// frame replaces the whole neighbourhood). Returns the carry distance (km).
+export function followMovingStars(refresh = true, frameAdvanceSec = 0) {
+    syncGalacticFrame(G.t);
+    if (refresh) {
+        updEphem();
+        refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t, frameAdvanceSec);
+    }
+    return carryBoundShip();
 }
 
 // Bridge `span` seconds of thrustless coast in as few analytic jumps as the
@@ -832,9 +900,9 @@ function advanceFlight(simAdv, atx, aty, atz, aMag) {
     }
     let adv = simAdv, steps = 0, lag = 0;
     const s = _gs;
-    s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
     updEphem(G.t);
-    refreshActiveStars(eph.earthX + s[0], eph.earthY + s[1], s[2], G.focus);
+    followMovingStars(true, simAdv); // stars at the real clock; may carry a bound ship
+    s[0] = G.x; s[1] = G.y; s[2] = G.z; s[3] = G.vx; s[4] = G.vy; s[5] = G.vz;
     // WP23b: the Sun's evolving state and engulfment. worldStep.js runs this
     // once per frame for every path before advancing; this is only the
     // fallback for callers outside the world step.

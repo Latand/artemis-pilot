@@ -55,6 +55,7 @@
     "smoke:explore-facts": "node scripts/smoke-explore-facts.mjs",
     "smoke:deep-clock": "node scripts/smoke-deep-clock.mjs",
     "smoke:deep-time": "node scripts/smoke-deep-time.mjs",
+    "smoke:deep-stars": "node scripts/smoke-deep-stars.mjs",
     "smoke:planet-phases": "node scripts/smoke-planet-phases.mjs"
   },
   "dependencies": {
