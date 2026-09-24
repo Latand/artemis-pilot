@@ -16,6 +16,8 @@ const ephem = await import("../src/ephemeris.js");
 const enc = await import("../src/bhEncounters.js");
 const physics = await import("../src/physics.js");
 const tde = await import("../src/tde.js");
+const debris = await import("../src/tdeDebris.js");
+const kepler = await import("../src/universe/keplerTools.js");
 
 const { MU_S, MU_E, R_SUN, R_EARTH, C_LIGHT, PL } = constants;
 const { G, BH, WORLD, EPHT, GS, resetWorld, resetShip } = state;
@@ -58,8 +60,10 @@ function bodyR(target) { return target === "sun" ? R_SUN : target === "earth" ? 
 function tidalR(target, msun) { return bodyR(target) * Math.cbrt(rsOf(msun) * C_LIGHT * C_LIGHT / 2 / bodyMu(target)); }
 
 // Place a hole so that `target` is on a conic of Newtonian pericentre rp about
-// it, eccentricity e, currently inbound at distance d0.
-function placeEncounter({ target, msun, rsKm, kind = 0, rp, e = 1, d0, phi = .7, incl = .15 }) {
+// it, eccentricity e, currently inbound at distance d0. pw: keep that angular
+// momentum but give the orbit zero Paczynski-Wiita energy (exactly parabolic
+// in the potential the hole exerts).
+function placeEncounter({ target, msun, rsKm, kind = 0, rp, e = 1, d0, phi = .7, incl = .15, pw = false }) {
     updEphem();
     const b = enc.bodyState(target, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 });
     const rs = rsKm ?? rsOf(msun);
@@ -70,6 +74,11 @@ function placeEncounter({ target, msun, rsKm, kind = 0, rp, e = 1, d0, phi = .7,
     let px = r * Math.cos(nu), py = r * Math.sin(nu);
     const k = Math.sqrt(mu / p);
     let vx = -k * Math.sin(nu), vy = k * (e + Math.cos(nu));
+    if (pw) {
+        const h = px * vy - py * vx, v = Math.sqrt(2 * mu / (r - rs)), vt = h / r;
+        const vr = -Math.sqrt(Math.max(0, v * v - vt * vt));
+        vx = (vr * px - vt * py) / r; vy = (vr * py + vt * px) / r;
+    }
     const c = Math.cos(phi), s = Math.sin(phi);
     [px, py] = [px * c - py * s, px * s + py * c];
     [vx, vy] = [vx * c - vy * s, vx * s + vy * c];
@@ -272,21 +281,40 @@ console.log("[D] 3390 Msun hole through the inner Solar System");
         const ux = ephem.eph.sunX / Math.hypot(ephem.eph.sunX, ephem.eph.sunY), uy = ephem.eph.sunY / Math.hypot(ephem.eph.sunX, ephem.eph.sunY);
         enc.addHoleData(ux * 4.5e7, uy * 4.5e7, 1e4, 0, 0);
         const w0 = performance.now();
-        run(span, warp / fps);
+        // the booked angular momentum of each plunge, in units of 4GM/c
+        const lRatio = {};
+        let t = 0;
+        const frame = warp / fps;
+        while (t < span - 1e-9) {
+            const dt = Math.min(frame, span - t);
+            physics.advanceWorld(dt);
+            t += dt;
+            for (const r of ENC) if (r.pending && r.cls) lRatio[enc.bodyLabel(r.target)] = r.el.h / (4 * r.muHole / C_LIGHT);
+        }
         const outcomes = [];
-        for (const c of CAPTURES) outcomes.push({ t: c.t, what: enc.bodyLabel(c.target) + ":captured" });
-        for (const d of TDES) outcomes.push({ t: d.t0, what: enc.bodyLabel(d.target) + ":" + d.regime });
+        for (const c of CAPTURES) outcomes.push({ t: c.t, who: enc.bodyLabel(c.target), what: "captured" });
+        for (const d of TDES) outcomes.push({ t: d.t0, who: enc.bodyLabel(d.target), what: d.regime });
         outcomes.sort((a, b) => a.t - b.t);
         const eaten = enc.BODY_TARGETS.filter(t => state.isBodyDestroyed(t)).map(enc.bodyLabel).sort().join(",");
-        res.push({ label, ms: Math.round(performance.now() - w0), ok: finiteAndSubluminal(), v: worldSpeed(0), eaten, seq: outcomes.map(o => o.what).join(" > "), times: outcomes.map(o => (o.t / 86400).toFixed(3)) });
+        res.push({ label, ms: Math.round(performance.now() - w0), ok: finiteAndSubluminal(), v: worldSpeed(0), eaten, outcomes, lRatio, times: outcomes.map(o => (o.t / 86400).toFixed(3)) });
     }
+    // Every body falls in almost radially: its angular momentum about the hole
+    // is ~1e-4 of r v, so the capture/disruption boundary (L = 4GM/c) is
+    // crossed by metre-per-second differences in the hole's path, which the
+    // warp-dependent substeps of the swallowings before it legitimately
+    // produce. A body whose L/(4GM/c) falls within [0.5, 2] at any warp is
+    // marginal: it must be destroyed at every warp, but either outcome counts.
+    const marginal = new Set();
+    for (const r of res) for (const [who, l] of Object.entries(r.lRatio)) if (l > .5 && l < 2) marginal.add(who);
+    const seqOf = r => r.outcomes.map(o => o.who + ":" + (marginal.has(o.who) && (o.what === "full" || o.what === "captured") ? "destroyed" : o.what)).join(" > ");
     for (const r of res) {
-        console.log("    " + r.label.padEnd(12) + " wall " + String(r.ms).padStart(5) + " ms  v_hole(world) " + r.v.toFixed(1) + " km/s  " + r.seq + "  [d " + r.times.join(",") + "]");
+        console.log("    " + r.label.padEnd(12) + " wall " + String(r.ms).padStart(5) + " ms  v_hole(world) " + r.v.toFixed(1) + " km/s  " + r.outcomes.map(o => o.who + ":" + o.what).join(" > ") + "  [d " + r.times.join(",") + "]");
         check(r.ok, r.label + ": hole stays finite and below c");
         check(r.eaten === res[0].eaten, r.label + ": the same bodies are destroyed at every warp", { got: r.eaten, want: res[0].eaten });
-        check(r.seq === res[0].seq, r.label + ": the same sequence of outcomes at every warp", r.seq);
+        check(seqOf(r) === seqOf(res[0]), r.label + ": the same sequence of outcomes at every warp", seqOf(r));
     }
-    check(/Sun:captured/.test(res[0].seq), "the Sun plunges on L < 4GM/c and is swallowed whole");
+    for (const who of marginal) console.log("    marginal plunge: " + who + " L/(4GM/c) = " + res.map(r => r.lRatio[who]?.toFixed(3) ?? "-").join(", "));
+    check(res.every(r => r.outcomes.some(o => o.who === "Sun" && o.what === "captured")), "the Sun plunges on L < 4GM/c and is swallowed whole (every warp)");
 }
 
 // ------------------------------------------------------- lifecycle (item 2)
@@ -416,6 +444,177 @@ console.log("[E] lifecycle: removal, merge, quickload, reverse, pulsars, 3-D");
     run(20 * 86400, 600);
     check(!state.isBodyDestroyed(JUPITER) && log.some(l => l.kind === "tde-flyby" && /Jupiter/.test(l.text)), "vertical flyby: distort, Jupiter intact", log.map(l => l.text));
     check(Math.abs(BH.vz[0] - vz0) > 1e-6, "the hole feels Jupiter's out-of-plane pull (z dynamics)", BH.vz[0] - vz0);
+}
+
+// ------------------------------------------------------- debris (item 3)
+console.log("[F] emergent debris: split, fallback, precession, remnant, determinism");
+{
+    const out = [0, 0, 0];
+    // 1. full disruption on an exactly parabolic (PW) orbit
+    const fullRun = frame => {
+        resetAll();
+        const rt = tidalR("sun", 1e6);
+        placeEncounter({ target: "sun", msun: 1e6, rp: rt / 3, d0: 3 * rt, pw: true });
+        run(2 * 3600, frame);
+        const d = TDES.find(x => x.target === "sun");
+        return d ? d.debris : null;
+    };
+    const spec = fullRun(60);
+    check(spec && spec.kind === "full", "full disruption leaves a debris spec", spec?.kind);
+    const m = new debris.DebrisModel(spec, debris.debrisCountFor(spec));
+    const n = m.count, tFb = spec.tFb, cen = m.census(spec.t0);
+    const fb = cen.bound / n;
+    console.log("    elements " + n + ", bound " + cen.bound + " (" + (100 * fb).toFixed(1) + "%), eps_cm/dEps " + (m.model.epsCm / m.model.dEps).toExponential(2) + ", kappa " + m.model.kappa.toFixed(4));
+    check(n <= 3000 && Math.abs(fb - .5) < .03, "half the debris is bound (emergent split)", fb);
+    const ret = [];
+    for (let i = 0; i < n; i++) if (m.flags[i] & debris.DEBRIS_BOUND) ret.push(m.tRet[i] - spec.tPeri);
+    ret.sort((a, b) => a - b);
+    check(Math.abs(ret[0] / tFb - 1) < .03, "the most bound debris returns after t_fb = 41 d", ret[0] / 86400);
+    for (const k of [1.2, 2, 5]) {
+        const frac = ret.filter(t => t <= k * tFb).length / ret.length;
+        check(Math.abs(frac - (1 - Math.pow(k, -2 / 3))) < .03, "returned by " + k + " t_fb matches M_acc(t)/(M/2) = 1-(t/t_fb)^-2/3", frac);
+    }
+    // log-slope of the return rate over 1.5 - 40 t_fb
+    const edges = [];
+    for (let k = 0; k <= 8; k++) edges.push(1.5 * Math.pow(40 / 1.5, k / 8) * tFb);
+    const xs = [], ys = [];
+    for (let b = 0; b + 1 < edges.length; b++) {
+        const cnt = ret.filter(t => t >= edges[b] && t < edges[b + 1]).length;
+        if (cnt > 4) { xs.push(Math.log(Math.sqrt(edges[b] * edges[b + 1]))); ys.push(Math.log(cnt / (edges[b + 1] - edges[b]))); }
+    }
+    const mx = xs.reduce((a, b) => a + b, 0) / xs.length, my = ys.reduce((a, b) => a + b, 0) / ys.length;
+    let sxy = 0, sxx = 0;
+    for (let k = 0; k < xs.length; k++) { sxy += (xs[k] - mx) * (ys[k] - my); sxx += (xs[k] - mx) ** 2; }
+    const slope = sxy / sxx;
+    console.log("    fallback d(ln Mdot)/d(ln t) over 1.5-40 t_fb: " + slope.toFixed(3));
+    check(Math.abs(slope + 5 / 3) < .15, "the t^-5/3 return rate emerges from the orbits", slope);
+    // stream geometry: thin and long, the bound half on the inside
+    let rB = 0, rU = 0, nB = 0, nU = 0;
+    for (let i = 0; i < n; i++) {
+        m.particleAt(i, spec.tPeri + 2 * 86400, out);
+        const r = Math.hypot(out[0], out[1], out[2]);
+        if (m.flags[i] & debris.DEBRIS_BOUND) { rB += r; nB++; } else { rU += r; nU++; }
+    }
+    check(rB / nB < rU / nU, "two days on, the bound half trails the unbound half", { bound: rB / nB, unbound: rU / nU });
+    const c12 = m.census(spec.tPeri + 1.2 * tFb);
+    check(c12.returned > 0 && c12.returned - c12.accreted > 0, "at 1.2 t_fb the returned debris is circularizing (disk)", c12);
+
+    // 2. a pure function of sim time: cold jump == many warm steps == reversed == repeated
+    const ts = [spec.t0, spec.tPeri, spec.tPeri + 3600, spec.tPeri + 2 * 86400, spec.tPeri + 1.3 * tFb, spec.tPeri + 4 * tFb];
+    const snap = (mm, t) => {
+        const a = [];
+        for (let i = 0; i < mm.count; i += 97) {
+            if (mm.particleAt(i, t, out) > 0) a.push(out[0], out[1], out[2]); else a.push(0, 0, 0);
+        }
+        return a;
+    };
+    const cold = ts.map(t => snap(new debris.DebrisModel(spec, n), t));
+    const warm = new debris.DebrisModel(spec, n);
+    const warmSnaps = [];
+    let tw = spec.t0;
+    for (const t of ts) { while (tw < t) { tw = Math.min(t, tw + (t - spec.t0) / 400 + 1); snap(warm, tw); } warmSnaps.push(snap(warm, t)); }
+    const rev = ts.slice().reverse().map(t => snap(warm, t)).reverse();
+    let worst = 0;
+    for (let k = 0; k < ts.length; k++) for (let j = 0; j < cold[k].length; j += 3) {
+        const r = Math.hypot(cold[k][j], cold[k][j + 1], cold[k][j + 2]) || 1;
+        for (const other of [warmSnaps[k], rev[k]]) {
+            const e = Math.hypot(cold[k][j] - other[j], cold[k][j + 1] - other[j + 1], cold[k][j + 2] - other[j + 2]) / r;
+            worst = Number.isFinite(e) ? Math.max(worst, e) : Infinity;
+        }
+    }
+    check(worst < 1e-9, "debris positions depend only on sim time (cold, stepped, reversed agree)", worst);
+    const a1 = snap(warm, spec.tPeri + 5e5), a2 = snap(warm, spec.tPeri + 5e5);
+    check(a1.every((v, k) => Math.abs(v - a2[k]) <= 1e-9 * Math.abs(v) + 1e-6), "a paused frame re-evaluates to the same positions (to the solver tolerance)");
+    // warp: the debris born in a run at 1-hour frames matches the 1-minute run
+    const specW = fullRun(3600);
+    // (same sampling seed: the record serial counts encounters across runs)
+    const mW = new debris.DebrisModel({ ...specW, seed: spec.seed }, n);
+    let wd = 0;
+    for (let i = 0; i < n; i += 31) {
+        m.particleAt(i, spec.tPeri + 3 * 86400, out);
+        const x = out[0], y = out[1], z = out[2];
+        mW.particleAt(i, spec.tPeri + 3 * 86400, out);
+        wd = Math.max(wd, Math.hypot(out[0] - x, out[1] - y, out[2] - z) / Math.hypot(x, y, z));
+    }
+    check(Math.abs(specW.t0 - spec.t0) < 1 && wd < 1e-3, "debris is warp-independent (1-min vs 1-h frames)", { dt0: specW.t0 - spec.t0, wd });
+
+    // 3. precessing conics sweep the Paczynski-Wiita apsidal angle
+    for (const q of [6.7, 15.8]) {
+        const mu = MU_S * 1e6, rs = rsOf(1e6), rp = q * rs;
+        const vp = Math.sqrt(2 * mu / (rp - rs)), L = rp * vp;
+        const pm = debris.precessionModel(0, L, mu, rs, rp, {});
+        // RK4 test particle in the PW potential from pericentre
+        let st = [rp, 0, 0, vp], t = 0;
+        const tDyn = Math.sqrt(rp ** 3 / mu), T = 30 * tDyn;
+        const f = v => { const r = Math.hypot(v[0], v[1]), a = -mu / ((r - rs) * (r - rs) * r); return [v[2], v[3], a * v[0], a * v[1]]; };
+        while (t < T) {
+            const h = Math.min(T - t, tDyn / 400 * Math.max(1, Math.pow(Math.hypot(st[0], st[1]) / rp, 1.5)));
+            const k1 = f(st), k2 = f(st.map((v, i) => v + k1[i] * h / 2)), k3 = f(st.map((v, i) => v + k2[i] * h / 2)), k4 = f(st.map((v, i) => v + k3[i] * h));
+            st = st.map((v, i) => v + h / 6 * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]));
+            t += h;
+        }
+        const phiPW = Math.atan2(st[1], st[0]);
+        // the model: exact energy (zero), equivalent Kepler with v_t x kappa
+        const vM = Math.sqrt(2 * (mu / rp + pm.B / (rp * rp)));
+        const el = kepler.conicFromState(rp, 0, 0, 0, pm.kappa * vM, 0, mu, kepler.makeConic());
+        const pf = [0, 0, 0];
+        kepler.perifocalAt(el.rp, el.alpha, mu, T, NaN, pf);
+        const phiM = Math.atan2(pf[1], pf[0]) / pm.kappa;
+        const dphi = Math.abs(Math.atan2(Math.sin(phiM - phiPW), Math.cos(phiM - phiPW)));
+        console.log("    r_p = " + q + " r_s: kappa " + pm.kappa.toFixed(4) + ", PW sweep " + pm.sweep.toFixed(4) + " rad, angle error at 30 t_dyn " + dphi.toExponential(2) + " rad");
+        check(dphi < .01, "precessing conic tracks a Paczynski-Wiita test particle (r_p = " + q + " r_s)", dphi);
+    }
+    check(Math.abs(debris.pwApsidalSweep(0, 1e6, 1, 0, 5e11) - Math.PI) < 1e-6 && Math.abs(debris.pwApsidalSweep(-.3, 1, 1, 0, 1 / (1 + Math.sqrt(.4))) - Math.PI) < 1e-6 &&
+        Math.abs(debris.pwApsidalSweep(.2, 1, 1, 0, 1 / (1 + Math.sqrt(1.4))) - Math.acos(-1 / Math.sqrt(1.4))) < 1e-5, "apsidal sweep reduces to Kepler's (pi; arccos(-1/e)) without the hole's r_s");
+
+    // 4. a partial stripping: the tails bracket the surviving core
+    resetAll();
+    {
+        const rt = tidalR("sun", 1e6);
+        placeEncounter({ target: "sun", msun: 1e6, rp: rt / 1.4, d0: 3 * rt, pw: true });
+        run(4 * 3600, 60);
+        const d = TDES.find(x => x.target === "sun");
+        check(d && d.regime === "partial" && !state.isBodyDestroyed("sun"), "beta 1.4 strips the Sun partially", d?.regime);
+        if (d) {
+            const mp = new debris.DebrisModel(d.debris, debris.debrisCountFor(d.debris));
+            run(8 * 3600, 600);
+            const b = enc.bodyState("sun", { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 });
+            const rx = b.x - BH.x[0], ry = b.y - BH.y[0], rz = b.z - BH.z[0];
+            let iB = -1, iU = -1;
+            for (let i = 0; i < mp.count; i++) {
+                if (mp.u[i] < 0 && (iB < 0 || mp.u[i] > mp.u[iB])) iB = i;
+                if (mp.u[i] > 0 && (iU < 0 || mp.u[i] < mp.u[iU])) iU = i;
+            }
+            const pB = [0, 0, 0], pU = [0, 0, 0];
+            mp.particleAt(iB, G.t, pB); mp.particleAt(iU, G.t, pU);
+            const sep = Math.hypot(pB[0] - pU[0], pB[1] - pU[1], pB[2] - pU[2]);
+            const off = Math.hypot((pB[0] + pU[0]) / 2 - rx, (pB[1] + pU[1]) / 2 - ry, (pB[2] + pU[2]) / 2 - rz);
+            const cp = mp.census(G.t);
+            console.log("    partial: " + mp.count + " elements, bound " + cp.bound + "; core-to-tail-midpoint " + (off / sep).toFixed(3) + " of the tail gap at +12 h");
+            check(off / sep < .25, "the leading and trailing tails leave from the surviving core", off / sep);
+        }
+    }
+    // 5. swallowed whole: every element plunges, freezes toward r_s, none returns
+    resetAll();
+    {
+        const rt = tidalR("sun", 1e8);
+        placeEncounter({ target: "sun", msun: 1e8, rp: rt, d0: 2.4 * 2 * rsOf(1e8), pw: true });
+        run(4 * 3600, 60);
+        const c = CAPTURES.find(x => x.target === "sun");
+        check(c && c.debris, "Sun + 1e8 Msun: captured with a debris spec");
+        if (c) {
+            const mc = new debris.DebrisModel(c.debris, debris.debrisCountFor(c.debris));
+            const rs = c.debris.rs;
+            const r1 = [], r2 = [];
+            for (let i = 0; i < mc.count; i += 53) {
+                mc.particleAt(i, c.t + 3600, out); r1.push(Math.hypot(out[0], out[1], out[2]));
+                mc.particleAt(i, c.t + 7200, out); r2.push(Math.hypot(out[0], out[1], out[2]));
+            }
+            const cc = mc.census(c.t + 7200);
+            check(cc.plunged === mc.count && cc.returned === 0, "all elements plunge, none returns", cc);
+            check(r1.every((r, k) => r > rs && r2[k] > rs && r2[k] <= r), "they approach r_s asymptotically (never cross it in coordinate time)");
+        }
+    }
 }
 
 if (failures) { console.log(failures + " FAILED"); process.exit(1); }

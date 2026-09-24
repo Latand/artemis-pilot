@@ -41,15 +41,35 @@ function uSigma(chi, r0, sigma0, alpha) {
 }
 
 // Solve sqrt(mu) dt = F(chi) (monotonic, F' = r > 0) by safeguarded Newton.
+// A warm start (last frame's chi) usually converges in two or three plain
+// Newton steps; the bracketed fallback handles cold starts and big jumps.
 export function solveUniversal(dt, r0, sigma0, alpha, mu, guess = NaN) {
     const sqmu = Math.sqrt(mu);
     if (dt === 0) return 0;
     const target = dt;
-    // bracket
+    if (Number.isFinite(guess)) {
+        let chi = guess;
+        for (let k = 0; k < 6; k++) {
+            const f = uTime(chi, r0, sigma0, alpha, sqmu) - target;
+            const r = uRadius(chi, r0, sigma0, alpha);
+            if (!(r > 0)) break;
+            const step = f * sqmu / r;
+            const next = chi - step;
+            if (!Number.isFinite(next)) break;
+            if (Math.abs(step) <= 1e-11 * Math.max(1, Math.abs(next))) return next;
+            chi = next;
+        }
+    }
+    // bracket, from a first step that cannot overshoot wildly: chi is below
+    // sqrt(mu) dt / r0 (the linear term), below the parabolic cube root, at
+    // most an orbit for an ellipse, and a hyperbolic anomaly of 7 is a long
+    // way out (larger steps would overflow cosh)
     let lo, hi;
     const dir = dt > 0 ? 1 : -1;
-    let step = Math.max(1e-30, Math.abs(sqmu * dt) / Math.max(r0, 1e-30));
+    const adt = Math.abs(sqmu * dt);
+    let step = Math.max(1e-30, Math.min(adt / Math.max(r0, 1e-30), Math.cbrt(6 * adt / Math.max(1e-12, 1 - alpha * r0))));
     if (alpha > 0) step = Math.min(step, 2 * Math.PI / Math.sqrt(alpha));
+    else if (alpha < 0) step = Math.min(step, 7 / Math.sqrt(-alpha));
     lo = 0; hi = dir * step;
     for (let k = 0; k < 200 && (uTime(hi, r0, sigma0, alpha, sqmu) - target) * dir < 0; k++) { lo = hi; hi *= 2; }
     if (dir < 0) { const t = lo; lo = hi; hi = t; }

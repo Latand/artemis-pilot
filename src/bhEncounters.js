@@ -163,7 +163,7 @@ function newEnc(bh, target, t) {
         relX: 0, relY: 0, relZ: 0, relVx: 0, relVy: 0, relVz: 0, tRel: t, mu: 0,
         R: 0, rt: 0, rCap: 0, rWatch: 0, rs: 0, muBody: 0, muHole: 0,
         tPeri: Infinity, tTidal: -Infinity, tEvent: Infinity, pending: false, lastResolved: -Infinity,
-        debris: null, flybyNoted: false, minBeta: 0,
+        debris: null, flybyNoted: false, minBeta: 0, Epw: NaN,
     };
     ENC.push(rec);
     return rec;
@@ -215,6 +215,7 @@ function updateEnc(rec, t, dt, rx, ry, rz, vx, vy, vz) {
     const el = conicFromState(rx, ry, rz, vx, vy, vz, rec.mu, rec.el);
     rec.relX = rx; rec.relY = ry; rec.relZ = rz; rec.relVx = vx; rec.relVy = vy; rec.relVz = vz; rec.tRel = t;
     const Epw = .5 * el.v * el.v - rec.mu / Math.max(1e-30, el.r - rec.rs);
+    rec.Epw = Epw; // conserved along the (Paczynski-Wiita) orbit
     const fresh = rec.tCreated === t;
     let tPeri = el.inbound || el.bound ? t + el.tToPeri : Infinity;
     let cls, due = Infinity;
@@ -273,15 +274,16 @@ function tidalCrossTime(rec, cls) {
     return Number.isFinite(lead) ? rec.tRel + lead : rec.tEvent;
 }
 
-// ---- debris specification (consumed by the renderer) ----
+// ---- debris specification (consumed by tdeDebris.js) ----
 // The fluid elements move ballistically from the moment the tide overwhelms
-// self-gravity (the inbound crossing of r_t): positions spread over the body,
-// velocities equal to the centre of mass. Their specific energies then span
-// eps_cm + (GM R / r_t^2)(x.r_hat / R) — the frozen-in spread — and the
-// stream, the bound/unbound split and the t^-5/3 return all follow from the
-// individual Kepler orbits.
-function makeDebrisSpec(rec, tEpoch, kind) {
-    propagateState(rec.relX, rec.relY, rec.relZ, rec.relVx, rec.relVy, rec.relVz, rec.mu, tEpoch - rec.tRel, _ps);
+// self-gravity (the inbound crossing of r_t; the pericentre for a partial).
+// Their specific energies span eps_cm + (GM R / r_t^2)(x.r_hat / R) — the
+// frozen-in spread — about the centre of mass's conserved orbital energy
+// (Paczynski-Wiita, from the last live refresh: the Kepler propagation to the
+// epoch conserves the Newtonian energy instead), and the stream, the
+// bound/unbound split and the fallback follow from the individual orbits.
+function makeDebrisSpec(rec, tEpoch, kind, tNow) {
+    relStateAt(rec, tEpoch, tNow, _ps);
     const cls = rec.cls;
     const r = Math.hypot(_ps.x, _ps.y, _ps.z);
     const s = Math.pow(cls.rt / Math.max(1e-30, r), 3);
@@ -291,25 +293,42 @@ function makeDebrisSpec(rec, tEpoch, kind) {
         x: _ps.x, y: _ps.y, z: _ps.z, vx: _ps.vx, vy: _ps.vy, vz: _ps.vz,
         tPeri: rec.tPeri, rp: cls.rpRel || rec.el.rp, beta: cls.beta, gamma: cls.gamma,
         massLossFrac: cls.massLossFrac, strain: s, target: rec.target, bh: rec.bh,
-        tFb: cls.tFbSec, rCirc: 2 * (cls.rpRel || rec.el.rp),
+        tFb: cls.tFbSec, rCirc: 2 * (cls.rpRel || rec.el.rp), epsCm: rec.Epw,
     };
 }
 
+// Relative (body - hole) state at tEpoch. The record is not refreshed inside
+// the freeze radius, and a Kepler propagation from there drifts from the
+// integrated (Paczynski-Wiita) orbit near pericentre, so the live n-body
+// state at tNow is used whenever it is the closer base (at an event the step
+// ends exactly on it: no propagation at all).
+const _bl = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
+function relStateAt(rec, tEpoch, tNow, out) {
+    const i = rec.bh;
+    if (Number.isFinite(tNow) && i >= 0 && i < BH.n && !isBodyDestroyed(rec.target) &&
+        Math.abs(tEpoch - tNow) <= Math.abs(tEpoch - rec.tRel)) {
+        bodyState(rec.target, _bl);
+        return propagateState(_bl.x - BH.x[i], _bl.y - BH.y[i], _bl.z - BH.z[i],
+            _bl.vx - BH.vx[i], _bl.vy - BH.vy[i], _bl.vz - BH.vz[i], rec.mu, tEpoch - tNow, out);
+    }
+    return propagateState(rec.relX, rec.relY, rec.relZ, rec.relVx, rec.relVy, rec.relVz, rec.mu, tEpoch - rec.tRel, out);
+}
+
 // ---- resolution ----
-function resolveEnc(rec, tEv) {
+function resolveEnc(rec, tEv, tNow) {
     const i = rec.bh;
     if (i < 0 || i >= BH.n || isBodyDestroyed(rec.target)) { rec.pending = false; return; }
-    propagateState(rec.relX, rec.relY, rec.relZ, rec.relVx, rec.relVy, rec.relVz, rec.mu, tEv - rec.tRel, _ps);
+    relStateAt(rec, tEv, tNow, _ps);
     const cls = rec.cls;
     rec.pending = false;
     rec.lastResolved = tEv;
     rec.tEvent = Infinity;
     WORLD.irreversibleFloorT = Math.max(WORLD.irreversibleFloorT, tEv);
-    if (cls.regime === "captured") captureBody(rec, tEv, _ps.x, _ps.y, _ps.z, _ps.vx, _ps.vy, _ps.vz, cls.reason);
-    else disruptBody(rec, tEv, _ps);
+    if (cls.regime === "captured") captureBody(rec, tEv, _ps.x, _ps.y, _ps.z, _ps.vx, _ps.vy, _ps.vz, cls.reason, tNow);
+    else disruptBody(rec, tEv, _ps, tNow);
     syncTdeFlag();
 }
-function captureBody(rec, tEv, rx, ry, rz, vx, vy, vz, reason) {
+function captureBody(rec, tEv, rx, ry, rz, vx, vy, vz, reason, tNow) {
     const i = rec.bh, target = rec.target;
     const m = bodyMuLive(target), mu0 = BH.mu[i], mu = mu0 + m;
     if (!(m > 0)) return;
@@ -319,7 +338,7 @@ function captureBody(rec, tEv, rx, ry, rz, vx, vy, vz, reason) {
     BH.mu[i] = mu;
     updateHoleSize(i);
     BH.ev[i].push({ x: BH.x[i], y: BH.y[i], z: BH.z[i], t: tEv, dmu: m }); // mass gain spreads at c
-    const spec = rec.debris || makeDebrisSpec(rec, tEv, "captured");
+    const spec = rec.debris || makeDebrisSpec(rec, tEv, "captured", tNow);
     spec.kind = "captured";
     CAPTURES.push({ bh: i, target, name: rec.name, t: tEv, debris: spec, reason, massMu: m });
     if (CAPTURES.length > 8) CAPTURES.shift();
@@ -332,7 +351,7 @@ function captureBody(rec, tEv, rx, ry, rz, vx, vy, vz, reason) {
 // passages is shredded outright on the next one (a partially disrupted
 // remnant is out of equilibrium and only easier to strip).
 const REMNANT_FLOOR = .05;
-function disruptBody(rec, tEv, ps) {
+function disruptBody(rec, tEv, ps, tNow) {
     const i = rec.bh, target = rec.target, cls = rec.cls;
     const muB = bodyMuLive(target);
     const si = bodyScaleIndex(target);
@@ -344,8 +363,8 @@ function disruptBody(rec, tEv, ps) {
         cls.reason = "remnant core shredded after repeated partial disruptions (beta " + cls.beta.toFixed(2) + ")";
     }
     const dM = f * muB, boundMass = .5 * dM;
-    const spec = full ? (rec.debris || makeDebrisSpec(rec, rec.tTidal > -Infinity && rec.tTidal <= tEv ? rec.tTidal : tEv, "full"))
-        : makeDebrisSpec(rec, tEv, "partial");
+    const spec = full ? (rec.debris || makeDebrisSpec(rec, rec.tTidal > -Infinity && rec.tTidal <= tEv ? rec.tTidal : tEv, "full", tNow))
+        : makeDebrisSpec(rec, tEv, "partial", tNow);
     spec.kind = full ? "full" : "partial";
     spec.massLossFrac = f;
     spec.tPeri = tEv;
@@ -520,7 +539,7 @@ function fillRecordScales(rec, i, target, t) {
 }
 function freezeDebrisIfDue(rec, t) {
     if (rec.pending && !rec.debris && rec.regime !== "partial" && rec.cls && t >= rec.tTidal) {
-        rec.debris = makeDebrisSpec(rec, rec.tTidal, rec.regime === "captured" ? "captured" : "full");
+        rec.debris = makeDebrisSpec(rec, rec.tTidal, rec.regime === "captured" ? "captured" : "full", t);
     }
     if (!rec.pending && rec.debris && rec.lastResolved === -Infinity) rec.debris = null;
 }
@@ -533,7 +552,7 @@ function resolveDue(t) {
             if (r.pending && r.tEvent <= t + tol && (!rec || r.tEvent < rec.tEvent)) rec = r;
         }
         if (!rec) break;
-        resolveEnc(rec, rec.tEvent);
+        resolveEnc(rec, rec.tEvent, t);
     }
 }
 // After every full live step: resolve what is due (the step was clipped to

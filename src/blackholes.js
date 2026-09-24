@@ -12,6 +12,7 @@ import { registerPlacedPulsar, unregisterPlacedPulsar } from "./ambientAudio.js"
 import { addNebula } from "./render/nebulae.js";
 import { NEBULAE, NEB_MAX, NEBULA_ARCHETYPES, nebulaRadiusKmFromPreset } from "./universe/nebulaeData.js";
 import { initEncounterHooks, addHoleData, removeHoleData, TDES } from "./bhEncounters.js";
+import { updateTdeVisuals } from "./tdeVisuals.js";
 // the encounter physics lives in bhEncounters.js (headless); these stay
 // importable from here for the HUD / events panel
 export { activeTde, bhAdvance, tdeInProgress } from "./bhEncounters.js";
@@ -881,4 +882,5 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         }
         m.tex.rotation -= dtLocal * (.25 + 9 / Math.sqrt(m.rs));
     }
+    updateTdeVisuals(earthScX, earthScZ, renderer.getPixelRatio());
 }

@@ -69,8 +69,11 @@ function consider(cands, wx, wy, wz, rsU, camera, f) {
     cands.push({ cx, cy, t2: t * t });
 }
 
+// ?lens=0 disables the pass (inspection and captures of the unlensed scene)
+const lensOff = typeof location !== "undefined" && new URLSearchParams(location.search).get("lens") === "0";
 export function updateLensing(camera, aspect) {
     _cand.length = 0;
+    if (lensOff) { lensingPass.enabled = false; return false; }
     const f = 1 / Math.tan(camera.fov * Math.PI / 360);
     for (let i = 0; i < BH.n; i++) {
         consider(_cand, (eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera, f);
