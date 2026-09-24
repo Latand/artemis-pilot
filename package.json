@@ -27,6 +27,7 @@
     "smoke:lunar-elp": "node scripts/smoke-lunar-elp.mjs",
     "smoke:minor": "node scripts/smoke-minor.mjs",
     "smoke:tde": "node scripts/smoke-tde.mjs",
+    "smoke:tde-regimes": "node scripts/smoke-tde-regimes.mjs",
     "smoke:contacts": "node scripts/smoke-contacts.mjs",
     "smoke:events": "node scripts/smoke-events.mjs",
     "smoke:approach": "node scripts/smoke-approach.mjs",

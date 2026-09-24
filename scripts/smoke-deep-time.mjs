@@ -193,7 +193,16 @@ console.log("\nD. black-hole scene: subcycled within the frame budget, shortfall
     reset();
     parkShipHelio(20);
     const sx = eph.sunX, sy = eph.sunY, d = Math.hypot(sx, sy), ux = -sx / d, uy = -sy / d;
-    blackholes.addBlackHole(sx - uy * 50 * AU_KM, sy + ux * 50 * AU_KM, 1, eph.sunVx, eph.sunVy, true); // 0.34 Msun, 50 AU out
+    // 0.34 Msun, 50 AU out, co-moving with the Sun, BEHIND the parked ship's
+    // orbital motion. The holes ride the bodies' leapfrog with the frame's
+    // indirect term, so this hole stays put (it free-falls ~3 AU over the
+    // ~16 yr below); the separate hole RK4 it replaced lacked that term, and a
+    // hole given the Sun's velocity drifted off at Earth's orbital speed. A
+    // hole AHEAD of the ship is where ~14 yr of max-warp frames carry it (~57
+    // deg of its 20 AU orbit): ~33 AU from the hole, whose pull there tops 12%
+    // of the Sun's, bhBridgeWindow refuses the bridge and honest RK4 delivers
+    // ~0.41 yr/s -- below the planner's rung, on mainline as well.
+    blackholes.addBlackHole(sx + uy * 50 * AU_KM, sy - ux * 50 * AU_KM, 1, eph.sunVx, eph.sunVy, true);
     ok(BH.n === 1, "one hole placed");
     G.warp = WARP_MAX;
     let finite = true, maxAU = 0;

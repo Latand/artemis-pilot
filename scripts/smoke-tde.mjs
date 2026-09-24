@@ -63,175 +63,128 @@ assert(Math.abs(slope - (-5 / 3)) <= .03, "light-curve decay slope should be -5/
 assert(iscoKm(12345) === 3 * 12345, "iscoKm should equal 3*rs exactly");
 assert(relErr(circularizationKm(R_SUN, muBh, muStar), 2 * rt) <= 1e-9, "circularizationKm should equal 2*tidalRadiusKm");
 
-await runWarpSafetyGate();
+await runLifecycleGate();
 
 console.log("tde smoke passed  tFbDays=" + (tFb / 86400).toFixed(3) + "  slope=" + slope.toFixed(5));
 
-async function runWarpSafetyGate() {
+// Lifecycle gate (re-pinned for the encounter pipeline): a Sun on a beta = 3
+// parabola about a 1e6 Msun hole is disrupted at its analytic pericentre with
+// no phantom gravity source, feeds the hole only its bound half along
+// M_acc(t), and the physical outcome is identical at a watchable and a deep
+// warp and independent of the wall clock.
+async function runLifecycleGate() {
     installDomStub();
     const state = await import("../src/state.js");
     const ephem = await import("../src/ephemeris.js");
+    const physics = await import("../src/physics.js");
     const blackholes = await import("../src/blackholes.js");
-    const { BH, EPHT, G, GS, WORLD, resetWorld } = state;
-    const { eph, updEphem } = ephem;
-    const { BH_META, addBlackHole, bhAdvance, clearBlackHoles, initBHHooks } = blackholes;
+    const enc = await import("../src/bhEncounters.js");
+    const { accretedFraction } = await import("../src/tde.js");
+    const { BH, EPHT, G, GS, WORLD, resetWorld, resetShip } = state;
+    const { eph, updEphem, resetEphem } = ephem;
+    const { BH_META, addBlackHole, clearBlackHoles, initBHHooks, activeTde } = blackholes;
 
     let lifecycleEvents = [];
     initBHHooks({
         toast() { },
         predict() { },
-        cataclysm() { },
+        event() { },
+        cataclysm(target) {
+            lifecycleEvents.push(["captured", target]);
+            state.destroyBody(target);
+        },
         disrupt(target) {
-            lifecycleEvents.push(["disrupt", target, EPHT.t]);
+            lifecycleEvents.push(["disrupt", target]);
             state.destroyBody(target);
             return target === "sun" ? "Sun" : "Body";
         },
         absorbed(target) {
-            lifecycleEvents.push(["absorbed", target, EPHT.t]);
-            if (!state.isBodyDestroyed(target)) state.destroyBody(target);
+            lifecycleEvents.push(["absorbed", target]);
         },
     });
 
-    function resetHarness(warp) {
+    function placeSunEncounter() {
         clearBlackHoles();
         resetWorld();
+        resetEphem();
+        resetShip();
         GS.length = 0;
-        BH_META.length = 0;
-        G.t = 0;
-        G.warp = warp;
-        EPHT.t = 0;
-        updEphem(0);
-        WORLD.sunDestroyed = false;
-        const rs = 2 * MU_S * 1e6 / (C_LIGHT * C_LIGHT);
-        const idx = addBlackHole(eph.sunX, eph.sunY, rs, eph.sunVx, eph.sunVy, true);
-        assert(idx === 0 && BH.n === 1, "black-hole harness should create one hole");
-        return BH.mu[0];
+        state.setSimTime(0); // both clocks, residues cleared
+        G.dead = true;
+        G.darkEnergy = false; G.darkMatter = false;
+        updEphem();
+        const rs = 2 * muBh / (C_LIGHT * C_LIGHT);
+        const mu = muBh + muStar;
+        const rp = rt / 3, d0 = 4 * rt, p = 2 * rp;
+        const nu = -Math.acos(p / d0 - 1);
+        const k = Math.sqrt(mu / p);
+        const relX = d0 * Math.cos(nu), relY = d0 * Math.sin(nu);
+        const relVx = -k * Math.sin(nu), relVy = k * (1 + Math.cos(nu));
+        const idx = addBlackHole(eph.sunX - relX, eph.sunY - relY, rs, eph.sunVx - relVx, eph.sunVy - relVy, true);
+        assert(idx === 0 && BH.n === 1 && BH_META.length === 1, "lifecycle harness should create one hole with its visual");
     }
-    function syncSimTime(t) {
-        G.t = t;
-        EPHT.t = t;
-    }
-
-    const fastMu0 = resetHarness(1e6 * 31557600);
-    syncSimTime(1);
-    bhAdvance(1, 1);
-    assert(GS.length === 0, "fast-warp TDE should leave GS.length===0, got " + GS.length);
-    assert(BH.mu[0] > fastMu0, "fast-warp TDE should increase BH.mu");
-    assert(WORLD.sunDestroyed, "fast-warp TDE should destroy the Sun through the absorbed hook");
-
-    const watchMu0 = resetHarness(600);
-    syncSimTime(1);
-    bhAdvance(1, 1);
-    assert(GS.length === 1, "watchable TDE should stage one phantom, got " + GS.length);
-    G.warp = 1e6 * 31557600;
-    syncSimTime(2);
-    bhAdvance(1, 2);
-    assert(GS.length === 0, "watchable TDE should clear GS after fast resolution, got " + GS.length);
-    assert(BH.mu[0] > watchMu0, "watchable TDE completion should increase BH.mu");
-
-    const shortWall = runWatchableLifecycle({ bornMs: 100, completedMs: 1100 });
-    const longWall = runWatchableLifecycle({ bornMs: 10000, completedMs: 31000 });
-    assert(shortWall.dtSequence.length === longWall.dtSequence.length &&
-        shortWall.dtSequence.every((dt, i) => dt === longWall.dtSequence[i]),
-    "watchable TDE runs should use the same simulated dt sequence");
-    assert(shortWall.wallElapsedMs < 5000,
-        "short-wall TDE should keep real elapsed time below five seconds, got " + shortWall.wallElapsedMs);
-    assert(longWall.wallElapsedMs - shortWall.wallElapsedMs >= 10000,
-        "mocked performance.now schedules should be materially different");
-    assert(shortWall.visualAtEnd < .96,
-        "short-wall TDE presentation progress should stay below .96, got " + shortWall.visualAtEnd);
-    assert(shortWall.physical.completionSimT === shortWall.expectedCompletionSimT,
-        "watchable TDE should complete after its simulated duration with wall elapsed below five seconds");
-    assert(JSON.stringify(shortWall.physical) === JSON.stringify(longWall.physical),
-        "watchable TDE physical lifecycle should be independent of performance.now schedule");
-    assert(shortWall.physical.bhMu > shortWall.initialBhMu,
-        "simulated completion should increase BH mass");
-    assert(relErr(shortWall.physical.bhMu, shortWall.initialBhMu + MU_S) <= 1e-12,
-        "simulated completion should add the disrupted body's mass to the BH");
-    assert(relErr(shortWall.physical.eventMassGain, MU_S) <= 1e-12,
-        "BH mass-gain event should equal the disrupted body's mass");
-    assert(shortWall.physical.massEvents.length === 1 &&
-        shortWall.physical.massEvents[0].t === shortWall.expectedCompletionSimT,
-    "BH mass-gain event should publish at simulated completion time");
-    assert(shortWall.physical.sunDestroyed,
-        "simulated completion should destroy the disrupted body");
-    assert(shortWall.physical.irreversibleFloorT === shortWall.expectedCompletionSimT,
-        "irreversible floor should publish at simulated completion time");
-    assert(shortWall.physical.disruptCount === 0 && !shortWall.physical.tdeInProgress,
-        "simulated completion should remove the disruption lifecycle");
-    assert(shortWall.physical.tdeMeta.active && shortWall.physical.tdeMeta.targetName === "Sun",
-        "simulated completion should activate Sun TDE metadata");
-    assert(shortWall.physical.gravitySources.length === 1 &&
-        shortWall.physical.gravitySources[0].phase === "ghost" &&
-        shortWall.physical.gravitySources[0].t === shortWall.expectedCompletionSimT &&
-        shortWall.physical.gravitySources[0].t0 === shortWall.expectedCompletionSimT,
-    "simulated completion should hand the disruption phantom off to a causal ghost");
-    assert(JSON.stringify(shortWall.physical.lifecycleEvents) === JSON.stringify([
-        ["disrupt", "sun", 1],
-        ["absorbed", "sun", shortWall.expectedCompletionSimT],
-    ]), "watchable TDE should emit disruption then absorption at deterministic simulated times");
-
-    function runWatchableLifecycle(wallSchedule) {
+    function runEncounter(warp, fps, wall) {
         lifecycleEvents = [];
-        mockNowMs = wallSchedule.bornMs;
-        const initialBhMu = resetHarness(600);
-        syncSimTime(1);
-        bhAdvance(1, 1);
-        const disruption = window.__BH_DISRUPT[0];
-        assert(disruption, "watchable lifecycle should stage one disruption");
-        assert(WORLD.sunDestroyed,
-            "watchable disruption should destroy the Sun during the staged phase");
-        assert(WORLD.irreversibleFloorT === 1,
-            "watchable disruption should publish its irreversible floor at simulation time 1");
-        assert(GS.length === 1,
-            "watchable lifecycle should stage one disruption phantom, got " + GS.length);
-        assert(!lifecycleEvents.some(e => e[0] === "absorbed"),
-            "watchable staged phase should have no absorption event");
-        const completionDt = disruption.duration + 1;
-        const expectedCompletionSimT = 1 + completionDt;
-        mockNowMs = wallSchedule.completedMs;
-        syncSimTime(expectedCompletionSimT);
-        bhAdvance(completionDt, expectedCompletionSimT);
-        const massEvents = BH.ev[0].slice(1).map(e => ({
-            x: e.x, y: e.y, z: e.z, t: e.t, dmu: e.dmu,
-        }));
+        mockNowMs = wall.bornMs;
+        placeSunEncounter();
+        const frame = warp / fps;
+        let sawApproach = false, gsMax = 0, floorAtSun = null;
+        const tEnd = 30000;
+        while (G.t < tEnd - 1e-9) {
+            physics.advanceWorld(Math.min(frame, tEnd - G.t));
+            mockNowMs += wall.msPerFrame;
+            gsMax = Math.max(gsMax, GS.length);
+            if (!WORLD.sunDestroyed && WORLD.tdeInProgress) sawApproach = true;
+            if (WORLD.sunDestroyed && floorAtSun === null) floorAtSun = WORLD.irreversibleFloorT;
+        }
+        // a 1e6 Msun hole this deep in the Solar System also strips inner
+        // planets on the way; the gate follows the Sun's own records
+        const d = enc.TDES.find(x => x.target === "sun");
+        assert(d, "the Sun should have a flare record");
+        const accretedAtPeriPlusHalfDay = d.accreted;
+        // fallback at a deep warp to 2 t_fb
+        const tLate = d.t0 + 2 * d.tFb;
+        while (G.t < tLate - 1e-6) physics.advanceWorld(Math.min(86400, tLate - G.t));
+        const ev = BH.ev[0].find(e => e.tFb > 0 && e.t === d.t0);
+        const flare = activeTde();
         return {
-            dtSequence: [1, completionDt],
-            expectedCompletionSimT,
-            initialBhMu,
-            wallElapsedMs: wallSchedule.completedMs - wallSchedule.bornMs,
-            visualAtEnd: disruption.visual,
-            physical: {
-                completionSimT: lifecycleEvents.find(e => e[0] === "absorbed")?.[2] ?? null,
-                bhMu: BH.mu[0],
-                eventMassGain: massEvents.reduce((sum, e) => sum + e.dmu, 0),
-                massEvents,
-                sunDestroyed: WORLD.sunDestroyed,
-                irreversibleFloorT: WORLD.irreversibleFloorT,
-                disruptCount: window.__BH_DISRUPT.length,
-                tdeInProgress: WORLD.tdeInProgress,
-                tdeMeta: {
-                    active: BH_META[0].tde.active,
-                    targetName: BH_META[0].tde.targetName,
-                    t0Sim: BH_META[0].tde.t0Sim,
-                    tFbSec: BH_META[0].tde.tFbSec,
-                    LpeakW: BH_META[0].tde.LpeakW,
-                    LnowW: BH_META[0].tde.LnowW,
-                    LEddW: BH_META[0].tde.LEddW,
-                    mStarKg: BH_META[0].tde.mStarKg,
-                    mBhMsun: BH_META[0].tde.mBhMsun,
-                    rCirc: BH_META[0].tde.rCirc,
-                },
-                gravitySources: GS.map(s => ({
-                    phase: Number.isFinite(s.t) ? "ghost" : "phantom",
-                    x: s.x, y: s.y, z: s.z,
-                    vx: s.vx, vy: s.vy, vz: s.vz,
-                    mu: s.mu, R: s.R, t0: s.t0, t: s.t,
-                })),
-                lifecycleEvents: lifecycleEvents.map(e => [...e]),
-            },
+            regime: d.regime, t0: d.t0, tFb: d.tFb, beta: d.beta,
+            sawApproach, gsMax, tdeInProgressAfter: WORLD.tdeInProgress,
+            sunDestroyed: WORLD.sunDestroyed, floorAtSun, frame,
+            accretedEarly: accretedAtPeriPlusHalfDay, accretedLate: d.accreted,
+            profileEvent: ev ? { t: ev.t, dmu: ev.dmu, tFb: ev.tFb } : null,
+            flare: flare ? { target: flare.targetName, regime: flare.regime, L: flare.LnowW, LEdd: flare.LEddW } : null,
+            sunHooks: lifecycleEvents.filter(e => e[1] === "sun").map(e => [...e]),
+            sunFlares: enc.TDES.filter(x => x.target === "sun").length,
         };
     }
+
+    const watch = runEncounter(600, 60, { bornMs: 100, msPerFrame: 16 });
+    const deep = runEncounter(86400, 60, { bornMs: 100, msPerFrame: 16 });
+    const watchSlowWall = runEncounter(600, 60, { bornMs: 10000, msPerFrame: 2500 });
+    for (const [label, r] of [["warp 600", watch], ["warp 86400", deep]]) {
+        assert(r.regime === "full", label + ": Sun + 1e6 Msun at beta 3 should be a full disruption, got " + r.regime);
+        assert(r.gsMax === 0, label + ": the disruption must not stage phantom gravity sources, saw " + r.gsMax);
+        assert(r.sunDestroyed, label + ": the Sun should be removed at pericentre");
+        assert(r.floorAtSun >= r.t0 && r.floorAtSun <= r.t0 + r.frame, label + ": the irreversible floor should publish at the pericentre time");
+        assert(!r.tdeInProgressAfter, label + ": no disruption should remain in progress afterwards");
+        assert(r.accretedEarly === 0, label + ": nothing may be accreted before t_fb, got " + r.accretedEarly);
+        assert(relErr(r.accretedLate, .5 * muStar * accretedFraction(2 * r.tFb, r.tFb)) <= 1e-9,
+            label + ": the hole should gain exactly M_acc(t) of the bound half, got " + (r.accretedLate / muStar) + " Msun");
+        assert(r.profileEvent && relErr(r.profileEvent.dmu, .5 * muStar) <= 1e-12 && r.profileEvent.tFb === r.tFb,
+            label + ": the causal mass event should carry the bound half with the fallback profile");
+        assert(r.flare && r.flare.L > 0 && r.flare.L <= r.flare.LEdd,
+            label + ": a flare should be live and Eddington-capped");
+        assert(JSON.stringify(r.sunHooks) === JSON.stringify([["disrupt", "sun"]]),
+            label + ": exactly one disruption hook call for the Sun, got " + JSON.stringify(r.sunHooks));
+        assert(r.sunFlares === 1, label + ": exactly one Sun flare record");
+    }
+    assert(watch.sawApproach, "the approach should raise tdeInProgress before pericentre at a watchable warp");
+    assert(Math.abs(watch.t0 - deep.t0) < 1, "pericentre time should not depend on warp: " + watch.t0 + " vs " + deep.t0);
+    assert(relErr(watch.beta, deep.beta) < 1e-3, "beta should not depend on warp: " + watch.beta + " vs " + deep.beta);
+    assert(relErr(watch.accretedLate, deep.accretedLate) < 1e-6, "accreted mass should not depend on warp");
+    assert(JSON.stringify(watch) === JSON.stringify(watchSlowWall),
+        "the physical lifecycle should be independent of the performance.now schedule");
 }
 
 function installDomStub() {

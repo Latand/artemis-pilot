@@ -77,6 +77,7 @@ import {
 } from "./cosmology.js";
 import { worldKmToGal } from "./universe/coords.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
+import { setObserver } from "./universe/observerTime.js";
 import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
 import { getSeed } from "./universe/galaxy.js";
 import { createCometTailPair, createMinorBodyRenderers, updateCometTail } from "./render/minorBodiesRender.js";
@@ -143,7 +144,7 @@ function lensCandidateCouldBeVisible(wx, wy, wz, rsU, camera) {
 }
 function lensingCouldBeVisible(camera) {
     for (let i = 0; i < BH.n; i++) {
-        if (lensCandidateCouldBeVisible((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera)) return true;
+        if (lensCandidateCouldBeVisible((eph.earthX + BH.x[i]) * K, BH.z[i] * K, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera)) return true;
     }
     for (const s of ACTIVE_STARS) {
         if (s.bh && lensCandidateCouldBeVisible(s.x * K, (s.z || 0) * K, -s.y * K, s.rs * K, camera)) return true;
@@ -222,12 +223,13 @@ function restart() {
 initPhysicsHooks({ die, award, banner: showBanner, hideBanner });
 initBHHooks({
     toast, predict: computePrediction,
+    // swallowed whole (no flare): `mode` carries the physical reason
     cataclysm(target, rs, mode, bi = -1) {
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), true, false);
         award("bh");
         if (bi >= 0) focusBlackHole(bi);
         if (name) {
-            const label = name + " absorbed by black hole · r_s now " + fmtKm(rs);
+            const label = name + " " + mode + " · r_s now " + fmtKm(rs);
             toast(label);
             noteEvent(label);
         }
@@ -623,7 +625,7 @@ const _moonOff = { x: 0, y: 0 };
 const bhFocusValue = i => "bh:" + i;
 const starFocusValue = i => "star:" + i;
 function bhScenePos(i, out = _bhFocusPos) {
-    return out.set((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K);
+    return out.set((eph.earthX + BH.x[i]) * K, BH.z[i] * K, -(eph.earthY + BH.y[i]) * K);
 }
 function starScenePos(i, out = _starFocusPos) {
     return out.set(STARS[i].x * K, (STARS[i].z || 0) * K, -STARS[i].y * K);
@@ -1954,6 +1956,7 @@ function frame() {
         tier1CamDirWorld.x = tier1CamDirScene.x;
         tier1CamDirWorld.y = -tier1CamDirScene.z;
         tier1CamDirWorld.z = tier1CamDirScene.y;
+        setObserver(camWorldKmX, camWorldKmY, camWorldKmZ, G.t);
         updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, tier1CamDirWorld, G.t);
         if (minorRenderers.oort.mesh.visible && (nearFieldDue || !minorRenderers.oort.geometry.drawRange.count)) {
             minorSunWorld[0] = eph.earthX + eph.sunX;

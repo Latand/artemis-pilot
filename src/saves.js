@@ -5,6 +5,7 @@ import { G, WORLD, BH, GS } from "./state.js";
 import { snapshotEphem, loadEphemSnapshot } from "./ephemeris.js";
 import { serializeLog, restoreLog } from "./discoveryLog.js";
 import { addBlackHole, clearBlackHoles } from "./blackholes.js";
+import { serializeEncounterState, restoreEncounterState } from "./bhEncounters.js";
 import { serializeNebulae, restoreNebulae } from "./render/nebulae.js";
 import { clearTrail, pushTrail, computePrediction } from "./trails.js";
 import { hideBanner, showBanner } from "./hud.js";
@@ -96,11 +97,16 @@ export function saveState() {
             ...(Number.isFinite(ephSt.earthZ) ? { earthZ: ephSt.earthZ } : {}),
             ...(Number.isFinite(ephSt.earthVz) ? { earthVz: ephSt.earthVz } : {}),
         },
-        bh: Array.from({ length: BH.n }, (_, i) => [BH.x[i], BH.y[i], BH.vx[i], BH.vy[i], BH.rs[i], BH.kind[i], BH.period[i]]),
+        // hole tuples gained z, vz (3-D holes) as trailing fields: a v11 loader
+        // that predates them still reads the first seven
+        bh: Array.from({ length: BH.n }, (_, i) => [BH.x[i], BH.y[i], BH.vx[i], BH.vy[i], BH.rs[i], BH.kind[i], BH.period[i], BH.z[i], BH.vz[i]]),
         neb: serializeNebulae(),
-        // gravity-front bookkeeping: per-hole mass-gain events, plus the
+        // gravity-front bookkeeping: per-hole mass-gain events (a trailing
+        // sixth field is a tidal fallback profile's t_fb), plus the
         // phantom/ghost sources (Infinity survives JSON as null)
-        bhEv: Array.from({ length: BH.n }, (_, i) => (BH.ev[i] || []).map(e => [e.x, e.y, e.z || 0, e.t, e.dmu])),
+        bhEv: Array.from({ length: BH.n }, (_, i) => (BH.ev[i] || []).map(e => e.tFb > 0 ? [e.x, e.y, e.z || 0, e.t, e.dmu, e.tFb] : [e.x, e.y, e.z || 0, e.t, e.dmu])),
+        // booked encounters, running flares and partially stripped bodies
+        tde: serializeEncounterState(),
         gs: GS.map(s => [s.x, s.y, s.z || 0, s.vx, s.vy, s.vz || 0, s.mu, s.R, s.t0, isFinite(s.t) ? s.t : null]),
         bhSizeIdx: BH.sizeIdx,
     };
@@ -179,14 +185,16 @@ export async function loadState() {
     }
     clearBlackHoles();
     restoreNebulae(data.neb || []);
-    data.bh.forEach(([x, y, vx, vy, rs, kind, period], i) => {
+    data.bh.forEach(([x, y, vx, vy, rs, kind, period, z, vz], i) => {
         const raw = data.bhEv && data.bhEv[i];
         const ev = raw && raw.length ? raw.map(row => row.length >= 5
-            ? { x: row[0], y: row[1], z: row[2], t: row[3], dmu: row[4] }
+            ? { x: row[0], y: row[1], z: row[2], t: row[3], dmu: row[4], ...(row[5] > 0 ? { tFb: row[5] } : {}) }
             : { x: row[0], y: row[1], z: 0, t: row[2], dmu: row[3] })
-            : [{ x, y, z: 0, t: -1e18, dmu: rs * C_LIGHT * C_LIGHT / 2 }]; // v1 saves: field counts as long-established
-        addBlackHole(x, y, rs, vx, vy, true, ev, kind ?? 0, period ?? 0);
+            : [{ x, y, z: z || 0, t: -1e18, dmu: rs * C_LIGHT * C_LIGHT / 2 }]; // v1 saves: field counts as long-established
+        addBlackHole(x, y, rs, vx, vy, true, ev, kind ?? 0, period ?? 0, Number.isFinite(z) ? z : 0, Number.isFinite(vz) ? vz : 0);
     });
+    // after the holes exist: encounter records reference them by index
+    restoreEncounterState(data.tde || null);
     if (typeof data.bhSizeIdx === "number") BH.sizeIdx = data.bhSizeIdx;
     hideBanner();
     clearTrail();

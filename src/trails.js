@@ -4,7 +4,7 @@ import {
     eph, moonState,
     snapshotEphem, loadEphemSnapshot, advanceEphemSnapshot, advanceEphemSnapshotKepler,
     bodyStateForTarget, IDX_MOON, IDX_SUN, IDX_PLANETS,
-    beginPredictionBH, endPredictionBH, predBHX, predBHY,
+    beginPredictionBH, endPredictionBH, predBHX, predBHY, predBHZ,
     beginPredictionStars, endPredictionStars,
 } from "./ephemeris.js";
 import { G, BH, WORLD } from "./state.js";
@@ -356,8 +356,8 @@ export function computePrediction() {
             }
             if (!impact) {
                 for (let bi = 0; bi < BH.n; bi++) {
-                    const dx = _ps[0] - predBHX(bi, pt), dy = _ps[1] - predBHY(bi, pt), dz = _ps[2];
-                    const lim = BH.rs[bi] * 1.5;
+                    const dx = _ps[0] - predBHX(bi, pt), dy = _ps[1] - predBHY(bi, pt), dz = _ps[2] - predBHZ(bi, pt);
+                    const lim = BH.kind[bi] === 2 ? 12 : BH.rs[bi] * 1.5;
                     if (dx * dx + dy * dy + dz * dz <= lim * lim) { impact = 4; break; }
                 }
             }
