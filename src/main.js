@@ -4,7 +4,10 @@ import {
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS, PC_KM,
     OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM,
 } from "./constants.js";
-import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
+import {
+    G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents,
+    advanceSimTime, setSimTime, syncEphemClock,
+} from "./state.js";
 import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
 import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
 import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.js";
@@ -1641,19 +1644,21 @@ function frame() {
             advanced = frameSimAdvance;
             advanceEphem(advanced);
             bhAdvance(advanced, G.t);
-            G.t += advanced;
+            advanceSimTime(advanced);
+            syncEphemClock();
         } else if (G.landed) {
             advanced = frameSimAdvance;
             advanceEphem(advanced);
             bhAdvance(advanced, G.t);
-            G.t += advanced;
+            advanceSimTime(advanced);
+            syncEphemClock();
         } else {
             advanced = advance(frameSimAdvance, atx, aty, atz, aMag);
             activeStarsFresh = true;
         }
     }
     const jumpSettlement = jumpFrame ? settleTimeJump(jumpFrame, advanced, aMag > 0) : null;
-    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) G.t = jumpSettlement.syncTimeSec;
+    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) setSimTime(jumpSettlement.syncTimeSec);
     snapLanded();
     const oi = orbitInfo();
     perfEnd("frame.physics", physicsT0, PERF.enabled ? { advanced, warp: G.warp, dtR, rawDtR, dtRCap } : null);

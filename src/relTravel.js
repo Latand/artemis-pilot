@@ -1,5 +1,5 @@
 import { C_LIGHT, G_ACCEL_KMS2, SEC_YEAR } from "./constants.js";
-import { G } from "./state.js";
+import { G, advanceSimTime, syncEphemClock } from "./state.js";
 import { targetState } from "./autopilot.js";
 import { advanceEphem } from "./ephemeris.js";
 import { bhAdvance } from "./blackholes.js";
@@ -117,7 +117,8 @@ export function relTravelStep(simAdvSec) {
     G.tau += sample.properElapsed - properPrev;
     advanceEphem(dCoord);
     bhAdvance(dCoord, G.t);
-    G.t += dCoord;
+    advanceSimTime(dCoord);
+    syncEphemClock();
     REL.coordElapsed = s;
     // float-accumulation guard - after the last step s can sit 1 ulp under T.
     if (p.T - s < 1e-6) {

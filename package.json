@@ -53,6 +53,7 @@
     "smoke:determinism": "node scripts/smoke-determinism.mjs",
     "smoke:exotic": "node scripts/smoke-exotic.mjs",
     "smoke:explore-facts": "node scripts/smoke-explore-facts.mjs",
+    "smoke:deep-clock": "node scripts/smoke-deep-clock.mjs",
     "smoke:planet-phases": "node scripts/smoke-planet-phases.mjs"
   },
   "dependencies": {

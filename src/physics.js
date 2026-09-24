@@ -7,7 +7,7 @@ import {
     eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance3,
     gravityStarsFor, currentGravityStars, STELLAR_GRAVITY_MIN_R,
 } from "./ephemeris.js";
-import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody } from "./state.js";
+import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody, advanceSimTime, syncEphemClock } from "./state.js";
 import { bhAdvance } from "./blackholes.js";
 import { fmtMET, fmtKm } from "./format.js";
 import { ACTIVE_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
@@ -614,7 +614,7 @@ function shipCosmologyJump(dt) {
     if (!cosmologyJumpClear(G.x, G.y, G.z, nx, ny, nz, dt)) return 0;
     advanceEphem(dt);
     bhAdvance(dt, G.t);
-    G.t += dt;
+    advanceSimTime(dt);
     smoothCosmologyAccelAt(nx, ny, nz, _cosA1);
     G.x = nx; G.y = ny; G.z = nz;
     G.vx = hvx + _cosA1[0] * dt * .5;
@@ -659,7 +659,15 @@ function markAdvancePerf(t0, simAdv, advanced, stats) {
     if (PERF.enabled) markPerf("physics.advance", performance.now() - t0, { simAdv, advanced, ...stats });
     return advanced;
 }
+// Every exit leaves the ephemeris caught up with the ship (final flush), so
+// the ephemeris clock is re-synced to the authoritative clock here: one clock
+// for G.t, gravity fronts and ghost stamps.
 export function advance(simAdv, atx, aty, atz, aMag) {
+    const advanced = advanceFlight(simAdv, atx, aty, atz, aMag);
+    syncEphemClock();
+    return advanced;
+}
+function advanceFlight(simAdv, atx, aty, atz, aMag) {
     const perfOn = PERF.enabled;
     const perfT0 = perfOn ? performance.now() : 0;
     const perfStats = perfOn ? {
@@ -739,7 +747,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
             perfStats.dtMax = Math.max(perfStats.dtMax, mag);
         }
         rk4Step(s, lag, dt, atx, aty, atz);
-        G.t += dt; adv -= dt; lag += dt; steps++;
+        advanceSimTime(dt); adv -= dt; lag += dt; steps++;
         if (aMag > 0) {
             const dv = aMag * dt * 1000;
             G.dvUsed += dv;
@@ -972,7 +980,7 @@ export function shipDeepJump(dt) {
         advanceEphem(dt);
         G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
         G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy; G.vz = _dj.vz;
-        G.t += dt;
+        advanceSimTime(dt);
         return dt;
     }
     if (starWell?.dominant && starAcc > domAcc) {
@@ -990,7 +998,7 @@ export function shipDeepJump(dt) {
         advanceEphem(dt);
         G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
         G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy; G.vz = _dj.vz;
-        G.t += dt;
+        advanceSimTime(dt);
         return dt;
     }
     const atmTop = oi.body === "EARTH" ? ATM_TOP : oi.domPl ? (PL[oi.pNear].atmTop || 0) : oi.domSysPlanet ? (oi.sysPlanet?.atmTop || 0) : 0;
@@ -1016,7 +1024,7 @@ export function shipDeepJump(dt) {
     else if (oi.domSun) { bx = eph.sunX; by = eph.sunY; bz = eph.sunZ; bvx = eph.sunVx; bvy = eph.sunVy; bvz = eph.sunVz; }
     G.x = bx + _dj.x; G.y = by + _dj.y; G.z = bz + _dj.z;
     G.vx = bvx + _dj.vx; G.vy = bvy + _dj.vy; G.vz = bvz + _dj.vz;
-    G.t += dt;
+    advanceSimTime(dt);
     return dt;
 }
 

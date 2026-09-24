@@ -3,7 +3,9 @@ import {
     MU_E, MU_M, MU_S, C_LIGHT, BH_MAX, LY_KM, PC_KM, DARK_ENERGY, DARK_MATTER,
     I_EARTH, OM_EARTH, I_MOON, OM_MOON0, OM_MOON_RATE, OM_YEAR,
 } from "./constants.js";
-import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
+import {
+    G, BH, WORLD, EPHT, GS, gsPull, bhMuAt, advanceEphemClock, ephemClockLo, setEphemClock,
+} from "./state.js";
 import { GRAVITY_STARS } from "./universe/activeStars.js";
 import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
 import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
@@ -548,6 +550,7 @@ function makeState() {
         earthVy,
         earthVz,
         t: EPHT.t,
+        tLo: ephemClockLo(),
     };
 }
 function copyLiveToState(st) {
@@ -556,6 +559,7 @@ function copyLiveToState(st) {
     st.earthX = earthX; st.earthY = earthY; st.earthZ = earthZ;
     st.earthVx = earthVx; st.earthVy = earthVy; st.earthVz = earthVz;
     st.t = EPHT.t;
+    st.tLo = ephemClockLo();
     return st;
 }
 function copyStateToLive(st) {
@@ -568,7 +572,7 @@ function copyStateToLive(st) {
     // earthZ/earthVz are intentionally not read back: Earth's world z is a
     // permanent 0 by this file's frame convention (see the `earthZ` const
     // above), not a per-snapshot value.
-    if (typeof st.t === "number") EPHT.t = st.t;
+    if (typeof st.t === "number") setEphemClock(st.t, Number.isFinite(st.tLo) ? st.tLo : 0);
     syncFromState();
 }
 
@@ -612,7 +616,11 @@ function computeAccel(st) {
     if (WORLD.earthDestroyed) { _lfEarthAx = 0; _lfEarthAy = 0; }
     else { _lfEarthAx = -_ind3[0] + _pnEarth3[0]; _lfEarthAy = -_ind3[1] + _pnEarth3[1]; }
 }
-function leapfrogBodies(st, dt) {
+// `tEnd` is the state's time after the step. Callers stepping a long
+// interval pass tStart + elapsed (elapsed summed from zero, so it stays
+// exact) instead of accumulating st.t += dt, whose rounding at deep time
+// (32 s ulp at 6 Gyr) used to walk the gravity-front clock off G.t.
+function leapfrogBodies(st, dt, tEnd = st.t + dt) {
     const h = dt / 2;
     computeAccel(st);
     for (let i = 0; i < NB; i++) {
@@ -625,7 +633,7 @@ function leapfrogBodies(st, dt) {
         st.x[i] += dt * st.vx[i]; st.y[i] += dt * st.vy[i]; st.z[i] += dt * st.vz[i];
     }
     st.earthX += dt * st.earthVx; st.earthY += dt * st.earthVy; // earthZ stays 0
-    st.t += dt;
+    st.t = tEnd;
     computeAccel(st);
     for (let i = 0; i < NB; i++) {
         if (!isBodyActive(i)) continue;
@@ -872,13 +880,15 @@ function advanceState(st, dtTotal, maxStep = 3600, live = false) {
         st.t += dtTotal;
         return;
     }
-    let rem = dtTotal, guard = 0;
+    let rem = dtTotal, guard = 0, elapsed = 0;
+    const tStart = st.t;
     while (Math.abs(rem) > 1e-9 && guard++ < 2000) {
         // if the step collapses near a deep well, spend the remaining budget
         // anyway: bounded local error beats bodies silently losing time
         const mag = Math.min(Math.abs(rem), Math.max(bodyStepSize(st, Math.abs(rem), maxStep), Math.abs(rem) / (2001 - guard)));
         const dt = Math.sign(rem) * mag;
-        leapfrogBodies(st, dt);
+        elapsed += dt;
+        leapfrogBodies(st, dt, tStart + elapsed);
         rem -= dt;
         if (live && liveGuard && BH.n) {
             syncFromState(st); // the guard reads current body positions via eph
@@ -888,13 +898,19 @@ function advanceState(st, dtTotal, maxStep = 3600, live = false) {
 }
 const _adv = makeState(); // persistent scratch: advanceEphem runs every flush, allocation-free
 export function advanceEphem(dtTotal) {
-    if (Math.abs(dtTotal) <= 1e-9) return;
+    if (Math.abs(dtTotal) <= 1e-9) return 0;
     copyLiveToState(_adv);
+    const t0 = _adv.t, lo0 = _adv.tLo;
     advanceState(_adv, dtTotal, 3600, true);
+    // the ephemeris clock advances by exactly the integrated span through the
+    // compensated adder (not by the state's own rounded sum of substeps)
+    _adv.t = t0; _adv.tLo = lo0;
     copyStateToLive(_adv);
+    advanceEphemClock(dtTotal);
     // a ghost whose front has swept past Neptune influences nothing anymore
     for (let k = GS.length - 1; k >= 0; k--)
         if ((EPHT.t - GS[k].t) * C_LIGHT > 1e10) GS.splice(k, 1);
+    return dtTotal;
 }
 export function snapshotEphem(out = null) { return out ? copyLiveToState(out) : makeState(); }
 export function applyEphemSnapshot(st) { syncFromState(st); }
