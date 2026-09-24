@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K } from "./constants.js";
+import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT } from "./constants.js";
 import { earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
 import { stellarExposure, meteredSkyExposure, linearStarColor } from "./render/stellarAppearance.js";
 import { makeStarPointMaterial } from "./render/starPointMaterial.js";
@@ -225,6 +225,7 @@ export function updateBodyShaders(camera, t) {
 // star, so it must share every part of the model, color included.
 const SUN_TEFF_COLOR = teffToRGB(SUN_TEFF_K);
 const _sunTintScratch = [1, 1, 1];
+const _sunNowTint = [1, 1, 1];
 const _sunEvoTint = new THREE.Vector3(1, 1, 1);
 const _sunPointColor = new THREE.Color();
 
@@ -234,9 +235,15 @@ const _sunPointColor = new THREE.Color();
 // exposure, fading out exactly as its photosphere resolves (0.75 -> 3 px),
 // so it is continuous from the surface out to where it drops below the
 // display limit, like every catalog star.
+// Observer time: everything the camera sees of the Sun (point, photosphere,
+// corona, planetary nebula) is the Sun as it was when that light left it,
+// t - d/c (universe/observerTime.js); from the Local Group that is 2.5 Myr,
+// longer than the planetary-nebula phase. The planets' illumination keeps
+// the Sun of the sim time.
 export function updateSunView(camera, camDistPc) {
-    const sun = sunStateAt(G.t);
     const d = Math.max(camDistPc, 1e-9);
+    const sun = sunStateAt(G.t - d * PC_KM / C_LIGHT);
+    const sunNow = d * PC_KM / C_LIGHT < 3.15e7 ? sun : sunStateAt(G.t);
     const teffColor = teffToRGB(sun.Teff, _sunTintScratch);
     const attrs = sunGlow.geometry.attributes;
     const absMagV = absMagVFromL(sun.L_Lsun, sun.Teff);
@@ -249,7 +256,8 @@ export function updateSunView(camera, camDistPc) {
         attrs.absMag.needsUpdate = attrs.teffK.needsUpdate = attrs.radiusKm.needsUpdate = attrs.color.needsUpdate = true;
     }
     linearStarColor(teffColor, sunCore.material.color);
-    sunLight.color.copy(sunCore.material.color);
+    if (sunNow === sun) sunLight.color.copy(sunCore.material.color);
+    else linearStarColor(teffToRGB(sunNow.Teff, _sunNowTint), sunLight.color);
     sunCore.rotation.y = (G.t * 2 * Math.PI / (25.38 * 86400)) % (2 * Math.PI);
     updateRealSkyFade(d);
 
