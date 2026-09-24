@@ -18,9 +18,77 @@ export const RUNG_WALL_S = 0.7;
 
 const FIRST_LADDER_RUNG = WARPS.indexOf(1);
 const GHOST_REASON = "deep time blocked: absorbed matter's gravity ghosts force step-by-step physics";
+// Black holes break the two-body decomposition the analytic bridges rely on,
+// so a scene with holes is integrated step by step inside a per-frame budget
+// (ephemeris.js EPHEM_FRAME_STEP_BUDGET, subcycled by physics.js bridgeSpan).
+// That delivers years per second, not the Gyr/s ladder top: the planner
+// plans black-hole scenes at this rung instead of promising 1 Gyr/s and
+// delivering ~1e-9 of it. Manual warp stays unclamped (the Time Dock reports
+// the shortfall honestly).
+export const BH_FEASIBLE_WARP = SEC_YEAR;
+export const BH_REASON = "deep time limited: black holes are integrated step by step (≤ 1 yr/s)";
+const CAPPED_JUMP_MAX_ETA_SEC = 60;
 const TWO_PI = 2 * Math.PI;
 const GOLDEN_TOLERANCE_SEC = 3600;
 const DEFAULT_SCAN_SAMPLE_BUDGET = 256;
+// Deep-time guards. Every refinement loop terminates on an ulp-aware
+// tolerance AND a hard iteration cap: at |t| >= 2^64 s the spacing of
+// float64 seconds exceeds GOLDEN_TOLERANCE_SEC, so `right - left > 3600`
+// could never become false and the idle prediction scheduler hung the app.
+// Scans additionally run in local time (offsets from the scan epoch, with the
+// conics re-phased to that epoch), so they never evaluate phase + n*t at a
+// huge t, where the mean anomaly itself has lost all precision.
+export const REFINE_MAX_ITERATIONS = 200;
+export const LEAD_SCAN_MAX_STEPS = 4096;
+// Diagnostics for smokes: the largest iteration count any refinement loop
+// needed, and how often a loop stopped at its cap instead of its tolerance.
+export const REFINE_STATS = { maxIterations: 0, maxLeadSteps: 0, capped: 0 };
+function noteRefine(iterations, cap) {
+    if (iterations > REFINE_STATS.maxIterations) REFINE_STATS.maxIterations = iterations;
+    if (iterations > cap) REFINE_STATS.capped++;
+}
+function noteLeadSteps(steps) {
+    if (steps > REFINE_STATS.maxLeadSteps) REFINE_STATS.maxLeadSteps = steps;
+    if (steps > LEAD_SCAN_MAX_STEPS) REFINE_STATS.capped++;
+}
+const _ulpView = new DataView(new ArrayBuffer(8));
+// Spacing of float64 values at |x| (the gap to the next representable one).
+export function ulp(x) {
+    const ax = Math.abs(x);
+    if (!Number.isFinite(ax)) return Infinity;
+    _ulpView.setFloat64(0, ax);
+    const exponent = (_ulpView.getUint32(0) >>> 20) & 0x7ff;
+    return exponent === 0 ? Number.MIN_VALUE : Math.pow(2, exponent - 1075);
+}
+function timeTolerance(a, b) {
+    return Math.max(GOLDEN_TOLERANCE_SEC, 8 * ulp(Math.max(Math.abs(a), Math.abs(b))));
+}
+// Dekker/Veltkamp exact product: a*b === hi + lo exactly (barring overflow).
+const SPLITTER = 134217729; // 2^27 + 1
+function twoProductLo(a, b, hi) {
+    const ca = SPLITTER * a, ah = ca - (ca - a), al = a - ah;
+    const cb = SPLITTER * b, bh = cb - (cb - b), bl = b - bh;
+    return ((ah * bh - hi) + ah * bl + al * bh) + al * bl;
+}
+// The body's mean anomaly at `epochSec`, phase + n*epoch, reduced modulo its
+// period in TIME (t - q*P with q*P formed exactly) so the result keeps full
+// precision at any epoch instead of the ~0.1 rad noise of a direct n*t at
+// 1e21 s. Deterministic and smooth in the epoch.
+function phaseAtEpoch(body, epochSec) {
+    if (epochSec === 0) return body.phase;
+    const period = TWO_PI / body.n;
+    const q = Math.round(epochSec / period);
+    const qpHi = q * period;
+    const qpLo = twoProductLo(q, period, qpHi);
+    const remainder = (epochSec - qpHi) - qpLo;
+    const phase = body.phase + body.n * remainder;
+    return phase - TWO_PI * Math.round(phase / TWO_PI);
+}
+// A copy of `body` whose conic is re-phased so that local time 0 is epochSec.
+function rebasedBody(body, epochSec) {
+    if (epochSec === 0) return body;
+    return Object.freeze({ ...body, phase: phaseAtEpoch(body, epochSec) });
+}
 const PHYSICAL_PLANET_ORDER = Object.freeze([
     "MERCURY",
     "VENUS",
@@ -143,7 +211,9 @@ function refineMinimum(bodyA, bodyB, leftSec, rightSec) {
     let innerRight = left + ratio * (right - left);
     let leftDistance = pairDistanceAt(bodyA, bodyB, innerLeft);
     let rightDistance = pairDistanceAt(bodyA, bodyB, innerRight);
-    while (right - left > GOLDEN_TOLERANCE_SEC) {
+    const tolerance = timeTolerance(left, right);
+    let iterations = 0;
+    while (right - left > tolerance && iterations++ < REFINE_MAX_ITERATIONS) {
         if (leftDistance <= rightDistance) {
             right = innerRight;
             innerRight = innerLeft;
@@ -158,6 +228,7 @@ function refineMinimum(bodyA, bodyB, leftSec, rightSec) {
             rightDistance = pairDistanceAt(bodyA, bodyB, innerRight);
         }
     }
+    noteRefine(iterations, REFINE_MAX_ITERATIONS);
     const tSimSec = (left + right) / 2;
     return { tSimSec, distKm: pairDistanceAt(bodyA, bodyB, tSimSec) };
 }
@@ -171,23 +242,29 @@ function approachId(bodyA, bodyB, tSimSec) {
     return "approach:" + pairName + ":" + Math.round(relativeLongitude / TWO_PI);
 }
 
+// Scans run in local time: [0, spanSec] from the epoch fromSec, on conics
+// re-phased to that epoch (rebasedBody). Rows report absolute sim time.
 function createPairScan(bodyA, bodyB, pair, fromSec, spanSec, threshold) {
-    const endSec = fromSec + spanSec;
+    const localA = rebasedBody(bodyA, fromSec);
+    const localB = rebasedBody(bodyB, fromSec);
     const coarseSec = Math.min(TWO_PI / bodyA.n, TWO_PI / bodyB.n) / 64;
-    const leftSec = fromSec - 2 * coarseSec;
-    const centerSec = fromSec - coarseSec;
+    const leftSec = -2 * coarseSec;
+    const centerSec = -coarseSec;
     return {
         bodyA,
         bodyB,
+        localA,
+        localB,
         pair,
-        fromSec,
-        endSec,
+        epochSec: fromSec,
+        fromSec: 0,
+        endSec: spanSec,
         threshold,
         coarseSec,
         leftSec,
         centerSec,
-        leftDistance: pairDistanceAt(bodyA, bodyB, leftSec),
-        centerDistance: pairDistanceAt(bodyA, bodyB, centerSec),
+        leftDistance: pairDistanceAt(localA, localB, leftSec),
+        centerDistance: pairDistanceAt(localA, localB, centerSec),
         rowsById: new Map(),
     };
 }
@@ -196,15 +273,20 @@ function stepPairScan(scan, sampleBudget) {
     let samples = 0;
     while (samples < sampleBudget && scan.centerSec <= scan.endSec + scan.coarseSec) {
         const rightSec = scan.centerSec + scan.coarseSec;
+        if (!(rightSec > scan.centerSec)) { // cannot progress: finish instead of spinning
+            scan.centerSec = Infinity;
+            break;
+        }
         const bodyA = scan.bodyA;
         const bodyB = scan.bodyB;
-        const rightDistance = pairDistanceAt(bodyA, bodyB, rightSec);
+        const rightDistance = pairDistanceAt(scan.localA, scan.localB, rightSec);
         if (scan.centerDistance <= scan.leftDistance && scan.centerDistance <= rightDistance &&
             (scan.centerDistance < scan.leftDistance || scan.centerDistance < rightDistance)) {
-            const refined = refineMinimum(bodyA, bodyB, scan.leftSec, rightSec);
+            const refined = refineMinimum(scan.localA, scan.localB, scan.leftSec, rightSec);
             if (refined.tSimSec >= scan.fromSec && refined.tSimSec <= scan.endSec &&
                 refined.distKm <= scan.threshold) {
-                const id = approachId(bodyA, bodyB, refined.tSimSec);
+                const tSimSec = scan.epochSec + refined.tSimSec;
+                const id = approachId(bodyA, bodyB, tSimSec);
                 const previous = scan.rowsById.get(id);
                 if (!previous || refined.distKm < previous.distKm) {
                     scan.rowsById.set(id, Object.freeze({
@@ -212,7 +294,7 @@ function stepPairScan(scan, sampleBudget) {
                         label: bodyA.name + "–" + bodyB.name + " close approach · " +
                             (refined.distKm / AU_KM).toFixed(3) + " AU (two-body estimate)",
                         tier: "modeled",
-                        tSimSec: refined.tSimSec,
+                        tSimSec,
                         distKm: refined.distKm,
                         pair: Object.freeze([bodyA, bodyB]),
                         pairIndices: Object.freeze(scan.pair.slice()),
@@ -336,24 +418,34 @@ function approachClosingLead(row) {
     const searchSpanSec = relativeRate > 0
         ? TWO_PI / relativeRate
         : Math.max(TWO_PI / bodyA.n, TWO_PI / bodyB.n);
-    let laterSec = minimumSec;
-    let earlierSec = minimumSec - stepSec;
-    const limitSec = minimumSec - searchSpanSec;
-    while (earlierSec >= limitSec - stepSec) {
-        const distanceKm = pairDistanceAt(bodyA, bodyB, earlierSec);
+    // local time around the minimum (re-phased conics), so the backward
+    // walk and the bisection stay exact however late the minimum is
+    const localA = rebasedBody(bodyA, minimumSec);
+    const localB = rebasedBody(bodyB, minimumSec);
+    let laterSec = 0;
+    let earlierSec = -stepSec;
+    const limitSec = -searchSpanSec;
+    let steps = 0;
+    while (earlierSec >= limitSec - stepSec && steps++ < LEAD_SCAN_MAX_STEPS) {
+        const distanceKm = pairDistanceAt(localA, localB, earlierSec);
         if (distanceKm >= targetKm) {
             let outsideSec = earlierSec;
             let insideSec = laterSec;
-            while (insideSec - outsideSec > GOLDEN_TOLERANCE_SEC) {
+            const tolerance = timeTolerance(outsideSec, insideSec);
+            let iterations = 0;
+            while (insideSec - outsideSec > tolerance && iterations++ < REFINE_MAX_ITERATIONS) {
                 const middleSec = (outsideSec + insideSec) / 2;
-                if (pairDistanceAt(bodyA, bodyB, middleSec) >= targetKm) outsideSec = middleSec;
+                if (pairDistanceAt(localA, localB, middleSec) >= targetKm) outsideSec = middleSec;
                 else insideSec = middleSec;
             }
-            return minimumSec - (outsideSec + insideSec) / 2;
+            noteRefine(iterations, REFINE_MAX_ITERATIONS);
+            noteLeadSteps(steps);
+            return -(outsideSec + insideSec) / 2;
         }
         laterSec = earlierSec;
         earlierSec -= stepSec;
     }
+    noteLeadSteps(steps);
     return 0;
 }
 
@@ -406,9 +498,9 @@ export function buildTimeline({ nowSec = 0, merger } = {}) {
 }
 
 export function maxFeasibleWarpScalar(gsCount = 0, landed = false, dead = false, bhN = 0) {
-    void bhN;
     if (dead) return 0;
     if (gsCount > 0 || landed) return Math.min(600, WARP_MAX);
+    if (bhN > 0) return Math.min(BH_FEASIBLE_WARP, WARP_MAX);
     return WARP_MAX;
 }
 
@@ -446,7 +538,8 @@ function shortJumpPlan(nowSec, targetSec, feas, preferredHoldWarp = JUMP_HOLD_WA
 }
 
 function enforceCappedJumpEta(plan, feas) {
-    if (feas <= 600 && plan.etaWallSec > 60) return { ok: false, reason: GHOST_REASON };
+    if (feas <= 600 && plan.etaWallSec > CAPPED_JUMP_MAX_ETA_SEC) return { ok: false, reason: GHOST_REASON };
+    if (feas < WARP_MAX && plan.etaWallSec > CAPPED_JUMP_MAX_ETA_SEC) return { ok: false, reason: BH_REASON };
     return plan;
 }
 
@@ -510,7 +603,7 @@ function validJumpPlan(plan, { simTimeSec, feasibleWarp } = {}) {
     if (!WARPS.includes(plan.holdWarp) || plan.holdWarp > WARP_MAX ||
         (validateFeasibility && (!(feasibleWarp > 0) || plan.holdWarp > feasibleWarp)) ||
         (validateLiveOrigin && !(plan.targetSec > simTimeSec)) ||
-        (validateFeasibility && feasibleWarp <= 600 && plan.etaWallSec > 60)) return false;
+        (validateFeasibility && feasibleWarp < WARP_MAX && plan.etaWallSec > CAPPED_JUMP_MAX_ETA_SEC)) return false;
 
     let previousToSimT = null;
     let totalWallSec = 0;

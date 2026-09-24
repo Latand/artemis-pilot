@@ -1,6 +1,6 @@
 import { addRuntimeStar, CATALOG_PROMOTION_MAX, INITIAL_STAR_COUNT, LY_KM, R_SUN, STARS } from "./constants.js";
 import {
-    ACTIVE_STARS, ACTIVE_STAR_CONFIG, activeStarFocusValue, activeStarStats, refreshActiveStars,
+    ACTIVE_STARS, ACTIVE_STAR_CONFIG, activeStarFocusValue, activeStarStats, activeStarsTime, refreshActiveStars,
 } from "./universe/activeStars.js";
 import { loadHygCatalogData, loadHygCatalogMeta } from "./universe/catalogData.js";
 import {
@@ -218,7 +218,8 @@ export function activeNeighborhoodRows(limit = 10) {
     const wy = Number.isFinite(origin.wy) ? origin.wy : 0;
     const wz = Number.isFinite(origin.wz) ? origin.wz : 0;
     const focus = origin.focus || "ship";
-    refreshActiveStars(wx, wy, wz, focus);
+    // the neighbourhood as it is now (the time of the frame's refresh), not at the epoch
+    refreshActiveStars(wx, wy, wz, focus, activeStarsTime());
     return ACTIVE_STARS
         .filter(star => (star.procedural || star.activeCatalog) && activeStarFocusValue(star))
         .map(star => {
@@ -379,7 +380,7 @@ async function focusCatalogIndex(index) {
         setOpen(false);
         return { existing: true, promotedIndex: existing, star: STARS[existing], focus: "" };
     }
-    const activeStar = hygStarByIndex(index);
+    const activeStar = hygStarByIndex(index, activeStarsTime());
     if (!activeStar) throw new Error("catalog row is unavailable for direct focus");
     const focus = hygCatalogFocusValue(index);
     hooks.onFocusCatalog(index, activeStar, "focus");

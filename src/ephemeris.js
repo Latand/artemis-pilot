@@ -3,12 +3,14 @@ import {
     MU_E, MU_M, MU_S, C_LIGHT, BH_MAX, LY_KM, PC_KM, DARK_ENERGY, DARK_MATTER,
     I_EARTH, OM_EARTH, I_MOON, OM_MOON0, OM_MOON_RATE, OM_YEAR,
 } from "./constants.js";
-import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
+import {
+    G, BH, WORLD, EPHT, GS, gsPull, bhMuAt, advanceEphemClock, ephemClockLo, setEphemClock,
+} from "./state.js";
 import { GRAVITY_STARS } from "./universe/activeStars.js";
 import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
 import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
 import { moonGeocentricCartesian, sunGeometricLongitudeJ2000 } from "./universe/lunarElp.js";
-import { meanElementsAt, tableKeyForPlanet } from "./universe/planetElements.js";
+import { meanElementsAt, tableKeyForPlanet, STANDISH_TABLE1, SEC_PER_JULIAN_CENTURY } from "./universe/planetElements.js";
 
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
@@ -548,6 +550,7 @@ function makeState() {
         earthVy,
         earthVz,
         t: EPHT.t,
+        tLo: ephemClockLo(),
     };
 }
 function copyLiveToState(st) {
@@ -556,6 +559,7 @@ function copyLiveToState(st) {
     st.earthX = earthX; st.earthY = earthY; st.earthZ = earthZ;
     st.earthVx = earthVx; st.earthVy = earthVy; st.earthVz = earthVz;
     st.t = EPHT.t;
+    st.tLo = ephemClockLo();
     return st;
 }
 function copyStateToLive(st) {
@@ -568,7 +572,7 @@ function copyStateToLive(st) {
     // earthZ/earthVz are intentionally not read back: Earth's world z is a
     // permanent 0 by this file's frame convention (see the `earthZ` const
     // above), not a per-snapshot value.
-    if (typeof st.t === "number") EPHT.t = st.t;
+    if (typeof st.t === "number") setEphemClock(st.t, Number.isFinite(st.tLo) ? st.tLo : 0);
     syncFromState();
 }
 
@@ -612,7 +616,11 @@ function computeAccel(st) {
     if (WORLD.earthDestroyed) { _lfEarthAx = 0; _lfEarthAy = 0; }
     else { _lfEarthAx = -_ind3[0] + _pnEarth3[0]; _lfEarthAy = -_ind3[1] + _pnEarth3[1]; }
 }
-function leapfrogBodies(st, dt) {
+// `tEnd` is the state's time after the step. Callers stepping a long
+// interval pass tStart + elapsed (elapsed summed from zero, so it stays
+// exact) instead of accumulating st.t += dt, whose rounding at deep time
+// (32 s ulp at 6 Gyr) used to walk the gravity-front clock off G.t.
+function leapfrogBodies(st, dt, tEnd = st.t + dt) {
     const h = dt / 2;
     computeAccel(st);
     for (let i = 0; i < NB; i++) {
@@ -625,7 +633,7 @@ function leapfrogBodies(st, dt) {
         st.x[i] += dt * st.vx[i]; st.y[i] += dt * st.vy[i]; st.z[i] += dt * st.vz[i];
     }
     st.earthX += dt * st.earthVx; st.earthY += dt * st.earthVy; // earthZ stays 0
-    st.t += dt;
+    st.t = tEnd;
     computeAccel(st);
     for (let i = 0; i < NB; i++) {
         if (!isBodyActive(i)) continue;
@@ -795,6 +803,56 @@ const _kjM = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
 const _kjP = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
 const _jx = new Float64Array(NB), _jy = new Float64Array(NB), _jz = new Float64Array(NB);
 const _jvx = new Float64Array(NB), _jvy = new Float64Array(NB), _jvz = new Float64Array(NB);
+
+// ---- secular drift on the analytic path ----
+// A frozen conic loses the slow orientation changes the integrator produces
+// by itself: the Sun drags the Moon's node round in 18.6 yr and its perigee
+// in 8.85 yr, and the planets' mutual pulls precess every perihelion and
+// node. Without these the lunar node regressed below the analytic threshold
+// and froze above it. The conics are rotated by the observed mean rates --
+// lunar node/perigee from Meeus' mean elements, planetary node/perihelion
+// from the same Standish Table 1 rates that seed the planets -- as rigid
+// rotations (node: about the ecliptic pole; perihelion: about the orbit
+// normal), so shapes and energies are untouched and a forward/backward jump
+// pair still cancels exactly. Eccentricity/inclination rates are NOT applied:
+// they are bounded oscillations in reality and a linear rate would run away
+// over Myr.
+const RATE_PER_CY = Math.PI / 180 / SEC_PER_JULIAN_CENTURY; // deg/cy -> rad/s
+const MOON_VARPI_RATE = 4069.0137287 * RATE_PER_CY;  // lunar perigee, +40.69 deg/yr
+const MOON_NODE_RATE = -1934.1362891 * RATE_PER_CY;  // lunar node, -19.34 deg/yr (18.6 yr)
+const EARTH_VARPI_RATE = STANDISH_TABLE1.EMB.rate[4] * RATE_PER_CY;
+const PL_VARPI_RATE = new Float64Array(PL.length), PL_NODE_RATE = new Float64Array(PL.length);
+for (let i = 0; i < PL.length; i++) {
+    const key = tableKeyForPlanet(PL[i].name);
+    if (!key) continue;
+    PL_VARPI_RATE[i] = STANDISH_TABLE1[key].rate[4] * RATE_PER_CY;
+    PL_NODE_RATE[i] = STANDISH_TABLE1[key].rate[5] * RATE_PER_CY;
+}
+// Rotate a conic state in place: the perihelion by (varpi - node) about the
+// orbit normal, then the node about the ecliptic pole (world z).
+function precessConic(o, dt, varpiRate, nodeRate) {
+    const dNode = nodeRate * dt, dArg = (varpiRate - nodeRate) * dt;
+    if (dArg !== 0) {
+        let hx = o.y * o.vz - o.z * o.vy, hy = o.z * o.vx - o.x * o.vz, hz = o.x * o.vy - o.y * o.vx;
+        const h = Math.hypot(hx, hy, hz);
+        if (h > 0) {
+            hx /= h; hy /= h; hz /= h;
+            const c = Math.cos(dArg), s = Math.sin(dArg);
+            // r, v lie in the orbital plane (normal h): u' = u cos + (h x u) sin
+            const x = o.x, y = o.y, z = o.z, vx = o.vx, vy = o.vy, vz = o.vz;
+            o.x = x * c + (hy * z - hz * y) * s; o.y = y * c + (hz * x - hx * z) * s; o.z = z * c + (hx * y - hy * x) * s;
+            o.vx = vx * c + (hy * vz - hz * vy) * s; o.vy = vy * c + (hz * vx - hx * vz) * s; o.vz = vz * c + (hx * vy - hy * vx) * s;
+        }
+    }
+    if (dNode !== 0) {
+        const c = Math.cos(dNode), s = Math.sin(dNode);
+        const x = o.x, vx = o.vx;
+        o.x = x * c - o.y * s; o.y = x * s + o.y * c;
+        o.vx = vx * c - o.vy * s; o.vy = vx * s + o.vy * c;
+    }
+    return o;
+}
+
 function keplerJumpState(st, dt) {
     const muS = bodyMu[IDX_SUN], muE = activeEarthMu(), muM = activeBodyMu(IDX_MOON);
     const sk = IDX_SUN;
@@ -817,13 +875,18 @@ function keplerJumpState(st, dt) {
     }
     const rBx = sWx + ox / M, rBy = sWy + oy / M;
     const vBx = sWvx + ovx / M, vBy = sWvy + ovy / M;
-    // advance every active piece on its own conic
+    // advance every active piece on its own conic, then apply its secular drift
     keplerAdvance3(eHx, eHy, eHz, eHvx, eHvy, eHvz, muS + muE, dt, _kjE);
-    if (muM > 0) keplerAdvance3(st.x[IDX_MOON], st.y[IDX_MOON], st.z[IDX_MOON], st.vx[IDX_MOON], st.vy[IDX_MOON], st.vz[IDX_MOON], muE + bodyMu[IDX_MOON], dt, _kjM);
+    precessConic(_kjE, dt, EARTH_VARPI_RATE, 0);
+    if (muM > 0) {
+        keplerAdvance3(st.x[IDX_MOON], st.y[IDX_MOON], st.z[IDX_MOON], st.vx[IDX_MOON], st.vy[IDX_MOON], st.vz[IDX_MOON], muE + bodyMu[IDX_MOON], dt, _kjM);
+        precessConic(_kjM, dt, MOON_VARPI_RATE, MOON_NODE_RATE);
+    }
     for (let i = 0; i < PL.length; i++) {
         const k = IDX_PLANETS + i;
         if (activeBodyMu(k) <= 0) continue;
         keplerAdvance3(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.z[k] - st.z[sk], st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], st.vz[k] - st.vz[sk], muS + bodyMu[k], dt, _kjP);
+        precessConic(_kjP, dt, PL_VARPI_RATE[i], PL_NODE_RATE[i]);
         _jx[k] = _kjP.x; _jy[k] = _kjP.y; _jz[k] = _kjP.z;
         _jvx[k] = _kjP.vx; _jvy[k] = _kjP.vy; _jvz[k] = _kjP.vz;
     }
@@ -857,44 +920,238 @@ function keplerJumpState(st, dt) {
     }
 }
 
+// Analytic advance that stays valid when Earth and/or the Sun are destroyed
+// (engulfed at the AGB tip, absorbed by a hole, smashed). keplerJumpState
+// above is the intact case. Without Earth the frame origin is a massless
+// point that coasts inertially (exactly what the leapfrog does: no indirect
+// term once Earth is gone), the Moon becomes a heliocentric body, and the
+// Sun still anchors every survivor's conic. Without the Sun nothing binds the
+// planets any more: they coast on straight lines (their mutual pulls are
+// negligible once they separate at their former orbital speeds), while an
+// intact Earth-Moon pair keeps its geocentric conic with the pair's
+// barycentre coasting. Destroyed bodies stay frozen in the origin-relative
+// frame, as in the integrator.
+const _gaW = new Float64Array(6);
+function analyticJumpState(st, dt) {
+    if (!WORLD.sunDestroyed && !WORLD.earthDestroyed) { keplerJumpState(st, dt); return; }
+    const sk = IDX_SUN;
+    const ox0 = st.earthX, oy0 = st.earthY, ovx = st.earthVx, ovy = st.earthVy;
+    if (!WORLD.sunDestroyed) {
+        // Earth gone, Sun intact: heliocentric conics about a coasting barycentre
+        const muS = bodyMu[sk];
+        const sWx = ox0 + st.x[sk], sWy = oy0 + st.y[sk], sWz = st.z[sk];
+        const sWvx = ovx + st.vx[sk], sWvy = ovy + st.vy[sk], sWvz = st.vz[sk];
+        let M = muS, bx = 0, by = 0, bz = 0, bvx = 0, bvy = 0, bvz = 0;
+        for (let k = 0; k < NB; k++) {
+            if (k === sk) continue;
+            const mu = activeBodyMu(k);
+            if (mu <= 0) continue;
+            M += mu;
+            bx += mu * (st.x[k] - st.x[sk]); by += mu * (st.y[k] - st.y[sk]); bz += mu * (st.z[k] - st.z[sk]);
+            bvx += mu * (st.vx[k] - st.vx[sk]); bvy += mu * (st.vy[k] - st.vy[sk]); bvz += mu * (st.vz[k] - st.vz[sk]);
+        }
+        const Bx = sWx + bx / M, By = sWy + by / M, Bz = sWz + bz / M;
+        const BVx = sWvx + bvx / M, BVy = sWvy + bvy / M, BVz = sWvz + bvz / M;
+        let nx = 0, ny = 0, nz = 0, nvx = 0, nvy = 0, nvz = 0;
+        for (let k = 0; k < NB; k++) {
+            if (k === sk) continue;
+            const mu = activeBodyMu(k);
+            if (mu <= 0) continue;
+            keplerAdvance3(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.z[k] - st.z[sk],
+                st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], st.vz[k] - st.vz[sk], muS + mu, dt, _kjP);
+            if (k >= IDX_PLANETS) precessConic(_kjP, dt, PL_VARPI_RATE[k - IDX_PLANETS], PL_NODE_RATE[k - IDX_PLANETS]);
+            _jx[k] = _kjP.x; _jy[k] = _kjP.y; _jz[k] = _kjP.z;
+            _jvx[k] = _kjP.vx; _jvy[k] = _kjP.vy; _jvz[k] = _kjP.vz;
+            nx += mu * _kjP.x; ny += mu * _kjP.y; nz += mu * _kjP.z;
+            nvx += mu * _kjP.vx; nvy += mu * _kjP.vy; nvz += mu * _kjP.vz;
+        }
+        const s1x = Bx + BVx * dt - nx / M, s1y = By + BVy * dt - ny / M, s1z = Bz + BVz * dt - nz / M;
+        const s1vx = BVx - nvx / M, s1vy = BVy - nvy / M, s1vz = BVz - nvz / M;
+        const ox1 = ox0 + ovx * dt, oy1 = oy0 + ovy * dt; // the origin coasts (z stays 0)
+        st.earthX = ox1; st.earthY = oy1;
+        st.x[sk] = s1x - ox1; st.y[sk] = s1y - oy1; st.z[sk] = s1z;
+        st.vx[sk] = s1vx - ovx; st.vy[sk] = s1vy - ovy; st.vz[sk] = s1vz;
+        for (let k = 0; k < NB; k++) {
+            if (k === sk || activeBodyMu(k) <= 0) continue;
+            st.x[k] = s1x + _jx[k] - ox1; st.y[k] = s1y + _jy[k] - oy1; st.z[k] = s1z + _jz[k];
+            st.vx[k] = s1vx + _jvx[k] - ovx; st.vy[k] = s1vy + _jvy[k] - ovy; st.vz[k] = s1vz + _jvz[k];
+        }
+        return;
+    }
+    // Sun gone: nothing binds the planets
+    let ox1 = ox0 + ovx * dt, oy1 = oy0 + ovy * dt, ovx1 = ovx, ovy1 = ovy;
+    let moonDone = false;
+    if (!WORLD.earthDestroyed) {
+        // the Earth-Moon pair keeps its conic; its barycentre coasts (x,y only:
+        // Earth's world z is pinned at 0, see the earthZ note)
+        const muE = MU_E, muM = activeBodyMu(IDX_MOON);
+        const share = muM / (muE + muM);
+        const bx = ox0 + share * st.x[IDX_MOON], by = oy0 + share * st.y[IDX_MOON];
+        const bvx = ovx + share * st.vx[IDX_MOON], bvy = ovy + share * st.vy[IDX_MOON];
+        if (muM > 0) {
+            keplerAdvance3(st.x[IDX_MOON], st.y[IDX_MOON], st.z[IDX_MOON],
+                st.vx[IDX_MOON], st.vy[IDX_MOON], st.vz[IDX_MOON], muE + muM, dt, _kjM);
+            _gaW[0] = _kjM.x; _gaW[1] = _kjM.y; _gaW[2] = _kjM.z;
+            _gaW[3] = _kjM.vx; _gaW[4] = _kjM.vy; _gaW[5] = _kjM.vz;
+        }
+        ox1 = bx + bvx * dt - share * (muM > 0 ? _gaW[0] : 0);
+        oy1 = by + bvy * dt - share * (muM > 0 ? _gaW[1] : 0);
+        ovx1 = bvx - share * (muM > 0 ? _gaW[3] : 0);
+        ovy1 = bvy - share * (muM > 0 ? _gaW[4] : 0);
+        if (muM > 0) {
+            st.x[IDX_MOON] = _gaW[0]; st.y[IDX_MOON] = _gaW[1]; st.z[IDX_MOON] = _gaW[2];
+            st.vx[IDX_MOON] = _gaW[3]; st.vy[IDX_MOON] = _gaW[4]; st.vz[IDX_MOON] = _gaW[5];
+        }
+        moonDone = true;
+    }
+    for (let k = 0; k < NB; k++) {
+        if (k === sk || (k === IDX_MOON && moonDone) || !isBodyActive(k)) continue;
+        // straight-line coast in the world frame, re-expressed about the new origin
+        const wx = ox0 + st.x[k] + (ovx + st.vx[k]) * dt, wy = oy0 + st.y[k] + (ovy + st.vy[k]) * dt;
+        const wvx = ovx + st.vx[k], wvy = ovy + st.vy[k];
+        st.x[k] = wx - ox1; st.y[k] = wy - oy1; st.z[k] += st.vz[k] * dt;
+        st.vx[k] = wvx - ovx1; st.vy[k] = wvy - ovy1;
+    }
+    st.earthX = ox1; st.earthY = oy1; st.earthVx = ovx1; st.earthVy = ovy1;
+}
+
+// ---- per-frame integration budget ----
+// worldStep.js opens a frame context for every rendered frame. Bulk advances
+// (deep-time bridges, the dead/landed/relativistic paths) that cannot ride the
+// analytic path integrate with HONEST steps (bodyStepSize, never stretched)
+// until either the request or this frame's step budget is used up, and report
+// the time they actually delivered; the caller advances the clock by that and
+// the shortfall is surfaced (timeCtl.noteFrameDelivery). Small advances
+// (ephemeris flushes inside the ship integrator, <= EPHEM_EXACT_MAX_SEC) and
+// predictions keep the old always-complete behaviour: their forced substeps
+// are at most a few seconds long.
+export const EPHEM_FRAME_STEP_BUDGET = 2500; // ~7 us/step with a hole in play: <= ~18 ms a frame
+const EPHEM_CALL_STEP_BUDGET = 20000; // a bulk call outside any frame (smokes, startup ?simt)
+const EPHEM_EXACT_MAX_SEC = 3600;
+const EPHEM_FRAME = { active: false, rate: 0, stepsLeft: 0, stepsUsed: 0, calls: 0, analyticCalls: 0, limited: false };
+export function beginEphemFrame(rateSecPerSec = 0, budget = EPHEM_FRAME_STEP_BUDGET) {
+    EPHEM_FRAME.active = true;
+    EPHEM_FRAME.rate = Math.abs(Number(rateSecPerSec)) || 0;
+    EPHEM_FRAME.stepsLeft = budget;
+    EPHEM_FRAME.stepsUsed = 0;
+    EPHEM_FRAME.calls = 0;
+    EPHEM_FRAME.analyticCalls = 0;
+    EPHEM_FRAME.limited = false;
+    return EPHEM_FRAME;
+}
+export function endEphemFrame() { EPHEM_FRAME.active = false; return EPHEM_FRAME; }
+
+// ---- physics regime: analytic conics vs the honest leapfrog ----
+// Chosen from the COMMANDED RATE (the warp, sim-s per wall-s) with
+// hysteresis, never from the per-frame dt. The old per-call test (|dt| >
+// 150 x a ~3600 s step = 540,000 s) put the 1 yr/s preset 2.6% under the
+// threshold at 60 fps and over it at 58 fps, so the Moon's node regressed or
+// froze depending on frame rate. Now 1 yr/s is always integrated, >= 3 yr/s
+// always rides the conics (with the secular drift above keeping the
+// orientation behaviour continuous), and 1.5-3 yr/s keeps whichever regime
+// it was in. Inside a world-step frame the rate is |G.warp|; a direct call
+// outside any frame (smokes, the startup ?simt loop) is treated as one
+// 60 fps frame, rate = |dt| * 60.
+export const ANALYTIC_ON_RATE = 3 * 31557600;
+export const ANALYTIC_OFF_RATE = 1.5 * 31557600;
+const DIRECT_CALL_FPS = 60;
+let analyticRegime = false;
+function analyticRegimeFor(dtTotal) {
+    const rate = EPHEM_FRAME.active ? EPHEM_FRAME.rate : Math.abs(dtTotal) * DIRECT_CALL_FPS;
+    if (analyticRegime) { if (rate < ANALYTIC_OFF_RATE) analyticRegime = false; }
+    else if (rate >= ANALYTIC_ON_RATE) analyticRegime = true;
+    return analyticRegime;
+}
+export function ephemRegime() { return analyticRegime ? "analytic" : "integrated"; }
+export function ephemFrameStats() { return EPHEM_FRAME; }
+export function ephemBudgetLeft() { return EPHEM_FRAME.active ? EPHEM_FRAME.stepsLeft : EPHEM_CALL_STEP_BUDGET; }
+
 // live-path guard wired by blackholes.js: a body can free-fall into a hole
 // well inside one flush interval, so disruption boundaries must be checked
 // per substep — never from predictions, which must not mutate the world
 let liveGuard = null;
 export function setLiveGuard(fn) { liveGuard = fn; }
+// Returns the simulated time actually integrated (== dtTotal unless a live
+// bulk advance ran out of this frame's step budget).
 function advanceState(st, dtTotal, maxStep = 3600, live = false) {
     // deep-time gate (live path only — predictions keep full leapfrog fidelity):
-    // holes, gravity ghosts, and a destroyed Sun or Earth all break the
-    // two-body decomposition, so those fall through to the integrator
-    if (live && BH.n === 0 && GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed &&
-        Math.abs(dtTotal) > bodyStepSize(st, Math.abs(dtTotal), maxStep) * 150) {
-        keplerJumpState(st, dtTotal);
+    // holes and gravity ghosts break the two-body decomposition, so those fall
+    // through to the integrator; destroyed bodies no longer do (see
+    // analyticJumpState) — that gate used to hand a post-engulfment system to
+    // 2000 forced steps of ~2.6e11 s each and fling Mars to 1e12 AU.
+    if (live && BH.n === 0 && GS.length === 0 && Math.abs(dtTotal) > EPHEM_EXACT_MAX_SEC &&
+        analyticRegimeFor(dtTotal)) {
+        analyticJumpState(st, dtTotal);
         st.t += dtTotal;
-        return;
+        if (EPHEM_FRAME.active) EPHEM_FRAME.analyticCalls++;
+        return dtTotal;
     }
-    let rem = dtTotal, guard = 0;
+    if (live && Math.abs(dtTotal) > EPHEM_EXACT_MAX_SEC) return budgetedLeapfrog(st, dtTotal, maxStep);
+    let rem = dtTotal, guard = 0, elapsed = 0;
+    const tStart = st.t;
     while (Math.abs(rem) > 1e-9 && guard++ < 2000) {
         // if the step collapses near a deep well, spend the remaining budget
         // anyway: bounded local error beats bodies silently losing time
+        // (only ever short, bounded intervals come through here)
         const mag = Math.min(Math.abs(rem), Math.max(bodyStepSize(st, Math.abs(rem), maxStep), Math.abs(rem) / (2001 - guard)));
         const dt = Math.sign(rem) * mag;
-        leapfrogBodies(st, dt);
+        elapsed += dt;
+        leapfrogBodies(st, dt, tStart + elapsed);
         rem -= dt;
         if (live && liveGuard && BH.n) {
             syncFromState(st); // the guard reads current body positions via eph
             liveGuard();
         }
     }
+    return dtTotal;
+}
+function budgetedLeapfrog(st, dtTotal, maxStep) {
+    const budget = ephemBudgetLeft();
+    // With holes in play the bulk path is the only way through deep time, so
+    // it may use the full accuracy ceiling (LEAP_DT_MAX, 1/200 of a lunar
+    // month) the step-size note above reserves for exactly this case;
+    // bodyStepSize still shrinks it near the holes.
+    if (BH.n > 0) maxStep = Math.max(maxStep, LEAP_DT_MAX);
+    let rem = dtTotal, elapsed = 0, steps = 0;
+    const tStart = st.t, sign = Math.sign(dtTotal);
+    while (Math.abs(rem) > 1e-9 && steps < budget) {
+        const mag = Math.min(Math.abs(rem), bodyStepSize(st, Math.abs(rem), maxStep));
+        const dt = sign * mag;
+        elapsed += dt;
+        leapfrogBodies(st, dt, tStart + elapsed);
+        rem -= dt;
+        steps++;
+        if (liveGuard && BH.n) {
+            syncFromState(st);
+            liveGuard();
+        }
+    }
+    const complete = Math.abs(rem) <= 1e-9;
+    if (EPHEM_FRAME.active) {
+        EPHEM_FRAME.stepsLeft -= steps;
+        EPHEM_FRAME.stepsUsed += steps;
+        if (!complete) EPHEM_FRAME.limited = true;
+    }
+    return complete ? dtTotal : elapsed;
 }
 const _adv = makeState(); // persistent scratch: advanceEphem runs every flush, allocation-free
+// Advance the live ephemeris; returns the time actually delivered (see the
+// budget note above) and advances the ephemeris clock by exactly that.
 export function advanceEphem(dtTotal) {
-    if (Math.abs(dtTotal) <= 1e-9) return;
+    if (!(Math.abs(dtTotal) > 1e-9)) return 0;
     copyLiveToState(_adv);
-    advanceState(_adv, dtTotal, 3600, true);
+    const t0 = _adv.t, lo0 = _adv.tLo;
+    if (EPHEM_FRAME.active) EPHEM_FRAME.calls++;
+    const delivered = advanceState(_adv, dtTotal, 3600, true);
+    // the ephemeris clock advances by exactly the integrated span through the
+    // compensated adder (not by the state's own rounded sum of substeps)
+    _adv.t = t0; _adv.tLo = lo0;
     copyStateToLive(_adv);
+    advanceEphemClock(delivered);
     // a ghost whose front has swept past Neptune influences nothing anymore
     for (let k = GS.length - 1; k >= 0; k--)
         if ((EPHT.t - GS[k].t) * C_LIGHT > 1e10) GS.splice(k, 1);
+    return delivered;
 }
 export function snapshotEphem(out = null) { return out ? copyLiveToState(out) : makeState(); }
 export function applyEphemSnapshot(st) { syncFromState(st); }
@@ -904,8 +1161,8 @@ export function advanceEphemSnapshot(st, dtTotal, maxStep = 3600) {
     copyStateToLive(st);
 }
 export function advanceEphemSnapshotKepler(st, dtTotal, syncLive = true) {
-    if (dtTotal > 0 && BH.n === 0 && GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
-        keplerJumpState(st, dtTotal);
+    if (dtTotal > 0 && BH.n === 0 && GS.length === 0) {
+        analyticJumpState(st, dtTotal);
         st.t += dtTotal;
     } else if (dtTotal > 0) advanceState(st, dtTotal, dtTotal);
     if (syncLive) copyStateToLive(st);

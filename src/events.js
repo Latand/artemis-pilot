@@ -516,6 +516,14 @@ function blockedReason(row) {
     if (GS.length > 0 && (row.tSimSec - G.t) / 600 > 60) {
         return "deep time blocked: absorbed matter's gravity ghosts force step-by-step physics";
     }
+    if (BH.n > 0) {
+        // holes are integrated step by step: the planner plans them at
+        // eventTimeline's BH_FEASIBLE_WARP and refuses jumps over a minute
+        const feasibility = maxFeasibleWarp({ gsCount: GS.length, landed: !!G.landed, dead: G.dead, bhN: BH.n });
+        if ((row.tSimSec - G.t) / feasibility > 60) {
+            return "deep time limited: black holes are integrated step by step (≤ 1 yr/s)";
+        }
+    }
     return null;
 }
 

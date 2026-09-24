@@ -4,9 +4,12 @@ import {
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS, PC_KM,
     OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM,
 } from "./constants.js";
-import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
-import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
-import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
+import {
+    G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents, setSimTime,
+} from "./state.js";
+import { eph, moonState, planetVel, sunVel, resetEphem } from "./ephemeris.js";
+import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero, followMovingStars } from "./physics.js";
+import { stepWorld, WORLD_STEP } from "./worldStep.js";
 import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.js";
 import { loadAllMaps, dotTexture } from "./textures.js";
 import {
@@ -24,7 +27,7 @@ import { addStarVisual, buildStars, updateStars, starVisualAlpha } from "./stars
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff, targetState } from "./autopilot.js";
-import { REL, relTravelStep, relCancel } from "./relTravel.js";
+import { REL, relCancel } from "./relTravel.js";
 import {
     shipG, craft, dot, flame, plasma, updateHeadingArrow,
     EXN, exPos, exVel, exLife, exMax, exCol, exPosAttr, exColAttr, exMat, exhaust, spawnExhaust,
@@ -41,7 +44,7 @@ import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from ".
 import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt } from "./cosmic.js";
 import { updateGalaxyVolume, renderGalaxyVolume } from "./render/galaxyVolume.js";
 import { eraModulation } from "./universe/cosmicEra.js";
-import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance, isBHPlacementMode } from "./blackholes.js";
+import { initBHHooks, updateBHVisuals, addBlackHole, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
@@ -69,8 +72,7 @@ import { moonWorldState, planetFocusIndex, planetMoonFocusIndex, planetWorldStat
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
-import { worldKmToGal, setSunGalAnchor } from "./universe/coords.js";
-import { solarGalacticStateAt } from "./universe/solarOrbit.js";
+import { worldKmToGal } from "./universe/coords.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
 import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
 import { getSeed } from "./universe/galaxy.js";
@@ -83,7 +85,7 @@ import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
 import { initExplorerUI, moveExplorerCamera, updateExplorerUI } from "./explorerUI.js";
 import { initUiMode, setXrPresenting } from "./uiMode.js";
-import { cancelTimeJump, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
+import { cancelTimeJump, noteFrameDelivery, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
 import { initTimeDock, renderTimeDock, sampleTimeDock } from "./timeDock.js";
 import { classifyContact } from "./universe/contactMath.js";
 import { initEvents, noteEvent, updateEvents } from "./events.js";
@@ -608,7 +610,6 @@ const _focusOrigin = new THREE.Vector3(), _focusPos = new THREE.Vector3();
 const _bhFocusPos = new THREE.Vector3(), _bhLabelPos = new THREE.Vector3();
 const _starFocusPos = new THREE.Vector3(), _starLabelPos = new THREE.Vector3();
 const _moonOff = { x: 0, y: 0 };
-const _sunOrbitState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 const bhFocusValue = i => "bh:" + i;
 const starFocusValue = i => "star:" + i;
 function bhScenePos(i, out = _bhFocusPos) {
@@ -1629,34 +1630,15 @@ function frame() {
     setExternalTimeDriver(cinematic.isPlaying() || REL.active);
     const jumpFrame = tickJump(rawDtR, dtR, aMag > 0);
     const frameSimAdvance = jumpFrame ? jumpFrame.advanceSec : dtR * G.warp;
+    // one world step for every mode (flight, landed, dead, relativistic):
+    // Sun evolution + engulfment, reverse guards, budgeted integration, and
+    // the delivered time the jump runtime and Time Dock report
     if (!G.paused) {
-        if (REL.active) {
-            advanced = frameSimAdvance;
-            if (G.warp < 0) relCancel("reverse warp", toast);
-            if (REL.active) {
-                relTravelStep(advanced);
-                activeStarsFresh = false;
-            } else {
-                advanced = advance(advanced, atx, aty, atz, aMag);
-                activeStarsFresh = true;
-            }
-        } else if (G.dead) {
-            advanced = frameSimAdvance;
-            advanceEphem(advanced);
-            bhAdvance(advanced, G.t);
-            G.t += advanced;
-        } else if (G.landed) {
-            advanced = frameSimAdvance;
-            advanceEphem(advanced);
-            bhAdvance(advanced, G.t);
-            G.t += advanced;
-        } else {
-            advanced = advance(frameSimAdvance, atx, aty, atz, aMag);
-            activeStarsFresh = true;
-        }
-    }
+        advanced = stepWorld(frameSimAdvance, atx, aty, atz, aMag, toast);
+        activeStarsFresh = WORLD_STEP.activeStarsFresh;
+    } else noteFrameDelivery(0, 0);
     const jumpSettlement = jumpFrame ? settleTimeJump(jumpFrame, advanced, aMag > 0) : null;
-    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) G.t = jumpSettlement.syncTimeSec;
+    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) setSimTime(jumpSettlement.syncTimeSec);
     snapLanded();
     const oi = orbitInfo();
     perfEnd("frame.physics", physicsT0, PERF.enabled ? { advanced, warp: G.warp, dtR, rawDtR, dtRCap } : null);
@@ -1832,17 +1814,14 @@ function frame() {
     if (focusNeb >= NEBULAE.length) setFocus("ship");
     const focusStar = starFocusIndex(G.focus);
     if (focusStar >= STARS.length) setFocus("ship");
-    // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time
-    // rather than sitting fixed at SUN_GAL forever — update the anchor every
-    // frame (cheap closed-form epicyclic math, zero-alloc via the reused
-    // scratch object) ahead of the active-star refresh below, which converts
-    // through this same anchor via worldKmToGal.
-    solarGalacticStateAt(G.t, _sunOrbitState);
-    setSunGalAnchor(_sunOrbitState.x, _sunOrbitState.y, _sunOrbitState.z);
+    // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time —
+    // bring the galactic anchor and Sgr A* to G.t every frame (a ship bound to
+    // a moving star rides along; physics.followMovingStars).
+    followMovingStars(false);
     if (activeStarsDue) {
         if (proceduralFocusId(G.focus) && !activeStarForFocus(G.focus)) setFocus("ship");
         if (hygCatalogFocusId(G.focus) && hygCatalogStats().loaded && !activeStarForFocus(G.focus)) setFocus("ship");
-        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t);
+        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t, advanced);
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);

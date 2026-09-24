@@ -201,6 +201,44 @@ export function worldKmToGalInto(x, y, z, out, o = 0) {
     return out;
 }
 
+// --- Explicit-anchor conversions (deep time) -------------------------------
+// The module anchor above tracks the Sun "now". Epoch-referenced data (the
+// catalogs are a t = 0 snapshot) and positions evaluated at some other time
+// must name the Sun they are relative to instead of borrowing it: converting
+// a catalog star with the CURRENT anchor and then adding its own orbital
+// rotation counted the Galactic rotation twice (catalog stars within 20 pc
+// sat ~230 pc away after 1 Myr and 12-18 kpc away after 100 Myr).
+
+// World-frame km relative to a Sun at galactocentric (sunX, sunY, sunZ) pc →
+// galactocentric pc. With SUN_GAL this is the catalog epoch's frame.
+export function worldKmToGalFromInto(x, y, z, sunX, sunY, sunZ, out, o = 0) {
+    const ex = x / PC_KM, ey = y / PC_KM, ez = z / PC_KM;
+    out[o] = sunX - (W2G[0][0] * ex + W2G[0][1] * ey + W2G[0][2] * ez);
+    out[o + 1] = W2G[1][0] * ex + W2G[1][1] * ey + W2G[1][2] * ez + sunY;
+    out[o + 2] = W2G[2][0] * ex + W2G[2][1] * ey + W2G[2][2] * ez + sunZ;
+    return out;
+}
+
+// Galactocentric pc → world-frame km relative to an explicit Sun position
+// (galactocentric pc), e.g. solarGalacticStateAt(simT). Same arithmetic as
+// galToWorldKmInto, so with SUN_GAL it reproduces the epoch values exactly.
+export function galToWorldKmFromInto(gx, gy, gz, sunX, sunY, sunZ, out, o = 0) {
+    const hx = sunX - gx, hy = gy - sunY, hz = gz - sunZ;
+    out[o] = (W2G[0][0] * hx + W2G[1][0] * hy + W2G[2][0] * hz) * PC_KM;
+    out[o + 1] = (W2G[0][1] * hx + W2G[1][1] * hy + W2G[2][1] * hz) * PC_KM;
+    out[o + 2] = (W2G[0][2] * hx + W2G[1][2] * hy + W2G[2][2] * hz) * PC_KM;
+    return out;
+}
+
+// A galactocentric DISPLACEMENT (pc) → world-frame km (anchor-free).
+export function galDeltaToWorldKmInto(dgx, dgy, dgz, out, o = 0) {
+    const hx = -dgx;
+    out[o] = (W2G[0][0] * hx + W2G[1][0] * dgy + W2G[2][0] * dgz) * PC_KM;
+    out[o + 1] = (W2G[0][1] * hx + W2G[1][1] * dgy + W2G[2][1] * dgz) * PC_KM;
+    out[o + 2] = (W2G[0][2] * hx + W2G[1][2] * dgy + W2G[2][2] * dgz) * PC_KM;
+    return out;
+}
+
 // Galactocentric parsecs → Sol-centred equatorial km (the constants.js STARS
 // frame). Translate to heliocentric, express in the galactic (l,b) basis, rotate
 // into equatorial, scale to km. The 20 pc solar offset tilts the basis by only
