@@ -17,7 +17,7 @@ for (let lg = 0; lg <= 5; lg += 0.05) {
     prev = f;
 }
 check(mono, "unresolved fraction is non-decreasing with camera distance");
-check(m.unresolvedFraction(10) < 0.002, `stars within 10 pc are resolved (f=${m.unresolvedFraction(10).toFixed(4)})`);
+check(m.unresolvedFraction(10) < 0.005, `stars within 10 pc are resolved (f=${m.unresolvedFraction(10).toFixed(4)})`);
 check(m.unresolvedFraction(30000) > 0.99, `the far side of the Galaxy is unresolved (f=${m.unresolvedFraction(30000).toFixed(3)})`);
 const f1k = m.unresolvedFraction(1000);
 check(f1k > 0.1 && f1k < 0.5, `about a fifth of the light at 1 kpc is unresolved (f=${f1k.toFixed(3)})`);
@@ -68,7 +68,10 @@ for (const [name, v] of [["hzYoung", m.MW.hzYoung], ["hzThin", m.MW.hzThin], ["h
     check(glsl.includes(v.toFixed(1)), `GLSL carries ${name}=${v}`);
 }
 const u = m.galaxyModelUniformValues();
-check(u.uArmRk.length === REID_ARMS.length && u.uFaint.length === m.FAINT_LIGHT_TABLE.length, "uniform arrays match the arm table and faint-light table");
+check(u.uArmRk.length === REID_ARMS.length && u.uFaintY.length === m.FAINT_TABLES.young.length && u.uFaintO.length === m.FAINT_TABLES.old.length, "uniform arrays match the arm table and faint-light tables");
+// Young light is carried by far more luminous stars than old light: at any
+// resolving distance the young component is resolved first.
+check(m.unresolvedFraction(1000, m.RESOLVED_MAG_LIMIT, "young") < m.unresolvedFraction(1000, m.RESOLVED_MAG_LIMIT, "old"), "young light resolves before old light at 1 kpc");
 check(Math.abs(u.uYoungNorm * (0.15 + m.MW.armAmpYoung * armSun) - 1) < 1e-12, "young light is normalized to its local share at the Sun");
 
 if (failures) { console.error(`smoke-galaxy-model: ${failures} failure(s)`); process.exit(1); }

@@ -22,7 +22,10 @@ import { BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, RELATIVISTIC_VIEW_GLSL } from "
 
 // Pixels per radian of the current view (h / (2 tan(fov/2))), shared by every
 // star material for the disk-resolve fade; main.js refreshes it per frame.
-export const starViewUniforms = { uPxScale: { value: 900 } };
+// uResolveLimit: apparent magnitude beyond which a star belongs to the
+// volumetric Milky Way's diffuse light instead of being a point (the shared
+// resolved/unresolved partition, render/resolvedFieldStars.js).
+export const starViewUniforms = { uPxScale: { value: 900 }, uResolveLimit: { value: 11 } };
 
 const VERT = /* glsl */`
 attribute vec3 color;
@@ -33,6 +36,9 @@ attribute float hidden;
 #endif
 #ifdef STAR_RADIUS
 attribute float radiusKm;
+#endif
+#ifdef STAR_RESOLVE_LIMIT
+uniform float uResolveLimit;
 #endif
 varying vec3 vColor;
 varying float vHdr;
@@ -71,6 +77,10 @@ void main() {
 #ifdef STAR_HIDDEN
     keep *= 1.0 - step(0.5, hidden);
 #endif
+#ifdef STAR_RESOLVE_LIMIT
+    // Fainter than the resolve limit: carried by the diffuse Milky Way light.
+    keep *= 1.0 - smoothstep(uResolveLimit, uResolveLimit + 0.4, mag - uMagPenalty);
+#endif
     vHdr = stellarDisplayFlux(flux, uStellarExposure) * keep;
     gl_PointSize = keep > 0.0 ? obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx) : 0.0;
     gl_Position = projectionMatrix * vec4(abPos, 1.0);
@@ -93,10 +103,11 @@ void main() {
     #include <colorspace_fragment>
 }`;
 
-export function makeStarPointMaterial({ dim = 1, magPenalty = 0, hidden = false, radius = false } = {}) {
+export function makeStarPointMaterial({ dim = 1, magPenalty = 0, hidden = false, radius = false, resolveLimit = true } = {}) {
     const defines = {};
     if (hidden) defines.STAR_HIDDEN = "";
     if (radius) defines.STAR_RADIUS = "";
+    if (resolveLimit) defines.STAR_RESOLVE_LIMIT = "";
     const mat = new THREE.ShaderMaterial({
         defines,
         uniforms: {
@@ -108,6 +119,7 @@ export function makeStarPointMaterial({ dim = 1, magPenalty = 0, hidden = false,
             uPcScene: { value: PC_KM * K },
             uKmScene: { value: K },
             uPxScale: starViewUniforms.uPxScale,
+            uResolveLimit: starViewUniforms.uResolveLimit,
             uDepthRange: tierDepthRange,
             uFade: { value: 1 },
             uStellarExposure: stellarExposure,

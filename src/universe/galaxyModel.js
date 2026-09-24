@@ -14,13 +14,16 @@
 // Galaxy would be counted twice. A star is drawn when its apparent magnitude
 // from the camera is brighter than RESOLVED_MAG_LIMIT, i.e. when its absolute
 // magnitude is brighter than M_lim(s) = m_lim - 5 log10(s / 10 pc) at camera
-// distance s. unresolvedFraction(s) is the fraction of the population's light
-// carried by stars fainter than M_lim(s), tabulated from the procedural
-// population at the Sun (galaxy.js starsInCell, 0.91 M stars in the eight
-// 100-pc cells around Sol, 2026 calibration run). So the diffuse glow fades
-// out near the camera exactly where individual stars take over, and becomes
-// the whole galaxy's light at large distance: a flux-preserving handoff, not
-// a cross-fade.
+// distance s. unresolvedFraction(s, comp) is the fraction of a component's
+// light carried by stars fainter than M_lim(s) in V, tabulated from the
+// procedural population (resolvedLF.js, built by scripts/build-resolved-lf.mjs
+// from galaxy.js starsInCell plus a Monte Carlo of the luminous tail). The
+// young and old components have their own tables (young light is carried by
+// far more luminous stars). The procedural resolved field
+// (resolvedField.js) draws exactly the complementary stars from the same
+// tables and densities, so the diffuse glow fades out near the camera where
+// individual stars take over and becomes the whole galaxy's light at large
+// distance: a flux-preserving handoff, not a cross-fade.
 //
 // Provenance of the parameters (see docs/universe-continuity.md):
 //   measured / literature: disk scale lengths and heights, arm geometry
@@ -36,6 +39,7 @@
 
 import { DISK, HALO, REID_ARMS, armWidth } from "./astroConstants.js";
 import { R0_PC } from "./coords.js";
+import { FAINT_LIGHT_V, FAINT_LIGHT_V_YOUNG, FAINT_LIGHT_V_OLD } from "./resolvedLF.js";
 
 const DEG = Math.PI / 180;
 // 1 km/s/kpc in rad/s.
@@ -43,27 +47,30 @@ const KMS_KPC_RAD_S = 1 / 3.0856775814913673e16;
 
 export const RESOLVED_MAG_LIMIT = 11;
 
-// Fraction of the local population's bolometric light carried by stars
-// FAINTER than absolute magnitude M (M from -8 to +12 in steps of 1).
-export const FAINT_LIGHT_TABLE = Object.freeze([
-    1.0, 1.0, 1.0, 0.97, 0.938, 0.911, 0.884, 0.620, 0.346, 0.200, 0.152,
-    0.1075, 0.0661, 0.0338, 0.0184, 0.0092, 0.0050, 0.0025, 0.0012, 0.0004, 0.0001,
-]);
+// Fraction of a component's bolometric light carried by stars FAINTER than
+// absolute V magnitude M (M from -8 to +12 in steps of 1): young, old
+// (thin + thick + halo + bar), and the local mixture.
+export const FAINT_TABLES = Object.freeze({ young: FAINT_LIGHT_V_YOUNG, old: FAINT_LIGHT_V_OLD, mix: FAINT_LIGHT_V });
+export const FAINT_LIGHT_TABLE = FAINT_LIGHT_V;
 export const FAINT_TABLE_M0 = -8;
 
-export function faintLightFraction(M) {
+export function faintLightFraction(M, comp = "mix") {
+    const table = FAINT_TABLES[comp] || FAINT_LIGHT_V;
     const x = (M - FAINT_TABLE_M0);
-    if (x <= 0) return FAINT_LIGHT_TABLE[0];
-    const n = FAINT_LIGHT_TABLE.length - 1;
-    if (x >= n) return FAINT_LIGHT_TABLE[n];
+    if (x <= 0) return table[0];
+    const n = table.length - 1;
+    if (x >= n) return table[n];
     const i = Math.floor(x), f = x - i;
-    return FAINT_LIGHT_TABLE[i] * (1 - f) + FAINT_LIGHT_TABLE[i + 1] * f;
+    return table[i] * (1 - f) + table[i + 1] * f;
 }
 
-// Fraction of light at camera distance sPc that no star layer draws.
-export function unresolvedFraction(sPc, magLimit = RESOLVED_MAG_LIMIT) {
-    const M = magLimit - 5 * Math.log10(Math.max(sPc, 1e-3) / 10);
-    return faintLightFraction(M);
+// Fraction of a component's light at camera distance sPc, behind avMag of V
+// extinction, that no star layer draws: the partition is in observed
+// magnitude, so a star dimmed past the limit by dust belongs to the diffuse
+// light (which the same dust dims).
+export function unresolvedFraction(sPc, magLimit = RESOLVED_MAG_LIMIT, comp = "mix", avMag = 0) {
+    const M = magLimit - 5 * Math.log10(Math.max(sPc, 1e-3) / 10) - avMag;
+    return faintLightFraction(M, comp);
 }
 
 // --- Milky Way structural + light parameters (galactocentric pc; galaxy.js
@@ -227,11 +234,12 @@ export function integrateRay(cx, cy, cz, dx, dy, dz, tSec, era = null, disrupt =
         const sm = 0.5 * (s0 + s1), ds = s1 - s0;
         mwSample(cx + dx * sm, cy + dy * sm, cz + dz * sm, ang, era, disrupt, _smp,
             sun ? sun[0] : MW.R0, sun ? sun[1] : 0, sun ? sun[2] : 20.8);
-        const f = unresolvedFraction(sm, magLimit);
+        const av = 1.0857362047581294 * tauV;
+        const fy = unresolvedFraction(sm, magLimit, "young", av), fo = unresolvedFraction(sm, magLimit, "old", av);
         const att = Math.exp(-tauV);
-        young += _smp.young * f * att * ds;
-        old += (_smp.thin + _smp.thick + _smp.halo) * f * att * ds;
-        bar += _smp.bar * f * att * ds;
+        young += _smp.young * fy * att * ds;
+        old += (_smp.thin + _smp.thick + _smp.halo) * fo * att * ds;
+        bar += _smp.bar * fo * att * ds;
         tauV += _smp.kappa * ds;
         s0 = s1;
         s *= ratio;
@@ -266,7 +274,7 @@ export function rayExit(cx, cy, cz, dx, dy, dz) {
 export const GALAXY_MODEL_GLSL = /* glsl */`
 uniform float uArmRk[5], uArmTanIn[5], uArmTanOut[5], uArmSinIn[5], uArmSinOut[5];
 uniform float uArmBetaK[5], uArmW[5], uArmBMin[5], uArmBMax[5];
-uniform float uFaint[21];
+uniform float uFaintY[21], uFaintO[21];
 uniform float uMagLimit;
 uniform float uSpiral, uBar, uSfr, uKeep;
 uniform vec3 uSun;
@@ -299,17 +307,23 @@ float gmArm(float R, float betaDeg) {
     }
     return best;
 }
-float gmFaint(float M) {
+// (young, old) faint-light fractions at absolute magnitude M.
+vec2 gmFaint(float M) {
     float x = clamp(M + 8.0, 0.0, 20.0);
     int i = int(floor(x));
     int j = min(i + 1, 20);
     float f = x - float(i);
-    float a = 0.0, b = 0.0;
-    for (int k = 0; k < 21; k++) { if (k == i) a = uFaint[k]; if (k == j) b = uFaint[k]; }
+    vec2 a = vec2(0.0), b = vec2(0.0);
+    for (int k = 0; k < 21; k++) {
+        if (k == i) a = vec2(uFaintY[k], uFaintO[k]);
+        if (k == j) b = vec2(uFaintY[k], uFaintO[k]);
+    }
     return mix(a, b, f);
 }
-float gmUnresolved(float sPc) {
-    return gmFaint(uMagLimit - 5.0 * log(max(sPc, 1e-3) / 10.0) / log(10.0));
+// avMag: V extinction between the camera and the sample (observed-magnitude
+// partition, see unresolvedFraction).
+vec2 gmUnresolved(float sPc, float avMag) {
+    return gmFaint(uMagLimit - 5.0 * log(max(sPc, 1e-3) / 10.0) / log(10.0) - avMag);
 }
 // Returns luminosity densities: x = young, y = old (thin+thick+halo), z = bar;
 // w = dust opacity (V, per pc).
@@ -373,7 +387,8 @@ export function galaxyModelUniformValues() {
     return {
         uArmRk: armRk, uArmTanIn: tanIn, uArmTanOut: tanOut, uArmSinIn: sinIn, uArmSinOut: sinOut,
         uArmBetaK: betaK, uArmW: w, uArmBMin: bmin, uArmBMax: bmax,
-        uFaint: FAINT_LIGHT_TABLE.slice(),
+        uFaintY: FAINT_LIGHT_V_YOUNG.slice(),
+        uFaintO: FAINT_LIGHT_V_OLD.slice(),
         uMagLimit: RESOLVED_MAG_LIMIT,
         uJ0: MW.jSun, uFYoung: MW.fYoung, uFThin: MW.fThin, uFThick: MW.fThick, uFHalo: MW.fHalo,
         uYoungNorm: 1 / (0.15 + MW.armAmpYoung * armProfile(MW.R0, 0)),

@@ -144,6 +144,11 @@ try {
             __cam.yaw = yaw; __cam.pitch = pitch;
         }, { shot, focus, yaw, pitch });
         await page.waitForTimeout(settleMs);
+        // The procedural resolved field builds in a worker: wait until it
+        // has caught up with this camera (and any resolve-limit change).
+        await page.waitForFunction(() => !window.__fieldStatus || window.__fieldStatus().idle, null, { timeout: 600000, polling: 500 })
+            .catch(() => console.log("  (field still building)"));
+        await page.waitForTimeout(300);
         await page.evaluate(() => __PERF.clear());
         await page.waitForTimeout(250);
         const buf = await page.screenshot({ type: "png" });
@@ -170,6 +175,7 @@ try {
             const pct = p => { let acc = 0; for (let v = 0; v < 256; v++) { acc += hist[v]; if (acc >= p * n) return v; } return 255; };
             return { meanLum: sum / n, litFrac: lit / n, brightFrac: bright / n, p50: pct(.5), p99: pct(.99), p999: pct(.999) };
         }, buf.toString("base64"));
+        const field = await page.evaluate(async () => (await import("/src/render/resolvedFieldStars.js")).resolvedFieldStatus());
         const state = await page.evaluate(() => ({
             camDist: __cam.dist,
             calls: __PERF.renderInfo.calls, points: __PERF.renderInfo.points, triangles: __PERF.renderInfo.triangles,
@@ -177,9 +183,9 @@ try {
             renderMs: __PERF.samples["render.frame"]?.avg ?? null,
         }));
         const ly = shot.dist / 9460730472.5808;
-        const row = { ...shot, ly, ...stats, ...state };
+        const row = { ...shot, ly, ...stats, ...state, fieldStars: field.stars, resolveLimit: field.mLim };
         results.push(row);
-        console.log(shot.name, ly.toExponential(2) + " ly", "mean", stats.meanLum.toFixed(2), "lit", (stats.litFrac * 100).toFixed(2) + "%", "p999", stats.p999, "calls", state.calls);
+        console.log(shot.name, ly.toExponential(2) + " ly", "mean", stats.meanLum.toFixed(2), "lit", (stats.litFrac * 100).toFixed(2) + "%", "p999", stats.p999, "calls", state.calls, "field", field.stars, "mLim", field.mLim, "gen", field.gen, "builds", field.builds, "idle", field.idle, "staging", field.staging);
     }
     await hide.evaluate(el => el.remove());
     await writeFile(resolve(out, "ladder.json"), JSON.stringify({ focus, yaw, pitch, tier1, simT, W, H, errors, results }, null, 2) + "\n");

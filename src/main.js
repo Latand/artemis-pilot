@@ -23,7 +23,7 @@ import {
     moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
 import { MOONS, moonOffset, moonFocusValue, moonFocusIndex, MOON_LABEL_DIST } from "./moons.js";
-import { addStarVisual, buildStars, updateStars, starVisualAlpha } from "./stars.js";
+import { addStarVisual, buildStars, updateStars, starVisualAlpha, syncActiveProceduralPoints } from "./stars.js";
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff, targetState } from "./autopilot.js";
@@ -42,8 +42,9 @@ import {
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
 import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt } from "./cosmic.js";
-import { updateGalaxyVolume, renderGalaxyVolume } from "./render/galaxyVolume.js";
+import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit } from "./render/galaxyVolume.js";
 import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
+import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
 import { starViewUniforms } from "./render/starPointMaterial.js";
 import { eraModulation } from "./universe/cosmicEra.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, isBHPlacementMode } from "./blackholes.js";
@@ -64,7 +65,7 @@ import { initScenarios } from "./scenarios.js";
 import { initHints, hintTick } from "./hints.js";
 import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
 import {
-    ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId,
+    ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId, activeNeighbourhood,
     refreshActiveStars, getFocusedSystem, getCachedFocusedSystem,
 } from "./universe/activeStars.js";
 import { initSystemRender, updateSystemRender, planetScenePosition, moonScenePosition } from "./render/systemBodies.js";
@@ -393,6 +394,10 @@ addBackgroundHook(renderGalaxyVolume);
 // Real stars (HYG catalog + curated destinations) at every camera distance,
 // one shared photometry with tier 1, the Sun and the active stars.
 initCatalogStars(scene);
+// Procedural resolved stars (the model Galaxy's individual stars the catalogs
+// don't hold), partitioned with the volumetric light by one resolve limit.
+initResolvedField(scene, { seed: getSeed(), mobile: renderQuality.mobile });
+window.__fieldStatus = resolvedFieldStatus; // debug/testing handle
 perfEnd("startup.initCosmicLayer", cosmicInitT0);
 // Tier-1 AT-HYG streaming star layer (WP9/WP10): fetches its manifest and
 // streams tiles over ~25 minutes, so it's fired without an `await` to avoid
@@ -1962,11 +1967,24 @@ function frame() {
         // outshines the galactic core, and the disk cloud already carries the
         // statistical field there. Fully gone by ~15 kly (see cosmic.js catalog
         // fade, which shares this band).
-        const catalogFade = 1 - smooth01(LY_SCENE * 1500, LY_SCENE * 15000, cam.dist);
-        setTier1Fade(catalogFade);
-        setCatalogStarsFade(catalogFade);
+        // Catalog stars stay at every scale: the resolve limit below hides
+        // the ones that belong to the diffuse light, and the procedural field
+        // leaves every star the catalogs hold to them.
+        setTier1Fade(1);
+        setCatalogStarsFade(1);
         updateCatalogStars();
         starViewUniforms.uPxScale.value = viewportSize.pxScale;
+        const fieldEra = eraModulation(G.t);
+        const t1s = tier1Stats();
+        updateResolvedField({
+            camWorldKm: [camWorldKmX, camWorldKmY, camWorldKmZ], tSec: G.t,
+            sfr: fieldEra ? fieldEra.blueFrac : 1, keep: 1 - Math.max(0, Math.min(1, mergerDisruptFractionAt(G.t) || 0)),
+            active: activeNeighbourhood(), catalogMagLimit: t1s.initialized && t1s.tilesLoaded > 0 ? 11 : 8,
+        });
+        const resolveLimit = resolvedFieldMagLimit();
+        starViewUniforms.uResolveLimit.value = resolveLimit;
+        setGalaxyVolumeMagLimit(resolveLimit);
+        syncActiveProceduralPoints();
         if (tier1RebaseEnabled) {
             const rebaseThresholdKm = Math.max(1e6, (cam.dist / K) * .5);
             if (maybeRebase(camWorldKmX, camWorldKmY, camWorldKmZ, rebaseThresholdKm)) {

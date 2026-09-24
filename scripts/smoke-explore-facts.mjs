@@ -206,8 +206,14 @@ try {
             const { LY_SCENE } = await import('/src/constants.js');
             __cam.dist = LY_SCENE * l;
         }, ly);
-        await page.waitForTimeout(900);
-        const value = (await facts(page)).rows['Viewing distance'];
+        // The first frame after a jump to a new scale can be slow (shader
+        // compiles, layer builds); poll until the panel reflects it.
+        let value = '';
+        for (let tries = 0; tries < 40; tries++) {
+            await page.waitForTimeout(tries ? 500 : 900);
+            value = (await facts(page)).rows['Viewing distance'];
+            if (/\d\s(ly|kly|Mly)$/.test(value)) break;
+        }
         units.push({ name, ly, value });
         check(/\d\s(ly|kly|Mly)$/.test(value), `${name} viewing distance uses a light-year unit (${value})`);
         assert.doesNotMatch(value, /\d{13,}/, `${name} viewing distance printed raw kilometres (${value})`);

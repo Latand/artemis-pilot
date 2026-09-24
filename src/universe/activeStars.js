@@ -44,6 +44,12 @@ export function activeStarEvalTime(simT) {
 let LAST_EVAL_T = 0;
 // The evaluation time of the latest refresh: "now" for the active layer.
 export function activeStarsTime() { return LAST_EVAL_T; }
+
+// Where galaxy.js's local tier supplies every procedural star (galactocentric
+// pc of the ship at the last full refresh, and the sampled radius). The
+// resolved field (render/resolvedFieldStars.js) leaves this ball to it.
+const NEIGHBOURHOOD = { gal: [0, 0, 0], radiusPc: 0, valid: false };
+export function activeNeighbourhood() { return NEIGHBOURHOOD.valid ? NEIGHBOURHOOD : null; }
 // The Sun (galactocentric pc) at the evaluation time: star positions are
 // relative to the Sun of the same instant, not to the per-frame anchor.
 const SUN_EVAL = { t: 0, x: SUN_GAL[0], y: SUN_GAL[1], z: SUN_GAL[2], vx: 0, vy: 0, vz: 0 };
@@ -652,8 +658,11 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
     PROC_NEAREST.length = 0;
     const procLimit = ACTIVE_STAR_CONFIG.totalLimit - ACTIVE_STARS.length;
     if (procLimit > 0) {
-        const procStars = proceduralStarsFor(gal[0], gal[1], gal[2], simT,
-            lite ? ACTIVE_STAR_CONFIG.decorrelatedRadiusPc : ACTIVE_STAR_CONFIG.proceduralRadiusPc);
+        const procRadius = lite ? ACTIVE_STAR_CONFIG.decorrelatedRadiusPc : ACTIVE_STAR_CONFIG.proceduralRadiusPc;
+        const procStars = proceduralStarsFor(gal[0], gal[1], gal[2], simT, procRadius);
+        NEIGHBOURHOOD.gal[0] = gal[0]; NEIGHBOURHOOD.gal[1] = gal[1]; NEIGHBOURHOOD.gal[2] = gal[2];
+        NEIGHBOURHOOD.radiusPc = procRadius;
+        NEIGHBOURHOOD.valid = true;
         for (let i = 0; i < procStars.length; i++) {
             const st = procStars[i];
             if (maskedByKnown(st, ACTIVE_STARS)) continue;

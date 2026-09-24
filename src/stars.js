@@ -9,17 +9,19 @@ import { curatedAbsMagV, holdCatalogRow } from "./render/catalogStars.js";
 import { dotTexture } from "./textures.js";
 import { renderQuality, scene, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
-import { ACTIVE_STARS } from "./universe/activeStars.js";
+import { ACTIVE_STARS, activeStarsTime } from "./universe/activeStars.js";
 import { applyTerrellToMaterial } from "./relView.js";
 
 // Physical renderings for the named stellar destinations and the active stars
 // around the ship: each star gets a photosphere mesh that appears as its disk
 // resolves; SGR A* gets an event horizon, an accretion disk, and polar jets.
 // The unresolved point of a curated star is its row in the curated point
-// layer (render/catalogStars.js). Active stars carry their own point of the
-// same shared material at their LIVE position (they move with sim time); an
-// active catalog star's static catalog point steps aside while it is active,
-// so every star is drawn by exactly one point.
+// layer (render/catalogStars.js). Every procedural star of the active
+// neighbourhood (galaxy.js's local tier, the ball the resolved field leaves
+// to it) is a point of the same shared material at its live position
+// (syncActiveProceduralPoints). An active catalog star carries its own point
+// at its live position while its static catalog point steps aside. So every
+// star is drawn by exactly one point.
 // Known limit: float32 world coordinates wobble at light-year distances —
 // close approaches render, but sub-1000 km precision out there is not exact.
 
@@ -219,7 +221,7 @@ export function addStarVisual(star) {
         }))
         : null;
     if (glow) g.add(glow);
-    const point = !star.bh && active ? activeStarPoint(absMag, tempK, star.R) : null;
+    const point = !star.bh && star.activeCatalog ? activeStarPoint(absMag, tempK, star.R) : null;
     if (point) g.add(point);
     if (star.activeCatalog) holdCatalogRow(star.hygIndex, true);
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
@@ -276,7 +278,58 @@ function syncActiveStarVisuals(camera, dtR = 0) {
     activeVisualSyncAge = 0;
 }
 
+// All procedural active stars as one point layer, re-synced whenever the
+// active set or its evaluation time changes. Offsets from the first star keep
+// float32 precision independent of the distance to the Sun.
+const activeProc = { mesh: null, capacity: 0, sig: "" };
+export function syncActiveProceduralPoints() {
+    const n0 = ACTIVE_STARS.length;
+    const sig = activeStarsTime() + ":" + n0 + ":" + (n0 ? ACTIVE_STARS[0].id || ACTIVE_STARS[0].name : "") + ":" + (n0 ? ACTIVE_STARS[n0 - 1].id || ACTIVE_STARS[n0 - 1].name : "");
+    if (sig === activeProc.sig) return;
+    activeProc.sig = sig;
+    let n = 0;
+    for (const s of ACTIVE_STARS) if (s.procedural && !s.bh) n++;
+    if (!activeProc.mesh || n > activeProc.capacity) {
+        if (activeProc.mesh) { scene.remove(activeProc.mesh); activeProc.mesh.geometry.dispose(); }
+        const cap = Math.max(64, Math.ceil(n * 1.5));
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(cap * 3), 3));
+        geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(cap * 3), 3));
+        geo.setAttribute("absMag", new THREE.BufferAttribute(new Float32Array(cap), 1));
+        geo.setAttribute("teffK", new THREE.BufferAttribute(new Float32Array(cap), 1));
+        geo.setAttribute("radiusKm", new THREE.BufferAttribute(new Float32Array(cap), 1));
+        activePointMaterial ||= makeStarPointMaterial({ radius: true });
+        activeProc.mesh = new THREE.Points(geo, activePointMaterial);
+        activeProc.mesh.name = "active procedural stars";
+        activeProc.mesh.frustumCulled = false;
+        activeProc.mesh.renderOrder = -3;
+        activeProc.capacity = cap;
+        scene.add(activeProc.mesh);
+    }
+    const a = activeProc.mesh.geometry.attributes;
+    let i = 0, cx = 0, cy = 0, cz = 0;
+    for (const s of ACTIVE_STARS) {
+        if (!s.procedural || s.bh) continue;
+        if (i === 0) { cx = s.x; cy = s.y; cz = s.z || 0; }
+        a.position.array[i * 3] = (s.x - cx) * K;
+        a.position.array[i * 3 + 1] = ((s.z || 0) - cz) * K;
+        a.position.array[i * 3 + 2] = -(s.y - cy) * K;
+        const teff = s.tempK || 5800;
+        const m = activeAbsMagV(s, teff);
+        a.absMag.array[i] = Number.isFinite(m) ? m : 99;
+        a.teffK.array[i] = teff;
+        a.radiusKm.array[i] = s.R || 0;
+        linearStarColor(teffToRGB(teff, starRGB), _ptColor);
+        a.color.array[i * 3] = _ptColor.r; a.color.array[i * 3 + 1] = _ptColor.g; a.color.array[i * 3 + 2] = _ptColor.b;
+        i++;
+    }
+    activeProc.mesh.position.set(cx * K, cz * K, -cy * K);
+    activeProc.mesh.geometry.setDrawRange(0, i);
+    for (const key of ["position", "color", "absMag", "teffK", "radiusKm"]) a[key].needsUpdate = true;
+}
+
 export function updateStars(camera, dtR) {
+    syncActiveProceduralPoints();
     const cameraSolarDistance = camera.position.length();
     if (cameraSolarDistance < LOCAL_VISUAL_SKIP_R) {
         if (!localVisualsHidden) {

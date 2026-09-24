@@ -81,8 +81,8 @@ void main() {
         ds = min(ds, bnd.y - s);
         float sm = s + 0.5 * ds;
         vec4 smp = gmSample(o + d * sm);
-        float f = gmUnresolved(sm);
-        vec3 em = (smp.x * uColYoung + smp.y * uColOld + smp.z * uColBar) * f;
+        vec2 f = gmUnresolved(sm, 1.0857362 * tau.g);
+        vec3 em = smp.x * uColYoung * f.x + (smp.y * uColOld + smp.z * uColBar) * f.y;
         vec3 k = smp.w * uExtRGB;
         vec3 kd = k * ds;
         // Exact emission-absorption over the step: em * (1 - e^{-k ds}) / k.
@@ -289,6 +289,15 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
         for (let i = 0; i < vals.length; i++) key[i] = vals[i];
         state.dirty = true;
     }
+}
+
+// Apparent magnitude separating point stars from the diffuse light (shared
+// with every point layer; render/resolvedFieldStars.js owns its value).
+export function setGalaxyVolumeMagLimit(m) {
+    if (!state.enabled) return;
+    init();
+    const u = state.rayMat.uniforms.uMagLimit;
+    if (Math.abs(u.value - m) > 1e-3) { u.value = m; state.dirty = true; }
 }
 
 // Scene background hook (scene.js renderSceneTiered): re-render the low-res
