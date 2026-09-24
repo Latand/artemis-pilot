@@ -1,16 +1,23 @@
 import * as THREE from "three";
-import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, K, LY_SCENE, LY_KM } from "./constants.js";
-import { tidalRadiusKm, mostBoundEnergy, fallbackTimeSec, circularizationKm, iscoKm, tdeLuminosityW, boundFraction, L_EDD_PER_MSUN } from "./tde.js";
-import { G, BH, WORLD, EPHT, bhRegister, bhMuAt, gsPull, addPhantom, GS } from "./state.js";
-import { eph, setLiveGuard } from "./ephemeris.js";
-import { fmtAccel, fmtDist, fmtKm, mulberry32 } from "./format.js";
+import { BH_MAX, BH_SIZES, C_LIGHT, MU_S, K, LY_SCENE, LY_KM } from "./constants.js";
+import { tdeLuminosityW, fallbackRate, L_EDD_PER_MSUN, TDE_ETA } from "./tde.js";
+import { G, BH } from "./state.js";
+import { eph } from "./ephemeris.js";
+import { fmtAccel, fmtDist, fmtKm } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
-import { scene, camera, cam, cvHost, lastPtr, renderer, renderQuality } from "./scene.js";
+import { scene, camera, cam, cvHost, lastPtr, renderer, renderQuality, viewportSize } from "./scene.js";
 import { noteNotable } from "./discoveryLog.js";
 import { hashInts, splitSeed } from "./universe/prng.js";
 import { registerPlacedPulsar, unregisterPlacedPulsar } from "./ambientAudio.js";
 import { addNebula } from "./render/nebulae.js";
 import { NEBULAE, NEB_MAX, NEBULA_ARCHETYPES, nebulaRadiusKmFromPreset } from "./universe/nebulaeData.js";
+import { initEncounterHooks, addHoleData, removeHoleData, TDES } from "./bhEncounters.js";
+import { updateTdeVisuals } from "./tdeVisuals.js";
+import { holeRoot, makeHoleOptics, updateHoleOptics, SHADOW_RS } from "./holeOptics.js";
+import { retardedTimeMoving } from "./universe/observerTime.js";
+// the encounter physics lives in bhEncounters.js (headless); these stay
+// importable from here for the HUD / events panel
+export { activeTde, bhAdvance, tdeInProgress } from "./bhEncounters.js";
 
 export const BH_META = []; // visual groups, parallel to the data arrays
 
@@ -19,7 +26,10 @@ let H = {
     disrupt: () => "", absorbed: () => { },
     event: () => { },
 };
-export function initBHHooks(hooks) { H = { ...H, ...hooks }; }
+export function initBHHooks(hooks) {
+    H = { ...H, ...hooks };
+    initEncounterHooks(hooks);
+}
 
 const SOLAR_MASS_KG = 1.98847e30;
 const G_KM = 6.674e-20;
@@ -93,33 +103,6 @@ export function pwAccelMs2(mu, rKm, rsKm) {
     const eff = Math.max(rKm - rsKm, rsKm * .02);
     return 1000 * mu / Math.max(1e-30, eff * eff);
 }
-function makeHawkingPoints(seed) {
-    const N = 140, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
-    const rnd = mulberry32(seed);
-    for (let i = 0; i < N; i++) {
-        const th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1);
-        const r = .16 + Math.pow(rnd(), .55) * 1.1;
-        pos[i * 3] = Math.sin(ph) * Math.cos(th) * r;
-        pos[i * 3 + 1] = (rnd() - .5) * .16;
-        pos[i * 3 + 2] = Math.sin(ph) * Math.sin(th) * r;
-        const hot = Math.pow(1 / r, .35);
-        col[i * 3] = .22 + hot * .32;
-        col[i * 3 + 1] = .52 + hot * .32;
-        col[i * 3 + 2] = .9 + hot * .1;
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    const mat = new THREE.PointsMaterial({
-        size: .008, vertexColors: true, transparent: true, opacity: .16,
-        depthWrite: false, blending: THREE.AdditiveBlending,
-        map: dotTexture("rgba(230,250,255,1)", "rgba(90,170,255,0.0)"),
-    });
-    const pts = new THREE.Points(g, mat);
-    pts.frustumCulled = false;
-    pts.renderOrder = 5;
-    return pts;
-}
 function makeTdeJet() {
     const seg = 36, verts = [], idx = [];
     for (let side = 0; side < 2; side++) {
@@ -170,112 +153,6 @@ function makePulsarVisuals(rsKm, period) {
     magnetic.add(beams);
     spin.add(star, magnetic);
     return { spin, magnetic, star, beams, beamLen, emissionRing, shimmerT: 0, period };
-}
-function makeSpaghettificationStream(seed) {
-    const N = 920, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
-    const phase = new Float32Array(N), lane = new Float32Array(N), jitter = new Float32Array(N);
-    const rnd = mulberry32(seed);
-    for (let i = 0; i < N; i++) {
-        pos[i * 3] = 0; pos[i * 3 + 1] = 0; pos[i * 3 + 2] = 0;
-        phase[i] = rnd() * Math.PI * 2;
-        lane[i] = rnd() < .5 ? -1 : 1;
-        jitter[i] = rnd();
-        col[i * 3] = .58;
-        col[i * 3 + 1] = .36;
-        col[i * 3 + 2] = .22;
-    }
-    const g = new THREE.BufferGeometry();
-    const attr = new THREE.BufferAttribute(pos, 3);
-    const colAttr = new THREE.BufferAttribute(col, 3);
-    attr.setUsage(THREE.DynamicDrawUsage);
-    colAttr.setUsage(THREE.DynamicDrawUsage);
-    g.setAttribute("position", attr);
-    g.setAttribute("color", colAttr);
-    const mat = new THREE.PointsMaterial({
-        size: .035, vertexColors: true, transparent: true, opacity: 0,
-        depthWrite: false, blending: THREE.AdditiveBlending,
-        map: dotTexture("rgba(255,245,218,1)", "rgba(255,110,30,0.0)"),
-    });
-    const pts = new THREE.Points(g, mat);
-    pts.frustumCulled = false;
-    pts.renderOrder = 7;
-    const arms = 5, segs = 112;
-    const linePos = new Float32Array(arms * (segs - 1) * 2 * 3);
-    const lineG = new THREE.BufferGeometry();
-    const lineAttr = new THREE.BufferAttribute(linePos, 3);
-    lineAttr.setUsage(THREE.DynamicDrawUsage);
-    lineG.setAttribute("position", lineAttr);
-    const lines = new THREE.LineSegments(lineG, new THREE.LineBasicMaterial({
-        color: 0xd7b073, transparent: true, opacity: 0,
-        depthWrite: false, blending: THREE.AdditiveBlending,
-    }));
-    lines.frustumCulled = false;
-    lines.renderOrder = 6;
-    const remnantUniforms = {
-        uRock: { value: new THREE.Color(0x9b8068) },
-        uHeat: { value: 0 },
-        uAlpha: { value: 0 },
-    };
-    const remnant = new THREE.Mesh(new THREE.SphereGeometry(1, 72, 48), new THREE.ShaderMaterial({
-        uniforms: remnantUniforms,
-        transparent: true, depthWrite: false,
-        vertexShader: /* glsl */`
-            varying vec3 vN; varying vec3 vP;
-            void main(){
-                vN = normalize(normalMatrix * normal);
-                vP = position;
-                vec3 p = position;
-                float pinch = smoothstep(-.25, .9, p.x);
-                p.yz *= mix(1.0, .52, pinch);
-                vec4 mv = modelViewMatrix * vec4(p, 1.0);
-                gl_Position = projectionMatrix * mv;
-            }`,
-        fragmentShader: /* glsl */`
-            uniform vec3 uRock; uniform float uHeat; uniform float uAlpha;
-            varying vec3 vN; varying vec3 vP;
-            float hash(vec3 p){ return fract(sin(dot(p, vec3(17.13, 71.91, 43.27))) * 43758.5453); }
-            void main(){
-                float grain = hash(floor((vP + 1.0) * 18.0));
-                float nose = smoothstep(.05, 1.0, vP.x);
-                float rim = pow(1.0 - abs(vN.z) * .55 - abs(vN.y) * .25, 2.0);
-                vec3 hot = mix(vec3(1.0, .32, .06), vec3(1.0, .86, .56), nose);
-                vec3 col = mix(uRock * (.72 + grain * .32), hot, clamp(uHeat * (.25 + nose * .75), 0.0, 1.0));
-                col += vec3(1.0, .42, .12) * rim * uHeat * .35;
-                gl_FragColor = vec4(col, uAlpha);
-            }`,
-    }));
-    remnant.frustumCulled = false;
-    remnant.renderOrder = 5;
-    const fragCount = 210;
-    const fragGeo = new THREE.DodecahedronGeometry(1, 0);
-    const fragMat = new THREE.MeshBasicMaterial({
-        vertexColors: true, transparent: true, opacity: 0,
-        depthWrite: false, blending: THREE.AdditiveBlending,
-    });
-    const fragments = new THREE.InstancedMesh(fragGeo, fragMat, fragCount);
-    fragments.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    fragments.frustumCulled = false;
-    fragments.renderOrder = 8;
-    const fragPhase = new Float32Array(fragCount);
-    const fragQ = new Float32Array(fragCount);
-    const fragLane = new Float32Array(fragCount);
-    const fragSize = new Float32Array(fragCount);
-    const c = new THREE.Color();
-    for (let i = 0; i < fragCount; i++) {
-        fragPhase[i] = rnd() * Math.PI * 2;
-        fragQ[i] = Math.pow(rnd(), .7);
-        fragLane[i] = rnd() < .5 ? -1 : 1;
-        fragSize[i] = .35 + rnd() * 1.4;
-        fragments.setColorAt(i, c.setRGB(.6, .38, .22));
-    }
-    if (fragments.instanceColor) fragments.instanceColor.needsUpdate = true;
-    const group = new THREE.Group();
-    group.add(lines, remnant, pts, fragments);
-    return {
-        group, pts, pos, col, attr, colAttr, mat, seed,
-        phase, lane, jitter, lines, linePos, lineAttr,
-        remnant, remnantUniforms, fragments, fragPhase, fragQ, fragLane, fragSize,
-    };
 }
 function polishCanvasTexture(t, srgb = false) {
     if (srgb) t.colorSpace = THREE.SRGBColorSpace;
@@ -366,7 +243,7 @@ function ensureBHPlacementPreview() {
         transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .34,
     }));
     const core = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: blackCoreTexture(), transparent: true, depthWrite: false, depthTest: false, opacity: .96,
+        map: blackCoreTexture(), transparent: true, depthWrite: false, opacity: .96,
     }));
     core.renderOrder = 30;
     const aim = new THREE.Mesh(
@@ -738,79 +615,74 @@ renderer.domElement.addEventListener("pointerdown", e => {
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     commitBHPlacement(e.clientX, e.clientY);
 }, true);
-export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, events = null, kind = 0, period = 0) {
-    if (BH.n >= BH_MAX) { if (!quiet) H.toast("Maximum " + BH_MAX + " black holes"); return -1; }
-    const i = BH.n;
-    bhRegister(i, xKm, yKm, rsKm, vx0, vy0, events, kind, period);
+// A hole's visual: the physical optics (holeOptics.js: shadow, photon ring,
+// accretion disk when something accretes, jet when flagged) plus a
+// screen-size marker ring that keeps an unresolved hole findable and fades
+// out once the shadow itself spans a few pixels. Pulsars keep their own
+// beam visuals.
+function buildHoleVisual(i) {
+    const rsKm = BH.rs[i], kind = BH.kind[i], period = BH.period[i];
     const g = new THREE.Group();
-    g.position.set(BH.sx[i], 0, BH.sz[i]);
-    const horizon = new THREE.Mesh(new THREE.SphereGeometry(rsKm * K, 128, 96), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    const photon = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(255,244,224,0.82)", 512, 34), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .62 }));
-    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(168,150,255,0.22)", "rgba(90,90,255,0.08)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .22 }));
-    const hawkGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(190,235,255,0.65)", 512, 26), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .18 }));
-    const coreMask = new THREE.Sprite(new THREE.SpriteMaterial({ map: blackCoreTexture(), transparent: true, depthWrite: false, depthTest: false, opacity: 1 }));
-    coreMask.renderOrder = 20;
-    const hawk = makeHawkingPoints(8800 + i * 97);
-    const spag = makeSpaghettificationStream(17000 + i * 173);
-    const cv = document.createElement("canvas");
-    const diskRes = 1024;
-    cv.width = cv.height = diskRes;
-    const ctx = cv.getContext("2d");
-    const dc = diskRes * .5;
-    const gr = ctx.createRadialGradient(dc, dc, diskRes * .133, dc, dc, dc);
-    gr.addColorStop(0, "rgba(255,255,255,0)");
-    gr.addColorStop(.16, "rgba(255,240,210,0.7)");
-    gr.addColorStop(.4, "rgba(255,158,66,0.34)");
-    gr.addColorStop(.75, "rgba(196,76,28,0.12)");
-    gr.addColorStop(1, "rgba(120,40,20,0)");
-    ctx.fillStyle = gr;
-    ctx.fillRect(0, 0, diskRes, diskRes);
-    ctx.globalCompositeOperation = "destination-out";
-    const rnd2 = mulberry32(1234 + i * 77);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    for (let k = 0; k < 96; k++) {
-        ctx.beginPath();
-        ctx.lineWidth = diskRes * (.0012 + rnd2() * .0032);
-        ctx.strokeStyle = "rgba(0,0,0," + (.055 + rnd2() * .18) + ")";
-        const rr = diskRes * (.148 + rnd2() * .344), a0 = rnd2() * Math.PI * 2;
-        ctx.arc(dc, dc, rr, a0, a0 + .9 + rnd2() * 3.6);
-        ctx.stroke();
-    }
-    const diskTex = polishCanvasTexture(new THREE.CanvasTexture(cv), true);
-    diskTex.center.set(.5, .5);
-    const disk = new THREE.Mesh(new THREE.PlaneGeometry(rsKm * K * 13, rsKm * K * 13), new THREE.MeshBasicMaterial({ map: diskTex, transparent: true, opacity: .82, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
-    disk.rotation.x = -Math.PI / 2;
-    const jet = makeTdeJet();
-    let pulsar = null, audioObj = null;
+    g.position.set(BH.sx[i], BH.sy[i], BH.sz[i]);
+    const horizon = new THREE.Mesh(new THREE.SphereGeometry(rsKm * K, 64, 48), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(255,244,224,0.82)", 256, 34), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .5 }));
+    marker.renderOrder = 8;
+    let pulsar = null, audioObj = null, glow = null, optics = null;
     const quasarLights = BH_META.reduce((n, m) => n + (m?.quasarLight ? 1 : 0), 0);
     let quasarLight = null;
-    if (kind === 1) {
-        disk.scale.setScalar(2.2);
-        jet.scale.set(rsKm * K * .45, rsKm * K * 30, rsKm * K * .45);
-        // Cap quasar point lights at two on desktop; mobile uses the additive sprites only.
-        if (!renderQuality.mobile && quasarLights < 2) {
-            quasarLight = new THREE.PointLight(0xcfe0ff, 4.0, BH.sinkS[i] * 600, 2);
-            g.add(quasarLight);
-        }
+    if (kind === 1 && !renderQuality.mobile && quasarLights < 2) {
+        // Cap quasar point lights at two on desktop. The light lives in the
+        // scene itself (it must keep lighting the planets while the lens pass
+        // draws the hole's optics separately) and follows the hole.
+        quasarLight = new THREE.PointLight(0xcfe0ff, 4.0, BH.sinkS[i] * 600, 2);
+        quasarLight.position.copy(g.position);
+        scene.add(quasarLight);
     }
     if (kind === 2) {
         pulsar = makePulsarVisuals(rsKm, period);
-        glow.material.map = dotTexture("rgba(210,235,255,0.36)", "rgba(75,150,255,0.0)");
-        glow.material.opacity = .34;
+        glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(210,235,255,0.36)", "rgba(75,150,255,0.0)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .34 }));
         audioObj = { x: 0, y: 0, z: 0, name: "PLACED PULSAR" };
         registerPlacedPulsar(audioObj, period);
         g.add(glow, pulsar.spin, pulsar.emissionRing);
+        scene.add(g);
     } else {
-        g.add(disk, horizon, photon, glow, hawkGlow, hawk, spag.group, jet, coreMask);
+        optics = makeHoleOptics();
+        g.add(horizon, optics.shadow, optics.ring, optics.disk, optics.jet, marker);
+        holeRoot.add(g);
     }
-    scene.add(g);
-    BH_META.push({
-        g, disk, diskBaseRs: rsKm, jet: kind === 2 ? null : jet, quasarLight, horizon, photon, glow, hawkGlow, hawk, spag, coreMask, tex: diskTex, rs: rsKm, flare: 0,
-        pulsar, audioObj,
-        tde: { active: false, targetName: "", t0Sim: 0, tFbSec: 0, LpeakW: 0, LnowW: 0, LEddW: L_EDD_PER_MSUN * (rsKm * C_LIGHT * C_LIGHT / 2 / MU_S), mStarKg: 0, mBhMsun: 0, rCirc: 0 },
+    return { g, horizon, marker, optics, quasarLight, glow, rs: rsKm, flare: 0, pulsar, audioObj, tBorn: G.t, lastT: NaN };
+}
+function disposeHoleVisual(m) {
+    if (!m) return;
+    if (m.audioObj) unregisterPlacedPulsar(m.audioObj);
+    m.g.parent?.remove(m.g);
+    if (m.quasarLight) { scene.remove(m.quasarLight); m.quasarLight.dispose?.(); }
+    m.g.traverse(o => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
     });
-    BH.n++;
+}
+// data-layer callbacks (bhEncounters.js owns the hole arrays)
+function onHoleRemoved(i) {
+    const m = BH_META.splice(i, 1)[0];
+    disposeHoleVisual(m);
+}
+function onHoleMerged(i) {
+    disposeHoleVisual(BH_META[i]);
+    BH_META[i] = buildHoleVisual(i);
+    if (BH_META[i]) BH_META[i].flare = 1;
+}
+function onHoleResized(i) {
+    refreshBHSize(i, BH.rs[i]);
+    if (BH_META[i]) BH_META[i].flare = 1;
+}
+initEncounterHooks({ onRemove: onHoleRemoved, onMerged: onHoleMerged, onResize: onHoleResized });
+
+export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, events = null, kind = 0, period = 0, zKm = 0, vz0 = 0) {
+    if (BH.n >= BH_MAX) { if (!quiet) H.toast("Maximum " + BH_MAX + " black holes"); return -1; }
+    const i = addHoleData(xKm, yKm, rsKm, vx0, vy0, events, kind, period, zKm, vz0);
+    if (i < 0) return -1;
+    BH_META[i] = buildHoleVisual(i);
     if (quiet) return i;
     if (kind === 1) noteNotable("quasar", "QUASAR " + bhMassLabel(rsKm));
     if (kind === 2) noteNotable("pulsar", "PULSAR " + pulsarFactsLabel(period));
@@ -821,30 +693,7 @@ export function addBlackHole(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, quiet = false, ev
     return i;
 }
 function removeBHIndex(i) {
-    for (let k = DISRUPT.length - 1; k >= 0; k--) {
-        if (DISRUPT[k].bh === i) DISRUPT.splice(k, 1);
-        else if (DISRUPT[k].bh > i) DISRUPT[k].bh--;
-    }
-    const m = BH_META.splice(i, 1)[0];
-    if (m?.audioObj) unregisterPlacedPulsar(m.audioObj);
-    scene.remove(m.g);
-    m.g.traverse(o => {
-        if (o.geometry) o.geometry.dispose();
-        if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
-    });
-    for (let k = i; k < BH.n - 1; k++) {
-        BH.x[k] = BH.x[k + 1]; BH.y[k] = BH.y[k + 1];
-        BH.vx[k] = BH.vx[k + 1]; BH.vy[k] = BH.vy[k + 1];
-        BH.mu[k] = BH.mu[k + 1]; BH.rs[k] = BH.rs[k + 1];
-        BH.sx[k] = BH.sx[k + 1]; BH.sz[k] = BH.sz[k + 1];
-        BH.c[k] = BH.c[k + 1]; BH.sinkS[k] = BH.sinkS[k + 1];
-        BH.obsT[k] = BH.obsT[k + 1];
-        BH.kind[k] = BH.kind[k + 1]; BH.period[k] = BH.period[k + 1];
-        BH.ev[k] = BH.ev[k + 1];
-    }
-    BH.ev[BH.n - 1] = null;
-    BH.kind[BH.n - 1] = 0; BH.period[BH.n - 1] = 0;
-    BH.n--;
+    removeHoleData(i);
 }
 export function removeLastBH() {
     if (!BH.n) { H.toast("No black holes placed"); return; }
@@ -854,140 +703,8 @@ export function removeLastBH() {
 }
 export function clearBlackHoles() {
     while (BH.n > 0) removeBHIndex(BH.n - 1);
-}
-
-// ---- black-hole dynamics ----
-// Holes free-fall in the same Earth-relative n-body frame as the ship and
-// planets, then attract each other via the Paczyński-Wiita acceleration.
-// Close pairs merge, conserving momentum.
-let _bax = 0, _bay = 0;
-// rsI: the hole's Schwarzschild radius — the body→hole pull uses the same
-// PW softening as the hole→body pull, so the pair obeys action–reaction
-// (asymmetric laws pumped momentum into the frame and skewed the whole map)
-function bodyPull(x, y, bx, by, mu, rsI) {
-    const dx = x - bx, dy = y - by;
-    const d = Math.sqrt(Math.max(1e-18, dx * dx + dy * dy));
-    const eff = Math.max(d - rsI, rsI * .02);
-    const w = mu / (eff * eff * d);
-    _bax -= w * dx;
-    _bay -= w * dy;
-    if (!WORLD.earthDestroyed) {
-        const r02 = Math.max(1e-18, bx * bx + by * by);
-        const w0 = mu / (r02 * Math.sqrt(r02)); // indirect: pull on the frame origin
-        _bax -= w0 * bx;
-        _bay -= w0 * by;
-    }
-}
-const _gp = [0, 0, 0];
-// `tau` offsets body positions from the live ephemeris (holes integrate over
-// the interval just *behind* the freshly advanced bodies, so tau ≤ 0).
-function bhAccel(i, X, Y, tau, out) {
-    const x = X[i], y = Y[i];
-    const tEval = EPHT.t + tau;
-    const rsI = BH.rs[i];
-    _bax = 0; _bay = 0;
-    if (!WORLD.earthDestroyed) {
-        const r = Math.sqrt(Math.max(1e-18, x * x + y * y));
-        const eff = Math.max(r - rsI, rsI * .02);
-        const w = MU_E / (eff * eff * r);
-        _bax -= w * x; _bay -= w * y;
-    }
-    if (!WORLD.moonDestroyed) bodyPull(x, y, eph.moonX + eph.moonVx * tau, eph.moonY + eph.moonVy * tau, MU_M, rsI);
-    if (!WORLD.sunDestroyed) bodyPull(x, y, eph.sunX + eph.sunVx * tau, eph.sunY + eph.sunVy * tau, MU_S, rsI);
-    for (let p = 0; p < PL.length; p++)
-        if (!WORLD.plDestroyed[p]) bodyPull(x, y, eph.plX[p] + eph.plVx[p] * tau, eph.plY[p] + eph.plVy[p] * tau, PL[p].mu, rsI);
-    // phantom debris & ghost shells pull the hole too
-    _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
-    gsPull(x, y, 0, tEval, _gp);
-    let ax = _bax + _gp[0], ay = _bay + _gp[1];
-    if (!WORLD.earthDestroyed) {
-        _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
-        gsPull(0, 0, 0, tEval, _gp);
-        ax -= _gp[0]; ay -= _gp[1];
-    }
-    for (let j = 0; j < BH.n; j++) {
-        if (j !== i) {
-            const dx = x - X[j], dy = y - Y[j];
-            const d = Math.sqrt(dx * dx + dy * dy);
-            const mu = bhMuAt(j, x, y, 0, tEval);
-            if (mu > 0) {
-                // shared pair softening so unequal holes obey action–reaction
-                const rsP = rsI + BH.rs[j];
-                const eff = Math.max(d - rsP, rsP * .02);
-                const am = mu / (eff * eff) / Math.max(1e-9, d);
-                ax -= dx * am; ay -= dy * am;
-            }
-        }
-        // indirect: every hole accelerates the Earth-centered frame origin
-        if (!WORLD.earthDestroyed) {
-            const mu0 = bhMuAt(j, 0, 0, 0, tEval);
-            if (mu0 > 0) {
-                const r0 = Math.sqrt(X[j] * X[j] + Y[j] * Y[j]);
-                const eff0 = Math.max(r0 - BH.rs[j], BH.rs[j] * .02);
-                const am0 = mu0 / (eff0 * eff0) / Math.max(1e-9, r0);
-                ax -= X[j] * am0; ay -= Y[j] * am0;
-            }
-        }
-    }
-    out[0] = ax; out[1] = ay;
-}
-const _ba = [0, 0];
-const _k = [];
-for (let s = 0; s < 4; s++) _k.push({ x: new Float64Array(BH_MAX), y: new Float64Array(BH_MAX), vx: new Float64Array(BH_MAX), vy: new Float64Array(BH_MAX) });
-function bhDerivAll(tau, X, Y, VX, VY, K_) {
-    for (let i = 0; i < BH.n; i++) {
-        bhAccel(i, X, Y, tau, _ba);
-        K_.x[i] = VX[i]; K_.y[i] = VY[i];
-        K_.vx[i] = _ba[0]; K_.vy[i] = _ba[1];
-    }
-}
-const _sx = new Float64Array(BH_MAX), _sy = new Float64Array(BH_MAX), _svx = new Float64Array(BH_MAX), _svy = new Float64Array(BH_MAX);
-function bhRk4(tau0, dt) {
-    const N = BH.n;
-    bhDerivAll(tau0, BH.x, BH.y, BH.vx, BH.vy, _k[0]);
-    for (const [f, kPrev, kCur] of [[.5, 0, 1], [.5, 1, 2], [1, 2, 3]]) {
-        for (let i = 0; i < N; i++) {
-            _sx[i] = BH.x[i] + f * dt * _k[kPrev].x[i];
-            _sy[i] = BH.y[i] + f * dt * _k[kPrev].y[i];
-            _svx[i] = BH.vx[i] + f * dt * _k[kPrev].vx[i];
-            _svy[i] = BH.vy[i] + f * dt * _k[kPrev].vy[i];
-        }
-        bhDerivAll(tau0 + f * dt, _sx, _sy, _svx, _svy, _k[kCur]);
-    }
-    for (let i = 0; i < N; i++) {
-        BH.x[i] += dt / 6 * (_k[0].x[i] + 2 * _k[1].x[i] + 2 * _k[2].x[i] + _k[3].x[i]);
-        BH.y[i] += dt / 6 * (_k[0].y[i] + 2 * _k[1].y[i] + 2 * _k[2].y[i] + _k[3].y[i]);
-        BH.vx[i] += dt / 6 * (_k[0].vx[i] + 2 * _k[1].vx[i] + 2 * _k[2].vx[i] + _k[3].vx[i]);
-        BH.vy[i] += dt / 6 * (_k[0].vy[i] + 2 * _k[1].vy[i] + 2 * _k[2].vy[i] + _k[3].vy[i]);
-    }
-}
-function tryMerge() {
-    for (let i = 0; i < BH.n; i++)
-        for (let j = i + 1; j < BH.n; j++) {
-            const dx = BH.x[i] - BH.x[j], dy = BH.y[i] - BH.y[j];
-            const d = Math.sqrt(dx * dx + dy * dy);
-            if (d < (BH.rs[i] + BH.rs[j]) * 1.2) {
-                const muI = BH.mu[i], muJ = BH.mu[j], muTotal = muI + muJ;
-                const x = (BH.x[i] * muI + BH.x[j] * muJ) / muTotal;
-                const y = (BH.y[i] * muI + BH.y[j] * muJ) / muTotal;
-                const vx = (BH.vx[i] * muI + BH.vx[j] * muJ) / muTotal;
-                const vy = (BH.vy[i] * muI + BH.vy[j] * muJ) / muTotal;
-                const eta = muI * muJ / (muTotal * muTotal);
-                const gwLossFrac = clamp(.192 * eta, 0, .06);
-                const muLoss = muTotal * gwLossFrac;
-                const mu = muTotal - muLoss;
-                const rs = 2 * mu / (C_LIGHT * C_LIGHT);
-                const ev = BH.ev[i].concat(BH.ev[j]);
-                if (muLoss > 0) ev.push({ x, y, z: 0, t: EPHT.t, dmu: -muLoss });
-                removeBHIndex(j); removeBHIndex(i);
-                addBlackHole(x, y, rs, vx, vy, false, ev);
-                WORLD.irreversibleFloorT = Math.max(WORLD.irreversibleFloorT, EPHT.t);
-                H.toast("⚫ Black-hole merger → r_s " + fmtKm(rs) + " · GW loss " + (gwLossFrac * 100).toFixed(1) + "%");
-                H.event?.("merger", "⚫ Black-hole merger → r_s " + fmtKm(rs) + " · GW loss " + (gwLossFrac * 100).toFixed(1) + "%");
-                return true;
-            }
-        }
-    return false;
+    // visuals left behind by a partial reset (e.g. a harness zeroing BH.n)
+    while (BH_META.length) disposeHoleVisual(BH_META.pop());
 }
 function refreshBHSize(i, rs) {
     const m = BH_META[i];
@@ -996,310 +713,6 @@ function refreshBHSize(i, rs) {
     const ratio = rs / oldRs;
     m.rs = rs;
     if (m.horizon) m.horizon.scale.multiplyScalar(ratio);
-    if (m.disk) m.disk.scale.multiplyScalar(ratio);
-}
-function absorbBody(i, target, x, y, vx, vy, muBody) {
-    const mu0 = BH.mu[i], mu = mu0 + muBody;
-    if (mu <= mu0) return;
-    BH.x[i] = (BH.x[i] * mu0 + x * muBody) / mu;
-    BH.y[i] = (BH.y[i] * mu0 + y * muBody) / mu;
-    BH.vx[i] = (BH.vx[i] * mu0 + vx * muBody) / mu;
-    BH.vy[i] = (BH.vy[i] * mu0 + vy * muBody) / mu;
-    BH.mu[i] = mu;
-    BH.ev[i].push({ x, y, z: 0, t: EPHT.t, dmu: muBody }); // mass gain spreads at c
-    BH.rs[i] = 2 * mu / (C_LIGHT * C_LIGHT);
-    BH.c[i] = .001 * Math.sqrt(2 * BH.mu[i] / 1000);
-    BH.sinkS[i] = BH.rs[i] * K;
-    BH.sx[i] = BH.x[i] * K;
-    BH.sz[i] = -BH.y[i] * K;
-    refreshBHSize(i, BH.rs[i]);
-    if (BH_META[i]) BH_META[i].flare = 1;
-    WORLD.irreversibleFloorT = Math.max(WORLD.irreversibleFloorT, EPHT.t);
-    H.absorbed(target, BH.rs[i], i);
-}
-function removePhantomSource(ph) {
-    if (!ph) return;
-    const idx = GS.indexOf(ph);
-    if (idx >= 0) GS.splice(idx, 1);
-}
-function refreshTdeLuminosity(tde) {
-    if (!tde?.active) return 0;
-    const age = Math.max(0, EPHT.t - tde.t0Sim);
-    const LnowW = tdeLuminosityW(age, tde.tFbSec, tde.mStarKg, tde.mBhMsun);
-    tde.LnowW = LnowW;
-    return LnowW;
-}
-export function activeTde() {
-    let best = null;
-    for (let i = 0; i < BH_META.length; i++) {
-        const tde = BH_META[i]?.tde;
-        if (!tde?.active) continue;
-        refreshTdeLuminosity(tde);
-        if (!best || tde.LnowW > best.LnowW) {
-            const ageSec = Math.max(0, EPHT.t - tde.t0Sim);
-            best = {
-                bh: i,
-                targetName: tde.targetName || "Body",
-                LnowW: tde.LnowW,
-                LpeakW: tde.LpeakW,
-                LEddW: tde.LEddW,
-                ageSec,
-                tFbSec: tde.tFbSec,
-                pastPeak: ageSec >= tde.tFbSec,
-            };
-        }
-    }
-    return best;
-}
-function activateTdeMeta(i, targetName, t0Sim, tFbSec, mStarKg, mBhMsun, rCirc = 0) {
-    const m = BH_META[i];
-    if (!m) return;
-    const LEddW = L_EDD_PER_MSUN * mBhMsun;
-    m.tde = {
-        active: true,
-        targetName,
-        t0Sim,
-        tFbSec,
-        LpeakW: tdeLuminosityW(tFbSec, tFbSec, mStarKg, mBhMsun),
-        LnowW: LEddW,
-        LEddW,
-        mStarKg,
-        mBhMsun,
-        rCirc,
-    };
-}
-function resolveTdeInstant(i, target, x, y, vx, vy, radius, muBody) {
-    const muBH = BH.mu[i];
-    const tFb = fallbackTimeSec(radius, muBH, muBody);
-    const mBhMsun = muBH / MU_S;
-    const mStarKg = muBody / G_KM;
-    activateTdeMeta(i, targetLabel(target), EPHT.t, tFb, mStarKg, mBhMsun, circularizationKm(radius, muBH, muBody));
-    absorbBody(i, target, x, y, vx, vy, muBody);
-}
-function bhBodyLimit(rs, radius, muBody, muBH) {
-    const roche = radius * Math.cbrt(muBH / Math.max(1e-9, muBody));
-    const tidal = Math.min(radius * 18, roche * .55);
-    return Math.max(radius + rs * 2.2, tidal);
-}
-// disruption limits depend only on the hole's μ (and body constants), so they
-// are cached and recomputed only after a merge or absorption changes the mass.
-// Keyed on μ, the cache stays valid even when removeBHIndex shifts the arrays.
-const _limCache = [];
-function bhLimits(i) {
-    let c = _limCache[i];
-    if (!c) { c = { mu: -1, pl: new Float64Array(PL.length) }; _limCache[i] = c; }
-    if (c.mu !== BH.mu[i]) {
-        const mu = BH.mu[i], rs = BH.rs[i];
-        c.mu = mu;
-        c.earth = bhBodyLimit(rs, R_EARTH, MU_E, mu);
-        c.moon = bhBodyLimit(rs, R_MOON, MU_M, mu);
-        c.sun = bhBodyLimit(rs, R_SUN, MU_S, mu);
-        for (let p = 0; p < PL.length; p++) c.pl[p] = bhBodyLimit(rs, PL[p].R, PL[p].mu, mu);
-    }
-    return c;
-}
-const DISRUPT = [];
-window.__BH_DISRUPT = DISRUPT;
-function targetLabel(target) {
-    return target === "earth" ? "Earth" :
-        target === "moon" ? "Moon" :
-            target === "sun" ? "Sun" :
-                typeof target === "number" && PL[target] ? PL[target].name : "Body";
-}
-function sameTarget(a, b) { return a === b; }
-function isDisrupting(target) {
-    return DISRUPT.some(d => sameTarget(d.target, target));
-}
-function syncDisruptionFlag() {
-    WORLD.tdeInProgress = DISRUPT.length > 0;
-}
-export function tdeInProgress() {
-    return DISRUPT.length > 0;
-}
-function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
-function targetDisruptionColor(target) {
-    if (target === "earth") return 0x4d78a8;
-    if (target === "moon") return 0x9b9a93;
-    if (target === "sun") return 0xff8a22;
-    if (typeof target === "number" && PL[target]) return PL[target].color;
-    return 0x9b8068;
-}
-function disruptionDuration(radius, dist, muBH, muBody, rel, tFbSec) {
-    const r = Math.max(1, dist);
-    const tidalAcc = 2 * muBH * radius / (r * r * r);
-    const selfAcc = muBody / Math.max(1, radius * radius);
-    const stress = Math.max(.02, tidalAcc / Math.max(1e-12, selfAcc));
-    const dyn = Math.sqrt(radius / Math.max(1e-9, tidalAcc));
-    const crossing = radius / Math.max(.05, rel);
-    const floor = clamp(Math.max(21600, dyn * 6, crossing * 10) / Math.sqrt(Math.min(60, stress)), 21600, 86400 * 90);
-    // Slow-motion viewing now tracks fallback: stretch, stream, then peak near t_fb.
-    return clamp(floor, Math.max(21600, tFbSec * .15), Math.min(86400 * 90, tFbSec * 3));
-}
-function disruptionBodyState(d) {
-    if (d.phantom) {
-        // the debris cloud coasts at the body's last velocity; the stream and
-        // final absorption follow that coasting cloud.
-        const ph = d.phantom, age = EPHT.t - ph.t0;
-        d.x = ph.x + ph.vx * age; d.y = ph.y + ph.vy * age;
-        d.vx = ph.vx; d.vy = ph.vy;
-        return d;
-    }
-    if (d.target === "earth") {
-        d.x = 0; d.y = 0; d.vx = 0; d.vy = 0;
-    } else if (d.target === "moon") {
-        d.x = eph.moonX; d.y = eph.moonY; d.vx = eph.moonVx; d.vy = eph.moonVy;
-    } else if (d.target === "sun") {
-        d.x = eph.sunX; d.y = eph.sunY; d.vx = eph.sunVx; d.vy = eph.sunVy;
-    } else if (typeof d.target === "number" && d.target >= 0 && d.target < PL.length) {
-        d.x = eph.plX[d.target]; d.y = eph.plY[d.target];
-        d.vx = eph.plVx[d.target]; d.vy = eph.plVy[d.target];
-    }
-    return d;
-}
-function beginDisruption(i, target, x, y, vx, vy, radius, muBody, dist, limit) {
-    if (isDisrupting(target) || i < 0 || i >= BH.n) return;
-    if (G.warp > TDE_WATCH_WARP) {
-        resolveTdeInstant(i, target, x, y, vx, vy, radius, muBody);
-        return;
-    }
-    const rel = Math.hypot(vx - BH.vx[i], vy - BH.vy[i]);
-    const muBH = BH.mu[i];
-    const tFb = fallbackTimeSec(radius, muBH, muBody);
-    const eMb = mostBoundEnergy(radius, muBH, muBody);
-    const rCirc = circularizationKm(radius, muBH, muBody);
-    const rIsco = iscoKm(BH.rs[i]);
-    const mBhMsun = muBH / MU_S;
-    const mStarKg = muBody / G_KM;
-    const duration = disruptionDuration(radius, Math.max(dist, BH.rs[i] * 1.2), muBH, muBody, rel, tFb);
-    const name = H.disrupt(target, BH.rs[i], "tidal disruption", i) || targetLabel(target);
-    DISRUPT.push({
-        bh: i, target, name, x, y, vx, vy, radius, muBody,
-        age: 0, visual: 0, duration,
-        tFb, eMb, rCirc, rIsco, mBhMsun, mStarKg,
-        accretionR: rCirc,
-        boundFrac: boundFraction(), tPeak: null, t0Sim: EPHT.t,
-        color: targetDisruptionColor(target),
-        limit: Math.max(limit, radius), bornRt: performance.now(),
-        // the doomed body's mass keeps gravitating as frozen debris until the
-        // absorption completes; deleting it here changed orbits system-wide
-        // in a single step and scattered everything
-        phantom: addPhantom(x, y, 0, vx, vy, 0, muBody, radius),
-    });
-    syncDisruptionFlag();
-    const m = BH_META[i];
-    if (m) m.flare = Math.max(m.flare, .55);
-    H.toast(name + " spaghettifying · mass transfer forming");
-}
-function advanceDisruptions(dt) {
-    for (let k = DISRUPT.length - 1; k >= 0; k--) {
-        const d = DISRUPT[k];
-        if (d.bh < 0 || d.bh >= BH.n) { DISRUPT.splice(k, 1); syncDisruptionFlag(); continue; }
-        disruptionBodyState(d);
-        d.age += dt;
-        const p = clamp(d.age / Math.max(1e-9, d.duration), 0, 1);
-        d.accretionR = d.rCirc + (d.rIsco - d.rCirc) * smooth01(0, 1, p);
-        if (G.warp > TDE_WATCH_WARP) {
-            removePhantomSource(d.phantom);
-            d.phantom = null;
-            resolveTdeInstant(d.bh, d.target, d.x, d.y, d.vx, d.vy, d.radius, d.muBody);
-            DISRUPT.splice(k, 1);
-            syncDisruptionFlag();
-            continue;
-        }
-        const simDone = d.age >= d.duration;
-        // Presentation progress may lag or race simulated completion; physical
-        // state changes publish as soon as the simulated disruption is done.
-        if (simDone) {
-            const dx = d.x - BH.x[d.bh], dy = d.y - BH.y[d.bh];
-            const r = Math.max(1e-9, Math.hypot(dx, dy));
-            const horizon = Math.max(BH.rs[d.bh] * 1.08, 1e-6);
-            const x = BH.x[d.bh] + dx / r * horizon;
-            const y = BH.y[d.bh] + dy / r * horizon;
-            d.tPeak = d.t0Sim + d.tFb;
-            activateTdeMeta(d.bh, d.name || targetLabel(d.target), d.t0Sim, d.tFb, d.mStarKg, d.mBhMsun, d.rCirc);
-            absorbBody(d.bh, d.target, x, y, d.vx, d.vy, d.muBody);
-            if (d.phantom) {
-                // phantom → ghost: outside the expanding front the old debris
-                // field persists; inside, the hole's new mass has taken over
-                const ph = d.phantom, age = EPHT.t - ph.t0;
-                ph.x += ph.vx * age; ph.y += ph.vy * age;
-                ph.t0 = EPHT.t; ph.t = EPHT.t;
-                d.phantom = null;
-            }
-            DISRUPT.splice(k, 1);
-            syncDisruptionFlag();
-        }
-    }
-}
-function checkBHBodyBoundaries() {
-    for (let i = 0; i < BH.n; i++) {
-        const L = bhLimits(i);
-        const x = BH.x[i], y = BH.y[i];
-        // a hole can only shred a body its gravity has actually reached
-        if (!WORLD.earthDestroyed) {
-            const d2 = x * x + y * y;
-            if (d2 < L.earth * L.earth && bhMuAt(i, 0, 0, 0, EPHT.t) > 0) beginDisruption(i, "earth", 0, 0, 0, 0, R_EARTH, MU_E, Math.sqrt(d2), L.earth);
-        }
-        if (!WORLD.moonDestroyed) {
-            const dx = x - eph.moonX, dy = y - eph.moonY, d2 = dx * dx + dy * dy;
-            if (d2 < L.moon * L.moon && bhMuAt(i, eph.moonX, eph.moonY, 0, EPHT.t) > 0) beginDisruption(i, "moon", eph.moonX, eph.moonY, eph.moonVx, eph.moonVy, R_MOON, MU_M, Math.sqrt(d2), L.moon);
-        }
-        if (!WORLD.sunDestroyed) {
-            const dx = x - eph.sunX, dy = y - eph.sunY, d2 = dx * dx + dy * dy;
-            if (d2 < L.sun * L.sun && bhMuAt(i, eph.sunX, eph.sunY, 0, EPHT.t) > 0) beginDisruption(i, "sun", eph.sunX, eph.sunY, eph.sunVx, eph.sunVy, R_SUN, MU_S, Math.sqrt(d2), L.sun);
-        }
-        for (let p = 0; p < PL.length; p++) {
-            if (WORLD.plDestroyed[p]) continue;
-            const dx = x - eph.plX[p], dy = y - eph.plY[p], d2 = dx * dx + dy * dy;
-            if (d2 < L.pl[p] * L.pl[p] && bhMuAt(i, eph.plX[p], eph.plY[p], 0, EPHT.t) > 0) beginDisruption(i, p, eph.plX[p], eph.plY[p], eph.plVx[p], eph.plVy[p], PL[p].R, PL[p].mu, Math.sqrt(d2), L.pl[p]);
-        }
-    }
-}
-queueMicrotask(() => setLiveGuard(checkBHBodyBoundaries));
-export function bhAdvance(dtTotal, _tEnd) {
-    if (!BH.n) return;
-    while (tryMerge()) { }
-    let rem = dtTotal, guard = 0;
-    while (Math.abs(rem) > 1e-9 && guard++ < 200 && BH.n) {
-        // step: a fraction of the tightest orbital timescale in play
-        let mag = Math.min(Math.abs(rem), 21600);
-        for (let i = 0; i < BH.n; i++) {
-            const mu = BH.mu[i];
-            if (!WORLD.sunDestroyed) {
-                const dx = BH.x[i] - eph.sunX, dy = BH.y[i] - eph.sunY, d2 = dx * dx + dy * dy;
-                mag = Math.min(mag, Math.sqrt(d2 * Math.sqrt(d2) / (MU_S + mu)) / 40);
-            }
-            const r2 = BH.x[i] * BH.x[i] + BH.y[i] * BH.y[i];
-            mag = Math.min(mag, Math.sqrt(r2 * Math.sqrt(r2) / (MU_E + mu)) / 40); // infall toward Earth
-            if (!WORLD.moonDestroyed) {
-                const dx = BH.x[i] - eph.moonX, dy = BH.y[i] - eph.moonY, d2 = dx * dx + dy * dy;
-                mag = Math.min(mag, Math.sqrt(d2 * Math.sqrt(d2) / (MU_M + mu)) / 40);
-            }
-            for (let p = 0; p < PL.length; p++) {
-                if (WORLD.plDestroyed[p]) continue;
-                const dx = BH.x[i] - eph.plX[p], dy = BH.y[i] - eph.plY[p], d2 = dx * dx + dy * dy;
-                mag = Math.min(mag, Math.sqrt(d2 * Math.sqrt(d2) / (PL[p].mu + mu)) / 40);
-            }
-            for (let j = i + 1; j < BH.n; j++) {
-                const dx = BH.x[i] - BH.x[j], dy = BH.y[i] - BH.y[j], d2 = dx * dx + dy * dy;
-                mag = Math.min(mag, Math.sqrt(d2 * Math.sqrt(d2) / (mu + BH.mu[j])) / 40);
-            }
-        }
-        mag = Math.max(mag, Math.abs(rem) / (200 - guard + 1), 1e-3);
-        mag = Math.min(mag, Math.abs(rem));
-        const dt = Math.sign(rem) * mag;
-        // the ephemeris is already at the end of the interval: holes catch up
-        // through it, sampling bodies interpolated backward from now
-        // REV-3 blocks reverse across disruption or merge floors; signed RK4 is pure orbital motion here.
-        bhRk4(-rem, dt);
-        rem -= dt;
-        advanceDisruptions(dt);
-        while (tryMerge()) { }
-        checkBHBodyBoundaries();
-    }
-    for (let i = 0; i < BH.n; i++) {
-        BH.sx[i] = BH.x[i] * K; BH.sz[i] = -BH.y[i] * K;
-    }
 }
 export function placeBHAtCursor() {
     const p = cursorPlaneHit();
@@ -1322,193 +735,108 @@ export function observerTimeScaleForBH(bi, scenePos = null) {
     const eventR = Math.max(BH.rs[bi] * 1.08, BH.rs[bi] + 1e-6);
     return clamp(lapseAt(eventR, BH.rs[bi]) / lapseAt(obsR, BH.rs[bi]), .08, 2.4);
 }
-const _fragObj = new THREE.Object3D();
-const _fragCol = new THREE.Color();
-const _bodyCol = new THREE.Color();
-const _hotFragCol = new THREE.Color(1, .48, .12);
-function updateSpagVisual(d, m, dtLocal, dBH, obsRate) {
-    if (!m?.spag) return;
-    const visualWindow = Math.max(5, Math.min(22, d.duration / 10800));
-    const realAge = (performance.now() - d.bornRt) * .001;
-    d.visual = Math.max(d.visual, clamp(realAge * obsRate / visualWindow, 0, 1));
-    d.visual = clamp(d.visual + dtLocal / visualWindow, 0, 1);
-    disruptionBodyState(d);
-    const plasmaTarget = d.target === "sun" || (typeof d.target === "number" && PL[d.target]?.gas);
-    const solidTarget = !plasmaTarget;
-    const sourceRadiusU = d.radius * K;
-    const visualRadiusU = plasmaTarget
-        ? Math.max(m.rs * K * .08, Math.min(sourceRadiusU * .12, dBH * .0026))
-        : sourceRadiusU;
-    const debrisX = (d.x - BH.x[d.bh]) * K;
-    const debrisZ = -(d.y - BH.y[d.bh]) * K;
-    const len0 = Math.max(Math.hypot(debrisX, debrisZ), visualRadiusU * .5, m.rs * K * 4);
-    const cap = Math.min(
-        Math.max(visualRadiusU * (plasmaTarget ? 2.2 : 3.2), m.rs * K * 8),
-        Math.max(m.rs * K * 4.5, dBH * .025),
-    );
-    const len = Math.min(len0, cap);
-    const ux = len0 > 1e-9 ? debrisX / len0 : 1, uz = len0 > 1e-9 ? debrisZ / len0 : 0;
-    const spag = m.spag;
-    spag.group.rotation.y = Math.atan2(-uz, ux);
-    const inner = Math.max(m.rs * K * 1.12, dBH * .0008);
-    const radiusU = Math.max(visualRadiusU, m.rs * K * .018);
-    const pixelU = Math.max(dBH * .00032, m.rs * K * .012);
-    const stress = clamp((d.limit / Math.max(d.radius, 1) - 1) / 15, 0, 1);
-    const tail = Math.max(inner * 1.12, len * (.16 + d.visual * (.42 + stress * .25)));
-    const outer = Math.min(tail * .72, Math.max(len * .45, radiusU * 1.8));
-    const boundProg = smooth01(.2, .7, d.visual);
-    const splitProg = smooth01(.12, .55, d.visual);
-    const fallbackU = Math.max(inner * 1.1, (d.accretionR || d.rIsco || BH.rs[d.bh] * 3) * K);
-    const escapeTail = tail * (1 + splitProg * (1.1 + stress * .45));
-    const heatPulse = .55 + .45 * Math.sin(performance.now() * .009 + d.visual * 9);
-    const pos = spag.pos, col = spag.col;
-    const rockBase = _bodyCol.setHex(d.color);
-    const N = pos.length / 3;
-    for (let n = 0; n < N; n++) {
-        const q = n / Math.max(1, N - 1);
-        const reveal = smooth01(q * .55, .18 + q * .92, d.visual);
-        const qq = Math.pow(q, 1.18);
-        const phase = spag.phase[n] + qq * 38 - d.visual * 24 + spag.lane[n] * stress;
-        const neck = 1 - smooth01(.02, .34, q);
-        const plasmaThin = plasmaTarget ? .42 : 1;
-        const width = (radiusU * (.018 + Math.pow(q, 1.55) * .16) * plasmaThin + pixelU) * (1.05 - d.visual * .32);
-        const lane = spag.lane[n];
-        const isBound = lane < 0;
-        const splitSign = isBound ? -1 : 1;
-        const spiral = (Math.sin(phase) * (.42 + spag.jitter[n] * 1.35) + splitSign * splitProg * (.7 + q * .9)) * width * reveal;
-        const lift = Math.cos(phase * .71 + spag.jitter[n] * 2.2) * width * (.34 + neck * .18) * reveal;
-        const shear = Math.sin(phase * .31) * width * .55 * stress;
-        const streamAlong = inner + qq * (isBound ? tail : escapeTail) + shear;
-        const wrap = fallbackU + (1 - qq) * inner * .8 + Math.sin(phase * .23) * width * .45;
-        const along = isBound ? streamAlong + (wrap - streamAlong) * boundProg : streamAlong;
-        pos[n * 3] = along;
-        pos[n * 3 + 1] = lift;
-        pos[n * 3 + 2] = spiral;
-        const hot = Math.pow(1 - q, plasmaTarget ? 2.4 : 3.2) * (.45 + heatPulse * .28);
-        const boundHeat = isBound ? boundProg * (1.15 - q * .55) : 0;
-        const escapeFade = isBound ? 1 : (1 - splitProg * (.28 + q * .42));
-        col[n * 3] = (rockBase.r * (.34 + q * .5) + hot * (plasmaTarget ? 1.25 : .92) + boundHeat * .7) * escapeFade;
-        col[n * 3 + 1] = (rockBase.g * (.33 + q * .42) + hot * (plasmaTarget ? .72 : .52) + boundHeat * .82) * escapeFade;
-        col[n * 3 + 2] = (rockBase.b * (.32 + q * .38) + hot * (plasmaTarget ? .22 : .16) + boundHeat * 1.15) * escapeFade;
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+// strongest running flare on hole bi (coordinate time)
+function holeFlare(bi, t) {
+    let best = null, bestL = 0;
+    for (let k = 0; k < TDES.length; k++) {
+        const d = TDES[k];
+        if (d.bh !== bi || !d.active) continue;
+        const L = tdeLuminosityW(t - d.t0, d.tFb, d.mStarKg, d.mBhMsun);
+        if (!best || L > bestL) { best = d; bestL = L; }
     }
-    spag.attr.needsUpdate = true;
-    spag.colAttr.needsUpdate = true;
-    spag.mat.size = Math.max(.01, dBH * (plasmaTarget ? .00072 : .00042) + stress * dBH * .0002);
-    spag.mat.opacity = plasmaTarget
-        ? clamp(.18 + .52 * Math.sin(Math.PI * Math.min(.98, d.visual)) + stress * .08, 0, .72)
-        : clamp(.07 + .4 * Math.sin(Math.PI * Math.min(.98, d.visual)) + stress * .06, 0, .5);
-    let li = 0;
-    const arms = 5, segs = 112;
-    for (let a = 0; a < arms; a++) {
-        const armPhase = a / arms * Math.PI * 2 + d.visual * (5.2 + a * .13);
-        const boundArm = a < Math.ceil(arms * Math.max(.2, d.boundFrac || .5));
-        for (let s = 0; s < segs - 1; s++) {
-            for (let end = 0; end < 2; end++) {
-                const q = (s + end) / (segs - 1);
-                const qq = Math.pow(q, 1.08);
-                const ang = armPhase + qq * (13 + stress * 8) - d.visual * 16;
-                const width = (radiusU * (.012 + Math.pow(q, 1.35) * .105) * (plasmaTarget ? .38 : 1) + pixelU * .75) * (1 - d.visual * .18);
-                const streamAlong = inner + qq * (boundArm ? tail : escapeTail) * (.78 + .16 * Math.sin(a * 1.7));
-                const wrap = fallbackU + (1 - qq) * inner * .75;
-                spag.linePos[li++] = boundArm ? streamAlong + (wrap - streamAlong) * boundProg : streamAlong;
-                spag.linePos[li++] = Math.sin(ang * .67 + a) * width * .36;
-                spag.linePos[li++] = Math.cos(ang) * width + (boundArm ? -1 : 1) * splitProg * width * (.45 + q);
-            }
-        }
-    }
-    spag.lineAttr.needsUpdate = true;
-    spag.lines.material.opacity = plasmaTarget
-        ? clamp(.06 + .22 * d.visual + stress * .07, 0, .32)
-        : clamp(.018 + .1 * d.visual + stress * .05, 0, .16);
-    const remnantAlpha = plasmaTarget ? clamp(.05 + (1 - Math.pow(d.visual, 1.6)) * .14, 0, .18) : 0;
-    spag.remnant.visible = remnantAlpha > .015;
-    if (spag.remnant.visible) {
-        const wantBlend = plasmaTarget ? THREE.AdditiveBlending : THREE.NormalBlending;
-        if (spag.remnant.material.blending !== wantBlend) {
-            spag.remnant.material.blending = wantBlend;
-            spag.remnant.material.needsUpdate = true;
-        }
-        spag.remnant.position.set(outer, 0, 0);
-        const stretch = 1 + 4 * smooth01(0, .3, d.visual);
-        if (plasmaTarget) {
-            spag.remnant.scale.set(
-                Math.min(radiusU * (1.4 + d.visual * 4.6) * stretch, Math.max(radiusU * 1.25, tail * .22)),
-                Math.max(radiusU * .28, radiusU * (1 - d.visual * .35)),
-                Math.max(radiusU * .25, radiusU * (1 - d.visual * .32)),
-            );
-        } else {
-            spag.remnant.scale.set(
-                Math.min(radiusU * (1.05 + d.visual * (4.2 + stress * 4.8)) * stretch, Math.max(radiusU * 1.25, tail * .18)),
-                Math.max(radiusU * .32, radiusU * (1 - d.visual * .58)),
-                Math.max(radiusU * .3, radiusU * (1 - d.visual * .55)),
-            );
-        }
-        spag.remnant.rotation.x = Math.sin(d.visual * 5) * .18;
-        spag.remnant.rotation.z = Math.cos(d.visual * 4.2) * .12;
-        spag.remnantUniforms.uRock.value.setHex(d.color);
-        spag.remnantUniforms.uHeat.value = plasmaTarget ? 1 : clamp(d.visual * 1.4 + stress * .45, 0, 1);
-        spag.remnantUniforms.uAlpha.value = remnantAlpha;
-    }
-    const count = spag.fragments.count;
-    for (let i = 0; i < count; i++) {
-        const q = spag.fragQ[i];
-        const reveal = smooth01(q * .35, .2 + q * .85, d.visual);
-        const ang = spag.fragPhase[i] + q * (18 + stress * 10) - d.visual * (17 + spag.fragLane[i] * 4);
-        const width = (radiusU * (.028 + Math.pow(q, 1.7) * .16) * (plasmaTarget ? .36 : 1) + pixelU) * reveal;
-        const boundFrag = spag.fragLane[i] < 0;
-        const streamAlong = inner + Math.pow(q, 1.12) * (boundFrag ? tail : escapeTail) + Math.sin(ang * .27) * width * .6;
-        const wrap = fallbackU + (1 - q) * inner * .9;
-        const along = boundFrag ? streamAlong + (wrap - streamAlong) * boundProg : streamAlong;
-        const y = Math.sin(ang * .71) * width * .45;
-        const z = Math.cos(ang) * width + (boundFrag ? -1 : 1) * splitProg * width * (.6 + q);
-        const scale = Math.max(.00001, radiusU * (.006 + .012 * spag.fragSize[i]) * reveal * (1 - d.visual * .35) * (plasmaTarget ? .32 : 1));
-        _fragObj.position.set(along, y, z);
-        _fragObj.rotation.set(ang * .17, ang * .31, ang * .23);
-        _fragObj.scale.setScalar(scale);
-        _fragObj.updateMatrix();
-        spag.fragments.setMatrixAt(i, _fragObj.matrix);
-        const hot = Math.pow(1 - q, 2.2) * clamp(d.visual * 1.3, 0, 1) + (boundFrag ? boundProg * .55 : 0);
-        spag.fragments.setColorAt(i, _fragCol.setHex(d.color).lerp(_hotFragCol, hot));
-    }
-    spag.fragments.instanceMatrix.needsUpdate = true;
-    if (spag.fragments.instanceColor) spag.fragments.instanceColor.needsUpdate = true;
-    spag.fragments.material.opacity = plasmaTarget
-        ? clamp(.12 + d.visual * .38, 0, .48)
-        : clamp(.12 + d.visual * .42, 0, .54);
+    _flare.tde = best; _flare.L = bestL;
+    return _flare;
 }
-function fadeSpagVisual(m, dtR) {
-    const spag = m?.spag;
-    if (!spag) return;
-    spag.mat.opacity = Math.max(0, spag.mat.opacity - dtR * .85);
-    spag.lines.material.opacity = Math.max(0, spag.lines.material.opacity - dtR * .7);
-    spag.fragments.material.opacity = Math.max(0, spag.fragments.material.opacity - dtR * .75);
-    spag.remnantUniforms.uAlpha.value = Math.max(0, spag.remnantUniforms.uAlpha.value - dtR * .9);
-    spag.remnant.visible = spag.remnantUniforms.uAlpha.value > .01;
-    const bi = BH_META.indexOf(m);
-    if (m.jet) m.jet.material.opacity = Math.max(BH.kind[bi] === 1 ? 0.55 : 0, m.jet.material.opacity - dtR * .9);
-    if (m.tde?.active && m.tde.LnowW > 0 && m.tde.LnowW < m.tde.LEddW * 1e-4) {
-        m.tde.active = false;
-        m.tde.LnowW = 0;
+const _flare = { tde: null, L: 0 };
+const C_M_S = 299792458, SIGMA_SB = 5.670374419e-8;
+// ?tdejet=1 flags every tidal disruption as jetted (a demonstration switch;
+// only ~1% of real TDEs launch a relativistic jet, e.g. Swift J1644+57)
+const TDE_JET_ALL = typeof location !== "undefined" && new URLSearchParams(location.search).get("tdejet") === "1";
+// Peak Novikov-Thorne temperature (K) for accretion rate mdot (kg/s):
+// sigma T*^4 = 3 G M mdot / (8 pi r_in^3), T_max = 0.488 T* at 49/36 r_in.
+function diskTmaxK(muKm3, rsKm, mdotKgS) {
+    const gm = muKm3 * 1e9, rIn = 3 * rsKm * 1e3;
+    return .48805 * Math.pow(3 * gm * mdotKgS / (8 * Math.PI * SIGMA_SB * rIn * rIn * rIn), .25);
+}
+const _op = {
+    rsKm: 0, muKm3: 0, t: 0, frameDt: 0, camRelX: 0, camRelY: 0, camRelZ: 1, pxScale: 1,
+    diskOn: false, TmaxK: 0, gain: 0, routOverRin: 20, axisX: 0, axisY: 1, axisZ: 0,
+    jetOn: false, jetLenKm: 0, jetI: 0,
+};
+// The accretion state a hole shows at sim time t: a running tidal disruption
+// feeds it at the fallback rate from t_fb on (Eddington-limited for the disk's
+// temperature and brightness); a quasar accretes steadily at 0.3 L_Edd;
+// anything else is a bare shadow and photon ring.
+function updateOpticsFor(bi, m, t, dBH) {
+    const rsKm = BH.rs[bi], mu = BH.mu[bi];
+    const op = _op;
+    op.rsKm = rsKm; op.muKm3 = mu; op.t = t;
+    op.frameDt = Number.isFinite(m.lastT) ? Math.abs(t - m.lastT) : 0;
+    m.lastT = t;
+    op.camRelX = camera.position.x - m.g.position.x;
+    op.camRelY = camera.position.y - m.g.position.y;
+    op.camRelZ = camera.position.z - m.g.position.z;
+    op.pxScale = viewportSize.pxScale;
+    op.diskOn = false; op.jetOn = false; op.jetLenKm = 0;
+    op.axisX = 0; op.axisY = 1; op.axisZ = 0;
+    const LEdd = L_EDD_PER_MSUN * mu / MU_S;
+    const mdotEdd = LEdd / (TDE_ETA * C_M_S * C_M_S);
+    const fl = holeFlare(bi, t);
+    const d = fl.tde;
+    const mdot = d ? fallbackRate(t - d.t0, d.tFb, d.mStarKg) : 0;
+    if (d && mdot > 0) {
+        op.diskOn = true;
+        op.TmaxK = diskTmaxK(mu, rsKm, Math.min(mdot, mdotEdd));
+        op.gain = 1.4 * Math.pow(Math.min(1, fl.L / Math.max(1e-30, LEdd)), .35);
+        op.routOverRin = Math.max(4, 1.5 * (d.rCirc || 0) / (3 * rsKm));
+        // the disk inherits the disrupted orbit's angular momentum
+        const sp = d.debris;
+        if (sp) {
+            const hx = sp.y * sp.vz - sp.z * sp.vy, hy = sp.z * sp.vx - sp.x * sp.vz, hz = sp.x * sp.vy - sp.y * sp.vx;
+            if (Math.hypot(hx, hy, hz) > 0) { op.axisX = hx; op.axisY = hz; op.axisZ = -hy; }
+        }
+        if (d.jetted || TDE_JET_ALL) {
+            // launched once the returning debris has built the disk
+            op.jetOn = true;
+            op.jetLenKm = Math.min(2e4 * rsKm, C_LIGHT * Math.max(0, t - (d.t0 + d.tFb)));
+            op.jetI = .5 * op.gain;
+        }
+    } else if (BH.kind[bi] === 1) {
+        op.diskOn = true;
+        op.TmaxK = diskTmaxK(mu, rsKm, .3 * mdotEdd);
+        op.gain = 1.4 * Math.pow(.3, .35);
+        op.routOverRin = 20;
+        // a quasar is placed as a jetted AGN: its jet runs out at ~c from placement
+        op.jetOn = true;
+        op.jetLenKm = Math.min(2e4 * rsKm, C_LIGHT * Math.max(0, t - m.tBorn));
+        op.jetI = .45;
     }
+    updateHoleOptics(m.optics, op);
+    if (m.quasarLight) { m.quasarLight.visible = op.diskOn; m.quasarLight.position.copy(m.g.position); }
+    // the marker only while the shadow is unresolved
+    const shadowPx = SHADOW_RS * rsKm * K * viewportSize.pxScale / Math.max(1e-30, dBH);
+    const mk = 1 - smooth01(1.5, 6, shadowPx);
+    m.marker.visible = mk > .01;
+    m.marker.material.opacity = .5 * mk;
+    m.marker.scale.setScalar(dBH * .0045);
 }
 export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
     updateBHPlacementPreview(dtR);
     updateBHPlacementUI();
-    for (let bi = 0; bi < BH_META.length; bi++) {
+    for (let bi = 0; bi < BH_META.length && bi < BH.n; bi++) {
         const m = BH_META[bi];
-        m.g.position.set(earthScX + BH.sx[bi], 0, earthScZ + BH.sz[bi]);
+        if (!m) continue;
+        m.g.position.set(earthScX + BH.sx[bi], BH.sy[bi], earthScZ + BH.sz[bi]);
+        if (m.rs !== BH.rs[bi]) refreshBHSize(bi, BH.rs[bi]);
         if (m.audioObj) {
             m.audioObj.x = eph.earthX + BH.x[bi];
             m.audioObj.y = eph.earthY + BH.y[bi];
-            m.audioObj.z = 0;
+            m.audioObj.z = BH.z[bi];
         }
         const dBH = camera.position.distanceTo(m.g.position);
         const obsRate = observerTimeScaleForBH(bi, m.g.position);
         BH.obsT[bi] = obsRate;
-        const dtLocal = dtR * obsRate;
-        m.flare = Math.max(0, m.flare - dtLocal * .55);
-        const massVis = smooth01(.5, 5000, m.rs);
-        const diskVis = smooth01(50, 100000, m.rs);
         if (BH.kind[bi] === 2 && m.pulsar) {
             const p = Math.max(1e-9, BH.period[bi]);
             const spinAngle = (G.t % p) / p * Math.PI * 2;
@@ -1525,50 +853,11 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
             m.glow.material.opacity = .24 * (aliased ? shimmer : 1);
             continue;
         }
-        let lum = 0;
-        if (m.tde?.active) {
-            const LnowW = refreshTdeLuminosity(m.tde);
-            lum = clamp(LnowW / Math.max(1e-30, m.tde.LEddW), 0, 1);
-        }
-        const screenRing = dBH * (.0026 + .002 * massVis);
-        m.photon.scale.setScalar(Math.max(m.rs * K * 4.2, screenRing));
-        m.glow.scale.setScalar(Math.max(m.rs * K * 8, dBH * (.0035 + .0055 * massVis)));
-        const hot = Math.min(1, Math.max(.14, Math.pow(1000 / Math.max(1, m.rs), .34)));
-        const flare = m.flare * m.flare;
-        const tdeFlare = Math.max(flare, lum);
-        const baseDiskScale = m.rs / Math.max(1e-9, m.diskBaseRs);
-        const circScale = m.tde?.active && m.tde.rCirc > 0
-            ? clamp((m.tde.rCirc * K * .5) / Math.max(1e-9, m.diskBaseRs * K * 6.5), baseDiskScale, baseDiskScale * 8)
-            : baseDiskScale;
-        m.disk.scale.setScalar(circScale * (BH.kind[bi] === 1 ? 2.2 : 1) * (1 + lum * .38));
-        let targetOpacity = .045 + diskVis * .6 + lum * .5 + (m.tde?.active ? 0 : flare * .28);
-        if (BH.kind[bi] === 1) targetOpacity = Math.max(targetOpacity, 0.85);
-        m.disk.material.opacity = targetOpacity;
-        m.glow.material.opacity = .025 + hot * (.025 + .075 * massVis) + flare * .24 + lum * .4;
-        const hVis = Math.max(m.rs * K * 5.5, dBH * (.0015 + .0018 * massVis));
-        m.hawk.scale.setScalar(hVis);
-        m.hawk.rotation.y += dtLocal * (1.4 + hot * 4.8);
-        m.hawk.rotation.z -= dtLocal * (.35 + hot * 1.2);
-        m.hawk.material.opacity = (.018 + hot * .055) * (.35 + .65 * massVis) + flare * .08 + lum * .16;
-        m.hawk.material.size = Math.max(.0025, dBH * (.00018 + .00018 * massVis)) * (.65 + hot * .35);
-        m.hawkGlow.scale.setScalar(Math.max(m.rs * K * (4.6 + tdeFlare * 5), dBH * (.0022 + .0035 * massVis + tdeFlare * .004)));
-        m.hawkGlow.material.opacity = .015 + hot * (.018 + .052 * massVis) * (0.65 + 0.35 * Math.sin(performance.now() * .004 + bi)) + flare * .22 + lum * .4;
-        if (m.jet) {
-            const jetOp = BH.kind[bi] === 1 ? 0.55 : lum > .8 ? .3 * (lum - .8) / .2 : 0;
-            m.jet.material.opacity = jetOp;
-            const jetLen = BH.kind[bi] === 1 ? m.rs * K * 30 : Math.max(m.rs * K * 7, dBH * (.02 + .04 * lum));
-            const jetRad = Math.max(m.rs * K * .45, dBH * .0012);
-            m.jet.scale.set(jetRad, jetLen, jetRad);
-            m.jet.visible = jetOp > .001;
-        }
-        if (m.coreMask) {
-            m.coreMask.scale.setScalar(Math.max(m.rs * K * 3, dBH * (.0025 + .0045 * massVis)));
-            m.coreMask.material.opacity = 1;
-            m.coreMask.quaternion.copy(camera.quaternion);
-        }
-        const d = DISRUPT.find(x => x.bh === bi);
-        if (d) updateSpagVisual(d, m, dtLocal, dBH, obsRate);
-        else fadeSpagVisual(m, dtR);
-        m.tex.rotation -= dtLocal * (.25 + 9 / Math.sqrt(m.rs));
+        // the disk, its flare and the jet as the camera sees them: at the
+        // hole's retarded time (the HUD light curve stays in coordinate time)
+        const tSeen = retardedTimeMoving(eph.earthX + BH.x[bi], eph.earthY + BH.y[bi], BH.z[bi],
+            eph.earthVx + BH.vx[bi], eph.earthVy + BH.vy[bi], BH.vz[bi], G.t);
+        updateOpticsFor(bi, m, tSeen, dBH);
     }
+    updateTdeVisuals(earthScX, earthScZ, renderer.getPixelRatio());
 }

@@ -24,7 +24,7 @@ const {
 const { STARS, MU_E, MU_S, PC_KM, MPC_KM, DARK_ENERGY, DARK_MATTER } = await import("../src/constants.js");
 const {
     darkEnergyAccelerationKmS2, darkEnergyVisibleFractionKm,
-    darkMatterEnclosedMassSolar, darkMatterHaloAccelAtEquatorialKm, darkMatterLocalCircularSpeedKmS, darkMatterRelativeAccel,
+    darkMatterEnclosedMassSolar, darkMatterHaloAccelAtWorldKm, darkMatterLocalCircularSpeedKmS, darkMatterRelativeAccel,
 } = await import("../src/cosmology.js");
 const { STAR_DOMINANCE_MARGIN, strongestActiveStarWell } = await import("../src/universe/starDominance.js");
 const { circularVelocityVector, orbitInfoMatchesTarget } = await import("../src/autopilot.js");
@@ -313,8 +313,8 @@ hr("Cosmology fields");
     const softPoint = galToEquatorialKm(DARK_MATTER.SOFTENING_PC, 0, 0);
     const corePoint = galToEquatorialKm(DARK_MATTER.SOFTENING_PC * 1e-4, 0, 0);
     const softAccel = [0, 0, 0], coreAccel = [0, 0, 0];
-    darkMatterHaloAccelAtEquatorialKm(softPoint[0], softPoint[1], softPoint[2], softAccel);
-    darkMatterHaloAccelAtEquatorialKm(corePoint[0], corePoint[1], corePoint[2], coreAccel);
+    darkMatterHaloAccelAtWorldKm(softPoint[0], softPoint[1], softPoint[2], softAccel);
+    darkMatterHaloAccelAtWorldKm(corePoint[0], corePoint[1], corePoint[2], coreAccel);
     const softMag = Math.hypot(softAccel[0], softAccel[1], softAccel[2]);
     const coreMag = Math.hypot(coreAccel[0], coreAccel[1], coreAccel[2]);
     ok(Number.isFinite(coreMag) && coreMag <= softMag * 1.01,

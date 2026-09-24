@@ -1,8 +1,7 @@
 import { C_LIGHT, G_ACCEL_KMS2, SEC_YEAR } from "./constants.js";
 import { G } from "./state.js";
 import { targetState } from "./autopilot.js";
-import { advanceEphem } from "./ephemeris.js";
-import { bhAdvance } from "./blackholes.js";
+import { advanceBodiesOnly } from "./physics.js";
 import { REL, relResetState } from "./relState.js";
 
 export { REL, relResetState };
@@ -98,11 +97,19 @@ export function relCancel(reason, toast) {
     if (toast && reason) toast("Relativistic travel off — " + reason);
 }
 
+// Advances the cruise by up to simAdvSec of coordinate time and returns the
+// coordinate time actually covered. The world under the ship (bodies, holes,
+// clock) moves first through the shared body-only advance: its per-frame
+// step budget can deliver less than asked in a black-hole scene, and the
+// cruise then covers exactly that much, so ship, bodies and clock never
+// disagree. Arrival clears REL.active.
 export function relTravelStep(simAdvSec) {
     const p = REL.plan;
     const prev = REL.coordElapsed;
-    // reverse warp cannot rewind a cruise — see main.js cancel guard.
-    const s = Math.min(Math.max(0, prev + simAdvSec), p.T);
+    // reverse warp cannot rewind a cruise — see the world step's cancel guard.
+    const want = Math.min(Math.max(0, prev + simAdvSec), p.T) - prev;
+    const dCoord = want > 0 ? advanceBodiesOnly(want) : 0;
+    const s = Math.min(p.T, prev + dCoord);
     const sample = brachistochroneSampleInto(p, s, _relSampA);
     G.x = REL.originX + REL.dirX * sample.distKm;
     G.y = REL.originY + REL.dirY * sample.distKm;
@@ -112,12 +119,8 @@ export function relTravelStep(simAdvSec) {
     REL.beta = sample.beta; REL.gamma = sample.gamma;
     REL.boostX = REL.dirX; REL.boostY = REL.dirY; REL.boostZ = REL.dirZ;
     REL.phase = s <= p.tHalf ? "accel" : "decel";
-    const dCoord = s - prev;
     const properPrev = brachistochroneSampleInto(p, prev, _relSampB).properElapsed;
     G.tau += sample.properElapsed - properPrev;
-    advanceEphem(dCoord);
-    bhAdvance(dCoord, G.t);
-    G.t += dCoord;
     REL.coordElapsed = s;
     // float-accumulation guard - after the last step s can sit 1 ulp under T.
     if (p.T - s < 1e-6) {
@@ -126,9 +129,8 @@ export function relTravelStep(simAdvSec) {
         if (ts) { G.x = ts.x; G.y = ts.y; G.z = ts.z || 0; G.vx = ts.vx || 0; G.vy = ts.vy || 0; G.vz = ts.vz || 0; }
         REL.phase = "arrived";
         relResetState();
-        return true;
     }
-    return false;
+    return dCoord;
 }
 
 export { G_ACCEL_KMS2, SEC_YEAR };

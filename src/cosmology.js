@@ -1,5 +1,5 @@
 import { DARK_ENERGY, DARK_MATTER, MU_S, PC_KM } from "./constants.js";
-import { equatorialKmToGal, galacticToEquatorial, R0_PC, Z_SUN_PC } from "./universe/coords.js";
+import { worldKmToGal, galacticToWorld, R0_PC, Z_SUN_PC } from "./universe/coords.js";
 import { smooth01 } from "./format.js";
 
 const _haloA = [0, 0, 0];
@@ -153,8 +153,8 @@ export function darkMatterVisibleFractionPc(deltaPc) {
 // disk, inside the Local Group) — collapses the ship-Earth differential back
 // toward zero in exactly the regime that was diverging, while leaving it
 // active for a point genuinely beyond the Local Group.
-export function darkMatterHaloAccelAtEquatorialKm(x, y, z, out = [0, 0, 0]) {
-    const [gx, gy, gz] = equatorialKmToGal(x, y, z);
+export function darkMatterHaloAccelAtWorldKm(x, y, z, out = [0, 0, 0]) {
+    const [gx, gy, gz] = worldKmToGal(x, y, z);
     const rPc = Math.hypot(gx, gy, gz);
     if (rPc <= 1e-9) {
         out[0] = 0; out[1] = 0; out[2] = 0;
@@ -169,14 +169,14 @@ export function darkMatterHaloAccelAtEquatorialKm(x, y, z, out = [0, 0, 0]) {
     const agx = -gx * inv * a;
     const agy = -gy * inv * a;
     const agz = -gz * inv * a;
-    const eq = galacticToEquatorial([-agx, agy, agz]);
+    const eq = galacticToWorld([-agx, agy, agz]);
     out[0] = eq[0]; out[1] = eq[1]; out[2] = eq[2];
     return out;
 }
 
 export function darkMatterRelativeAccel(x, y, z, originX = 0, originY = 0, originZ = 0, out = [0, 0, 0]) {
-    darkMatterHaloAccelAtEquatorialKm(originX + x, originY + y, originZ + z, _haloA);
-    darkMatterHaloAccelAtEquatorialKm(originX, originY, originZ, _haloO);
+    darkMatterHaloAccelAtWorldKm(originX + x, originY + y, originZ + z, _haloA);
+    darkMatterHaloAccelAtWorldKm(originX, originY, originZ, _haloO);
     out[0] = _haloA[0] - _haloO[0];
     out[1] = _haloA[1] - _haloO[1];
     out[2] = _haloA[2] - _haloO[2];

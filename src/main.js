@@ -1,18 +1,21 @@
 import * as THREE from "three";
 import {
-    R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
+    R_EARTH, R_MOON, A_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS, PC_KM,
-    OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM,
+    OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM, MPC_KM, C_LIGHT, SEC_YEAR,
 } from "./constants.js";
-import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
-import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
-import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
+import {
+    G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents, setSimTime,
+} from "./state.js";
+import { eph, moonState, planetVel, sunVel, resetEphem } from "./ephemeris.js";
+import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero, followMovingStars } from "./physics.js";
+import { stepWorld, WORLD_STEP } from "./worldStep.js";
 import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.js";
 import { loadAllMaps, dotTexture } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
     renderQuality, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
-    farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll,
+    farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
     buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
@@ -20,11 +23,11 @@ import {
     moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
 import { MOONS, moonOffset, moonFocusValue, moonFocusIndex, MOON_LABEL_DIST } from "./moons.js";
-import { addStarVisual, buildStars, updateStars, starVisualAlpha } from "./stars.js";
+import { addStarVisual, buildStars, updateStars, starVisualAlpha, syncActiveProceduralPoints } from "./stars.js";
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff, targetState } from "./autopilot.js";
-import { REL, relTravelStep, relCancel } from "./relTravel.js";
+import { REL, relCancel } from "./relTravel.js";
 import {
     shipG, craft, dot, flame, plasma, updateHeadingArrow,
     EXN, exPos, exVel, exLife, exMax, exCol, exPosAttr, exColAttr, exMat, exhaust, spawnExhaust,
@@ -38,8 +41,20 @@ import {
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
-import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState } from "./cosmic.js";
-import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance, isBHPlacementMode } from "./blackholes.js";
+import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt, andromedaOffsetMpc } from "./cosmic.js";
+import { initGalaxyPopulation, updateGalaxyPopulation, galaxyPopulationStatus, galaxySharedUniforms, mergerParticipants } from "./render/galaxyPopulationRender.js";
+import { initMergerTides, startMergerTides, updateMergerTides, mergerKeepAt, mergerTidesStatus } from "./render/mergerTidesRender.js";
+import { MW_LIGHT, MW_DISK_OF_TOTAL, TIDES, keepAtRadius } from "./universe/mergerTides.js";
+import { stellarExposure } from "./render/stellarAppearance.js";
+import { galacticCenterScene } from "./universe/starfield.js";
+import { evolutionAt } from "./universe/galaxyEvolution.js";
+import { cosmicTimeGyr } from "./universe/cosmicExpansion.js";
+import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit } from "./render/galaxyVolume.js";
+import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
+import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
+import { starViewUniforms } from "./render/starPointMaterial.js";
+import { eraModulation } from "./universe/cosmicEra.js";
+import { initBHHooks, updateBHVisuals, addBlackHole, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
@@ -57,7 +72,7 @@ import { initScenarios } from "./scenarios.js";
 import { initHints, hintTick } from "./hints.js";
 import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
 import {
-    ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId,
+    ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId, activeNeighbourhood,
     refreshActiveStars, getFocusedSystem, getCachedFocusedSystem,
 } from "./universe/activeStars.js";
 import { initSystemRender, updateSystemRender, planetScenePosition, moonScenePosition } from "./render/systemBodies.js";
@@ -67,9 +82,9 @@ import { moonWorldState, planetFocusIndex, planetMoonFocusIndex, planetWorldStat
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
-import { equatorialKmToGal, setSunGalAnchor } from "./universe/coords.js";
-import { solarGalacticStateAt } from "./universe/solarOrbit.js";
+import { worldKmToGal, worldKmToGalInto } from "./universe/coords.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
+import { setObserver } from "./universe/observerTime.js";
 import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
 import { getSeed } from "./universe/galaxy.js";
 import { createCometTailPair, createMinorBodyRenderers, updateCometTail } from "./render/minorBodiesRender.js";
@@ -81,12 +96,21 @@ import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
 import { initExplorerUI, moveExplorerCamera, updateExplorerUI } from "./explorerUI.js";
 import { initUiMode, setXrPresenting } from "./uiMode.js";
-import { cancelTimeJump, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
+import { cancelTimeJump, noteFrameDelivery, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
 import { initTimeDock, renderTimeDock, sampleTimeDock } from "./timeDock.js";
 import { classifyContact } from "./universe/contactMath.js";
 import { initEvents, noteEvent, updateEvents } from "./events.js";
 
 // ============================ WIRING ============================
+// Milky Way stellar-disk diameter (~30 kpc) in scene units: sets the
+// volume -> galaxy-population handoff by angular size.
+const MW_DIAMETER_SCENE = 30000 * PC_KM * K;
+const MAX_POINT_PX = (() => { try { const gl = renderer.getContext(); return gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64; } catch { return 64; } })();
+const m31Mpc = [0, 0, 0];
+const _mwEvo = {};
+const GYR_S = 1e9 * SEC_YEAR;
+const _camGalPc = [0, 0, 0];
+let tidesPhot = null;
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
 const query = new URLSearchParams(location.search);
 const bloomParam = query.get("bloom");
@@ -111,6 +135,14 @@ let updateLensingImpl = null;
 let lensingReady = null;
 const lensPrecheckV = new THREE.Vector3();
 function perfStart() { return PERF.enabled ? performance.now() : 0; }
+// Merger keep factor of the Milky Way disk at the camera's galactocentric
+// radius (the procedural resolved stars thin out as the debris takes over).
+function localDiskKeep(xKm, yKm, zKm) {
+    const tk = mergerKeepAt(G.t / GYR_S, G.t / GYR_S);
+    if (!tk) return 1 - Math.max(0, Math.min(1, mergerDisruptFractionAt(G.t) || 0));
+    worldKmToGalInto(xKm, yKm, zKm, _camGalPc);
+    return keepAtRadius(tk.mwBins, TIDES.mwBinEdgesKpc, Math.hypot(_camGalPc[0], _camGalPc[1]) / 1000);
+}
 function perfEnd(name, start, detail = null) {
     if (PERF.enabled) markPerf(name, performance.now() - start, detail);
 }
@@ -136,7 +168,7 @@ function lensCandidateCouldBeVisible(wx, wy, wz, rsU, camera) {
 }
 function lensingCouldBeVisible(camera) {
     for (let i = 0; i < BH.n; i++) {
-        if (lensCandidateCouldBeVisible((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera)) return true;
+        if (lensCandidateCouldBeVisible((eph.earthX + BH.x[i]) * K, BH.z[i] * K, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera)) return true;
     }
     for (const s of ACTIVE_STARS) {
         if (s.bh && lensCandidateCouldBeVisible(s.x * K, (s.z || 0) * K, -s.y * K, s.rs * K, camera)) return true;
@@ -215,12 +247,13 @@ function restart() {
 initPhysicsHooks({ die, award, banner: showBanner, hideBanner });
 initBHHooks({
     toast, predict: computePrediction,
+    // swallowed whole (no flare): `mode` carries the physical reason
     cataclysm(target, rs, mode, bi = -1) {
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), true, false);
         award("bh");
         if (bi >= 0) focusBlackHole(bi);
         if (name) {
-            const label = name + " absorbed by black hole · r_s now " + fmtKm(rs);
+            const label = name + " " + mode + " · r_s now " + fmtKm(rs);
             toast(label);
             noteEvent(label);
         }
@@ -383,6 +416,23 @@ const cosmicInitT0 = perfStart();
 // entire cosmic layer (catalog/procedural galaxy clouds, Local Group) and
 // the whole tier-1 streaming field into the far tier for free.
 initCosmicLayer(farTierGroup);
+addBackgroundHook(renderGalaxyVolume);
+// Real stars (HYG catalog + curated destinations) at every camera distance,
+// one shared photometry with tier 1, the Sun and the active stars.
+initCatalogStars(scene);
+// Procedural resolved stars (the model Galaxy's individual stars the catalogs
+// don't hold), partitioned with the volumetric light by one resolve limit.
+initResolvedField(scene, { seed: getSeed(), mobile: renderQuality.mobile });
+window.__fieldStatus = resolvedFieldStatus; // debug/testing handle
+// Every other galaxy (Local Group, Local Volume, 2MRS, the statistical
+// universe beyond) and the Milky Way once it is small: one population, one
+// shader (render/galaxyPopulationRender.js). Built in a worker at startup.
+initGalaxyPopulation(farTierGroup);
+window.__galaxyStatus = galaxyPopulationStatus; // debug/testing handle
+// Tidal debris of the Milky Way - Andromeda merger (restricted N-body in a
+// worker, started once the Local Group photometry is known).
+initMergerTides(farTierGroup, galaxySharedUniforms());
+window.__tidesStatus = mergerTidesStatus; // debug/testing handle
 perfEnd("startup.initCosmicLayer", cosmicInitT0);
 // Tier-1 AT-HYG streaming star layer (WP9/WP10): fetches its manifest and
 // streams tiles over ~25 minutes, so it's fired without an `await` to avoid
@@ -605,11 +655,10 @@ const _focusOrigin = new THREE.Vector3(), _focusPos = new THREE.Vector3();
 const _bhFocusPos = new THREE.Vector3(), _bhLabelPos = new THREE.Vector3();
 const _starFocusPos = new THREE.Vector3(), _starLabelPos = new THREE.Vector3();
 const _moonOff = { x: 0, y: 0 };
-const _sunOrbitState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 const bhFocusValue = i => "bh:" + i;
 const starFocusValue = i => "star:" + i;
 function bhScenePos(i, out = _bhFocusPos) {
-    return out.set((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K);
+    return out.set((eph.earthX + BH.x[i]) * K, BH.z[i] * K, -(eph.earthY + BH.y[i]) * K);
 }
 function starScenePos(i, out = _starFocusPos) {
     return out.set(STARS[i].x * K, (STARS[i].z || 0) * K, -STARS[i].y * K);
@@ -1239,6 +1288,7 @@ function updateFocusVelocityVector(alpha = 1) {
 // ============================ MAIN LOOP ============================
 const clock = new THREE.Clock();
 const earthV = new THREE.Vector3(), moonV = new THREE.Vector3(), velV = new THREE.Vector3(), upV = new THREE.Vector3(0, 1, 0), dirV = new THREE.Vector3();
+const _moonRingN = new THREE.Vector3();
 const moonBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
     map: dotTexture("rgba(220,230,245,1)", "rgba(150,170,200,0)"),
     color: 0xaeb9c8, transparent: true, opacity: .5, depthWrite: false,
@@ -1304,12 +1354,27 @@ function advanceMinorSwarm(swarm, group, cursor, chunk, res) {
     uploadMinorResiduals(group, res.start, res.count);
     return res.nextIdx;
 }
+// Minor-body swarms are representative structure guides (fixed-pixel points,
+// not photometric bodies): each fades in as the camera clears its region and
+// fades out as the whole structure shrinks below ~12-40 px, instead of
+// switching at fixed distances and piling up into a bright additive blob.
+const MINOR_GUIDE_RADIUS_AU = { belt: 2.8, kuiper: 42, curated: 30, oort: 8000 };
+function setMinorSwarm(key, fade) {
+    const r = minorRenderers[key];
+    r.mesh.visible = fade > .01;
+    r.mesh.material.uniforms.uFade.value = fade;
+}
 function setMinorVisible(solarDistAu) {
-    const nearSystem = !WORLD.sunDestroyed && solarDistAu >= 0.35 && solarDistAu <= 1600;
-    minorRenderers.belt.mesh.visible = nearSystem;
-    minorRenderers.kuiper.mesh.visible = nearSystem && solarDistAu >= 5;
-    minorRenderers.curated.mesh.visible = nearSystem;
-    minorRenderers.oort.mesh.visible = !WORLD.sunDestroyed && solarDistAu >= 500 && cam.dist < LY_SCENE * .2;
+    if (WORLD.sunDestroyed) {
+        for (const key of ["belt", "kuiper", "curated", "oort"]) minorRenderers[key].mesh.visible = false;
+        return;
+    }
+    const pxPerAu = AU_KM * K * viewportSize.pxScale / Math.max(1e-9, camera.position.distanceTo(sunPos));
+    const shrink = key => smooth01(12, 40, MINOR_GUIDE_RADIUS_AU[key] * pxPerAu);
+    setMinorSwarm("belt", smooth01(.25, .45, solarDistAu) * shrink("belt"));
+    setMinorSwarm("kuiper", smooth01(3.5, 6, solarDistAu) * shrink("kuiper"));
+    setMinorSwarm("curated", smooth01(.25, .45, solarDistAu) * shrink("curated"));
+    setMinorSwarm("oort", smooth01(350, 650, solarDistAu) * shrink("oort"));
 }
 const cosmoDEVec = [0, 0, 0];
 const cosmoDMVec = [0, 0, 0];
@@ -1359,8 +1424,8 @@ function updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cd, alpha = 1)
             cosmoDMAcc[2] * DARK_MATTER.ARROW_SECONDS,
             cosmoDMVec,
         );
-        const [gx, gy, gz] = equatorialKmToGal(eph.earthX + G.x, eph.earthY + G.y, G.z);
-        const [ex, ey, ez] = equatorialKmToGal(eph.earthX, eph.earthY, 0);
+        const [gx, gy, gz] = worldKmToGal(eph.earthX + G.x, eph.earthY + G.y, G.z);
+        const [ex, ey, ez] = worldKmToGal(eph.earthX, eph.earthY, 0);
         const fade = darkMatterVisibleFractionPc(Math.hypot(gx - ex, gy - ey, gz - ez));
         if (fade > .01 && setLineVector(haloArrPos, haloArrAttr, oriX, oriY, oriZ, cosmoDMVec[0], cosmoDMVec[1], cosmoDMVec[2], lenScale, maxLen)) {
             haloArrow.material.opacity = Math.min(.9, .16 + .7 * fade) * alpha;
@@ -1625,34 +1690,15 @@ function frame() {
     setExternalTimeDriver(cinematic.isPlaying() || REL.active);
     const jumpFrame = tickJump(rawDtR, dtR, aMag > 0);
     const frameSimAdvance = jumpFrame ? jumpFrame.advanceSec : dtR * G.warp;
+    // one world step for every mode (flight, landed, dead, relativistic):
+    // Sun evolution + engulfment, reverse guards, budgeted integration, and
+    // the delivered time the jump runtime and Time Dock report
     if (!G.paused) {
-        if (REL.active) {
-            advanced = frameSimAdvance;
-            if (G.warp < 0) relCancel("reverse warp", toast);
-            if (REL.active) {
-                relTravelStep(advanced);
-                activeStarsFresh = false;
-            } else {
-                advanced = advance(advanced, atx, aty, atz, aMag);
-                activeStarsFresh = true;
-            }
-        } else if (G.dead) {
-            advanced = frameSimAdvance;
-            advanceEphem(advanced);
-            bhAdvance(advanced, G.t);
-            G.t += advanced;
-        } else if (G.landed) {
-            advanced = frameSimAdvance;
-            advanceEphem(advanced);
-            bhAdvance(advanced, G.t);
-            G.t += advanced;
-        } else {
-            advanced = advance(frameSimAdvance, atx, aty, atz, aMag);
-            activeStarsFresh = true;
-        }
-    }
+        advanced = stepWorld(frameSimAdvance, atx, aty, atz, aMag, toast);
+        activeStarsFresh = WORLD_STEP.activeStarsFresh;
+    } else noteFrameDelivery(0, 0);
     const jumpSettlement = jumpFrame ? settleTimeJump(jumpFrame, advanced, aMag > 0) : null;
-    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) G.t = jumpSettlement.syncTimeSec;
+    if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) setSimTime(jumpSettlement.syncTimeSec);
     snapLanded();
     const oi = orbitInfo();
     perfEnd("frame.physics", physicsT0, PERF.enabled ? { advanced, warp: G.warp, dtR, rawDtR, dtRCap } : null);
@@ -1697,8 +1743,17 @@ function frame() {
     if (nearFieldDue) {
         earthG.position.copy(earthV);
         moonOrbitRing.position.copy(earthV);
+        // Orient the (illustrative, fixed-shape) lunar ring in the Moon's live
+        // osculating plane: normal = r x v, scene axis map (x, z, -y).
+        {
+            const hx = eph.moonY * eph.moonVz - eph.moonZ * eph.moonVy;
+            const hy = eph.moonZ * eph.moonVx - eph.moonX * eph.moonVz;
+            const hz = eph.moonX * eph.moonVy - eph.moonY * eph.moonVx;
+            const hl = Math.hypot(hx, hy, hz);
+            if (hl > 0) moonOrbitRing.quaternion.setFromUnitVectors(upV, _moonRingN.set(hx / hl, hz / hl, -hy / hl));
+        }
         moonState(G.t, _m);
-        moonV.set((eph.earthX + _m.mx) * K, 0, -(eph.earthY + _m.my) * K);
+        moonV.set((eph.earthX + _m.mx) * K, (eph.moonZ || 0) * K, -(eph.earthY + _m.my) * K);
         moon.position.copy(moonV);
         moon.rotation.y = _m.ang + Math.PI * .5;
         moonSoiRing.position.copy(moonV);
@@ -1715,20 +1770,23 @@ function frame() {
         clouds.visible = true;
         if (earthAtmo) earthAtmo.visible = true;
     }
-    moonOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.moonDestroyed && !cosmicView;
+    const moonGuide = smooth01(6, 24, A_MOON * K * viewportSize.pxScale / Math.max(1e-9, camera.position.distanceTo(earthG.position)));
+    moonOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.moonDestroyed && moonGuide > .01;
+    moonOrbitRing.material.opacity = .55 * moonGuide;
     const moonVisible = !WORLD.moonDestroyed && !cosmicView;
     if (!moonVisible) moon.visible = false;
     else if (!detailShed) moon.visible = true;
     // sun & planets follow the live ephemeris (cache refreshed by orbitInfo above)
     if (nearFieldDue) {
-        sunPos.set((eph.earthX + eph.sunX) * K, 0, -(eph.earthY + eph.sunY) * K);
+        sunPos.set((eph.earthX + eph.sunX) * K, (eph.sunZ || 0) * K, -(eph.earthY + eph.sunY) * K);
         sunCore.position.copy(sunPos);
         sunGlow.position.copy(sunPos);
         sunLight.position.copy(sunPos);
         sunCorona.position.copy(sunPos);
     }
     const sunVisible = !WORLD.sunDestroyed && !cosmicView;
-    sunGlow.visible = sunVisible;
+    // The unresolved Sun is a star point at every scale (bodies.js updateSunView).
+    sunGlow.visible = !WORLD.sunDestroyed;
     sunLight.visible = sunVisible;
     if (!sunVisible) {
         sunCore.visible = false;
@@ -1747,10 +1805,11 @@ function frame() {
     if (nearFieldDue) {
         for (let i = 0; i < PL.length; i++) {
             const px = (eph.earthX + eph.plX[i]) * K, pz = -(eph.earthY + eph.plY[i]) * K;
-            plGroups[i].position.set(px, 0, pz);
+            const py = (eph.plZ[i] || 0) * K; // real inclined orbits (ecliptic J2000 z)
+            plGroups[i].position.set(px, py, pz);
             flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
             if (nearVisualDue) {
-                plGlows[i].position.set(px, 0, pz);
+                plGlows[i].position.set(px, py, pz);
                 plOrbitRings[i].position.copy(sunPos);
                 plGroups[i].rotation.z = PL[i].visualTilt || 0;
                 plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
@@ -1769,9 +1828,10 @@ function frame() {
             moonOffset(m, G.t, _moonOff);
             const mx = (eph.earthX + eph.plX[m.p] + _moonOff.x) * K;
             const mz = -(eph.earthY + eph.plY[m.p] + _moonOff.y) * K;
-            moonGroups[i].position.set(mx, 0, mz);
+            const my = (eph.plZ[m.p] || 0) * K;
+            moonGroups[i].position.set(mx, my, mz);
             if (nearVisualDue) {
-                moonGlows[i].position.set(mx, 0, mz);
+                moonGlows[i].position.set(mx, my, mz);
                 const dCam = camera.position.distanceTo(moonGroups[i].position);
                 // hold the beacon at a near-constant on-screen size so even tiny
                 // moons (Phobos, Mimas) stay visible as dots; the true sphere
@@ -1798,10 +1858,16 @@ function frame() {
     if (nearVisualDue) nearVisualReady = true;
     perfEnd("scene.bodies", sceneBodiesT0, PERF.enabled ? { nearFieldDue, nearVisualDue, cosmicView } : null);
     const sceneFocusT0 = perfStart();
+    const sunCamDist = Math.max(1e-9, camera.position.distanceTo(sunPos));
     for (let i = 0; i < PL.length; i++) {
         plGroups[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
-        plGlows[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
-        plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed && !cosmicView;
+        // Orbit rings and planet markers are guides: they fade out as the
+        // orbit shrinks below ~6-24 px instead of stacking over the Sun.
+        const guide = smooth01(6, 24, PL[i].a * K * viewportSize.pxScale / sunCamDist);
+        plGlows[i].visible = !WORLD.plDestroyed[i] && guide > .01;
+        plGlows[i].userData.guideFade = guide;
+        plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed && guide > .01;
+        plOrbitRings[i].material.opacity = .5 * guide;
     }
     const focusMoon = moonFocusIndex(G.focus);
     for (let i = 0; i < MOONS.length; i++) {
@@ -1817,17 +1883,14 @@ function frame() {
     if (focusNeb >= NEBULAE.length) setFocus("ship");
     const focusStar = starFocusIndex(G.focus);
     if (focusStar >= STARS.length) setFocus("ship");
-    // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time
-    // rather than sitting fixed at SUN_GAL forever — update the anchor every
-    // frame (cheap closed-form epicyclic math, zero-alloc via the reused
-    // scratch object) ahead of the active-star refresh below, which converts
-    // through this same anchor via equatorialKmToGal.
-    solarGalacticStateAt(G.t, _sunOrbitState);
-    setSunGalAnchor(_sunOrbitState.x, _sunOrbitState.y, _sunOrbitState.z);
+    // WP23-EXTENSION: the Sun rides its own galactic orbit under deep time —
+    // bring the galactic anchor and Sgr A* to G.t every frame (a ship bound to
+    // a moving star rides along; physics.followMovingStars).
+    followMovingStars(false);
     if (activeStarsDue) {
         if (proceduralFocusId(G.focus) && !activeStarForFocus(G.focus)) setFocus("ship");
         if (hygCatalogFocusId(G.focus) && hygCatalogStats().loaded && !activeStarForFocus(G.focus)) setFocus("ship");
-        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t);
+        if (!activeStarsFresh) refreshActiveStars(eph.earthX + G.x, eph.earthY + G.y, G.z, G.focus, G.t, advanced);
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
@@ -1926,6 +1989,7 @@ function frame() {
         tier1CamDirWorld.x = tier1CamDirScene.x;
         tier1CamDirWorld.y = -tier1CamDirScene.z;
         tier1CamDirWorld.z = tier1CamDirScene.y;
+        setObserver(camWorldKmX, camWorldKmY, camWorldKmZ, G.t);
         updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, tier1CamDirWorld, G.t);
         if (minorRenderers.oort.mesh.visible && (nearFieldDue || !minorRenderers.oort.geometry.drawRange.count)) {
             minorSunWorld[0] = eph.earthX + eph.sunX;
@@ -1939,11 +2003,29 @@ function frame() {
         // outshines the galactic core, and the disk cloud already carries the
         // statistical field there. Fully gone by ~15 kly (see cosmic.js catalog
         // fade, which shares this band).
-        setTier1Fade(1 - smooth01(LY_SCENE * 1500, LY_SCENE * 15000, cam.dist));
+        // Catalog stars stay at every scale: the resolve limit below hides
+        // the ones that belong to the diffuse light, and the procedural field
+        // leaves every star the catalogs hold to them.
+        setTier1Fade(1);
+        setCatalogStarsFade(1);
+        updateCatalogStars();
+        starViewUniforms.uPxScale.value = viewportSize.pxScale;
+        const fieldEra = eraModulation(G.t);
+        const t1s = tier1Stats();
+        updateResolvedField({
+            camWorldKm: [camWorldKmX, camWorldKmY, camWorldKmZ], tSec: G.t,
+            sfr: fieldEra ? fieldEra.blueFrac : 1, keep: localDiskKeep(camWorldKmX, camWorldKmY, camWorldKmZ),
+            active: activeNeighbourhood(), catalogMagLimit: t1s.initialized && t1s.tilesLoaded > 0 ? 11 : 8,
+        });
+        const resolveLimit = resolvedFieldMagLimit();
+        starViewUniforms.uResolveLimit.value = resolveLimit;
+        setGalaxyVolumeMagLimit(resolveLimit);
+        syncActiveProceduralPoints();
         if (tier1RebaseEnabled) {
             const rebaseThresholdKm = Math.max(1e6, (cam.dist / K) * .5);
             if (maybeRebase(camWorldKmX, camWorldKmY, camWorldKmZ, rebaseThresholdKm)) {
                 refreshTier1Residuals();
+                refreshCatalogResiduals();
                 uploadMinorResiduals(minorRenderers.oort, 0, minorRenderers.oort.capacity);
             }
         }
@@ -1990,7 +2072,8 @@ function frame() {
     }
     perfEnd("scene.nearPlane", nearPlaneT0, PERF.enabled ? { starChecks: nearPlaneStarChecks, clearU, near: camera.near } : null);
     if (sky) { sky.position.copy(camera.position); sky.visible = !cosmicView; }
-    if (skyStars) { skyStars.position.copy(camera.position); skyStars.visible = !cosmicView; }
+    // Constellation guides fade with distance from the Sun (updateSunView).
+    if (skyStars) { skyStars.position.copy(camera.position); skyStars.visible = true; }
     if (galaxyBackdrop) { galaxyBackdrop.position.copy(camera.position); galaxyBackdrop.visible = !cosmicView && (!renderQuality.mobile || galaxyBackdropForced); }
     perfEnd("scene.update", sceneT0, PERF.enabled ? {
         cosmicLod,
@@ -1999,7 +2082,59 @@ function frame() {
         activeStarsDue,
     } : null);
     const cosmicT0 = perfStart();
+    // Unresolved Milky Way light: one volumetric integral from the camera's
+    // true galactic position (render/galaxyVolume.js) while the Galaxy is
+    // resolved; once it spans fewer than ~40 px its entry in the galaxy
+    // population takes over (same luminosity, cross-faded by angular size).
+    const gcScene = galacticCenterScene();
+    const mwDistScene = Math.hypot(camera.position.x - gcScene[0], camera.position.y - gcScene[1], camera.position.z - gcScene[2]);
+    const mwSprite = 1 - smooth01(16, 40, MW_DIAMETER_SCENE * viewportSize.pxScale / Math.max(mwDistScene, 1));
+    const mergeFrac = mergerDisruptFractionAt(G.t);
+    // Deep-time fading: the Galaxy's old light follows the passive evolution
+    // of its stellar population (galaxyEvolution.js), its young light the
+    // star formation of cosmicEra.js; its sprite and Andromeda's use the same.
+    const era = eraModulation(G.t);
+    const mwEvo = evolutionAt(4, cosmicTimeGyr(G.t), _mwEvo);
+    const mwLum = 0.04 * era.blueFrac + 0.96 * mwEvo.passive;
+    // Observer time: the Galaxy and Andromeda as they were when the light now
+    // arriving left them (M31 on its trajectory at its retarded time).
+    const tMwRet = G.t - mwDistScene / K / C_LIGHT;
+    andromedaOffsetMpc(G.t, m31Mpc);
+    let tM31Ret = G.t;
+    {
+        const k = MPC_KM * K;
+        const dx = gcScene[0] + m31Mpc[0] * k - camera.position.x, dy = gcScene[1] + m31Mpc[2] * k - camera.position.y, dz = gcScene[2] - m31Mpc[1] * k - camera.position.z;
+        tM31Ret = G.t - Math.hypot(dx, dy, dz) / K / C_LIGHT;
+        andromedaOffsetMpc(tM31Ret, m31Mpc);
+    }
+    // Merger: the disk light the tide has pulled into debris
+    // (mergerTides.js) leaves the smooth models; until the simulation has
+    // run, a uniform ramp stands in.
+    const tides = mergerKeepAt(tMwRet / GYR_S, tM31Ret / GYR_S);
+    updateGalaxyVolume(camera, G.t, era, tides ? tides.mwBins : mergeFrac, 1 - mwSprite, mwEvo.passive);
     updateCosmicLayer();
+    const mwSpriteDisk = MW_LIGHT.halo + MW_DISK_OF_TOTAL;
+    updateGalaxyPopulation(camera, {
+        tSim: G.t, gcScene, exposure: stellarExposure.value, pxScale: viewportSize.pxScale, viewport: [viewportSize.w, viewportSize.h],
+        dpr: renderer.getPixelRatio(), maxPointPx: MAX_POINT_PX,
+        mwKeep: mwSprite, mergeMorph: mergeFrac, m31Mpc, mwLum,
+        mwDiskKeep: tides ? (MW_LIGHT.halo + MW_DISK_OF_TOTAL * tides.mwTotal) / mwSpriteDisk : 1 - mergeFrac,
+        m31DiskKeep: tides ? tides.m31 : 1 - mergeFrac,
+    });
+    if (!tidesPhot) {
+        const mp = mergerParticipants();
+        if (mp) tidesPhot = {
+            m31HKpc: mp.m31.hKpc,
+            mwL: Math.pow(10, -0.4 * (mp.mw.MV - 4.83)) * MW_DISK_OF_TOTAL, mwBV: mp.mw.bv,
+            m31L: Math.pow(10, -0.4 * (mp.m31.MV - 4.83)) * (1 - mp.m31.bulge), m31BV: mp.m31.bv,
+        };
+    }
+    // the debris only exists from ~3.5 Gyr on: simulate it (~2 s in a
+    // worker) once the clock heads that way
+    if (tidesPhot && G.t > GYR_S) startMergerTides({ m31HKpc: tidesPhot.m31HKpc });
+    updateMergerTides(camera, { tMwGyr: tMwRet / GYR_S, tM31Gyr: tM31Ret / GYR_S, gcScene, lum: mwLum, red: mergeFrac, phot: tidesPhot });
+    // The Sun's point and evolving photosphere: every view, not only near it.
+    updateSunView(camera, camera.position.distanceTo(sunPos) / K / PC_KM);
     perfEnd("cosmic.update", cosmicT0, PERF.enabled ? { cosmicView, dist: cam.dist } : null);
     if (cosmicView) {
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
@@ -2044,9 +2179,6 @@ function frame() {
     const starsT0 = perfStart();
     updateStars(camera, dtR);
     perfEnd("stars.update", starsT0, PERF.enabled ? { entries: STARS.length, activeStars: ACTIVE_STARS.length } : null);
-    // WP16 owns the Sun's view-aware brightness model; this call site is the
-    // frozen handoff (see bodies.js:updateSunView) so WP17 never edits bodies.js.
-    updateSunView(camera, camera.position.distanceTo(sunPos) / K / PC_KM);
     // ---- craft pose & adaptive size ----
     craft.quaternion.setFromUnitVectors(upV, dirV);
     const cd = camera.position.distanceTo(shipG.position);

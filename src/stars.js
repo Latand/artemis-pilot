@@ -1,19 +1,27 @@
 import * as THREE from "three";
-import { STARS, K, LY_SCENE, PC_KM } from "./constants.js";
+import { STARS, K, LY_SCENE } from "./constants.js";
 import { CURATED_PHOTOMETRY } from "./render/curatedPhotometry.js";
 import { photosphereMaterial } from "./render/planetAppearance.js";
-import { stellarExposure, linearStarColor, meteredSkyExposure, stellarPointMarker, stellarPointAppearance } from "./render/stellarAppearance.js";
-import { observedMag, apparentMagAt, absMagFromApparent, hdrIntensityForMag, sizePxForMag, teffToRGB, bvToTeff } from "./render/viewBrightness.js";
+import { stellarExposure, linearStarColor, meteredSkyExposure } from "./render/stellarAppearance.js";
+import { teffToRGB, bvToTeff, absMagVFromL } from "./render/viewBrightness.js";
+import { makeStarPointMaterial, starPointAlpha } from "./render/starPointMaterial.js";
+import { curatedAbsMagV, holdCatalogRow } from "./render/catalogStars.js";
 import { dotTexture } from "./textures.js";
 import { renderQuality, scene, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
-import { ACTIVE_STARS } from "./universe/activeStars.js";
+import { ACTIVE_STARS, activeStarsTime } from "./universe/activeStars.js";
 import { applyTerrellToMaterial } from "./relView.js";
 
-// Physical renderings for the named stellar destinations. Until now a star
-// was only a point in the cosmic layer: flying 4 ly to Proxima showed a dot.
-// Each star gets a photosphere mesh + fresnel shell + distance-scaled glow;
-// SGR A* gets an event horizon, an accretion disk, and polar jets.
+// Physical renderings for the named stellar destinations and the active stars
+// around the ship: each star gets a photosphere mesh that appears as its disk
+// resolves; SGR A* gets an event horizon, an accretion disk, and polar jets.
+// The unresolved point of a curated star is its row in the curated point
+// layer (render/catalogStars.js). Every procedural star of the active
+// neighbourhood (galaxy.js's local tier, the ball the resolved field leaves
+// to it) is a point of the same shared material at its live position
+// (syncActiveProceduralPoints). An active catalog star carries its own point
+// at its live position while its static catalog point steps aside. So every
+// star is drawn by exactly one point.
 // Known limit: float32 world coordinates wobble at light-year distances —
 // close approaches render, but sub-1000 km precision out there is not exact.
 
@@ -41,12 +49,44 @@ function starVisualId(star) {
     return star.name;
 }
 
-// Label consumers read the rendered marker and resolved-disk visibility.
-// A resolved photosphere remains a visible target when its point has faded out.
+// Label consumers read the rendered point and resolved-disk visibility
+// (refreshed by updateStars). A resolved photosphere remains a visible target
+// when its point has faded out.
 export function starVisualAlpha(star) {
     const entry = entryById.get(starVisualId(star));
-    if (!entry?.g.visible) return 0;
-    return Math.max(entry.glow.material.opacity, entry.photosphere?.visible ? entry.appearance.disk : 0);
+    if (!entry) return 0;
+    if (entry.star.bh) return entry.g.visible ? entry.glow.material.opacity : 0;
+    return entry.alpha;
+}
+
+let activePointMaterial = null;
+function activeStarPoint(absMag, tempK, radiusKm) {
+    activePointMaterial ||= makeStarPointMaterial({ radius: true });
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(3), 3));
+    geo.setAttribute("absMag", new THREE.BufferAttribute(new Float32Array(1), 1));
+    geo.setAttribute("teffK", new THREE.BufferAttribute(new Float32Array(1), 1));
+    geo.setAttribute("radiusKm", new THREE.BufferAttribute(new Float32Array(1), 1));
+    const pt = new THREE.Points(geo, activePointMaterial);
+    pt.frustumCulled = false;
+    pt.renderOrder = -3;
+    setActivePointPhotometry(pt, absMag, tempK, radiusKm);
+    return pt;
+}
+const _ptColor = new THREE.Color();
+function setActivePointPhotometry(pt, absMag, tempK, radiusKm) {
+    const a = pt.geometry.attributes;
+    a.absMag.array[0] = Number.isFinite(absMag) ? absMag : 99;
+    a.teffK.array[0] = tempK || 5800;
+    a.radiusKm.array[0] = radiusKm || 0;
+    linearStarColor(teffToRGB(tempK || 5800, starRGB), _ptColor);
+    a.color.array[0] = _ptColor.r; a.color.array[1] = _ptColor.g; a.color.array[2] = _ptColor.b;
+    a.absMag.needsUpdate = a.teffK.needsUpdate = a.radiusKm.needsUpdate = a.color.needsUpdate = true;
+}
+function activeAbsMagV(star, tempK) {
+    if (Number.isFinite(star.absMag)) return star.absMag;
+    return star.lumSolar > 0 ? absMagVFromL(star.lumSolar, tempK || 5800) : NaN;
 }
 
 function fresnelShell(radius, color, power, gain) {
@@ -122,8 +162,10 @@ function disposeMaterial(material) {
 
 function disposeStarVisual(entry) {
     const textures = new Set();
+    if (entry.star.activeCatalog) holdCatalogRow(entry.star.hygIndex, false);
     entry.g.traverse(obj => {
         if (obj.geometry) obj.geometry.dispose();
+        if (obj.material === activePointMaterial) return;
         collectMaterialTextures(obj.material, textures);
         disposeMaterial(obj.material);
     });
@@ -139,8 +181,9 @@ export function addStarVisual(star) {
             existing.tempK = star.tempK;
             linearStarColor(teffToRGB(star.tempK, starRGB), existing.photosphere.material.color);
         }
-        if (Number.isFinite(star.absMag)) existing.absMag = star.absMag;
-        else if (star.lumSolar > 0) existing.absMag = observedMag(star.lumSolar, 10);
+        const m = existing.active ? activeAbsMagV(star, existing.tempK) : curatedAbsMagV(star);
+        if (Number.isFinite(m)) existing.absMag = m;
+        if (existing.point) setActivePointPhotometry(existing.point, existing.absMag, existing.tempK, star.R);
         return existing;
     }
     const g = new THREE.Group();
@@ -148,9 +191,8 @@ export function addStarVisual(star) {
     let photosphere = null;
     const photometry = CURATED_PHOTOMETRY[star.name];
     const tempK = star.tempK || photometry?.tempK || (Number.isFinite(star.bv) ? bvToTeff(star.bv) : null);
-    const absMag = Number.isFinite(star.absMag) ? star.absMag
-        : photometry ? absMagFromApparent(photometry.mag, Math.hypot(star.x, star.y, star.z || 0) / PC_KM)
-        : star.lumSolar > 0 ? observedMag(star.lumSolar, 10) : null;
+    const active = !!(star.procedural || star.activeCatalog);
+    const absMag = active ? activeAbsMagV(star, tempK) : curatedAbsMagV(star);
     if (star.bh) {
         const rsU = star.rs * K;
         g.add(new THREE.Mesh(sphere(rsU, 48, 32, 24, 16), applyTerrellToMaterial(new THREE.MeshBasicMaterial({ color: 0x000000 }))));
@@ -172,18 +214,19 @@ export function addStarVisual(star) {
         photosphere = new THREE.Mesh(sphere(star.R * K, 64, 48, 32, 24), applyTerrellToMaterial(photosphereMaterial(color)));
         g.add(photosphere);
     }
-    // Point primitives avoid precision loss in light-year-sized billboard
-    // triangles. Their footprint is specified directly in display pixels.
     const glow = star.bh
         ? new THREE.Sprite(new THREE.SpriteMaterial({
             map: dotTexture(hexRgba(star.color, 1), hexRgba(star.color, .4)),
             transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .9,
         }))
-        : stellarPointMarker(dotTexture("rgba(255,255,255,1)", "rgba(255,255,255,0.1)"));
-    g.add(glow);
+        : null;
+    if (glow) g.add(glow);
+    const point = !star.bh && star.activeCatalog ? activeStarPoint(absMag, tempK, star.R) : null;
+    if (point) g.add(point);
+    if (star.activeCatalog) holdCatalogRow(star.hygIndex, true);
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
     scene.add(g);
-    const entry = { g, glow, disk, photosphere, tempK, absMag, star, id, appearance: {disk:0} };
+    const entry = { g, glow, point, disk, photosphere, tempK, absMag, star, id, active, alpha: 0 };
     entries.push(entry);
     entryById.set(id, entry);
     return entry;
@@ -235,12 +278,71 @@ function syncActiveStarVisuals(camera, dtR = 0) {
     activeVisualSyncAge = 0;
 }
 
+// All procedural active stars as one point layer, re-synced whenever the
+// active set or its evaluation time changes. Offsets from the first star keep
+// float32 precision independent of the distance to the Sun.
+const activeProc = { mesh: null, capacity: 0, sig: "" };
+export function syncActiveProceduralPoints() {
+    const n0 = ACTIVE_STARS.length;
+    const sig = activeStarsTime() + ":" + n0 + ":" + (n0 ? ACTIVE_STARS[0].id || ACTIVE_STARS[0].name : "") + ":" + (n0 ? ACTIVE_STARS[n0 - 1].id || ACTIVE_STARS[n0 - 1].name : "");
+    if (sig === activeProc.sig) return;
+    activeProc.sig = sig;
+    let n = 0;
+    for (const s of ACTIVE_STARS) if (s.procedural && !s.bh) n++;
+    if (!activeProc.mesh || n > activeProc.capacity) {
+        if (activeProc.mesh) { scene.remove(activeProc.mesh); activeProc.mesh.geometry.dispose(); }
+        const cap = Math.max(64, Math.ceil(n * 1.5));
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(cap * 3), 3));
+        geo.setAttribute("color", new THREE.BufferAttribute(new Float32Array(cap * 3), 3));
+        geo.setAttribute("absMag", new THREE.BufferAttribute(new Float32Array(cap), 1));
+        geo.setAttribute("teffK", new THREE.BufferAttribute(new Float32Array(cap), 1));
+        geo.setAttribute("radiusKm", new THREE.BufferAttribute(new Float32Array(cap), 1));
+        activePointMaterial ||= makeStarPointMaterial({ radius: true });
+        activeProc.mesh = new THREE.Points(geo, activePointMaterial);
+        activeProc.mesh.name = "active procedural stars";
+        activeProc.mesh.frustumCulled = false;
+        activeProc.mesh.renderOrder = -3;
+        activeProc.capacity = cap;
+        scene.add(activeProc.mesh);
+    }
+    const a = activeProc.mesh.geometry.attributes;
+    let i = 0, cx = 0, cy = 0, cz = 0;
+    for (const s of ACTIVE_STARS) {
+        if (!s.procedural || s.bh) continue;
+        if (i === 0) { cx = s.x; cy = s.y; cz = s.z || 0; }
+        a.position.array[i * 3] = (s.x - cx) * K;
+        a.position.array[i * 3 + 1] = ((s.z || 0) - cz) * K;
+        a.position.array[i * 3 + 2] = -(s.y - cy) * K;
+        const teff = s.tempK || 5800;
+        const m = activeAbsMagV(s, teff);
+        a.absMag.array[i] = Number.isFinite(m) ? m : 99;
+        a.teffK.array[i] = teff;
+        a.radiusKm.array[i] = s.R || 0;
+        linearStarColor(teffToRGB(teff, starRGB), _ptColor);
+        a.color.array[i * 3] = _ptColor.r; a.color.array[i * 3 + 1] = _ptColor.g; a.color.array[i * 3 + 2] = _ptColor.b;
+        i++;
+    }
+    activeProc.mesh.position.set(cx * K, cz * K, -cy * K);
+    activeProc.mesh.geometry.setDrawRange(0, i);
+    for (const key of ["position", "color", "absMag", "teffK", "radiusKm"]) a[key].needsUpdate = true;
+}
+
 export function updateStars(camera, dtR) {
+    syncActiveProceduralPoints();
     const cameraSolarDistance = camera.position.length();
     if (cameraSolarDistance < LOCAL_VISUAL_SKIP_R) {
         if (!localVisualsHidden) {
             for (const e of entries) e.g.visible = false;
             localVisualsHidden = true;
+        }
+        // Active stars keep their points (their catalog rows are held):
+        // only the photosphere meshes are skipped this close to the Sun.
+        for (const e of entries) {
+            if (!e.point) continue;
+            e.g.position.set(e.star.x * K, (e.star.z || 0) * K, -e.star.y * K);
+            e.g.visible = true;
+            e.photosphere.visible = false;
         }
         activeVisualSyncAge = Infinity;
         return;
@@ -253,21 +355,19 @@ export function updateStars(camera, dtR) {
         e.g.position.set(e.star.x * K, (e.star.z || 0) * K, -e.star.y * K);
         stellarExposure.value = Math.min(stellarExposure.value, meteredSkyExposure(camera, e.g.position, e.star.R * K));
     }
+    const pxScale = viewportSize.pxScale;
     for (const e of entries) {
         e.g.position.set(e.star.x * K, (e.star.z || 0) * K, -e.star.y * K);
         const d = camera.position.distanceTo(e.g.position);
         if (!e.star.bh) {
-            const pc = Math.max(1e-9, d / (PC_KM * K));
-            const mag = Number.isFinite(e.absMag) ? apparentMagAt(e.absMag, pc) : Infinity;
-            const pxScale = viewportSize.pxScale;
-            const radiusPx = e.star.R * K * pxScale / Math.max(e.star.R * K, d);
-            const appearance = stellarPointAppearance(hdrIntensityForMag(mag), radiusPx, stellarExposure.value, e.appearance);
-            e.g.visible = appearance.visible;
+            // The point (catalogStars.js curated layer, or e.point for an
+            // active star) fades 0.75 -> 3 px as the photosphere resolves.
+            const rScene = e.star.R * K;
+            const radiusPx = rScene * pxScale / Math.max(rScene, d);
+            const disk = THREE.MathUtils.smoothstep(radiusPx, .75, 3);
             e.photosphere.visible = radiusPx > .3;
-            e.glow.material.opacity = appearance.opacity;
-            const color = teffToRGB(e.tempK, starRGB);
-            linearStarColor(color, e.glow.material.color).multiplyScalar(appearance.intensity);
-            e.glow.material.size = Math.max(3, sizePxForMag(mag));
+            e.g.visible = e.photosphere.visible || !!e.point;
+            e.alpha = Math.max(Number.isFinite(e.absMag) ? starPointAlpha(e.absMag, d, e.star.R, stellarExposure.value, pxScale) : 0, e.photosphere.visible ? disk : 0);
         } else {
             const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
             const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, cameraSolarDistance);

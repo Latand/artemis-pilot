@@ -1,16 +1,16 @@
 // Unified observer-relative star photometry (WP16).
 //
 // Single source of truth for "how bright does a star of luminosity L look
-// from camDistPc parsecs away", used identically by the Tier-0 catalog cloud
-// (cosmic.js/catalogWorker.js), the Tier-1 AT-HYG stream (render/athygStars.js),
-// and the Sun's far-field view (bodies.js). Brightness is always a function of
-// distance from the CAMERA, never distance from the Sun — that is what removes
-// the "near-Sun bubble" at galaxy zoom (the old catalog cloud baked in
-// apparent magnitude computed from Sol, so it stayed bright regardless of how
-// far the camera actually was). The realSky naked-eye dome is the one
-// deliberate exception (a fixed-distance-shell sky has no real per-star
-// distance to be observer-relative about) and instead fades out wholesale
-// once the camera leaves the solar neighborhood — see skyDomeFade below.
+// from camDistPc parsecs away", used identically by every resolved-star
+// layer through the shared point material (render/starPointMaterial.js): the
+// HYG catalog and curated destinations (render/catalogStars.js), the Tier-1
+// AT-HYG stream (render/athygStars.js), the active stars (stars.js) and the
+// Sun (bodies.js). Brightness is always a function of distance from the
+// CAMERA, never distance from the Sun — that is what removes the "near-Sun
+// bubble" at galaxy zoom. Point magnitudes are V band (absMagVFromL converts a
+// bolometric luminosity through BC_V(Teff)). The camera-attached
+// constellation guides are the one Sol-perspective element and fade out as
+// soon as parallax breaks them — see skyDomeFade below.
 //
 // The GLSL chunk at the bottom mirrors the JS functions above it verbatim
 // (same formulas, same constants) so every point shader that pastes it in is
@@ -91,17 +91,61 @@ export function hdrIntensityForMag(mag, curve = BRIGHTNESS_CURVE) {
     return Math.pow(10, -0.4 * (mag - curve.magLimit));
 }
 
+// --- Bolometric -> V -------------------------------------------------------
+// Catalog layers carry V-band absolute magnitudes; the procedural population
+// and the Sun's evolution model carry bolometric luminosities. Every layer
+// renders V-band magnitudes, so bolometric values pass through BC_V(Teff):
+// Torres (2010, AJ 140, 1158) polynomial fit to Flower (1996), with the
+// solar zero point M_bol,sun = 4.74 (so BC_V(5772 K) = -0.07, M_V,sun = 4.81).
+// Below 3,900 K the polynomial runs away (-5.0 at 3,000 K); cool dwarfs use
+// a short table after Pecaut & Mamajek (2013), joined continuously at 3,900 K.
+const COOL_BC = [[2500, -4.6], [2850, -3.66], [3050, -2.98], [3200, -2.52], [3400, -2.06], [3550, -1.72], [3700, -1.45], [3850, -1.24]];
+export function bolometricCorrectionV(teffK) {
+    const t = Math.max(2000, Math.min(50000, teffK || SUN_TEFF_K));
+    if (t < 3900) {
+        const hi = torresBC(3900);
+        const table = COOL_BC.concat([[3900, hi]]);
+        if (t <= table[0][0]) return table[0][1];
+        for (let i = 1; i < table.length; i++) {
+            if (t <= table[i][0]) {
+                const [t0, b0] = table[i - 1], [t1, b1] = table[i];
+                return b0 + (b1 - b0) * (t - t0) / (t1 - t0);
+            }
+        }
+    }
+    return torresBC(t);
+}
+function torresBC(teffK) {
+    const lt = Math.log10(teffK);
+    let bc;
+    if (lt < 3.70) {
+        bc = -0.190537291496456e5 + 0.155144866764412e5 * lt - 0.421278819301717e4 * lt * lt + 0.381476328422343e3 * lt * lt * lt;
+    } else if (lt < 3.90) {
+        bc = -0.370510203809015e5 + 0.385672629965804e5 * lt - 0.150651486316025e5 * lt * lt + 0.261724637119416e4 * lt ** 3 - 0.170623810323864e3 * lt ** 4;
+    } else {
+        bc = -0.118115450538963e6 + 0.137145973583929e6 * lt - 0.636233812100225e5 * lt * lt + 0.147412923562646e5 * lt ** 3 - 0.170587278406872e4 * lt ** 4 + 0.788731721804990e2 * lt ** 5;
+    }
+    return bc;
+}
+export function absMagVFromL(L, teffK) {
+    return absMagFromL(L) - bolometricCorrectionV(teffK);
+}
+
 // --- Sun-specific helper: the Sun observed as an ordinary L=1 Lsun star ----
 export function sunObservedMag(camDistPc) {
     return observedMag(1, camDistPc);
 }
 
-// --- realSky dome fade zone -------------------------------------------------
-// The fixed-shell naked-eye dome only makes sense within the solar
-// neighborhood; it fades fully out over 50 -> 500 pc of camera distance from
-// Sol (WP16 a1/a: the one surviving piece of the old two-mode blend).
-export const SKY_DOME_FADE_START_PC = 50;
-export const SKY_DOME_FADE_END_PC = 500;
+// --- Sol-perspective guide fade -------------------------------------------
+// The camera-attached dome now carries only constellation figures and their
+// labels (the stars themselves are real 3-D points at every scale). A figure
+// drawn on a camera-centred shell is exact only at the Sun: moving D shifts a
+// star at distance d by ~D/d rad, so Sirius (2.6 pc) drifts ~1 deg off its
+// line by D ~ 0.05 pc. The guides therefore fade out over 0.008 -> 0.08 pc
+// (1650 AU -> 0.26 ly) of camera distance from the Sun, before they visibly
+// stop connecting the stars they name.
+export const SKY_DOME_FADE_START_PC = 0.008;
+export const SKY_DOME_FADE_END_PC = 0.08;
 export function skyDomeFade(camDistFromSolPc) {
     const q = Math.max(0, Math.min(1, (camDistFromSolPc - SKY_DOME_FADE_START_PC) / (SKY_DOME_FADE_END_PC - SKY_DOME_FADE_START_PC)));
     const s = q * q * (3 - 2 * q);
@@ -202,7 +246,11 @@ float relDopplerFactor(float mu, float beta) {
 // Given the view-space vertex position of a point star, return the aberrated
 // view-space position at the same radius and expose Doppler through out param.
 // Identity when uBeta==0.
-// Consumers apply headlight beaming with pow(dopplerD, 4.0).
+// Consumers apply headlight beaming to POINT sources with pow(dopplerD, 2.0):
+// specific intensity I_nu/nu^3 is invariant, so bolometric surface brightness
+// scales as D^4 while a point source's solid angle shrinks as D^-2 -- the
+// flux of a star seen by a moving observer scales as D^2 (D^4 applies to
+// extended surfaces).
 vec3 relApplyView(vec3 viewPos, float teffK, out float dopplerD) {
     dopplerD = 1.0;
     if (uBeta <= 0.0) return viewPos;

@@ -28,7 +28,7 @@ function assert(cond, msg) {
   const cases = [
     { a: A_MOON, e: E_MOON, varpi: 0, M0: MOON_ANG0, mu: MU_E + MU_M },
     { a: 149597870.7, e: E_EARTH, varpi: VARPI_EARTH, M0: 1.234, mu: MU_S + MU_E },
-    ...PL.map(p => ({ a: p.a, e: p.e, varpi: p.varpi, M0: p.phase, mu: MU_S })),
+    ...PL.map((p, i) => ({ a: p.a, e: p.e, varpi: p.varpi, M0: 0.7 + 0.61 * i, mu: MU_S })),
     { a: 1e6, e: 0.9, varpi: 5.5, M0: -2.3, mu: 4e5 }, // a high-e synthetic case
   ];
   const planar = { x: 0, y: 0, vx: 0, vy: 0 };

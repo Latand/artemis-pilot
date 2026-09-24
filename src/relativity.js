@@ -32,7 +32,7 @@ export function clockRateAtShip() {
     }
     for (let i = 0; i < BH.n; i++) {
         const floorR = Math.max(BH.rs[i] * 1.002, 1e-9);
-        curv = addCurvature(curv, BH.mu[i], Math.hypot(G.x - BH.x[i], G.y - BH.y[i], G.z), floorR);
+        curv = addCurvature(curv, BH.mu[i], Math.hypot(G.x - BH.x[i], G.y - BH.y[i], G.z - BH.z[i]), floorR);
     }
     const vx = G.vx + eph.earthVx;
     const vy = G.vy + eph.earthVy;

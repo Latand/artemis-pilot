@@ -34,19 +34,22 @@ const RS_PER_SOLAR_MASS = 2.9532;
 // position values which are the cited real numbers).
 const NS_RADIUS_KM = 12;
 
+import { raDecToWorldUnitInto } from "./coords.js";
+
 const hmsToDeg = (h, m, s) => 15 * (h + m / 60 + s / 3600);
 const dmsToDeg = (sign, d, m, s) => sign * (d + m / 60 + s / 3600);
 
 // Replicated from constants.js's skyStar() -- see file header note.
+// RA/Dec are J2000 equatorial; positions land in the world (ecliptic J2000)
+// frame through coords.js, like every other catalog source.
 function specialStar(name, dLy, raDeg, decDeg, color, mass, radiusSolar, extra = {}) {
-    const ra = raDeg * DEG, dec = decDeg * DEG;
     const dKm = dLy * LY_KM;
-    const cd = Math.cos(dec);
+    const u = raDecToWorldUnitInto(raDeg, decDeg, [0, 0, 0]);
     return {
         name, dLy, raDeg, decDeg, color, mass, R: radiusSolar * R_SUN,
-        x: cd * Math.cos(ra) * dKm,
-        y: cd * Math.sin(ra) * dKm,
-        z: Math.sin(dec) * dKm,
+        x: u[0] * dKm,
+        y: u[1] * dKm,
+        z: u[2] * dKm,
         catalog: "special-object",
         ...extra,
     };

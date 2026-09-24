@@ -27,6 +27,7 @@
     "smoke:lunar-elp": "node scripts/smoke-lunar-elp.mjs",
     "smoke:minor": "node scripts/smoke-minor.mjs",
     "smoke:tde": "node scripts/smoke-tde.mjs",
+    "smoke:tde-regimes": "node scripts/smoke-tde-regimes.mjs",
     "smoke:contacts": "node scripts/smoke-contacts.mjs",
     "smoke:events": "node scripts/smoke-events.mjs",
     "smoke:approach": "node scripts/smoke-approach.mjs",
@@ -41,9 +42,9 @@
     "smoke:xrperf": "node scripts/smoke-xrperf.mjs",
     "smoke:river-deeptime": "node scripts/smoke-river-deeptime.mjs",
     "smoke:merger": "node scripts/smoke-merger.mjs",
+    "smoke:merger-tides": "node scripts/smoke-merger-tides.mjs",
     "smoke:brightness": "node scripts/smoke-brightness.mjs",
     "smoke:cosmic-era": "node scripts/smoke-cosmic-era.mjs",
-    "smoke:deepfield": "node scripts/smoke-deepfield.mjs",
     "smoke:bound-systems": "node scripts/smoke-bound-systems.mjs",
     "smoke:sun-evolution": "node scripts/smoke-sun-evolution.mjs",
     "smoke:reltravel": "node scripts/smoke-reltravel.mjs",
@@ -52,7 +53,15 @@
     "preview": "vite preview",
     "smoke:determinism": "node scripts/smoke-determinism.mjs",
     "smoke:exotic": "node scripts/smoke-exotic.mjs",
-    "smoke:explore-facts": "node scripts/smoke-explore-facts.mjs"
+    "smoke:explore-facts": "node scripts/smoke-explore-facts.mjs",
+    "smoke:planet-phases": "node scripts/smoke-planet-phases.mjs",
+    "smoke:galaxy-model": "node scripts/smoke-galaxy-model.mjs",
+    "catalog:galaxies": "node scripts/build-galaxy-catalogs.mjs",
+    "smoke:galaxy-catalogs": "node scripts/smoke-galaxy-catalogs.mjs",
+    "smoke:deep-clock": "node scripts/smoke-deep-clock.mjs",
+    "smoke:deep-time": "node scripts/smoke-deep-time.mjs",
+    "smoke:deep-stars": "node scripts/smoke-deep-stars.mjs",
+    "smoke:galaxy-population": "node scripts/smoke-galaxy-population.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

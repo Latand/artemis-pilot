@@ -1,12 +1,11 @@
 import * as THREE from "three";
-import { stellarExposure, STELLAR_PSF_GLSL, linearStarColor } from "./render/stellarAppearance.js";
 import { STAR_CATALOG_META } from "./constants.js";
 import { G } from "./state.js";
 import { PERF, markPerf } from "./perf.js";
-import { bvToTeff, teffToRGB, skyDomeFade } from "./render/viewBrightness.js";
+import { skyDomeFade } from "./render/viewBrightness.js";
+import { ensureWorldFrameRecords } from "./universe/coords.js";
 
 const SKY_R = 5.92e6;
-const MAG_LIMIT = 6.5;
 const LABEL_R = SKY_R * 0.985;
 const LINE_R = SKY_R * 0.992;
 
@@ -192,13 +191,6 @@ function dirFromRecord(vals, j, ix, iy, iz, out = new THREE.Vector3()) {
 }
 
 // Temperature sets hue; every source retains its own measured magnitude.
-const _teffRGB = [1, 1, 1];
-function colorFromTemp(tempK, bv, c = new THREE.Color()) {
-    teffToRGB(tempK > 0 ? tempK : bvToTeff(bv), _teffRGB);
-    linearStarColor(_teffRGB, c);
-    return c;
-}
-
 function makeLabelTexture(text, color = "#d9e7ff") {
     const canvas = document.createElement("canvas");
     canvas.width = 256;
@@ -339,84 +331,6 @@ async function addConstellations(parent, meta, vals, indexes) {
     if (PERF.enabled) markPerf("realSky.constellations", performance.now() - t0, { lineCount, labelCount });
 }
 
-async function addRealStars(parent, meta, vals, indexes) {
-    const t0 = performance.now();
-    const bands = [{ pos: [], col: [], mag: [] }];
-    const dir = new THREE.Vector3();
-    const color = new THREE.Color();
-    let visible = 0;
-    const slice = { t: performance.now() };
-    for (let i = 0; i < meta.count; i++) {
-        const j = i * meta.stride;
-        const mag = vals[j + indexes.mag];
-        if (!Number.isFinite(mag) || mag > MAG_LIMIT) continue;
-        dirFromRecord(vals, j, indexes.xPc, indexes.yPc, indexes.zPc, dir);
-        const band = bands[0];
-        band.pos.push(dir.x * SKY_R, dir.y * SKY_R, dir.z * SKY_R);
-        const bv = vals[j + indexes.bv];
-        const tempK = indexes.tempK != null ? vals[j + indexes.tempK] : NaN;
-        const c = colorFromTemp(tempK, Number.isFinite(bv) ? bv : .65, color);
-        band.col.push(c.r, c.g, c.b);
-        band.mag.push(mag);
-        visible++;
-        if ((i & 2047) === 0) await yieldIfNeeded(slice);
-    }
-
-    for (let i = 0; i < bands.length; i++) {
-        const band = bands[i];
-        if (!band.pos.length) continue;
-        const g = new THREE.BufferGeometry();
-        g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(band.pos), 3));
-        g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(band.col), 3));
-        g.setAttribute("magnitude", new THREE.BufferAttribute(new Float32Array(band.mag), 1));
-        const mat = new THREE.ShaderMaterial({
-            uniforms: { uStellarExposure:stellarExposure, uFade:{value:1}, uDpr:{value:1} },
-            vertexShader: /* glsl */`
-                attribute float magnitude;
-                varying vec3 vColor;
-                varying float vFlux;
-                uniform float uDpr;
-                void main() {
-                    float size = clamp(2.5 * pow(10.0, -0.12 * (magnitude - 2.0)), 3.0, 7.0);
-                    gl_PointSize = size * uDpr;
-                    vFlux = pow(10.0, -0.4 * (magnitude - 3.0)) * 4.0 / (size * size);
-                    vColor = color;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                }`,
-            fragmentShader: /* glsl */`
-                varying vec3 vColor;
-                varying float vFlux;
-                uniform float uFade;
-                ${STELLAR_PSF_GLSL}
-                void main() {
-                    float g = stellarPSF(gl_PointCoord);
-                    if (g < 0.001) discard;
-                    gl_FragColor = vec4(vColor * min(vFlux, 16.0) * uStellarExposure, g * uFade);
-                    #include <tonemapping_fragment>
-                    #include <colorspace_fragment>
-                }`,
-            vertexColors: true,
-            // Draw the infinite background in the opaque pass before bodies.
-            // Transparent sorting would otherwise paint it over a planet.
-            transparent: false, depthTest: false, depthWrite: false,
-            blending: THREE.AdditiveBlending,
-        });
-        mat.userData.baseOpacity = 1;
-        const pts = new THREE.Points(g, mat);
-        pts.onBeforeRender = renderer => {
-            mat.uniforms.uDpr.value = renderer.getPixelRatio();
-            mat.uniforms.uFade.value = mat.opacity;
-        };
-        pts.frustumCulled = false;
-        pts.renderOrder = -2;
-        parent.add(pts);
-        await yieldIfNeeded(slice);
-    }
-    status.stars = visible;
-    publishStatus();
-    if (PERF.enabled) markPerf("realSky.stars", performance.now() - t0, { visible });
-}
-
 async function loadRealSky() {
     const t0 = performance.now();
     const binUrl = new URL(HYG_BIN_URL, location.href);
@@ -430,6 +344,8 @@ async function loadRealSky() {
         count: Math.floor(vals.length / HYG_FIELDS.length),
         labels: SKY_LABEL_ROWS,
     };
+    // Equatorial catalog -> world (ecliptic J2000) frame, like every layer.
+    ensureWorldFrameRecords(meta, vals, meta.stride, fieldIndex(meta, "xPc"), fieldIndex(meta, "yPc"), fieldIndex(meta, "zPc"));
     const indexes = {
         xPc: fieldIndex(meta, "xPc"),
         yPc: fieldIndex(meta, "yPc"),
@@ -438,8 +354,10 @@ async function loadRealSky() {
         mag: fieldIndex(meta, "mag"),
         tempK: meta.fields.indexOf("tempK") >= 0 ? meta.fields.indexOf("tempK") : null,
     };
-    await idleSlice();
-    await addRealStars(root, meta, vals, indexes);
+    // The stars themselves are the 3-D HYG catalog layer
+    // (render/catalogStars.js), drawn at every scale with the shared
+    // photometry; this module keeps only the constellation guides and labels,
+    // which belong to the view from the Solar System.
     await idleSlice();
     await addConstellations(root, meta, vals, indexes);
     status.loaded = true;

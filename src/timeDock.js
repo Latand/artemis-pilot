@@ -2,7 +2,7 @@ import { WARPS, SEC_YEAR, warpLabel } from "./constants.js";
 import { civilDateAt, fmtCivil, getEpochMs } from "./epoch.js";
 import { fmtCivilDate } from "./format.js";
 import { G, GS, WORLD } from "./state.js";
-import { cancelTimeJump, setPaused, setWarp, stepWarp } from "./timeCtl.js";
+import { cancelTimeJump, deliveryStatus, setPaused, setWarp, stepWarp } from "./timeCtl.js";
 
 const $ = id => document.getElementById(id);
 
@@ -93,6 +93,7 @@ export function initTimeDock() {
         direction: $("tdDirection"),
         ticks: [],
         blocked: $("tdBlocked"),
+        limited: $("tdLimited"),
         jump: $("tdJump"),
         cancel: $("tdCancel"),
     };
@@ -140,6 +141,7 @@ export function initTimeDock() {
 export function sampleTimeDock() {
     if (!els) return;
     const now = performance.now();
+    const wasVisible = sampled.blockedVisible;
     if (WORLD.reverseBlocked) {
         if (GS.length > 0 || WORLD.tdeInProgress) {
             sampled.blockedKind = 1;
@@ -156,6 +158,11 @@ export function sampleTimeDock() {
         sampled.blockedKind = 0;
         sampled.blockedFloorT = -Infinity;
     }
+    // A block can last a single frame (one reverse tick into the floor). The
+    // dock otherwise renders on the HUD cadence (every 6 frames at high warp),
+    // which at a few fps can outlast the 1.5 s latch and swallow the notice;
+    // render on the rising edge so the plate always appears.
+    if (sampled.blockedVisible && !wasVisible) renderTimeDock();
 }
 
 export function renderTimeDock() {
@@ -194,6 +201,19 @@ export function renderTimeDock() {
         setHidden(els.blocked, false);
     } else {
         setHidden(els.blocked, true);
+    }
+    // honest delivery: the physics could not honour the commanded warp this
+    // frame (black holes / ghosts / a burn integrated step by step) and
+    // advanced less time instead of integrating garbage
+    const delivery = deliveryStatus();
+    if (delivery.limited && !stopped) {
+        const asked = Math.abs(G.warp);
+        const got = asked * Math.max(0, Math.min(1, delivery.ratio));
+        setText(els.limited, "PHYSICS-LIMITED — delivering " + warpLabel(got) + " of " + warpLabel(asked) +
+            " · " + delivery.reason);
+        setHidden(els.limited, false);
+    } else {
+        setHidden(els.limited, true);
     }
 
     const dockHeight = els.dock?.offsetHeight || 0;
