@@ -59,10 +59,10 @@ function tidalR(target, msun) { return bodyR(target) * Math.cbrt(rsOf(msun) * C_
 
 // Place a hole so that `target` is on a conic of Newtonian pericentre rp about
 // it, eccentricity e, currently inbound at distance d0.
-function placeEncounter({ target, msun, rp, e = 1, d0, phi = .7, incl = .15 }) {
+function placeEncounter({ target, msun, rsKm, kind = 0, rp, e = 1, d0, phi = .7, incl = .15 }) {
     updEphem();
     const b = enc.bodyState(target, { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 });
-    const rs = rsOf(msun);
+    const rs = rsKm ?? rsOf(msun);
     const mu = rs * C_LIGHT * C_LIGHT / 2 + bodyMu(target);
     const p = rp * (1 + e);
     const nu = -Math.acos(Math.max(-1, Math.min(1, (p / d0 - 1) / e)));
@@ -75,7 +75,7 @@ function placeEncounter({ target, msun, rp, e = 1, d0, phi = .7, incl = .15 }) {
     [vx, vy] = [vx * c - vy * s, vx * s + vy * c];
     const ci = Math.cos(incl), si = Math.sin(incl);
     const rel = { x: px, y: py * ci, z: py * si, vx, vy: vy * ci, vz: vy * si };
-    return enc.addHoleData(b.x - rel.x, b.y - rel.y, rs, b.vx - rel.vx, b.vy - rel.vy, null, 0, 0, b.z - rel.z, b.vz - rel.vz);
+    return enc.addHoleData(b.x - rel.x, b.y - rel.y, rs, b.vx - rel.vx, b.vy - rel.vy, null, kind, kind === 2 ? .0334 : 0, b.z - rel.z, b.vz - rel.vz);
 }
 function run(total, frameDt) {
     let t = 0;
@@ -287,6 +287,135 @@ console.log("[D] 3390 Msun hole through the inner Solar System");
         check(r.seq === res[0].seq, r.label + ": the same sequence of outcomes at every warp", r.seq);
     }
     check(/Sun:captured/.test(res[0].seq), "the Sun plunges on L < 4GM/c and is swallowed whole");
+}
+
+// ------------------------------------------------------- lifecycle (item 2)
+console.log("[E] lifecycle: removal, merge, quickload, reverse, pulsars, 3-D");
+{
+    const snapshotWorld = () => {
+        const eph = ephem.snapshotEphem();
+        return JSON.stringify({
+            t: G.t, ephT: EPHT.t,
+            eph: { x: Array.from(eph.x), y: Array.from(eph.y), z: Array.from(eph.z), vx: Array.from(eph.vx), vy: Array.from(eph.vy), vz: Array.from(eph.vz), earthX: eph.earthX, earthY: eph.earthY, earthVx: eph.earthVx, earthVy: eph.earthVy },
+            world: { earth: WORLD.earthDestroyed, moon: WORLD.moonDestroyed, sun: WORLD.sunDestroyed, pl: Array.from(WORLD.plDestroyed), floor: Number.isFinite(WORLD.irreversibleFloorT) ? WORLD.irreversibleFloorT : null },
+            bh: Array.from({ length: BH.n }, (_, i) => [BH.x[i], BH.y[i], BH.vx[i], BH.vy[i], BH.rs[i], BH.kind[i], BH.period[i], BH.z[i], BH.vz[i]]),
+            bhEv: Array.from({ length: BH.n }, (_, i) => BH.ev[i].map(e => e.tFb > 0 ? [e.x, e.y, e.z, e.t, e.dmu, e.tFb] : [e.x, e.y, e.z, e.t, e.dmu])),
+            tde: enc.serializeEncounterState(),
+        });
+    };
+    const restoreWorld = json => {
+        const d = JSON.parse(json);
+        resetAll();
+        G.t = d.t;
+        ephem.loadEphemSnapshot({
+            x: Float64Array.from(d.eph.x), y: Float64Array.from(d.eph.y), z: Float64Array.from(d.eph.z),
+            vx: Float64Array.from(d.eph.vx), vy: Float64Array.from(d.eph.vy), vz: Float64Array.from(d.eph.vz),
+            earthX: d.eph.earthX, earthY: d.eph.earthY, earthVx: d.eph.earthVx, earthVy: d.eph.earthVy, t: d.ephT,
+        });
+        WORLD.earthDestroyed = d.world.earth; WORLD.moonDestroyed = d.world.moon; WORLD.sunDestroyed = d.world.sun;
+        WORLD.plDestroyed.set(d.world.pl);
+        WORLD.irreversibleFloorT = d.world.floor === null ? -Infinity : d.world.floor;
+        d.bh.forEach(([x, y, vx, vy, rs, kind, period, z, vz], i) => {
+            const ev = d.bhEv[i].map(r => ({ x: r[0], y: r[1], z: r[2], t: r[3], dmu: r[4], ...(r[5] > 0 ? { tFb: r[5] } : {}) }));
+            enc.addHoleData(x, y, rs, vx, vy, ev, kind, period, z, vz);
+        });
+        enc.restoreEncounterState(d.tde);
+    };
+    const rt6 = tidalR("sun", 1e6);
+
+    // 1. removing a hole mid-approach clears the booking and the reverse block
+    resetAll();
+    placeEncounter({ target: "sun", msun: 1e6, rp: rt6 / 3, d0: 3 * rt6 });
+    run(600, 60);
+    const pendingBefore = WORLD.tdeInProgress && ENC.some(r => r.pending);
+    enc.removeHoleData(0);
+    check(pendingBefore && !WORLD.tdeInProgress && ENC.length === 0 && GS.length === 0, "removal mid-approach clears the booking and tdeInProgress");
+    const back = physics.advanceWorld(-300);
+    check(back === -300 && !WORLD.reverseBlocked, "reverse works again after the hole is removed", back);
+
+    // 2. removing a hole mid-flare leaves no debris gravity behind and re-opens
+    //    the deep-time fast path (a partial leaves the Sun alive)
+    resetAll();
+    placeEncounter({ target: "sun", msun: 1e6, rp: rt6 / 1.2, d0: 3 * rt6 });
+    run(2 * 86400, 600);
+    const flareBefore = TDES.length > 0;
+    enc.removeHoleData(0);
+    check(flareBefore && TDES.length === 0 && GS.length === 0 && !WORLD.tdeInProgress, "removal mid-flare drops the flare, no phantom/ghost left");
+    const w0 = performance.now();
+    ephem.advanceEphem(3e9);
+    const ms = performance.now() - w0;
+    check(ms < 200, "deep-time Kepler path re-opens after the hole is gone (100 yr in " + ms.toFixed(0) + " ms)");
+    const floorBefore = WORLD.irreversibleFloorT;
+    const rev = physics.advanceWorld(-1e12);
+    check(WORLD.reverseBlocked && Math.abs(G.t - floorBefore) < 1e-6, "reverse stops at the disruption's irreversible floor", { t: G.t, floorBefore });
+
+    // 3. merging mid-flare hands the running flare to the merged hole
+    resetAll();
+    placeEncounter({ target: "sun", msun: 1e6, rp: rt6 / 3, d0: 3 * rt6 });
+    run(86400, 600);
+    const sunFlare = TDES.find(d => d.target === "sun");
+    const rsA = BH.rs[0];
+    enc.addHoleData(BH.x[0] + 12 * rsA, BH.y[0], rsA * .5, BH.vx[0], BH.vy[0], null, 0, 0, BH.z[0], BH.vz[0]);
+    let vMax = 0;
+    for (let k = 0; k < 60; k++) { run(60, 60); for (let i = 0; i < BH.n; i++) vMax = Math.max(vMax, worldSpeed(i)); }
+    check(BH.n === 1 && sunFlare && sunFlare.bh === 0 && TDES.includes(sunFlare), "merger keeps the flare on the merged hole", { n: BH.n, bh: sunFlare?.bh });
+    check(vMax < .95 * C_LIGHT, "two holes coalesce below c without touching the numerical guard (merge at 2(r_s1+r_s2))", vMax / C_LIGHT);
+    const acc0 = sunFlare.accreted, mu0 = BH.mu[0];
+    run(sunFlare.t0 + 2 * sunFlare.tFb - G.t, 86400);
+    check(sunFlare.accreted > acc0 && relErr(sunFlare.accreted, .5 * MU_S * tde.accretedFraction(G.t - sunFlare.t0, sunFlare.tFb)) < 1e-9,
+        "accretion continues onto the merged hole along M_acc(t)");
+    check(BH.mu[0] - mu0 >= sunFlare.accreted - acc0 - 1e-3 * MU_S, "merged hole mass grows by the accreted debris");
+
+    // 4. quicksave / quickload: mid-approach and mid-flare round trips
+    for (const [label, tSave] of [["mid-approach", 900], ["mid-flare", 20 * 86400]]) {
+        resetAll();
+        placeEncounter({ target: "sun", msun: 1e6, rp: rt6 / 3, d0: 3 * rt6, phi: 1.3 });
+        run(tSave, 300);
+        const saved = snapshotWorld();
+        run(60 * 86400 - G.t, 3600);
+        const refA = { mu: BH.mu[0], x: BH.x[0], vx: BH.vx[0], t0: TDES.find(d => d.target === "sun")?.t0, regime: TDES.find(d => d.target === "sun")?.regime };
+        restoreWorld(saved);
+        run(60 * 86400 - G.t, 3600);
+        const refB = { mu: BH.mu[0], x: BH.x[0], vx: BH.vx[0], t0: TDES.find(d => d.target === "sun")?.t0, regime: TDES.find(d => d.target === "sun")?.regime };
+        check(refA.regime === "full" && refB.regime === refA.regime && Math.abs(refA.t0 - refB.t0) < 1e-6 && relErr(refB.mu, refA.mu) < 1e-12 &&
+            Math.abs(refB.x - refA.x) < 1e-6 * Math.abs(refA.x) + 1 && Math.abs(refB.vx - refA.vx) < 1e-6,
+            "quickload " + label + " continues the same encounter", { refA, refB });
+    }
+
+    // 5. pulsars: a 1.4 Msun neutron star tidally disrupts a planet like any
+    //    1.4 Msun object (Eddington-capped at 1.4 Msun); a plunge hits the crust
+    const NS_RS = 4.1345;
+    const rtNS = R_EARTH * Math.cbrt(NS_RS * C_LIGHT * C_LIGHT / 2 / MU_E);
+    resetAll();
+    placeEncounter({ target: "earth", rsKm: NS_RS, kind: 2, rp: rtNS / 3, d0: 3 * rtNS });
+    run(40000, 60);
+    const nsFlare = TDES.find(d => d.target === "earth");
+    check(nsFlare?.regime === "full" && relErr(nsFlare.LEddW, tde.L_EDD_PER_MSUN * BH.mu[0] / MU_S) < 1e-6 && BH.kind[0] === 2,
+        "neutron star: ordinary tidal disruption of Earth, flare capped at L_Edd(1.4 Msun)", nsFlare?.regime);
+    check(Math.abs(BH.sinkS[0] - 12 * constants.K) < 1e-15, "neutron star keeps its 12 km surface after accreting");
+    resetAll();
+    placeEncounter({ target: "earth", rsKm: NS_RS, kind: 2, rp: 3, d0: 3 * rtNS });
+    run(40000, 60);
+    const nsCap = CAPTURES.find(c => c.target === "earth");
+    check(nsCap && /neutron-star surface/.test(nsCap.reason) && !TDES.some(d => d.target === "earth"), "neutron star: a plunging body impacts the surface (no horizon, no flare)", nsCap?.reason);
+    // the ship dies on the crust, not at a 4-6 km 'horizon'
+    resetAll();
+    G.dead = false;
+    let deathMsg = "", deathR = 0;
+    physics.initPhysicsHooks({ die(m) { G.dead = true; deathMsg = m; deathR = Math.hypot(G.x - BH.x[0], G.y - BH.y[0], G.z - BH.z[0]); }, award() { }, banner() { }, hideBanner() { }, engulfed() { } });
+    enc.addHoleData(G.x + 3000, G.y, NS_RS, G.vx, G.vy, null, 2, .0334, G.z, G.vz);
+    for (let k = 0; k < 2000 && !G.dead; k++) physics.advance(.05, 0, 0, 0, 0);
+    check(/neutron-star surface/.test(deathMsg) && deathR <= 12.01 && deathR > 6, "ship impacts the neutron-star surface at 12 km", { deathMsg, deathR });
+    G.dead = true;
+
+    // 6. 3-D: a vertical flyby (orbit plane perpendicular to the ecliptic)
+    resetAll();
+    const rtJ = tidalR(JUPITER, 1e5);
+    placeEncounter({ target: JUPITER, msun: 1e5, rp: rtJ / .35, d0: 5.5 * rtJ, incl: Math.PI / 2 });
+    const z0 = BH.z[0], vz0 = BH.vz[0];
+    run(20 * 86400, 600);
+    check(!state.isBodyDestroyed(JUPITER) && log.some(l => l.kind === "tde-flyby" && /Jupiter/.test(l.text)), "vertical flyby: distort, Jupiter intact", log.map(l => l.text));
+    check(Math.abs(BH.vz[0] - vz0) > 1e-6, "the hole feels Jupiter's out-of-plane pull (z dynamics)", BH.vz[0] - vz0);
 }
 
 if (failures) { console.log(failures + " FAILED"); process.exit(1); }

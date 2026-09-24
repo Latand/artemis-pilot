@@ -136,7 +136,7 @@ function lensCandidateCouldBeVisible(wx, wy, wz, rsU, camera) {
 }
 function lensingCouldBeVisible(camera) {
     for (let i = 0; i < BH.n; i++) {
-        if (lensCandidateCouldBeVisible((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera)) return true;
+        if (lensCandidateCouldBeVisible((eph.earthX + BH.x[i]) * K, BH.z[i] * K, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera)) return true;
     }
     for (const s of ACTIVE_STARS) {
         if (s.bh && lensCandidateCouldBeVisible(s.x * K, (s.z || 0) * K, -s.y * K, s.rs * K, camera)) return true;
@@ -610,7 +610,7 @@ const _sunOrbitState = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 const bhFocusValue = i => "bh:" + i;
 const starFocusValue = i => "star:" + i;
 function bhScenePos(i, out = _bhFocusPos) {
-    return out.set((eph.earthX + BH.x[i]) * K, 0, -(eph.earthY + BH.y[i]) * K);
+    return out.set((eph.earthX + BH.x[i]) * K, BH.z[i] * K, -(eph.earthY + BH.y[i]) * K);
 }
 function starScenePos(i, out = _starFocusPos) {
     return out.set(STARS[i].x * K, (STARS[i].z || 0) * K, -STARS[i].y * K);

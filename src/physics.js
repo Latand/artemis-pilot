@@ -9,6 +9,7 @@ import {
 } from "./ephemeris.js";
 import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody } from "./state.js";
 import { bhAdvance } from "./bhEncounters.js";
+import { NS_SURFACE_KM } from "./tde.js";
 import { fmtMET, fmtKm } from "./format.js";
 import { ACTIVE_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
 import { strongestActiveStarWell } from "./universe/starDominance.js";
@@ -230,8 +231,10 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 
         const d = Math.sqrt(d2);
         const tB = Math.sqrt(d * d2 / BH.mu[i]) / 60;
         if (tB < dt) dt = tB;
-        const gap = d - BH.rs[i];
-        if (gap < BH.rs[i] * 80) {
+        // a neutron star is a surface, a hole a photon sphere / horizon
+        const surf = BH.kind[i] === 2 ? NS_SURFACE_KM : BH.rs[i];
+        const gap = d - surf;
+        if (gap < surf * 80) {
             // bullet-time: never jump across the photon sphere in one step
             const lim = Math.max(1e-7, .15 * Math.max(0, gap) / Math.max(.01, vTot));
             if (lim < dt) dt = lim;
@@ -811,6 +814,17 @@ export function advance(simAdv, atx, aty, atz, aMag) {
         }
         for (let i = 0; i < BH.n; i++) {
             const dBH = Math.hypot(s[0] - BH.x[i], s[1] - BH.y[i], s[2] - BH.z[i]);
+            if (BH.kind[i] === 2) {
+                // pulsars have a ~12 km crust, not a horizon
+                if (dBH <= NS_SURFACE_KM) {
+                    G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
+                    const rel = Math.hypot(s[3] - BH.vx[i], s[4] - BH.vy[i], s[5] - BH.vz[i]);
+                    H.award("bh");
+                    H.die("Impacted the neutron-star surface at " + (rel > 1000 ? (rel / C_LIGHT).toFixed(2) + "c" : rel.toFixed(0) + " km/s"));
+                    break;
+                }
+                continue;
+            }
             if (dBH <= BH.rs[i]) {
                 G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
                 H.award("bh");

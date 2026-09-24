@@ -160,7 +160,7 @@ export function updateEscapeTracker(oi) {
     ];
     let bi = -1, bd = Infinity;
     for (let i = 0; i < BH.n; i++) {
-        const d = Math.hypot(G.x - BH.x[i], G.y - BH.y[i], G.z);
+        const d = Math.hypot(G.x - BH.x[i], G.y - BH.y[i], G.z - BH.z[i]);
         if (d < bd) { bd = d; bi = i; }
     }
     if (bi >= 0) rows.push({
@@ -211,7 +211,7 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     const aShS = WORLD.sunDestroyed ? 0 : MU_S / Math.pow(Math.max(R_SUN, oi.rS), 2);
     let aShB = 0;
     for (let bi = 0; bi < BH.n; bi++) {
-        const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi], G.z);
+        const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi], G.z - BH.z[bi]);
         const effB = Math.max(dB - BH.rs[bi], BH.rs[bi] * .02);
         aShB += BH.mu[bi] / (effB * effB);
     }
@@ -236,11 +236,11 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     const focusBH = bhFocusIndex(G.focus);
     let bhReadoutRs = BH_SIZES[BH.sizeIdx], bhNearestD = Infinity;
     for (let bi = 0; bi < BH.n; bi++) {
-        const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi], G.z);
+        const dB = Math.hypot(G.x - BH.x[bi], G.y - BH.y[bi], G.z - BH.z[bi]);
         if (dB < bhNearestD) { bhNearestD = dB; bhReadoutRs = BH.rs[bi]; }
     }
     if (focusBH >= 0 && focusBH < BH.n) {
-        const dShip = Math.hypot(G.x - BH.x[focusBH], G.y - BH.y[focusBH], G.z);
+        const dShip = Math.hypot(G.x - BH.x[focusBH], G.y - BH.y[focusBH], G.z - BH.z[focusBH]);
         const vFrame = Math.hypot(BH.vx[focusBH], BH.vy[focusBH]);
         const vSun = Math.hypot(BH.vx[focusBH] + eph.earthVx, BH.vy[focusBH] + eph.earthVy);
         setText(bhLineEl, "⚫ BH " + (focusBH + 1) + "/" + BH.n +

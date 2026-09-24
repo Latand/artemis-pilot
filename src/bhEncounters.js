@@ -36,7 +36,9 @@ import { sunStateAt } from "./universe/sunEvolution.js";
 import { hashInts } from "./universe/prng.js";
 
 const G_KM = 6.674e-20;          // km^3 kg^-1 s^-2
-const SPEED_CAP = .5 * C_LIGHT;   // numerical safety net only
+// Numerical guard only: with captures at 2 r_s and pair merges at
+// 2(r_s1 + r_s2) resolved dynamics stay below c on their own.
+const SPEED_CAP = .98 * C_LIGHT;
 export const DEBRIS_COUNT = 3000;
 
 // ---- hooks (presentation layer) ----
@@ -425,7 +427,11 @@ function mergePair(i, j, t) {
 function fmtKmShort(km) {
     return km >= 1e6 ? (km / 1e6).toFixed(2) + " M km" : km >= 1 ? km.toFixed(km >= 100 ? 0 : 2) + " km" : (km * 1000).toFixed(1) + " m";
 }
-function mergeRadius(i, j) { return (BH.rs[i] + BH.rs[j]) * 1.2; }
+// Hole pairs coalesce at twice their summed Schwarzschild radii — the pair
+// analogue of the 2 r_s capture sphere: from rest at infinity the
+// relative infall speed under the shared-softening PW law reaches c exactly
+// there (the old 1.2x merge radius let pairs run past c first).
+function mergeRadius(i, j) { return (BH.rs[i] + BH.rs[j]) * 2; }
 function mergeBySegment(t) {
     for (let i = 0; i < BH.n; i++)
         for (let j = i + 1; j < BH.n; j++) {
@@ -493,7 +499,7 @@ function preKick(t, dt) {
         if (v > SPEED_CAP) {
             const f = SPEED_CAP / v;
             BH.vx[i] = wx * f - eph.earthVx; BH.vy[i] = wy * f - eph.earthVy; BH.vz[i] = wz * f;
-            if (!speedWarned) { speedWarned = true; console.warn("black-hole speed capped at 0.5c (numerical safety net)"); }
+            if (!speedWarned) { speedWarned = true; console.warn("black-hole speed capped below c (numerical guard)"); }
         }
     }
     syncTdeFlag();
@@ -595,6 +601,63 @@ export function bhAdvance(_dtTotal, _tEnd) {
     for (let guard = 0; guard < 8 && mergeByDistance(t); guard++) { }
     updateAccretion(t);
     syncHoleScene();
+}
+
+// ---- quicksave / quickload ----
+// Records are plain data; +-Infinity (unbooked times, unbound periods) is
+// carried as a string because JSON would turn it into null.
+function packNums(v) {
+    if (typeof v === "number") return Number.isFinite(v) ? v : v > 0 ? "+Inf" : v < 0 ? "-Inf" : "NaN";
+    if (Array.isArray(v)) return v.map(packNums);
+    if (v && typeof v === "object") {
+        const o = {};
+        for (const k of Object.keys(v)) o[k] = packNums(v[k]);
+        return o;
+    }
+    return v;
+}
+function unpackNums(v) {
+    if (v === "+Inf") return Infinity;
+    if (v === "-Inf") return -Infinity;
+    if (v === "NaN") return NaN;
+    if (Array.isArray(v)) return v.map(unpackNums);
+    if (v && typeof v === "object") {
+        const o = {};
+        for (const k of Object.keys(v)) o[k] = unpackNums(v[k]);
+        return o;
+    }
+    return v;
+}
+export function serializeEncounterState() {
+    return packNums({
+        v: 1, serial: encSerial,
+        enc: ENC, tdes: TDES, captures: CAPTURES,
+        muScale: Array.from(WORLD.muScale), rScale: Array.from(WORLD.rScale),
+    });
+}
+// Call after the holes themselves have been restored (indices must match).
+export function restoreEncounterState(data) {
+    ENC.length = 0; TDES.length = 0; CAPTURES.length = 0;
+    if (!data || data.v !== 1) {
+        // a save without encounter state has no stripped bodies either
+        WORLD.muScale.fill(1); WORLD.rScale.fill(1);
+        syncTdeFlag();
+        return false;
+    }
+    const d = unpackNums(data);
+    encSerial = Math.max(encSerial, d.serial | 0);
+    const ok = x => x && x.bh >= 0 && x.bh < BH.n;
+    for (const r of d.enc || []) if (ok(r)) ENC.push({ ...r, el: { ...makeConic(), ...r.el } });
+    for (const t of d.tdes || []) if (ok(t)) TDES.push(t);
+    for (const c of d.captures || []) if (ok(c)) CAPTURES.push(c);
+    if (Array.isArray(d.muScale) && d.muScale.length === WORLD.muScale.length) WORLD.muScale.set(d.muScale);
+    if (Array.isArray(d.rScale) && d.rScale.length === WORLD.rScale.length) WORLD.rScale.set(d.rScale);
+    syncTdeFlag();
+    return true;
+}
+export function clearEncounterState() {
+    ENC.length = 0; TDES.length = 0; CAPTURES.length = 0;
+    syncTdeFlag();
 }
 
 // ---- flare readout ----
