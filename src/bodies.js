@@ -1,7 +1,8 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM } from "./constants.js";
+import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K } from "./constants.js";
 import { earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
-import { stellarExposure, meteredSkyExposure, linearStarColor, stellarPointAppearance } from "./render/stellarAppearance.js";
+import { stellarExposure, meteredSkyExposure, linearStarColor } from "./render/stellarAppearance.js";
+import { makeStarPointMaterial } from "./render/starPointMaterial.js";
 import { MOONS } from "./moons.js";
 import { mulberry32 } from "./format.js";
 import {
@@ -10,7 +11,7 @@ import {
 } from "./textures.js";
 import { renderQuality, scene, viewportSize } from "./scene.js";
 import { initRealSky, realSkyReady, realSkyStatus, updateRealSkyFade } from "./realSky.js";
-import { BRIGHTNESS_CURVE, observedMag, sizePxForMag, hdrIntensityForMag, teffToRGB, SUN_TEFF_K } from "./render/viewBrightness.js";
+import { teffToRGB, absMagVFromL, SUN_TEFF_K } from "./render/viewBrightness.js";
 import { applyTerrellToMaterial } from "./relView.js";
 import { G } from "./state.js";
 import { sunStateAt, AGB_TIP_R_RSUN } from "./universe/sunEvolution.js";
@@ -22,7 +23,6 @@ export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], pl
 // planetary moons: small textured-free spheres + always-on glow dot + label
 export const moonGroups = [], moonSurfaces = [], moonGlows = [], moonLabels = [];
 let deferredRealSky = false;
-let proceduralSkyObjects = [];
 
 function rgbaFromHex(hex, alpha) {
     const c = new THREE.Color(hex);
@@ -36,9 +36,9 @@ function shouldUseRealSky() {
     const flag = new URLSearchParams(location.search).get("realsky");
     if (flag === "1") return true;
     if (flag === "0") return false;
-    // Default ON since Wave 6: the real HYG naked-eye sky is a core
-    // requirement (readable constellations); ?realsky=0 opts out for
-    // low-bandwidth sessions.
+    // Default ON since Wave 6: the constellation guides and labels of the
+    // real HYG sky (the stars themselves are render/catalogStars.js);
+    // ?realsky=0 opts out for low-bandwidth sessions.
     return true;
 }
 
@@ -50,54 +50,10 @@ function shouldUseGalaxyBackdrop() {
     return new URLSearchParams(location.search).get("galaxy") === "1";
 }
 
-function disposeProceduralSky() {
-    for (const obj of proceduralSkyObjects) {
-        if (obj.parent) obj.parent.remove(obj);
-        obj.geometry?.dispose?.();
-        obj.material?.dispose?.();
-    }
-    proceduralSkyObjects = [];
-}
-
-function buildProceduralSky(starSprite, starColor, scratchColor) {
-    for (const conf of [[2400, 1.75, .96, null, 1.08], [780, 3.15, 1, starSprite, 1.16], [190, 5.45, 1, starSprite, 1.24]]) {
-        const count = conf[0], pos = new Float32Array(count * 3), col = new Float32Array(count * 3), rnd = mulberry32(count * 7 + 13);
-        const gain = conf[4];
-        for (let i = 0; i < count; i++) {
-            const th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1), r = 6.0e6;
-            pos[i * 3] = r * Math.sin(ph) * Math.cos(th);
-            pos[i * 3 + 1] = r * Math.cos(ph);
-            pos[i * 3 + 2] = r * Math.sin(ph) * Math.sin(th);
-            starColor(rnd, scratchColor);
-            const b = (.58 + .50 * Math.pow(rnd(), 1.45)) * gain; // magnitude spread inside each band
-            col[i * 3] = Math.min(1.45, scratchColor[0] * b);
-            col[i * 3 + 1] = Math.min(1.45, scratchColor[1] * b);
-            col[i * 3 + 2] = Math.min(1.45, scratchColor[2] * b);
-        }
-        const g = new THREE.BufferGeometry();
-        g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-        g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-        const pts = new THREE.Points(g, new THREE.PointsMaterial({
-            vertexColors: true, size: conf[1], sizeAttenuation: false, transparent: true,
-            opacity: conf[2], depthWrite: false, map: conf[3], blending: THREE.AdditiveBlending,
-        }));
-        pts.frustumCulled = false;
-        pts.renderOrder = -2;
-        skyStars.add(pts);
-        proceduralSkyObjects.push(pts);
-    }
-}
-
 export function scheduleDeferredRealSkyLoad(delayMs = 4800) {
     if (!deferredRealSky || !skyStars) return;
     deferredRealSky = false;
-    const start = () => {
-        initRealSky(skyStars);
-        const ready = realSkyReady();
-        if (ready?.finally) ready.finally(() => {
-            if (realSkyStatus().loaded) disposeProceduralSky();
-        });
-    };
+    const start = () => initRealSky(skyStars);
     const queueIdle = () => {
         if (typeof requestIdleCallback === "function") requestIdleCallback(start, { timeout: 1200 });
         else setTimeout(start, 250);
@@ -249,7 +205,7 @@ export function updateBodyShaders(camera, t) {
         exposure = Math.min(exposure, meteredSkyExposure(camera, group.position, p.R * K, sunPos));
         if (rpx > 2) requestPlanetTexture(i);
         // A distant marker fades continuously as the physical disk resolves.
-        plGlows[i].material.opacity = 0.24 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4));
+        plGlows[i].material.opacity = 0.24 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4)) * (plGlows[i].userData.guideFade ?? 1);
         for (const child of group.children) {
             const direction = child.material?.userData.sunDirection;
             if (direction) {
@@ -270,27 +226,28 @@ export function updateBodyShaders(camera, t) {
 const SUN_TEFF_COLOR = teffToRGB(SUN_TEFF_K);
 const _sunTintScratch = [1, 1, 1];
 const _sunEvoTint = new THREE.Vector3(1, 1, 1);
-const _sunAppearance = {};
+const _sunPointColor = new THREE.Color();
 
-// Physical radius, temperature and luminosity still come from sunStateAt.
-// The display maps unresolved flux to a finite PSF and resolves the actual
-// photosphere without superimposing an unbounded additive glow on its center.
+// Physical radius, temperature and luminosity come from sunStateAt. Unresolved,
+// the Sun is an ordinary point of the shared resolved-star material (sunGlow):
+// V-band absolute magnitude from its evolving L and Teff, one PSF, one
+// exposure, fading out exactly as its photosphere resolves (0.75 -> 3 px),
+// so it is continuous from the surface out to where it drops below the
+// display limit, like every catalog star.
 export function updateSunView(camera, camDistPc) {
     const sun = sunStateAt(G.t);
     const d = Math.max(camDistPc, 1e-9);
-    const mag = observedMag(sun.L_Lsun, d);
-    const sizePx = sizePxForMag(mag, BRIGHTNESS_CURVE);
-    const hdr = hdrIntensityForMag(mag, BRIGHTNESS_CURVE);
-    const pxScale = viewportSize.pxScale;
-    const distScene = d * PC_KM * K;
-    const pointWorldScale = sizePx * distScene / Math.max(1e-6, pxScale);
-    const sunRadiusScene = SUN_RADIUS * sun.R_Rsun; // evolving photosphere radius, scene units
-    const radiusPx = sunRadiusScene * pxScale / Math.max(sunRadiusScene, distScene);
-    const appearance = stellarPointAppearance(hdr, radiusPx, stellarExposure.value, _sunAppearance);
-    sunGlow.scale.setScalar(Math.max(sunRadiusScene * 2, pointWorldScale));
-    sunGlow.material.opacity = appearance.opacity;
     const teffColor = teffToRGB(sun.Teff, _sunTintScratch);
-    linearStarColor(teffColor, sunGlow.material.color).multiplyScalar(appearance.intensity);
+    const attrs = sunGlow.geometry.attributes;
+    const absMagV = absMagVFromL(sun.L_Lsun, sun.Teff);
+    if (attrs.absMag.array[0] !== absMagV || attrs.teffK.array[0] !== sun.Teff || attrs.radiusKm.array[0] !== SUN_RADIUS / K * sun.R_Rsun) {
+        attrs.absMag.array[0] = absMagV;
+        attrs.teffK.array[0] = sun.Teff;
+        attrs.radiusKm.array[0] = SUN_RADIUS / K * sun.R_Rsun;
+        linearStarColor(teffColor, _sunPointColor);
+        attrs.color.array[0] = _sunPointColor.r; attrs.color.array[1] = _sunPointColor.g; attrs.color.array[2] = _sunPointColor.b;
+        attrs.absMag.needsUpdate = attrs.teffK.needsUpdate = attrs.radiusKm.needsUpdate = attrs.color.needsUpdate = true;
+    }
     linearStarColor(teffColor, sunCore.material.color);
     sunLight.color.copy(sunCore.material.color);
     sunCore.rotation.y = (G.t * 2 * Math.PI / (25.38 * 86400)) % (2 * Math.PI);
@@ -404,33 +361,28 @@ export function buildBodies(maps) {
     sunPN.scale.setScalar(0); // hidden until updateSunView enters the 'PN' phase
     sunPN.visible = false;
     scene.add(sunPN);
-    // soft glow only — no lens flare, it blocked the view ahead
-    // PSF-style soft gaussian dot (no square sprite); the texture itself is
-    // neutral white so the Sun's true Teff=5772K hue comes entirely from
-    // material.color, set every frame by updateSunView from the same
-    // blackbody LUT every other star uses.
-    sunGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,255,255,0.95)", "rgba(255,255,255,0.2)"), transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, opacity: .06 }));
-    sunGlow.scale.setScalar(SUN_RADIUS * 2.2);
+    // The unresolved Sun: one point of the shared resolved-star material
+    // (render/starPointMaterial.js), driven by updateSunView. It is visible at
+    // every camera distance; its disk-resolve fade hands over to sunCore.
+    const sunPointGeo = new THREE.BufferGeometry();
+    sunPointGeo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
+    sunPointGeo.setAttribute("color", new THREE.BufferAttribute(new Float32Array([1, 1, 1]), 3));
+    sunPointGeo.setAttribute("absMag", new THREE.BufferAttribute(new Float32Array([absMagVFromL(1, SUN_TEFF_K)]), 1));
+    sunPointGeo.setAttribute("teffK", new THREE.BufferAttribute(new Float32Array([SUN_TEFF_K]), 1));
+    sunPointGeo.setAttribute("radiusKm", new THREE.BufferAttribute(new Float32Array([SUN_RADIUS / K]), 1));
+    sunGlow = new THREE.Points(sunPointGeo, makeStarPointMaterial({ radius: true }));
+    sunGlow.name = "Sun (unresolved)";
+    sunGlow.frustumCulled = false;
+    sunGlow.renderOrder = -3;
     scene.add(sunGlow);
-    // ---- stars: three magnitude bands, blackbody-ish colors ----
-    // B-V style temperature → RGB, biased toward the real bright-sky mix
-    const starColor = (rnd, out) => {
-        const t = rnd();
-        if (t < .12) { out[0] = .62 + rnd() * .18; out[1] = .72 + rnd() * .16; out[2] = 1; }          // O/B blue
-        else if (t < .3) { out[0] = .9 + rnd() * .1; out[1] = .92 + rnd() * .08; out[2] = 1; }        // A white
-        else if (t < .62) { out[0] = 1; out[1] = .9 + rnd() * .08; out[2] = .72 + rnd() * .2; }       // F/G yellow-white
-        else if (t < .86) { out[0] = 1; out[1] = .74 + rnd() * .12; out[2] = .5 + rnd() * .16; }      // K orange
-        else { out[0] = 1; out[1] = .55 + rnd() * .14; out[2] = .38 + rnd() * .12; }                  // M red
-        return out;
-    };
-    const starSprite = dotTexture("rgba(255,255,255,1)", "rgba(200,215,255,0.48)");
-    const _sc = [0, 0, 0];
+    // Camera-attached guides for the view from the Solar System
+    // (constellation figures and labels, realSky.js). There is no stand-in
+    // random star dome: the real catalog stars are drawn in 3-D at every scale.
     skyStars = new THREE.Group();
     skyStars.frustumCulled = false;
     scene.add(skyStars);
     const useRealSky = shouldUseRealSky();
     const immediateRealSky = useRealSky && shouldLoadRealSkyImmediately();
-    if (!immediateRealSky) buildProceduralSky(starSprite, starColor, _sc);
     if (immediateRealSky) initRealSky(skyStars);
     else if (useRealSky) deferredRealSky = true;
     if (maps.milky && !location.search.includes("sky=0")) {
@@ -512,7 +464,7 @@ export function buildBodies(maps) {
     // moon orbit ring
     {
         const g = orbitEllipseGeometry(A_MOON, E_MOON, 0, 240);
-        moonOrbitRing = new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: 0x2a3442, transparent: true, opacity: .55 }));
+        moonOrbitRing = new THREE.LineLoop(g, new THREE.LineBasicMaterial({ color: 0x2a3442, transparent: true, opacity: .55, depthWrite: false }));
         scene.add(moonOrbitRing);
     }
     // SOI ring around the Moon
@@ -559,7 +511,8 @@ export function buildBodies(maps) {
         }));
         scene.add(glow);
         const og = orbitEllipseGeometry(p.a, p.e, p.varpi, undefined, p.i || 0, p.Om || 0);
-        const orbit = new THREE.LineLoop(og, new THREE.LineBasicMaterial({ color: 0x2c3a4a, transparent: true, opacity: .5 }));
+        // Guide overlay: depth-tested against bodies, never occluding them.
+        const orbit = new THREE.LineLoop(og, new THREE.LineBasicMaterial({ color: 0x2c3a4a, transparent: true, opacity: .5, depthWrite: false }));
         scene.add(orbit);
         const sp = document.createElement("span");
         sp.className = "lbl";

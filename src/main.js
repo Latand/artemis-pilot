@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import {
-    R_EARTH, R_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
+    R_EARTH, R_MOON, A_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS, PC_KM,
     OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM,
 } from "./constants.js";
@@ -43,6 +43,8 @@ import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
 import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt } from "./cosmic.js";
 import { updateGalaxyVolume, renderGalaxyVolume } from "./render/galaxyVolume.js";
+import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
+import { starViewUniforms } from "./render/starPointMaterial.js";
 import { eraModulation } from "./universe/cosmicEra.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
@@ -388,6 +390,9 @@ const cosmicInitT0 = perfStart();
 // the whole tier-1 streaming field into the far tier for free.
 initCosmicLayer(farTierGroup);
 addBackgroundHook(renderGalaxyVolume);
+// Real stars (HYG catalog + curated destinations) at every camera distance,
+// one shared photometry with tier 1, the Sun and the active stars.
+initCatalogStars(scene);
 perfEnd("startup.initCosmicLayer", cosmicInitT0);
 // Tier-1 AT-HYG streaming star layer (WP9/WP10): fetches its manifest and
 // streams tiles over ~25 minutes, so it's fired without an `await` to avoid
@@ -1309,12 +1314,27 @@ function advanceMinorSwarm(swarm, group, cursor, chunk, res) {
     uploadMinorResiduals(group, res.start, res.count);
     return res.nextIdx;
 }
+// Minor-body swarms are representative structure guides (fixed-pixel points,
+// not photometric bodies): each fades in as the camera clears its region and
+// fades out as the whole structure shrinks below ~12-40 px, instead of
+// switching at fixed distances and piling up into a bright additive blob.
+const MINOR_GUIDE_RADIUS_AU = { belt: 2.8, kuiper: 42, curated: 30, oort: 8000 };
+function setMinorSwarm(key, fade) {
+    const r = minorRenderers[key];
+    r.mesh.visible = fade > .01;
+    r.mesh.material.uniforms.uFade.value = fade;
+}
 function setMinorVisible(solarDistAu) {
-    const nearSystem = !WORLD.sunDestroyed && solarDistAu >= 0.35 && solarDistAu <= 1600;
-    minorRenderers.belt.mesh.visible = nearSystem;
-    minorRenderers.kuiper.mesh.visible = nearSystem && solarDistAu >= 5;
-    minorRenderers.curated.mesh.visible = nearSystem;
-    minorRenderers.oort.mesh.visible = !WORLD.sunDestroyed && solarDistAu >= 500 && cam.dist < LY_SCENE * .2;
+    if (WORLD.sunDestroyed) {
+        for (const key of ["belt", "kuiper", "curated", "oort"]) minorRenderers[key].mesh.visible = false;
+        return;
+    }
+    const pxPerAu = AU_KM * K * viewportSize.pxScale / Math.max(1e-9, camera.position.distanceTo(sunPos));
+    const shrink = key => smooth01(12, 40, MINOR_GUIDE_RADIUS_AU[key] * pxPerAu);
+    setMinorSwarm("belt", smooth01(.25, .45, solarDistAu) * shrink("belt"));
+    setMinorSwarm("kuiper", smooth01(3.5, 6, solarDistAu) * shrink("kuiper"));
+    setMinorSwarm("curated", smooth01(.25, .45, solarDistAu) * shrink("curated"));
+    setMinorSwarm("oort", smooth01(350, 650, solarDistAu) * shrink("oort"));
 }
 const cosmoDEVec = [0, 0, 0];
 const cosmoDMVec = [0, 0, 0];
@@ -1710,7 +1730,9 @@ function frame() {
         clouds.visible = true;
         if (earthAtmo) earthAtmo.visible = true;
     }
-    moonOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.moonDestroyed && !cosmicView;
+    const moonGuide = smooth01(6, 24, A_MOON * K * viewportSize.pxScale / Math.max(1e-9, camera.position.distanceTo(earthG.position)));
+    moonOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.moonDestroyed && moonGuide > .01;
+    moonOrbitRing.material.opacity = .55 * moonGuide;
     const moonVisible = !WORLD.moonDestroyed && !cosmicView;
     if (!moonVisible) moon.visible = false;
     else if (!detailShed) moon.visible = true;
@@ -1723,7 +1745,8 @@ function frame() {
         sunCorona.position.copy(sunPos);
     }
     const sunVisible = !WORLD.sunDestroyed && !cosmicView;
-    sunGlow.visible = sunVisible;
+    // The unresolved Sun is a star point at every scale (bodies.js updateSunView).
+    sunGlow.visible = !WORLD.sunDestroyed;
     sunLight.visible = sunVisible;
     if (!sunVisible) {
         sunCore.visible = false;
@@ -1795,10 +1818,16 @@ function frame() {
     if (nearVisualDue) nearVisualReady = true;
     perfEnd("scene.bodies", sceneBodiesT0, PERF.enabled ? { nearFieldDue, nearVisualDue, cosmicView } : null);
     const sceneFocusT0 = perfStart();
+    const sunCamDist = Math.max(1e-9, camera.position.distanceTo(sunPos));
     for (let i = 0; i < PL.length; i++) {
         plGroups[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
-        plGlows[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
-        plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed && !cosmicView;
+        // Orbit rings and planet markers are guides: they fade out as the
+        // orbit shrinks below ~6-24 px instead of stacking over the Sun.
+        const guide = smooth01(6, 24, PL[i].a * K * viewportSize.pxScale / sunCamDist);
+        plGlows[i].visible = !WORLD.plDestroyed[i] && guide > .01;
+        plGlows[i].userData.guideFade = guide;
+        plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed && guide > .01;
+        plOrbitRings[i].material.opacity = .5 * guide;
     }
     const focusMoon = moonFocusIndex(G.focus);
     for (let i = 0; i < MOONS.length; i++) {
@@ -1933,11 +1962,16 @@ function frame() {
         // outshines the galactic core, and the disk cloud already carries the
         // statistical field there. Fully gone by ~15 kly (see cosmic.js catalog
         // fade, which shares this band).
-        setTier1Fade(1 - smooth01(LY_SCENE * 1500, LY_SCENE * 15000, cam.dist));
+        const catalogFade = 1 - smooth01(LY_SCENE * 1500, LY_SCENE * 15000, cam.dist);
+        setTier1Fade(catalogFade);
+        setCatalogStarsFade(catalogFade);
+        updateCatalogStars();
+        starViewUniforms.uPxScale.value = viewportSize.pxScale;
         if (tier1RebaseEnabled) {
             const rebaseThresholdKm = Math.max(1e6, (cam.dist / K) * .5);
             if (maybeRebase(camWorldKmX, camWorldKmY, camWorldKmZ, rebaseThresholdKm)) {
                 refreshTier1Residuals();
+                refreshCatalogResiduals();
                 uploadMinorResiduals(minorRenderers.oort, 0, minorRenderers.oort.capacity);
             }
         }
@@ -1984,7 +2018,8 @@ function frame() {
     }
     perfEnd("scene.nearPlane", nearPlaneT0, PERF.enabled ? { starChecks: nearPlaneStarChecks, clearU, near: camera.near } : null);
     if (sky) { sky.position.copy(camera.position); sky.visible = !cosmicView; }
-    if (skyStars) { skyStars.position.copy(camera.position); skyStars.visible = !cosmicView; }
+    // Constellation guides fade with distance from the Sun (updateSunView).
+    if (skyStars) { skyStars.position.copy(camera.position); skyStars.visible = true; }
     if (galaxyBackdrop) { galaxyBackdrop.position.copy(camera.position); galaxyBackdrop.visible = !cosmicView && (!renderQuality.mobile || galaxyBackdropForced); }
     perfEnd("scene.update", sceneT0, PERF.enabled ? {
         cosmicLod,
@@ -1997,6 +2032,8 @@ function frame() {
     // true galactic position at every scale (render/galaxyVolume.js).
     updateGalaxyVolume(camera, G.t, eraModulation(G.t), mergerDisruptFractionAt(G.t));
     updateCosmicLayer();
+    // The Sun's point and evolving photosphere: every view, not only near it.
+    updateSunView(camera, camera.position.distanceTo(sunPos) / K / PC_KM);
     perfEnd("cosmic.update", cosmicT0, PERF.enabled ? { cosmicView, dist: cam.dist } : null);
     if (cosmicView) {
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
@@ -2041,9 +2078,6 @@ function frame() {
     const starsT0 = perfStart();
     updateStars(camera, dtR);
     perfEnd("stars.update", starsT0, PERF.enabled ? { entries: STARS.length, activeStars: ACTIVE_STARS.length } : null);
-    // WP16 owns the Sun's view-aware brightness model; this call site is the
-    // frozen handoff (see bodies.js:updateSunView) so WP17 never edits bodies.js.
-    updateSunView(camera, camera.position.distanceTo(sunPos) / K / PC_KM);
     // ---- craft pose & adaptive size ----
     craft.quaternion.setFromUnitVectors(upV, dirV);
     const cd = camera.position.distanceTo(shipG.position);

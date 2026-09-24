@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { G } from "./state.js";
 import { CAM_DIST_MAX, K, LY_SCENE } from "./constants.js";
+import { tierDepthRange } from "./render/tierDepth.js";
 import { eph } from "./ephemeris.js";
 import { look, LOOK_YAW_MAX, LOOK_PITCH_MIN, LOOK_PITCH_MAX } from "./cockpit.js";
 import { apOff } from "./autopilot.js";
@@ -132,6 +133,7 @@ export function renderSceneTiered(rendererArg, sceneArg, cameraArg) {
     cameraArg.near = Math.min(savedFar, Math.max(savedNear, TIER_SPLIT_UNITS));
     cameraArg.far = savedFar;
     cameraArg.updateProjectionMatrix();
+    tierDepthRange.value.set(cameraArg.near, 1e38);
     rendererArg.render(sceneArg, cameraArg);
     for (let i = 0; i < nearTierOnly.length; i++) nearTierOnly[i].visible = tierSavedVis[i];
     farTierGroup.visible = false;
@@ -145,7 +147,9 @@ export function renderSceneTiered(rendererArg, sceneArg, cameraArg) {
     cameraArg.near = savedNear;
     cameraArg.far = Math.min(savedFar, TIER_SPLIT_UNITS);
     cameraArg.updateProjectionMatrix();
+    tierDepthRange.value.set(0, cameraArg.far);
     rendererArg.render(sceneArg, cameraArg);
+    tierDepthRange.value.set(0, 1e38);
     rendererArg.autoClear = oldAutoClear;
     farTierGroup.visible = true;
     cameraArg.near = savedNear;

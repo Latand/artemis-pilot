@@ -36,7 +36,7 @@ const bodiesSrc = readFileSync(new URL("../src/bodies.js", import.meta.url), "ut
 const cosmicSrc = readFileSync(new URL("../src/cosmic.js", import.meta.url), "utf8");
 const catalogDataSrc = readFileSync(new URL("../src/universe/catalogData.js", import.meta.url), "utf8");
 const catalogSearchSrc = readFileSync(new URL("../src/catalogSearch.js", import.meta.url), "utf8");
-const catalogWorkerSrc = readFileSync(new URL("../src/catalogWorker.js", import.meta.url), "utf8");
+const catalogStarsSrc = readFileSync(new URL("../src/render/catalogStars.js", import.meta.url), "utf8");
 const activeStarsSrc = readFileSync(new URL("../src/universe/activeStars.js", import.meta.url), "utf8");
 const hygActiveCatalogSrc = readFileSync(new URL("../src/universe/hygActiveCatalog.js", import.meta.url), "utf8");
 const mainSrc = readFileSync(new URL("../src/main.js", import.meta.url), "utf8");
@@ -148,11 +148,12 @@ for (const duplicate of ["SIRIUS", "PROCYON", "RIGIL KENTAURUS", "TOLIMAN", "RAN
   assert(!names.has(duplicate), "runtime HYG subset should filter curated alias " + duplicate);
 }
 assert(
-  cosmicSrc.includes("worker.onerror") &&
-    cosmicSrc.includes("loadCatalogStarsFallback") &&
-    cosmicSrc.includes("catalogLoaded") &&
-    cosmicSrc.includes("est mass "),
-  "runtime catalog loader should fall back when module workers fail",
+  catalogStarsSrc.includes("loadHygCatalogData()") &&
+    catalogStarsSrc.includes("requestIdleCallback") &&
+    catalogStarsSrc.includes("state.error") &&
+    !cosmicSrc.includes("catalogRoot") &&
+    !cosmicSrc.includes("nearStarRoot"),
+  "the HYG catalog is drawn once, by the shared-material catalog layer, loaded in idle slices",
 );
 assert(
     riverSrc.includes("const RIVER_STAR_SOURCE_MAX = 24") &&
@@ -244,8 +245,8 @@ assert(
   texturesSrc.includes('const forceMilky = q.get("milky") === "1" || q.get("sky") === "1"') &&
     texturesSrc.includes('milky: forceMilky ? tryLoad("2k_stars_milky_way.jpg") : Promise.resolve(null)') &&
     bodiesSrc.includes("if (maps.milky && !location.search.includes(\"sky=0\"))") &&
-    bodiesSrc.includes("buildProceduralSky(starSprite, starColor, _sc)"),
-  "decorative Milky Way sky texture should stay opt-in while procedural sky remains the default backdrop",
+    !bodiesSrc.includes("buildProceduralSky"),
+  "decorative Milky Way sky texture stays opt-in, and no random stand-in star dome is drawn",
 );
 assert(
   sceneSrc.includes("const bloomRequested = bloomParam !== \"0\"") &&
@@ -277,8 +278,7 @@ assert(
   "startup warmup should apply body surface LOD before compiling the scene",
 );
 assert(
-  realSkySrc.includes("const MAG_LIMIT = 6.5") &&
-    realSkySrc.includes("HYG real naked-eye sky") &&
+  realSkySrc.includes("HYG real naked-eye sky") &&
     realSkySrc.includes("const ASTERISMS") &&
     realSkySrc.includes("ORION") &&
     realSkySrc.includes("URSA MAJOR") &&
@@ -286,8 +286,6 @@ assert(
     realSkySrc.includes("CANIS MAJOR") &&
     realSkySrc.includes("PEGASUS") &&
     realSkySrc.includes("LineSegments") &&
-    realSkySrc.includes("ShaderMaterial") &&
-    realSkySrc.includes('g.setAttribute("magnitude"') &&
     bodiesSrc.includes("function shouldUseRealSky()") &&
     bodiesSrc.includes('flag === "1"') &&
     bodiesSrc.includes('flag === "0"') &&
@@ -297,8 +295,6 @@ assert(
     bodiesSrc.includes("requestRealSkyLoad") &&
     inputSrc.includes("requestRealSkyLoad(0)") &&
     mobileControlsSrc.includes("requestRealSkyLoad(0)") &&
-    bodiesSrc.includes("buildProceduralSky") &&
-    bodiesSrc.includes("disposeProceduralSky") &&
     bodiesSrc.includes("initRealSky(skyStars)") &&
     mainSrc.includes("scheduleDeferredRealSkyLoad()") &&
     mainSrc.includes("smooth01(2.0e7, 7.0e7, cam.dist)") &&
@@ -396,14 +392,10 @@ assert(
     activeStarsSrc.includes("hygCatalogFocusId(focus)") &&
     hygActiveCatalogSrc.includes("catalogPhysicsUsable") &&
     catalogSearchSrc.includes("catalogPhysicsUsable") &&
-    catalogWorkerSrc.includes("inputVals") &&
-    cosmicSrc.includes("hygCatalogMetaUrl()") &&
-    cosmicSrc.includes("rememberHygCatalogData(msg.meta") &&
-    cosmicSrc.includes("url: hygCatalogMetaUrl()") &&
+
     catalogSearchSrc.includes("loadHygCatalogData") &&
     hygActiveCatalogSrc.includes("loadHygCatalogData") &&
-    cosmicSrc.includes("{ deferIndex: true }") &&
-    cosmicSrc.includes("registerHygCatalog(msg.meta") &&
+    catalogStarsSrc.includes("registerHygCatalog(meta, vals, { deferIndex: true })") &&
     catalogSearchSrc.includes("registerHygCatalog(meta, vals, { deferIndex: true })") &&
     hygActiveCatalogSrc.includes("waitForHygCatalogIndex") &&
     hygActiveCatalogSrc.includes("deferIndex: typeof window") &&

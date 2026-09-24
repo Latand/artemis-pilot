@@ -34,11 +34,11 @@
 // how bright it happens to look from Sol.
 
 import * as THREE from "three";
-import { stellarExposure, STELLAR_VISIBILITY_GLSL, STELLAR_PSF_GLSL, linearStarColor } from "./stellarAppearance.js";
+import { linearStarColor } from "./stellarAppearance.js";
+import { makeStarPointMaterial } from "./starPointMaterial.js";
 import { PC_KM, K } from "../constants.js";
 import { worldToResidualArr } from "../universe/renderOrigin.js";
-import { relUniforms } from "../relView.js";
-import { BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, RELATIVISTIC_VIEW_GLSL, bvToTeff, teffToRGB, absMagFromApparent } from "./viewBrightness.js";
+import { BRIGHTNESS_CURVE, bvToTeff, teffToRGB, absMagFromApparent } from "./viewBrightness.js";
 
 export const GROUP_TILE_SPAN = 256;
 
@@ -99,84 +99,11 @@ export const TIER1_MIN_PX = BRIGHTNESS_CURVE.minPx;
 export const TIER1_MAX_PX = BRIGHTNESS_CURVE.maxPx;
 export const TIER1_MAG_LIMIT = BRIGHTNESS_CURVE.magLimit;
 
-const VERT = /* glsl */`
-attribute vec3 color;
-attribute float absMag;
-attribute float hidden;
-attribute float teffK;
-varying vec3 vColor;
-varying float vHdr;
-varying float vDoppler;
-uniform float uBasePx;
-uniform float uMagRef;
-uniform float uMinPx;
-uniform float uMaxPx;
-uniform float uMagLimit;
-uniform float uPcScene;
-uniform float uMagPenalty;
-uniform float uStellarExposure;
-${VIEW_BRIGHTNESS_GLSL}
-${STELLAR_VISIBILITY_GLSL}
-${RELATIVISTIC_VIEW_GLSL}
-void main() {
-    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    float dopplerD;
-    vec3 abPos = relApplyView(mvPosition.xyz, teffK, dopplerD);
-    vDoppler = dopplerD;
-    vColor = color;
-    if (uBeta > 0.0) {
-        vec3 rgb = relTeffToRGB(teffK * dopplerD);
-        vColor = mix(rgb / 12.92, pow((rgb + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), rgb));
-    }
-    float camDistPc = length(abPos) / uPcScene;
-    float mag = obmApparentMagAt(absMag + uMagPenalty, camDistPc);
-    gl_PointSize = hidden > 0.5 ? 0.0 : obmSizePx(mag, uBasePx, uMagRef, uMinPx, uMaxPx);
-    vHdr = stellarDisplayFlux(obmHdrIntensity(mag, uMagLimit) * pow(dopplerD, 4.0), uStellarExposure);
-    gl_Position = projectionMatrix * vec4(abPos, 1.0);
-    // Sub-display flux can be rejected before rasterization. No catalog rows
-    // or physical sources are removed by this display-only cull.
-    if (hidden > 0.5 || vHdr * uStellarExposure < 0.001) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-}
-`;
-
-const FRAG = /* glsl */`
-varying vec3 vColor;
-varying float vHdr;
-uniform float uFade;
-uniform float uDim;
-${STELLAR_PSF_GLSL}
-void main() {
-    float g = stellarPSF(gl_PointCoord);
-    if (g < 0.001) discard;
-    gl_FragColor = vec4(vColor * min(vHdr, 16.0) * uStellarExposure, g * uFade * uDim);
-    #include <tonemapping_fragment>
-    #include <colorspace_fragment>
-}
-`;
-
+// The point shader is the shared resolved-star material (starPointMaterial.js),
+// so a tier-1 star renders exactly like a tier-0, curated or procedural star
+// of the same absolute magnitude at the same camera distance.
 function makeTier1Material({ dim = 1, magPenalty = 0 } = {}) {
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            uBasePx: { value: BRIGHTNESS_CURVE.basePx },
-            uMagRef: { value: BRIGHTNESS_CURVE.magRef },
-            uMinPx: { value: BRIGHTNESS_CURVE.minPx },
-            uMaxPx: { value: BRIGHTNESS_CURVE.maxPx },
-            uMagLimit: { value: BRIGHTNESS_CURVE.magLimit },
-            uPcScene: { value: PC_KM * K },
-            uFade: { value: 1 },
-            uStellarExposure: stellarExposure,
-            uDim: { value: dim },
-            uMagPenalty: { value: magPenalty },
-            uBeta: relUniforms.uBeta,
-            uBoostDirView: relUniforms.uBoostDirView,
-        },
-        vertexShader: VERT,
-        fragmentShader: FRAG,
-        transparent: true,
-        depthWrite: false,
-        depthTest: true,
-        blending: THREE.AdditiveBlending,
-    });
+    return makeStarPointMaterial({ dim, magPenalty, hidden: true });
 }
 
 // --- THREE-backed groups -----------------------------------------------------

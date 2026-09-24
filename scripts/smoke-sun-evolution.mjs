@@ -172,7 +172,10 @@ async function warpToEpoch(page, targetGyr, { freshStart } = {}) {
         const waitFrame = () => new Promise(r => requestAnimationFrame(r));
         for (let i = 0; i < 12; i++) await waitFrame();
 
-        const glowColor = bodies.sunGlow ? [bodies.sunGlow.material.color.r, bodies.sunGlow.material.color.g, bodies.sunGlow.material.color.b] : null;
+        // The unresolved Sun is a point of the shared star material; its
+        // colour is the per-vertex blackbody colour of the evolving Teff.
+        const c = bodies.sunGlow?.geometry?.attributes?.color?.array;
+        const glowColor = c ? [c[0], c[1], c[2]] : null;
         return {
             gyrReached: G.t / (1e9 * SEC_YEAR),
             sun,

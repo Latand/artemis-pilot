@@ -153,17 +153,19 @@ for (const curve of [BRIGHTNESS_CURVE, SKY_CURVE]) {
 }
 
 // ── 7. realSky dome fade zone: continuous, monotonic, correct endpoints ───
-hr("realSky dome fade (50 -> 500 pc, WP16 a1 legacy-path boundary)");
+hr("Sol-perspective guide fade (0.008 -> 0.08 pc, before parallax breaks the figures)");
 ok(skyDomeFade(0) === 1, "fully opaque at the Sun");
-ok(skyDomeFade(SKY_DOME_FADE_START_PC) === 1, "still fully opaque at the 50 pc fade-start boundary");
-ok(skyDomeFade(SKY_DOME_FADE_END_PC) === 0, "fully faded by the 500 pc fade-end boundary");
-ok(skyDomeFade(1e6) === 0, "stays fully faded far beyond 500 pc");
+ok(skyDomeFade(SKY_DOME_FADE_START_PC) === 1, "still fully opaque at the 0.008 pc fade-start boundary");
+ok(skyDomeFade(SKY_DOME_FADE_END_PC) === 0, "fully faded by the 0.08 pc fade-end boundary");
+ok(skyDomeFade(1e6) === 0, "stays fully faded far beyond 0.08 pc");
+// Sirius (2.64 pc) must still sit within ~2 deg of its figure where the fade ends.
+ok(SKY_DOME_FADE_END_PC / 2.64 < 2 * Math.PI / 180, "guides are gone before Sirius drifts 2 deg off its figure");
 {
-    const samples = Array.from({ length: 21 }, (_, i) => 30 + i * 25); // 30..530 pc
+    const samples = Array.from({ length: 21 }, (_, i) => 0.005 + i * 0.006); // 0.005..0.125 pc
     const fades = samples.map(skyDomeFade);
     let monotonic = true;
     for (let i = 1; i < fades.length; i++) if (fades[i] > fades[i - 1] + 1e-9) monotonic = false;
-    ok(monotonic, "skyDomeFade is non-increasing across the whole 30-530 pc sample range");
+    ok(monotonic, "skyDomeFade is non-increasing across the whole 0.005-0.125 pc sample range");
     ok(fades.every(f => f >= 0 && f <= 1), "skyDomeFade stays within [0, 1]");
 }
 

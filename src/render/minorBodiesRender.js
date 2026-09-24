@@ -17,13 +17,14 @@ void main() {
 
 const FRAG = /* glsl */`
 uniform vec3 uColor;
+uniform float uFade;
 varying float vBrightness;
 void main() {
     vec2 uv = gl_PointCoord - 0.5;
     float r2 = dot(uv, uv);
     float g = exp(-r2 * 14.0);
     if (g < 0.006) discard;
-    gl_FragColor = vec4(uColor * vBrightness, g * vBrightness);
+    gl_FragColor = vec4(uColor * vBrightness, g * vBrightness * uFade);
 }
 `;
 
@@ -49,7 +50,7 @@ void main() { gl_FragColor = vec4(vColor, 1.0); }
 
 function makePointsMaterial(color) {
     return new THREE.ShaderMaterial({
-        uniforms: { uColor: { value: new THREE.Color(color) } },
+        uniforms: { uColor: { value: new THREE.Color(color) }, uFade: { value: 1 } },
         vertexShader: VERT,
         fragmentShader: FRAG,
         transparent: true,

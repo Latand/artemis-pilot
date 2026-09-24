@@ -2,8 +2,8 @@ import { STAR_CATALOG_META } from "../constants.js";
 import { ensureWorldFrameRecords } from "./coords.js";
 
 // Every consumer of the shared HYG values sees WORLD-frame (ecliptic J2000)
-// positions: the rotation happens once here (or in catalogWorker.js, which
-// tags meta.frame so this never rotates twice).
+// positions: the rotation happens once here (ensureWorldFrameRecords tags
+// meta.frame so the shared values are never rotated twice).
 function toWorldFrame(meta, vals) {
     const fields = meta?.fields || [];
     const stride = meta?.stride || fields.length || 10;
