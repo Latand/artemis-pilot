@@ -49,6 +49,7 @@ const SCENARIOS = [
             { name: "09-fallback-1.2tfb", at: "tfb", k: 1.2, focus: "span", dist: 1.1, tilt: .12 },
             { name: "10-inner-1.2tfb", at: "tfb", k: 1.2, focus: "hole", dist: 4, tilt: .35 },
             { name: "11-disk-3tfb", at: "tfb", k: 3, focus: "hole", dist: 2.2, tilt: .6 },
+            { name: "12-disk-inclined", at: "tfb", k: 3, focus: "hole", dist: 1.6, tilt: 1.3 },
         ],
     },
     {
@@ -75,10 +76,12 @@ const SCENARIOS = [
         id: "capture", label: "Sun + 1e8 Msun: swallowed whole (Hills regime)",
         target: "sun", msun: 1e8, beta: 1, d0: 6,
         phases: [
+            // the camera sits 12 L = 7.1e9 km out, looking down the orbital
+            // axis: it sees the hole ~6.6 h late (light-travel time)
             { name: "01-approach", at: "event", dt: -7200, focus: "body", dist: 60, tilt: .35 },
-            { name: "02-plunge", at: "event", dt: -600, focus: "hole", dist: 2.2, tilt: .35 },
-            { name: "03-horizon", at: "event", dt: 900, focus: "hole", dist: 2.2, tilt: .35 },
-            { name: "04-fading", at: "event", dt: 4000, focus: "hole", dist: 2.2, tilt: .35 },
+            { name: "02-infall-seen", at: "event", dt: 6 * 3600, focus: "hole", dist: 12, tilt: 0 },
+            { name: "03-plunge-seen", at: "event", dt: 7.4 * 3600, focus: "hole", dist: 12, tilt: 0 },
+            { name: "04-frozen-seen", at: "event", dt: 14 * 3600, focus: "hole", dist: 12, tilt: 0 },
         ],
     },
 ];
@@ -181,10 +184,16 @@ try {
                     if (__G.dead || __G.landed) advanceWorld(dt); else advance(dt, 0, 0, 0, 0);
                 }
                 // one render pass so the debris systems exist and are current
-                await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-                const sys = vis.debrisSystemsInfo().find(s => s.target === target && s.live > 0) || null;
+                const frames = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                await frames();
+                // The debris is drawn at the camera's retarded time, so moving
+                // the camera moves what it sees: aim, let the frame catch up,
+                // and aim again at the cloud as now seen.
+                let sys = null, focus = ph.focus, distKm = 0, rec = null;
+                for (let pass = 0; pass < 3; pass++) {
+                sys = vis.debrisSystemsInfo().find(s => s.target === target && s.live > 0) || null;
                 // the encounter's orbital axis (world -> scene: x, z, -y)
-                const rec = enc.ENC.find(r => r.target === target) || null;
+                rec = enc.ENC.find(r => r.target === target) || null;
                 const spec = rec?.debris || enc.TDES.find(d => d.target === target)?.debris || enc.CAPTURES.find(c => c.target === target)?.debris || null;
                 let rx, ry, rz, vx, vy, vz;
                 if (rec && rec.cls) { rx = rec.relX; ry = rec.relY; rz = rec.relZ; vx = rec.relVx; vy = rec.relVy; vz = rec.relVz; }
@@ -203,10 +212,9 @@ try {
                 __cam.pitch = Math.max(-1.35, Math.min(1.35, Math.asin(uy)));
                 __cam.yaw = Math.atan2(uz, ux);
                 const alive = target === "sun" ? !__WORLD.sunDestroyed : typeof target === "number" ? !__WORLD.plDestroyed[target] : true;
-                let focus = ph.focus;
+                focus = ph.focus;
                 if (focus === "body" && !alive) focus = sys ? "debris" : "hole";
                 if ((focus === "debris" || focus === "span") && !sys) focus = alive ? "body" : "hole";
-                let distKm;
                 if (focus === "body") { __G.focus = target; distKm = ph.dist * info.R; }
                 else if (focus === "hole") { __G.focus = "bh:0"; distKm = ph.dist * info.L; }
                 else if (focus === "span") {
@@ -224,6 +232,9 @@ try {
                     distKm = ph.dist * Math.max(sys.radius, info.R * 3);
                 }
                 __cam.dist = distKm * K; __cam.distTarget = null;
+                await frames();
+                if (focus !== "debris" && focus !== "span") break;
+                }
                 const tde = enc.TDES.find(d => d.target === target);
                 return {
                     t: __G.t, focus, distKm, regime: tde?.regime || (enc.CAPTURES.some(c => c.target === target) ? "captured" : rec?.regime || "none"),
@@ -267,7 +278,7 @@ try {
             const file = resolve(out, sc.id + "-" + ph.name + ".png");
             await writeFile(file, buf);
             console.log("  ", ph.name, JSON.stringify(st));
-            summary.push({ scenario: sc.id, label: sc.label, phase: ph.name, file, ...st });
+            summary.push({ scenario: sc.id, label: sc.label, phase: ph.name, file: sc.id + "-" + ph.name + ".png", ...st });
         }
         await hide.evaluate(el => el.remove());
         if (errors.length) { console.error("page errors:", errors.slice(0, 10)); process.exitCode = 1; }

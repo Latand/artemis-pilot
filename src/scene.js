@@ -179,6 +179,8 @@ export async function ensurePostProcessing(lensingPass = null) {
             samples: 0,
         });
         composerTarget.texture.name = composerHdr ? "Composer.hdr" : "Composer.ldr";
+        // readable depth: the lensing pass bends only what lies behind a lens
+        composerTarget.depthTexture = new THREE.DepthTexture(1, 1);
         composer = new EffectComposer(renderer, composerTarget);
         composerPixelRatio = renderer.getPixelRatio();
         // Same multi-frustum tiering as the non-composer path (renderSceneTiered

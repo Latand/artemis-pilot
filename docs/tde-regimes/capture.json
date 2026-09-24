@@ -1,0 +1,562 @@
+[
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "01-approach",
+    "file": "full-01-approach.png",
+    "t": 13.527999999932943,
+    "focus": "body",
+    "distKm": 11141440,
+    "regime": "full",
+    "debris": null,
+    "tidal": {
+      "lambda": 1.0574743636712711,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "02-stretched",
+    "file": "full-02-stretched.png",
+    "t": 2428.231901839623,
+    "focus": "body",
+    "distKm": 7659740,
+    "regime": "full",
+    "debris": null,
+    "tidal": {
+      "lambda": 1.6160059105526887,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "03-frozen-in",
+    "file": "full-03-frozen-in.png",
+    "t": 3088.231901839625,
+    "focus": "debris",
+    "distKm": 6684864,
+    "regime": "full",
+    "debris": {
+      "live": 3000,
+      "count": 3000,
+      "radiusKm": 801341.5595654633,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 0,
+      "plunged": 0,
+      "rMinKm": 45281291.04776843,
+      "rMedianKm": 46472370.78246278,
+      "rMaxKm": 47708299.935817
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "04-pericentre",
+    "file": "full-04-pericentre.png",
+    "t": 3688.0206214566656,
+    "focus": "debris",
+    "distKm": 7102668,
+    "regime": "full",
+    "debris": {
+      "live": 3000,
+      "count": 3000,
+      "radiusKm": 1097988.9768028208,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 0,
+      "plunged": 0,
+      "rMinKm": 19389032.511491757,
+      "rMedianKm": 19510538.811366614,
+      "rMaxKm": 19722563.958993156
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "05-stream-1h",
+    "file": "full-05-stream-1h.png",
+    "t": 7288.020621456554,
+    "focus": "debris",
+    "distKm": 5431452,
+    "regime": "full",
+    "debris": {
+      "live": 3000,
+      "count": 3000,
+      "radiusKm": 709859.0459246483,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 0,
+      "plunged": 0,
+      "rMinKm": 180976920.19285032,
+      "rMedianKm": 181469163.90913185,
+      "rMaxKm": 181939640.47625637
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "06-stream-8h",
+    "file": "full-06-stream-8h.png",
+    "t": 32488.02062145655,
+    "focus": "debris",
+    "distKm": 23311439.27316615,
+    "regime": "full",
+    "debris": {
+      "live": 3000,
+      "count": 3000,
+      "radiusKm": 10596108.760530068,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 0,
+      "plunged": 0,
+      "rMinKm": 753670748.717613,
+      "rMedianKm": 771827903.3652999,
+      "rMaxKm": 788795746.5537271
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "07-stream-2d",
+    "file": "full-07-stream-2d.png",
+    "t": 176488.02062145656,
+    "focus": "debris",
+    "distKm": 253951334.98753843,
+    "regime": "full",
+    "debris": {
+      "live": 3000,
+      "count": 3000,
+      "radiusKm": 115432424.99433564,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 0,
+      "plunged": 0,
+      "rMinKm": 2382921945.5530148,
+      "rMedianKm": 2587448352.979094,
+      "rMaxKm": 2773371044.791068
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "08-stream-12d",
+    "file": "full-08-stream-12d.png",
+    "t": 1040488.0206214566,
+    "focus": "span",
+    "distKm": 16768545727.827654,
+    "regime": "full",
+    "debris": {
+      "live": 3000,
+      "count": 3000,
+      "radiusKm": 1167675249.9851334,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 0,
+      "plunged": 0,
+      "rMinKm": 6053109571.782615,
+      "rMedianKm": 8298201938.687871,
+      "rMaxKm": 10093518624.858543
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "09-fallback-1.2tfb",
+    "file": "full-09-fallback-1.2tfb.png",
+    "t": 4255678.844469574,
+    "focus": "span",
+    "distKm": 59589905894.41966,
+    "regime": "full",
+    "debris": {
+      "live": 3000,
+      "count": 3000,
+      "radiusKm": 8927917435.9549,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 173,
+      "plunged": 0,
+      "rMinKm": 11895825.36722428,
+      "rMedianKm": 21435705772.89958,
+      "rMaxKm": 32150069038.661972
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000.0572284996
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "10-inner-1.2tfb",
+    "file": "full-10-inner-1.2tfb.png",
+    "t": 4255678.844469574,
+    "focus": "hole",
+    "distKm": 278536000,
+    "regime": "full",
+    "debris": {
+      "live": 3000,
+      "count": 3000,
+      "radiusKm": 8930190108.67393,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 173,
+      "plunged": 0,
+      "rMinKm": 11886174.627927745,
+      "rMedianKm": 21438197769.805748,
+      "rMaxKm": 32154539604.816185
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000.0572284996
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "11-disk-3tfb",
+    "file": "full-11-disk-3tfb.png",
+    "t": 10633665.08024175,
+    "focus": "hole",
+    "distKm": 153194800,
+    "regime": "full",
+    "debris": {
+      "live": 2276,
+      "count": 3000,
+      "radiusKm": 19304281735.92818,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 767,
+      "plunged": 0,
+      "rMinKm": 8871475.02667694,
+      "rMedianKm": 50390385959.07061,
+      "rMaxKm": 73901827518.94205
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000.2596256898
+  },
+  {
+    "scenario": "full",
+    "label": "Sun + 1e6 Msun, beta 3: full disruption",
+    "phase": "12-disk-inclined",
+    "file": "full-12-disk-inclined.png",
+    "t": 10633665.08024175,
+    "focus": "hole",
+    "distKm": 111414400,
+    "regime": "full",
+    "debris": {
+      "live": 2276,
+      "count": 3000,
+      "radiusKm": 19304406860.945618,
+      "bound": 1499,
+      "unbound": 1501,
+      "returned": 767,
+      "plunged": 0,
+      "rMinKm": 8868752.12940778,
+      "rMedianKm": 50390310768.467316,
+      "rMaxKm": 73901693915.81929
+    },
+    "tidal": {
+      "lambda": 2.5665760651639733,
+      "shrink": 1
+    },
+    "holeMsun": 1000000.2596256898
+  },
+  {
+    "scenario": "partial",
+    "label": "Sun + 1e6 Msun, beta 1.4: partial disruption",
+    "phase": "01-approach",
+    "file": "partial-01-approach.png",
+    "t": 11.254000000022351,
+    "focus": "body",
+    "distKm": 11141440,
+    "regime": "partial",
+    "debris": null,
+    "tidal": {
+      "lambda": 1.0574714032585337,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "partial",
+    "label": "Sun + 1e6 Msun, beta 1.4: partial disruption",
+    "phase": "02-near-peri",
+    "file": "partial-02-near-peri.png",
+    "t": 3236.818254017261,
+    "focus": "body",
+    "distKm": 7659740,
+    "regime": "partial",
+    "debris": null,
+    "tidal": {
+      "lambda": 2.026454813833241,
+      "shrink": 1
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "partial",
+    "label": "Sun + 1e6 Msun, beta 1.4: partial disruption",
+    "phase": "03-stripping",
+    "file": "partial-03-stripping.png",
+    "t": 5936.818254016954,
+    "focus": "body",
+    "distKm": 9748760,
+    "regime": "partial",
+    "debris": {
+      "live": 1147,
+      "count": 1147,
+      "radiusKm": 11560125.273739157,
+      "bound": 603,
+      "unbound": 544,
+      "returned": 0,
+      "plunged": 0,
+      "rMinKm": 79042678.0984275,
+      "rMedianKm": 87540554.96134073,
+      "rMaxKm": 87903058.83248769
+    },
+    "tidal": {
+      "lambda": 1.3444348229295633,
+      "shrink": 0.7822106760309713
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "partial",
+    "label": "Sun + 1e6 Msun, beta 1.4: partial disruption",
+    "phase": "04-streams-6h",
+    "file": "partial-04-streams-6h.png",
+    "t": 25736.81825401695,
+    "focus": "span",
+    "distKm": 1152065455.2307827,
+    "regime": "partial",
+    "debris": {
+      "live": 1147,
+      "count": 1147,
+      "radiusKm": 94641609.70364572,
+      "bound": 603,
+      "unbound": 544,
+      "returned": 0,
+      "plunged": 0,
+      "rMinKm": 520517500.92592394,
+      "rMedianKm": 524852025.298288,
+      "rMaxKm": 532303309.80449903
+    },
+    "tidal": {
+      "lambda": 1.0015027335887898,
+      "shrink": 0.7822106760309713
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "partial",
+    "label": "Sun + 1e6 Msun, beta 1.4: partial disruption",
+    "phase": "05-streams-2d",
+    "file": "partial-05-streams-2d.png",
+    "t": 176936.81825401695,
+    "focus": "span",
+    "distKm": 5148296866.371352,
+    "regime": "partial",
+    "debris": {
+      "live": 1147,
+      "count": 1147,
+      "radiusKm": 415298761.0961598,
+      "bound": 603,
+      "unbound": 544,
+      "returned": 0,
+      "plunged": 0,
+      "rMinKm": 2211483814.827566,
+      "rMedianKm": 2302916577.069802,
+      "rMaxKm": 2541685268.768146
+    },
+    "tidal": {
+      "lambda": 1.0000201807819653,
+      "shrink": 0.7822106760309713
+    },
+    "holeMsun": 1000000
+  },
+  {
+    "scenario": "flyby",
+    "label": "Jupiter + 1e5 Msun, beta 0.45: tidal distortion flyby",
+    "phase": "01-inbound",
+    "file": "flyby-01-inbound.png",
+    "t": 13.215999999977647,
+    "focus": "body",
+    "distKm": 349555,
+    "regime": "distort",
+    "debris": null,
+    "tidal": {
+      "lambda": 1.0457753452878167,
+      "shrink": 1
+    },
+    "holeMsun": 100000.00000000001
+  },
+  {
+    "scenario": "flyby",
+    "label": "Jupiter + 1e5 Msun, beta 0.45: tidal distortion flyby",
+    "phase": "02-pericentre",
+    "file": "flyby-02-pericentre.png",
+    "t": 5858.317806495916,
+    "focus": "body",
+    "distKm": 349555,
+    "regime": "distort",
+    "debris": null,
+    "tidal": {
+      "lambda": 1.1379871211338197,
+      "shrink": 1
+    },
+    "holeMsun": 100000.00000000001
+  },
+  {
+    "scenario": "flyby",
+    "label": "Jupiter + 1e5 Msun, beta 0.45: tidal distortion flyby",
+    "phase": "03-outbound",
+    "file": "flyby-03-outbound.png",
+    "t": 45858.31780649595,
+    "focus": "body",
+    "distKm": 349555,
+    "regime": "none",
+    "debris": null,
+    "tidal": {
+      "lambda": 1.0008585467752813,
+      "shrink": 1
+    },
+    "holeMsun": 100000.00000000001
+  },
+  {
+    "scenario": "capture",
+    "label": "Sun + 1e8 Msun: swallowed whole (Hills regime)",
+    "phase": "01-approach",
+    "file": "capture-01-approach.png",
+    "t": 10970.571691136993,
+    "focus": "body",
+    "distKm": 41780400,
+    "regime": "captured",
+    "debris": null,
+    "tidal": {
+      "lambda": 1.0021410741998198,
+      "shrink": 1
+    },
+    "holeMsun": 100000000.00038096
+  },
+  {
+    "scenario": "capture",
+    "label": "Sun + 1e8 Msun: swallowed whole (Hills regime)",
+    "phase": "02-infall-seen",
+    "file": "capture-02-infall-seen.png",
+    "t": 39770.571691137,
+    "focus": "hole",
+    "distKm": 7087800183.601929,
+    "regime": "captured",
+    "debris": {
+      "live": 1600,
+      "count": 1600,
+      "radiusKm": 234201.00031360754,
+      "bound": 0,
+      "unbound": 1600,
+      "returned": 0,
+      "plunged": 1600,
+      "rMinKm": 399483080.9176171,
+      "rMedianKm": 399772156.0623583,
+      "rMaxKm": 400052026.29565907
+    },
+    "tidal": {
+      "lambda": 1.0021410741998198,
+      "shrink": 1
+    },
+    "holeMsun": 100000001.00134155
+  },
+  {
+    "scenario": "capture",
+    "label": "Sun + 1e8 Msun: swallowed whole (Hills regime)",
+    "phase": "03-plunge-seen",
+    "file": "capture-03-plunge-seen.png",
+    "t": 44810.571691137,
+    "focus": "hole",
+    "distKm": 7087800183.601929,
+    "regime": "captured",
+    "debris": {
+      "live": 1600,
+      "count": 1600,
+      "radiusKm": 389617.5888802504,
+      "bound": 0,
+      "unbound": 1600,
+      "returned": 0,
+      "plunged": 1600,
+      "rMinKm": 1371467340.4868774,
+      "rMedianKm": 1372177171.4286711,
+      "rMaxKm": 1372825191.2305028
+    },
+    "tidal": {
+      "lambda": 1.0021410741998198,
+      "shrink": 1
+    },
+    "holeMsun": 100000001.00134155
+  },
+  {
+    "scenario": "capture",
+    "label": "Sun + 1e8 Msun: swallowed whole (Hills regime)",
+    "phase": "04-frozen-seen",
+    "file": "capture-04-frozen-seen.png",
+    "t": 68570.571691137,
+    "focus": "hole",
+    "distKm": 7087800183.601929,
+    "regime": "captured",
+    "debris": {
+      "live": 1600,
+      "count": 1600,
+      "radiusKm": 154261.74101436627,
+      "bound": 0,
+      "unbound": 1600,
+      "returned": 0,
+      "plunged": 1600,
+      "rMinKm": 295346263.68003756,
+      "rMedianKm": 295346325.54061395,
+      "rMaxKm": 295346393.6751158
+    },
+    "tidal": {
+      "lambda": 1.0021410741998198,
+      "shrink": 1
+    },
+    "holeMsun": 100000001.00134155
+  }
+]

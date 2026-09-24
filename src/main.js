@@ -70,6 +70,7 @@ import {
 import { equatorialKmToGal, setSunGalAnchor } from "./universe/coords.js";
 import { solarGalacticStateAt } from "./universe/solarOrbit.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
+import { setObserver } from "./universe/observerTime.js";
 import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
 import { getSeed } from "./universe/galaxy.js";
 import { createCometTailPair, createMinorBodyRenderers, updateCometTail } from "./render/minorBodiesRender.js";
@@ -1920,6 +1921,7 @@ function frame() {
         tier1CamDirWorld.x = tier1CamDirScene.x;
         tier1CamDirWorld.y = -tier1CamDirScene.z;
         tier1CamDirWorld.z = tier1CamDirScene.y;
+        setObserver(camWorldKmX, camWorldKmY, camWorldKmZ, G.t);
         updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, tier1CamDirWorld, G.t);
         if (minorRenderers.oort.mesh.visible && (nearFieldDue || !minorRenderers.oort.geometry.drawRange.count)) {
             minorSunWorld[0] = eph.earthX + eph.sunX;

@@ -525,6 +525,35 @@ console.log("[F] emergent debris: split, fallback, precession, remnant, determin
     check(worst < 1e-9, "debris positions depend only on sim time (cold, stepped, reversed agree)", worst);
     const a1 = snap(warm, spec.tPeri + 5e5), a2 = snap(warm, spec.tPeri + 5e5);
     check(a1.every((v, k) => Math.abs(v - a2[k]) <= 1e-9 * Math.abs(v) + 1e-6), "a paused frame re-evaluates to the same positions (to the solver tolerance)");
+    // observer effects: each element is drawn at its own retarded time
+    // t_i = t - |x_i(t_i) - x_obs| / c; the drawn solution must sit on
+    // the exact light cone (iterated to convergence)
+    {
+        const C = 299792.458;
+        let worstRet = 0, worstShift = 0;
+        for (const [tq, D] of [[spec.tPeri + 600, 3e7], [spec.tPeri + 2 * 86400, 2e9], [spec.tPeri + 1.3 * tFb, 3e10]]) {
+            const ox = D * .6, oy = -D * .8, oz = D * .1; // observer, hole at the origin
+            const tH = tq - Math.hypot(ox, oy, oz) / C;
+            const mr = new debris.DebrisModel(spec, n);
+            for (let i = 0; i < n; i += 37) {
+                if (!(mr.seenAt(i, tq, tH, 0, 0, 0, ox, oy, oz, out) > 0)) continue;
+                const sx = out[0], sy = out[1], sz = out[2];
+                // exact: iterate t_i to the fixed point
+                let ti = tH;
+                for (let k = 0; k < 40; k++) {
+                    mr.particleAt(i, ti, out);
+                    ti = tq - Math.hypot(out[0] - ox, out[1] - oy, out[2] - oz) / C;
+                }
+                mr.particleAt(i, ti, out);
+                const r = Math.hypot(out[0], out[1], out[2]);
+                worstRet = Math.max(worstRet, Math.hypot(sx - out[0], sy - out[1], sz - out[2]) / r);
+                mr.particleAt(i, tq, out);
+                worstShift = Math.max(worstShift, Math.hypot(sx - out[0], sy - out[1], sz - out[2]) / r);
+            }
+        }
+        console.log("    retarded-time drawing: error vs exact light cone " + worstRet.toExponential(2) + " of r (the retardation itself shifts elements by up to " + worstShift.toExponential(2) + " of r)");
+        check(worstRet < 2e-3 && worstShift > 20 * worstRet, "debris is drawn on the observer's past light cone (within 0.2% of r)", { worstRet, worstShift });
+    }
     // warp: the debris born in a run at 1-hour frames matches the 1-minute run
     const specW = fullRun(3600);
     // (same sampling seed: the record serial counts encounters across runs)

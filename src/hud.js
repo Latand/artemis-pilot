@@ -253,7 +253,9 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     const tde = activeTde();
     if (tde) {
         const ratio = tde.ageSec / Math.max(1e-9, tde.tFbSec);
-        setText(tdeEl, "◉ TDE " + tde.targetName + " · L " + sci(tde.LnowW) + " W · t/t_fb " + ratio.toFixed(2) + " · " + (tde.pastPeak ? "t^-5/3 decay" : "rising"));
+        // coordinate (sim) time at the hole; the disk on screen shows the
+        // light now reaching the camera
+        setText(tdeEl, "◉ TDE " + tde.targetName + " · L " + sci(tde.LnowW) + " W · t/t_fb " + ratio.toFixed(2) + " · " + (tde.pastPeak ? "t^-5/3 decay" : "rising") + " · coordinate time");
     }
     setStyle(tdeEl, "display", tde ? "block" : "none");
     if (fB > .25) {

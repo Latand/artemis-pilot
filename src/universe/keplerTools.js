@@ -49,9 +49,12 @@ export function solveUniversal(dt, r0, sigma0, alpha, mu, guess = NaN) {
     const target = dt;
     if (Number.isFinite(guess)) {
         let chi = guess;
+        const b = 1 - alpha * r0;
         for (let k = 0; k < 6; k++) {
-            const f = uTime(chi, r0, sigma0, alpha, sqmu) - target;
-            const r = uRadius(chi, r0, sigma0, alpha);
+            // t(chi) and r(chi) = dt/dchi share one Stumpff evaluation
+            const c2 = chi * chi, z = alpha * c2, C = stumpC(z), S = stumpS(z);
+            const f = (sigma0 * c2 * C + b * c2 * chi * S + r0 * chi) / sqmu - target;
+            const r = c2 * C + sigma0 * chi * (1 - z * S) + r0 * (1 - z * C);
             if (!(r > 0)) break;
             const step = f * sqmu / r;
             const next = chi - step;
@@ -219,8 +222,9 @@ export function propagateState(rx, ry, rz, vx, vy, vz, mu, dt, out, guess = NaN)
 
 // Perifocal position at time dt after pericentre for pericentre distance q
 // and alpha = 1/a; writes X (toward pericentre) and Y (along the pericentre
-// velocity) into out[0], out[1] and returns the universal anomaly for warm
-// starts. Allocation-free: used per particle per frame.
+// velocity) into out[0], out[1], the radius into out[2] and, when out has a
+// fourth slot, the radial speed dr/dt into out[3]; returns the universal
+// anomaly for warm starts. Allocation-free: used per particle per frame.
 export function perifocalAt(q, alpha, mu, dt, chiGuess, out) {
     const sqmu = Math.sqrt(mu);
     const v0 = Math.sqrt(Math.max(0, mu * (2 / q - alpha)));
@@ -230,6 +234,9 @@ export function perifocalAt(q, alpha, mu, dt, chiGuess, out) {
     const g = dt - chi * chi * chi * S / sqmu;
     out[0] = f * q;
     out[1] = g * v0;
-    out[2] = chi * chi * C + q * (1 - z * C); // radius
+    const r = chi * chi * C + q * (1 - z * C);
+    out[2] = r;
+    // sigma = r.v / sqrt(mu) from pericentre (sigma0 = 0)
+    if (out.length > 3) out[3] = sqmu * (1 - alpha * q) * chi * (1 - z * S) / r;
     return chi;
 }

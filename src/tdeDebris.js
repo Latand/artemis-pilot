@@ -31,7 +31,7 @@
 // horizon asymptotically, e-folding every 2 r_s / c as a distant observer
 // sees them.
 import { C_LIGHT, PL } from "./constants.js";
-import { makeConic, conicFromState, perifocalAt, timeToRadiusInbound } from "./universe/keplerTools.js";
+import { makeConic, conicFromState, perifocalAt, timeToRadiusInbound, propagateState } from "./universe/keplerTools.js";
 import { pwPericentre } from "./tde.js";
 import { mulberry32 } from "./format.js";
 
@@ -132,7 +132,12 @@ export function debrisCountFor(spec) {
 }
 
 const _el = makeConic();
-const _pf = [0, 0, 0];
+const _cb = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, chi: 0 };
+const _pf = [0, 0, 0, 0];
+const _vel = [0, 0, 0];
+const C_KM_S = 299792.458;
+// which leg of its history an element is on at a given time
+export const LEG_NONE = 0, LEG_KEPLER = 1, LEG_RING = 2, LEG_PLUNGE = 3;
 const _pm = { kappa: 1, B: 0, rp: NaN, captured: false, sweep: Math.PI };
 
 // Particle flags
@@ -155,8 +160,10 @@ export class DebrisModel {
         this.rX = new Float64Array(count);
         this.dx = new Float32Array(count); this.dy = new Float32Array(count); this.dz = new Float32Array(count);
         this.u = new Float32Array(count);       // x.r_hat / R at birth: the element's place in the energy spread
+        this.ox = new Float32Array(count); this.oy = new Float32Array(count); this.oz = new Float32Array(count); // birth offset from the centre of mass
         this.eps = new Float64Array(count);     // specific orbital energy
         this.model = { kappa: 1, B: 0, rp: NaN, captured: false, sweep: Math.PI, epsCm: 0, dEps: 0, hCm: 0 };
+        this.lastLeg = LEG_NONE;
         this.build();
     }
     build() {
@@ -267,6 +274,7 @@ export class DebrisModel {
             this.ex[i] = ex; this.ey[i] = ey; this.ez[i] = ez;
             this.qx[i] = hhy * ez - hhz * ey; this.qy[i] = hhz * ex - hhx * ez; this.qz[i] = hhx * ey - hhy * ex;
             this.u[i] = ux;
+            this.ox[i] = px - sp.x; this.oy[i] = py - sp.y; this.oz[i] = pz - sp.z;
             let f = 0;
             if (_el.alpha > 0) {
                 f |= DEBRIS_BOUND;
@@ -305,11 +313,56 @@ export class DebrisModel {
     }
     // Position of element i relative to the hole at sim time t (km, world
     // axes) into out[0..2]; returns a brightness factor (0: not there).
-    particleAt(i, t, out) {
+    legAt(i, t) {
+        if (t < this.spec.t0) return LEG_NONE;
+        const f = this.flags[i];
+        if ((f & DEBRIS_PLUNGE) && t >= this.tX[i]) return LEG_PLUNGE;
+        if ((f & DEBRIS_BOUND) && t >= this.tRet[i]) return LEG_RING;
+        return LEG_KEPLER;
+    }
+    // Element i as an observer at world (ox, oy, oz) sees it at coordinate time
+    // t: at its own retarded time t_i = t - |x_i(t_i) - x_obs| / c, starting
+    // from the hole's retarded time tH (the hole now at world hx, hy, hz). On
+    // a Kepler leg with little angle swept in between, the light-cone
+    // condition is solved for straight-line motion at the element's velocity
+    // (exact to first order in the curvature); otherwise it is iterated.
+    seenAt(i, t, tH, hx, hy, hz, ox, oy, oz, out) {
+        let a = this.particleAt(i, tH, out, true);
+        if (!(a > 0)) return a;
+        let dx = hx + out[0] - ox, dy = hy + out[1] - oy, dz = hz + out[2] - oz;
+        let d = Math.hypot(dx, dy, dz);
+        const lag = C_KM_S * (t - tH) - d; // light-path mismatch at tH (km)
+        if (Math.abs(lag) < 1e-3 * C_KM_S) return a;
+        if (this.lastLeg === LEG_KEPLER) {
+            const vx = _vel[0], vy = _vel[1], vz = _vel[2];
+            // |d0 + v s| = c (t - tH - s)  ->  s = lag / (c + d_hat . v)
+            const s = lag / (C_KM_S + (dx * vx + dy * vy + dz * vz) / Math.max(d, 1e-30));
+            const r = Math.hypot(out[0], out[1], out[2]);
+            if (Math.hypot(vx, vy, vz) * Math.abs(s) < .05 * r && this.legAt(i, tH + s) === LEG_KEPLER) {
+                out[0] += vx * s; out[1] += vy * s; out[2] += vz * s;
+                return a;
+            }
+        }
+        // iterate the light-cone condition (converges by ~v/c per pass)
+        let ti = t - d / C_KM_S;
+        for (let k = 0; k < 4; k++) {
+            a = this.particleAt(i, ti, out);
+            if (!(a > 0)) return a;
+            dx = hx + out[0] - ox; dy = hy + out[1] - oy; dz = hz + out[2] - oz;
+            const tn = t - Math.hypot(dx, dy, dz) / C_KM_S;
+            if (Math.abs(tn - ti) < 1e-3) break;
+            ti = tn;
+        }
+        return a;
+    }
+    // wantVel: on a Kepler leg also leave the velocity in the module scratch
+    particleAt(i, t, out, wantVel = false) {
         const sp = this.spec, mu = sp.mu;
+        this.lastLeg = LEG_NONE;
         if (t < sp.t0) return 0;
         const f = this.flags[i];
         if ((f & DEBRIS_PLUNGE) && t >= this.tX[i]) {
+            this.lastLeg = LEG_PLUNGE;
             // seen from afar, matter approaches the horizon asymptotically,
             // e-folding every 2 r_s / c
             const rs = Math.max(1e-9, sp.rs);
@@ -320,6 +373,7 @@ export class DebrisModel {
             return 1;
         }
         if ((f & DEBRIS_BOUND) && t >= this.tRet[i]) {
+            this.lastLeg = LEG_RING;
             // Back at pericentre the element meets the precessed stream and
             // circularizes at fixed angular momentum: semi-latus rectum 2q,
             //   r = r_c / (1 + e cos th),  e = exp(-age / P0),
@@ -345,16 +399,38 @@ export class DebrisModel {
             out[2] = r * (c * this.ez[i] + s * this.qz[i]);
             return Math.min(1, (rc - rIn) / (.25 * rIn));
         }
+        this.lastLeg = LEG_KEPLER;
         const dt = t - this.tp[i];
-        const chi = perifocalAt(this.q[i], this.alpha[i], mu, dt, this.chi[i], _pf);
+        const q = this.q[i], al = this.alpha[i], kap = this.kap[i];
+        const chi = perifocalAt(q, al, mu, dt, this.chi[i], _pf);
         if (Number.isFinite(chi)) this.chi[i] = chi;
         const r = _pf[2];
-        const phi = this.anomaly(i, dt, _pf[0], _pf[1]) / this.kap[i];
+        const phi = this.anomaly(i, dt, _pf[0], _pf[1]) / kap;
         const c = Math.cos(phi), s = Math.sin(phi);
-        out[0] = r * (c * this.ex[i] + s * this.qx[i]);
-        out[1] = r * (c * this.ey[i] + s * this.qy[i]);
-        out[2] = r * (c * this.ez[i] + s * this.qz[i]);
+        const ex = this.ex[i], ey = this.ey[i], ez = this.ez[i], qx = this.qx[i], qy = this.qy[i], qz = this.qz[i];
+        out[0] = r * (c * ex + s * qx);
+        out[1] = r * (c * ey + s * qy);
+        out[2] = r * (c * ez + s * qz);
+        if (wantVel) {
+            // dr/dt along r_hat, r dphi/dt along phi_hat; dphi/dt = h' / (kappa r^2)
+            const rd = _pf[3];
+            const hp = q * Math.sqrt(Math.max(0, mu * (2 / q - al)));
+            const vt = hp / (kap * r);
+            _vel[0] = rd * (c * ex + s * qx) + vt * (c * qx - s * ex);
+            _vel[1] = rd * (c * ey + s * qy) + vt * (c * qy - s * ey);
+            _vel[2] = rd * (c * ez + s * qz) + vt * (c * qz - s * ez);
+        }
         return 1;
+    }
+    // Before the freeze epoch the body is still whole: its centre of mass on
+    // the (Kepler) orbit it arrived on, at time t < t0, into out — for drawing
+    // the intact body as a distant observer still sees it after the
+    // simulation has already disrupted it (light-travel time).
+    centreBefore(t, out) {
+        const sp = this.spec;
+        propagateState(sp.x, sp.y, sp.z, sp.vx, sp.vy, sp.vz, sp.mu, t - sp.t0, _cb);
+        out[0] = _cb.x; out[1] = _cb.y; out[2] = _cb.z;
+        return out;
     }
     // counts at sim time t (inspection / tests)
     census(t) {

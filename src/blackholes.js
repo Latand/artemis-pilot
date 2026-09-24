@@ -1,11 +1,11 @@
 import * as THREE from "three";
 import { BH_MAX, BH_SIZES, C_LIGHT, MU_S, K, LY_SCENE, LY_KM } from "./constants.js";
-import { tdeLuminosityW, L_EDD_PER_MSUN } from "./tde.js";
+import { tdeLuminosityW, fallbackRate, L_EDD_PER_MSUN, TDE_ETA } from "./tde.js";
 import { G, BH } from "./state.js";
 import { eph } from "./ephemeris.js";
-import { fmtAccel, fmtDist, fmtKm, mulberry32 } from "./format.js";
+import { fmtAccel, fmtDist, fmtKm } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
-import { scene, camera, cam, cvHost, lastPtr, renderer, renderQuality } from "./scene.js";
+import { scene, camera, cam, cvHost, lastPtr, renderer, renderQuality, viewportSize } from "./scene.js";
 import { noteNotable } from "./discoveryLog.js";
 import { hashInts, splitSeed } from "./universe/prng.js";
 import { registerPlacedPulsar, unregisterPlacedPulsar } from "./ambientAudio.js";
@@ -13,6 +13,8 @@ import { addNebula } from "./render/nebulae.js";
 import { NEBULAE, NEB_MAX, NEBULA_ARCHETYPES, nebulaRadiusKmFromPreset } from "./universe/nebulaeData.js";
 import { initEncounterHooks, addHoleData, removeHoleData, TDES } from "./bhEncounters.js";
 import { updateTdeVisuals } from "./tdeVisuals.js";
+import { holeRoot, makeHoleOptics, updateHoleOptics, SHADOW_RS } from "./holeOptics.js";
+import { retardedTimeMoving } from "./universe/observerTime.js";
 // the encounter physics lives in bhEncounters.js (headless); these stay
 // importable from here for the HUD / events panel
 export { activeTde, bhAdvance, tdeInProgress } from "./bhEncounters.js";
@@ -100,33 +102,6 @@ function pulsarFactsLabel(period) {
 export function pwAccelMs2(mu, rKm, rsKm) {
     const eff = Math.max(rKm - rsKm, rsKm * .02);
     return 1000 * mu / Math.max(1e-30, eff * eff);
-}
-function makeHawkingPoints(seed) {
-    const N = 140, pos = new Float32Array(N * 3), col = new Float32Array(N * 3);
-    const rnd = mulberry32(seed);
-    for (let i = 0; i < N; i++) {
-        const th = rnd() * Math.PI * 2, ph = Math.acos(2 * rnd() - 1);
-        const r = .16 + Math.pow(rnd(), .55) * 1.1;
-        pos[i * 3] = Math.sin(ph) * Math.cos(th) * r;
-        pos[i * 3 + 1] = (rnd() - .5) * .16;
-        pos[i * 3 + 2] = Math.sin(ph) * Math.sin(th) * r;
-        const hot = Math.pow(1 / r, .35);
-        col[i * 3] = .22 + hot * .32;
-        col[i * 3 + 1] = .52 + hot * .32;
-        col[i * 3 + 2] = .9 + hot * .1;
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
-    const mat = new THREE.PointsMaterial({
-        size: .008, vertexColors: true, transparent: true, opacity: .16,
-        depthWrite: false, blending: THREE.AdditiveBlending,
-        map: dotTexture("rgba(230,250,255,1)", "rgba(90,170,255,0.0)"),
-    });
-    const pts = new THREE.Points(g, mat);
-    pts.frustumCulled = false;
-    pts.renderOrder = 5;
-    return pts;
 }
 function makeTdeJet() {
     const seg = 36, verts = [], idx = [];
@@ -268,7 +243,7 @@ function ensureBHPlacementPreview() {
         transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .34,
     }));
     const core = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: blackCoreTexture(), transparent: true, depthWrite: false, depthTest: false, opacity: .96,
+        map: blackCoreTexture(), transparent: true, depthWrite: false, opacity: .96,
     }));
     core.renderOrder = 30;
     const aim = new THREE.Mesh(
@@ -640,79 +615,48 @@ renderer.domElement.addEventListener("pointerdown", e => {
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     commitBHPlacement(e.clientX, e.clientY);
 }, true);
+// A hole's visual: the physical optics (holeOptics.js: shadow, photon ring,
+// accretion disk when something accretes, jet when flagged) plus a
+// screen-size marker ring that keeps an unresolved hole findable and fades
+// out once the shadow itself spans a few pixels. Pulsars keep their own
+// beam visuals.
 function buildHoleVisual(i) {
     const rsKm = BH.rs[i], kind = BH.kind[i], period = BH.period[i];
     const g = new THREE.Group();
     g.position.set(BH.sx[i], BH.sy[i], BH.sz[i]);
-    const horizon = new THREE.Mesh(new THREE.SphereGeometry(rsKm * K, 128, 96), new THREE.MeshBasicMaterial({ color: 0x000000 }));
-    const photon = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(255,244,224,0.82)", 512, 34), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .62 }));
-    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(168,150,255,0.22)", "rgba(90,90,255,0.08)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .22 }));
-    const hawkGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(190,235,255,0.65)", 512, 26), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .18 }));
-    const coreMask = new THREE.Sprite(new THREE.SpriteMaterial({ map: blackCoreTexture(), transparent: true, depthWrite: false, depthTest: false, opacity: 1 }));
-    coreMask.renderOrder = 20;
-    const hawk = makeHawkingPoints(8800 + i * 97);
-    const cv = document.createElement("canvas");
-    const diskRes = 1024;
-    cv.width = cv.height = diskRes;
-    const ctx = cv.getContext("2d");
-    const dc = diskRes * .5;
-    const gr = ctx.createRadialGradient(dc, dc, diskRes * .133, dc, dc, dc);
-    gr.addColorStop(0, "rgba(255,255,255,0)");
-    gr.addColorStop(.16, "rgba(255,240,210,0.7)");
-    gr.addColorStop(.4, "rgba(255,158,66,0.34)");
-    gr.addColorStop(.75, "rgba(196,76,28,0.12)");
-    gr.addColorStop(1, "rgba(120,40,20,0)");
-    ctx.fillStyle = gr;
-    ctx.fillRect(0, 0, diskRes, diskRes);
-    ctx.globalCompositeOperation = "destination-out";
-    const rnd2 = mulberry32(1234 + i * 77);
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    for (let k = 0; k < 96; k++) {
-        ctx.beginPath();
-        ctx.lineWidth = diskRes * (.0012 + rnd2() * .0032);
-        ctx.strokeStyle = "rgba(0,0,0," + (.055 + rnd2() * .18) + ")";
-        const rr = diskRes * (.148 + rnd2() * .344), a0 = rnd2() * Math.PI * 2;
-        ctx.arc(dc, dc, rr, a0, a0 + .9 + rnd2() * 3.6);
-        ctx.stroke();
-    }
-    const diskTex = polishCanvasTexture(new THREE.CanvasTexture(cv), true);
-    diskTex.center.set(.5, .5);
-    const disk = new THREE.Mesh(new THREE.PlaneGeometry(rsKm * K * 13, rsKm * K * 13), new THREE.MeshBasicMaterial({ map: diskTex, transparent: true, opacity: .82, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide }));
-    disk.rotation.x = -Math.PI / 2;
-    const jet = makeTdeJet();
-    let pulsar = null, audioObj = null;
+    const horizon = new THREE.Mesh(new THREE.SphereGeometry(rsKm * K, 64, 48), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+    const marker = new THREE.Sprite(new THREE.SpriteMaterial({ map: ringTexture("rgba(255,244,224,0.82)", 256, 34), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .5 }));
+    marker.renderOrder = 8;
+    let pulsar = null, audioObj = null, glow = null, optics = null;
     const quasarLights = BH_META.reduce((n, m) => n + (m?.quasarLight ? 1 : 0), 0);
     let quasarLight = null;
-    if (kind === 1) {
-        disk.scale.setScalar(2.2);
-        jet.scale.set(rsKm * K * .45, rsKm * K * 30, rsKm * K * .45);
-        // Cap quasar point lights at two on desktop; mobile uses the additive sprites only.
-        if (!renderQuality.mobile && quasarLights < 2) {
-            quasarLight = new THREE.PointLight(0xcfe0ff, 4.0, BH.sinkS[i] * 600, 2);
-            g.add(quasarLight);
-        }
+    if (kind === 1 && !renderQuality.mobile && quasarLights < 2) {
+        // Cap quasar point lights at two on desktop. The light lives in the
+        // scene itself (it must keep lighting the planets while the lens pass
+        // draws the hole's optics separately) and follows the hole.
+        quasarLight = new THREE.PointLight(0xcfe0ff, 4.0, BH.sinkS[i] * 600, 2);
+        quasarLight.position.copy(g.position);
+        scene.add(quasarLight);
     }
     if (kind === 2) {
         pulsar = makePulsarVisuals(rsKm, period);
-        glow.material.map = dotTexture("rgba(210,235,255,0.36)", "rgba(75,150,255,0.0)");
-        glow.material.opacity = .34;
+        glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(210,235,255,0.36)", "rgba(75,150,255,0.0)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .34 }));
         audioObj = { x: 0, y: 0, z: 0, name: "PLACED PULSAR" };
         registerPlacedPulsar(audioObj, period);
         g.add(glow, pulsar.spin, pulsar.emissionRing);
+        scene.add(g);
     } else {
-        g.add(disk, horizon, photon, glow, hawkGlow, hawk, jet, coreMask);
+        optics = makeHoleOptics();
+        g.add(horizon, optics.shadow, optics.ring, optics.disk, optics.jet, marker);
+        holeRoot.add(g);
     }
-    scene.add(g);
-    return {
-        g, disk, diskBaseRs: rsKm, jet: kind === 2 ? null : jet, quasarLight, horizon, photon, glow, hawkGlow, hawk, coreMask, tex: diskTex, rs: rsKm, flare: 0,
-        pulsar, audioObj,
-    };
+    return { g, horizon, marker, optics, quasarLight, glow, rs: rsKm, flare: 0, pulsar, audioObj, tBorn: G.t, lastT: NaN };
 }
 function disposeHoleVisual(m) {
     if (!m) return;
     if (m.audioObj) unregisterPlacedPulsar(m.audioObj);
-    scene.remove(m.g);
+    m.g.parent?.remove(m.g);
+    if (m.quasarLight) { scene.remove(m.quasarLight); m.quasarLight.dispose?.(); }
     m.g.traverse(o => {
         if (o.geometry) o.geometry.dispose();
         if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
@@ -769,7 +713,6 @@ function refreshBHSize(i, rs) {
     const ratio = rs / oldRs;
     m.rs = rs;
     if (m.horizon) m.horizon.scale.multiplyScalar(ratio);
-    if (m.disk) m.disk.scale.multiplyScalar(ratio);
 }
 export function placeBHAtCursor() {
     const p = cursorPlaneHit();
@@ -806,6 +749,78 @@ function holeFlare(bi, t) {
     return _flare;
 }
 const _flare = { tde: null, L: 0 };
+const C_M_S = 299792458, SIGMA_SB = 5.670374419e-8;
+// ?tdejet=1 flags every tidal disruption as jetted (a demonstration switch;
+// only ~1% of real TDEs launch a relativistic jet, e.g. Swift J1644+57)
+const TDE_JET_ALL = typeof location !== "undefined" && new URLSearchParams(location.search).get("tdejet") === "1";
+// Peak Novikov-Thorne temperature (K) for accretion rate mdot (kg/s):
+// sigma T*^4 = 3 G M mdot / (8 pi r_in^3), T_max = 0.488 T* at 49/36 r_in.
+function diskTmaxK(muKm3, rsKm, mdotKgS) {
+    const gm = muKm3 * 1e9, rIn = 3 * rsKm * 1e3;
+    return .48805 * Math.pow(3 * gm * mdotKgS / (8 * Math.PI * SIGMA_SB * rIn * rIn * rIn), .25);
+}
+const _op = {
+    rsKm: 0, muKm3: 0, t: 0, frameDt: 0, camRelX: 0, camRelY: 0, camRelZ: 1, pxScale: 1,
+    diskOn: false, TmaxK: 0, gain: 0, routOverRin: 20, axisX: 0, axisY: 1, axisZ: 0,
+    jetOn: false, jetLenKm: 0, jetI: 0,
+};
+// The accretion state a hole shows at sim time t: a running tidal disruption
+// feeds it at the fallback rate from t_fb on (Eddington-limited for the disk's
+// temperature and brightness); a quasar accretes steadily at 0.3 L_Edd;
+// anything else is a bare shadow and photon ring.
+function updateOpticsFor(bi, m, t, dBH) {
+    const rsKm = BH.rs[bi], mu = BH.mu[bi];
+    const op = _op;
+    op.rsKm = rsKm; op.muKm3 = mu; op.t = t;
+    op.frameDt = Number.isFinite(m.lastT) ? Math.abs(t - m.lastT) : 0;
+    m.lastT = t;
+    op.camRelX = camera.position.x - m.g.position.x;
+    op.camRelY = camera.position.y - m.g.position.y;
+    op.camRelZ = camera.position.z - m.g.position.z;
+    op.pxScale = viewportSize.pxScale;
+    op.diskOn = false; op.jetOn = false; op.jetLenKm = 0;
+    op.axisX = 0; op.axisY = 1; op.axisZ = 0;
+    const LEdd = L_EDD_PER_MSUN * mu / MU_S;
+    const mdotEdd = LEdd / (TDE_ETA * C_M_S * C_M_S);
+    const fl = holeFlare(bi, t);
+    const d = fl.tde;
+    const mdot = d ? fallbackRate(t - d.t0, d.tFb, d.mStarKg) : 0;
+    if (d && mdot > 0) {
+        op.diskOn = true;
+        op.TmaxK = diskTmaxK(mu, rsKm, Math.min(mdot, mdotEdd));
+        op.gain = 1.4 * Math.pow(Math.min(1, fl.L / Math.max(1e-30, LEdd)), .35);
+        op.routOverRin = Math.max(4, 1.5 * (d.rCirc || 0) / (3 * rsKm));
+        // the disk inherits the disrupted orbit's angular momentum
+        const sp = d.debris;
+        if (sp) {
+            const hx = sp.y * sp.vz - sp.z * sp.vy, hy = sp.z * sp.vx - sp.x * sp.vz, hz = sp.x * sp.vy - sp.y * sp.vx;
+            if (Math.hypot(hx, hy, hz) > 0) { op.axisX = hx; op.axisY = hz; op.axisZ = -hy; }
+        }
+        if (d.jetted || TDE_JET_ALL) {
+            // launched once the returning debris has built the disk
+            op.jetOn = true;
+            op.jetLenKm = Math.min(2e4 * rsKm, C_LIGHT * Math.max(0, t - (d.t0 + d.tFb)));
+            op.jetI = .5 * op.gain;
+        }
+    } else if (BH.kind[bi] === 1) {
+        op.diskOn = true;
+        op.TmaxK = diskTmaxK(mu, rsKm, .3 * mdotEdd);
+        op.gain = 1.4 * Math.pow(.3, .35);
+        op.routOverRin = 20;
+        // a quasar is placed as a jetted AGN: its jet runs out at ~c from placement
+        op.jetOn = true;
+        op.jetLenKm = Math.min(2e4 * rsKm, C_LIGHT * Math.max(0, t - m.tBorn));
+        op.jetI = .45;
+    }
+    updateHoleOptics(m.optics, op);
+    if (m.quasarLight) { m.quasarLight.visible = op.diskOn; m.quasarLight.position.copy(m.g.position); }
+    // the marker only while the shadow is unresolved
+    const shadowPx = SHADOW_RS * rsKm * K * viewportSize.pxScale / Math.max(1e-30, dBH);
+    const mk = 1 - smooth01(1.5, 6, shadowPx);
+    m.marker.visible = mk > .01;
+    m.marker.material.opacity = .5 * mk;
+    m.marker.scale.setScalar(dBH * .0045);
+}
 export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
     updateBHPlacementPreview(dtR);
     updateBHPlacementUI();
@@ -822,10 +837,6 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
         const dBH = camera.position.distanceTo(m.g.position);
         const obsRate = observerTimeScaleForBH(bi, m.g.position);
         BH.obsT[bi] = obsRate;
-        const dtLocal = dtR * obsRate;
-        m.flare = Math.max(0, m.flare - dtLocal * .55);
-        const massVis = smooth01(.5, 5000, m.rs);
-        const diskVis = smooth01(50, 100000, m.rs);
         if (BH.kind[bi] === 2 && m.pulsar) {
             const p = Math.max(1e-9, BH.period[bi]);
             const spinAngle = (G.t % p) / p * Math.PI * 2;
@@ -842,45 +853,11 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
             m.glow.material.opacity = .24 * (aliased ? shimmer : 1);
             continue;
         }
-        const fl = holeFlare(bi, G.t);
-        const lum = fl.tde ? clamp(fl.L / Math.max(1e-30, fl.tde.LEddW), 0, 1) : 0;
-        const screenRing = dBH * (.0026 + .002 * massVis);
-        m.photon.scale.setScalar(Math.max(m.rs * K * 4.2, screenRing));
-        m.glow.scale.setScalar(Math.max(m.rs * K * 8, dBH * (.0035 + .0055 * massVis)));
-        const hot = Math.min(1, Math.max(.14, Math.pow(1000 / Math.max(1, m.rs), .34)));
-        const flare = m.flare * m.flare;
-        const tdeFlare = Math.max(flare, lum);
-        const baseDiskScale = m.rs / Math.max(1e-9, m.diskBaseRs);
-        const circScale = fl.tde && fl.tde.rCirc > 0
-            ? clamp((fl.tde.rCirc * K * .5) / Math.max(1e-9, m.diskBaseRs * K * 6.5), baseDiskScale, baseDiskScale * 8)
-            : baseDiskScale;
-        m.disk.scale.setScalar(circScale * (BH.kind[bi] === 1 ? 2.2 : 1) * (1 + lum * .38));
-        let targetOpacity = .045 + diskVis * .6 + lum * .5 + (fl.tde ? 0 : flare * .28);
-        if (BH.kind[bi] === 1) targetOpacity = Math.max(targetOpacity, 0.85);
-        m.disk.material.opacity = targetOpacity;
-        m.glow.material.opacity = .025 + hot * (.025 + .075 * massVis) + flare * .24 + lum * .4;
-        const hVis = Math.max(m.rs * K * 5.5, dBH * (.0015 + .0018 * massVis));
-        m.hawk.scale.setScalar(hVis);
-        m.hawk.rotation.y += dtLocal * (1.4 + hot * 4.8);
-        m.hawk.rotation.z -= dtLocal * (.35 + hot * 1.2);
-        m.hawk.material.opacity = (.018 + hot * .055) * (.35 + .65 * massVis) + flare * .08 + lum * .16;
-        m.hawk.material.size = Math.max(.0025, dBH * (.00018 + .00018 * massVis)) * (.65 + hot * .35);
-        m.hawkGlow.scale.setScalar(Math.max(m.rs * K * (4.6 + tdeFlare * 5), dBH * (.0022 + .0035 * massVis + tdeFlare * .004)));
-        m.hawkGlow.material.opacity = .015 + hot * (.018 + .052 * massVis) * (0.65 + 0.35 * Math.sin(performance.now() * .004 + bi)) + flare * .22 + lum * .4;
-        if (m.jet) {
-            const jetOp = BH.kind[bi] === 1 ? 0.55 : lum > .8 ? .3 * (lum - .8) / .2 : 0;
-            m.jet.material.opacity = jetOp;
-            const jetLen = BH.kind[bi] === 1 ? m.rs * K * 30 : Math.max(m.rs * K * 7, dBH * (.02 + .04 * lum));
-            const jetRad = Math.max(m.rs * K * .45, dBH * .0012);
-            m.jet.scale.set(jetRad, jetLen, jetRad);
-            m.jet.visible = jetOp > .001;
-        }
-        if (m.coreMask) {
-            m.coreMask.scale.setScalar(Math.max(m.rs * K * 3, dBH * (.0025 + .0045 * massVis)));
-            m.coreMask.material.opacity = 1;
-            m.coreMask.quaternion.copy(camera.quaternion);
-        }
-        m.tex.rotation -= dtLocal * (.25 + 9 / Math.sqrt(m.rs));
+        // the disk, its flare and the jet as the camera sees them: at the
+        // hole's retarded time (the HUD light curve stays in coordinate time)
+        const tSeen = retardedTimeMoving(eph.earthX + BH.x[bi], eph.earthY + BH.y[bi], BH.z[bi],
+            eph.earthVx + BH.vx[bi], eph.earthVy + BH.vy[bi], BH.vz[bi], G.t);
+        updateOpticsFor(bi, m, tSeen, dBH);
     }
     updateTdeVisuals(earthScX, earthScZ, renderer.getPixelRatio());
 }

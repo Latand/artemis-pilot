@@ -23,8 +23,10 @@ import { K, PL, C_LIGHT } from "./constants.js";
 import { G, BH, WORLD, bodyScaleIndex, isBodyDestroyed } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { ENC, TDES, CAPTURES, BODY_TARGETS, bodyState, bodyMuLive, bodyRadiusLive } from "./bhEncounters.js";
-import { DebrisModel, debrisCountFor, loveH2, tidalElongation } from "./tdeDebris.js";
-import { scene, viewportSize } from "./scene.js";
+import { DebrisModel, debrisCountFor, loveH2, tidalElongation, LEG_RING } from "./tdeDebris.js";
+import { viewportSize, camera } from "./scene.js";
+import { holeRoot, SHADOW_RS, GLSL_SHADOW_OCCLUSION, trackCameraRel } from "./holeOptics.js";
+import { observerState, observedTimeAt, retardedTimeMoving } from "./universe/observerTime.js";
 import { sunCore, sunCorona, earth, clouds, earthAtmo, moon, plGroups } from "./bodies.js";
 
 export const DEBRIS_BUDGET = 4096;
@@ -41,6 +43,25 @@ export function blackbodyLinear(T, out) {
     out[0] = srgbToLinear(Math.min(1, Math.max(0, r / 255)));
     out[1] = srgbToLinear(Math.min(1, Math.max(0, g / 255)));
     out[2] = srgbToLinear(Math.min(1, Math.max(0, b / 255)));
+    return out;
+}
+// the same fit tabulated in log T (per-particle colours, allocation-free)
+const BB_N = 512, BB_LO = Math.log(500), BB_HI = Math.log(60000);
+const BB_LUT = new Float32Array(BB_N * 3);
+{
+    const c = [0, 0, 0];
+    for (let k = 0; k < BB_N; k++) {
+        blackbodyLinear(Math.exp(BB_LO + (BB_HI - BB_LO) * k / (BB_N - 1)), c);
+        BB_LUT[k * 3] = c[0]; BB_LUT[k * 3 + 1] = c[1]; BB_LUT[k * 3 + 2] = c[2];
+    }
+}
+function blackbodyFast(T, out) {
+    const u = (Math.log(Math.max(1, T)) - BB_LO) / (BB_HI - BB_LO) * (BB_N - 1);
+    const k = Math.max(0, Math.min(BB_N - 2, Math.floor(u)));
+    const f = Math.max(0, Math.min(1, u - k)), j = k * 3;
+    out[0] = BB_LUT[j] + (BB_LUT[j + 3] - BB_LUT[j]) * f;
+    out[1] = BB_LUT[j + 1] + (BB_LUT[j + 4] - BB_LUT[j + 1]) * f;
+    out[2] = BB_LUT[j + 2] + (BB_LUT[j + 5] - BB_LUT[j + 2]) * f;
     return out;
 }
 function hexLinear(hex, out) {
@@ -62,7 +83,7 @@ const SUN_TEFF = 5772;
 // ---- debris systems ----
 const tdeGroup = new THREE.Group();
 tdeGroup.name = "tde.debris";
-scene.add(tdeGroup);
+holeRoot.add(tdeGroup); // drawn with the hole's optics, after the screen-space lens
 export function tdeVisualGroup() { return tdeGroup; }
 const SYSTEMS = new Map(); // spec -> DebrisSystem
 let budgetUsed = 0;
@@ -81,23 +102,29 @@ const debrisMaterial = () => new THREE.ShaderMaterial({
         uMinPx: { value: 2 },
         uMaxPx: { value: 72 },
         uPixelRatio: { value: 1 },
+        uCamRel: { value: new THREE.Vector3(0, 1, 0) },
+        uShadowR: { value: 0 },
     },
     vertexShader: /* glsl */`
         attribute vec3 aColor;
         attribute float aAlpha;
+        attribute float aSize;
         uniform float uSize, uProj, uMinPx, uMaxPx, uPixelRatio;
+        ${GLSL_SHADOW_OCCLUSION}
         varying vec3 vColor;
         varying float vAlpha;
         varying float vK;
         void main() {
             vec4 mv = modelViewMatrix * vec4(position, 1.0);
             gl_Position = projectionMatrix * mv;
-            float px = uSize * uProj / max(1e-9, -mv.z);
+            float px = uSize * aSize * uProj / max(1e-9, -mv.z);
             float s = clamp(px, uMinPx, uMaxPx);
             // an unresolved element is drawn at the minimum size, dimmed
             // toward (but not below) a visibility floor: a stream far
             // thinner than a pixel still reads as a thin line
             vAlpha = aAlpha * (px < uMinPx ? max(.6, px / uMinPx) : 1.0);
+            // behind the hole and inside its shadow: hidden
+            vAlpha *= 1.0 - shadowed(position);
             vK = mix(.35, 3.2, clamp((s - uMinPx) / 6.0, 0.0, 1.0));
             vColor = aColor;
             gl_PointSize = aAlpha > 0.0 ? s * uPixelRatio : 0.0;
@@ -118,7 +145,7 @@ const debrisMaterial = () => new THREE.ShaderMaterial({
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
 });
 
-const _pf = [0, 0, 0];
+const _pf = [0, 0, 0], _cm = [0, 0, 0];
 const _c3 = [0, 0, 0], _c3b = [0, 0, 0];
 
 class DebrisSystem {
@@ -129,15 +156,18 @@ class DebrisSystem {
         this.pos = new Float32Array(count * 3);
         this.col = new Float32Array(count * 3);
         this.alp = new Float32Array(count);
+        this.siz = new Float32Array(count).fill(1);
         this.lastT = NaN;
         this.last = { x: 0, y: 0, z: 0 };
         const g = new THREE.BufferGeometry();
         this.posAttr = new THREE.BufferAttribute(this.pos, 3).setUsage(THREE.DynamicDrawUsage);
         this.colAttr = new THREE.BufferAttribute(this.col, 3).setUsage(THREE.DynamicDrawUsage);
         this.alpAttr = new THREE.BufferAttribute(this.alp, 1).setUsage(THREE.DynamicDrawUsage);
+        this.sizAttr = new THREE.BufferAttribute(this.siz, 1).setUsage(THREE.DynamicDrawUsage);
         g.setAttribute("position", this.posAttr);
         g.setAttribute("aColor", this.colAttr);
         g.setAttribute("aAlpha", this.alpAttr);
+        g.setAttribute("aSize", this.sizAttr);
         // a fluid element: ~3 mean interparticle spacings across, so the
         // fresh cloud overlaps into a continuous body
         const vFrac = spec.kind === "partial" ? Math.max(.04, .35 * (spec.massLossFrac || 0)) : 1;
@@ -146,12 +176,24 @@ class DebrisSystem {
         this.points.material.uniforms.uSize.value = this.elemKm * K;
         this.points.frustumCulled = false;
         this.points.renderOrder = 7;
+        trackCameraRel(this.points, this.points.material.uniforms, p => p);
         tdeGroup.add(this.points);
     }
-    update(t) {
-        if (t === this.lastT) return;
-        this.lastT = t;
+    // t: coordinate (sim) time now; hole: {x,y,z,vx,vy,vz} world km of the
+    // owning hole. Each element is drawn as the observer sees it: at its own
+    // retarded time t - |x - x_obs|/c (one fixed-point step from the hole's).
+    update(t, hole) {
+        const obs = observerState();
+        if (t === this.lastT && obs.x === this.lastOx && obs.y === this.lastOy && obs.z === this.lastOz) return;
+        this.lastT = t; this.lastOx = obs.x; this.lastOy = obs.y; this.lastOz = obs.z;
+        const tH = retardedTimeMoving(hole.x, hole.y, hole.z, hole.vx, hole.vy, hole.vz, t);
+        this.lastTH = tH;
+        const ret = obs.valid;
         const sp = this.spec, n = this.count;
+        // light still on its way from before the freeze: once the simulation
+        // has removed the body, draw it whole where the observer still sees it
+        const pre = tH < sp.t0 && isBodyDestroyed(sp.target);
+        if (pre) this.m.centreBefore(tH, _cm);
         const rt = sp.rt, rs = Math.max(1e-12, sp.rs);
         const star = sp.target === "sun";
         const base = hexLinear(bodyHexColor(sp.target), _c3b);
@@ -161,8 +203,12 @@ class DebrisSystem {
         const out = _pf;
         const m = this.m;
         for (let i = 0; i < n; i++) {
-            let a = m.particleAt(i, t, out);
+            let a = ret ? m.seenAt(i, t, tH, hole.x, hole.y, hole.z, obs.x, obs.y, obs.z, out) : m.particleAt(i, t, out);
             const j = i * 3;
+            if (!(a > 0) && pre) {
+                out[0] = _cm[0] + m.ox[i]; out[1] = _cm[1] + m.oy[i]; out[2] = _cm[2] + m.oz[i];
+                a = 1;
+            }
             if (!(a > 0)) { this.alp[i] = 0; continue; }
             const x = out[0], y = out[1], z = out[2];
             const r = Math.hypot(x, y, z);
@@ -179,13 +225,13 @@ class DebrisSystem {
             const T = tBody * heat * gz;
             let cr, cg, cb;
             if (star) {
-                blackbodyLinear(T, _c3);
+                blackbodyFast(T, _c3);
                 cr = _c3[0]; cg = _c3[1]; cb = _c3[2];
             } else {
                 // rock and gas debris: reflected colour, glowing where the tide
                 // compresses and shocks it
                 const glow = Math.min(1, Math.max(0, (heat - .9) * .9));
-                blackbodyLinear(Math.max(1200, 2200 * heat) * gz, _c3);
+                blackbodyFast(Math.max(1200, 2200 * heat) * gz, _c3);
                 cr = b0 * (1 - glow) + _c3[0] * glow;
                 cg = b1 * (1 - glow) + _c3[1] * glow;
                 cb = b2 * (1 - glow) + _c3[2] * glow;
@@ -195,13 +241,22 @@ class DebrisSystem {
             this.pos[j] = x * K; this.pos[j + 1] = z * K; this.pos[j + 2] = -y * K;
             this.col[j] = cr; this.col[j + 1] = cg; this.col[j + 2] = cb;
             this.alp[i] = Math.min(1, a * .5);
+            // A fluid element swells as the stream stretches: its spacing and
+            // the stream's width grow ~ linearly with distance from the hole,
+            // so the stream stays a continuous medium. Gas settled into the
+            // disk (ring leg) stays compact.
+            this.siz[i] = m.lastLeg === LEG_RING ? 1 : Math.min(40, Math.max(1, Math.sqrt(r / (2 * rt))));
             sx += x; sy += y; sz += z; live++;
         }
         this.live = live;
-        if (live) { this.last.x = sx / live; this.last.y = sy / live; this.last.z = sz / live; }
+        if (live) {
+            const cx = sx / live, cy = sy / live, cz = sz / live;
+            this.last.x = cx; this.last.y = cy; this.last.z = cz;
+        }
         this.posAttr.needsUpdate = true;
         this.colAttr.needsUpdate = true;
         this.alpAttr.needsUpdate = true;
+        this.sizAttr.needsUpdate = true;
     }
     dispose() {
         tdeGroup.remove(this.points);
@@ -328,8 +383,10 @@ function updateDeformations(t, earthScX, earthScZ) {
             st.holeX = earthScX + BH.sx[bi]; st.holeY = BH.sy[bi]; st.holeZ = earthScZ + BH.sz[bi];
         }
         // the debris has taken over from the mesh once its orbits have started
+        // (as the observer sees the body: at its retarded time, like the debris)
+        const tSeen = observedTimeAt(eph.earthX + _bs.x, eph.earthY + _bs.y, _bs.z, t);
         for (const spec of SYSTEMS.keys()) {
-            if (spec.target === target && spec.kind !== "partial" && t >= spec.t0) st.collapse = 1;
+            if (spec.target === target && spec.kind !== "partial" && tSeen >= spec.t0) st.collapse = 1;
         }
         st.active = lam > 1.0005 || st.shrink < .9995 || st.collapse > 0;
     }
@@ -337,6 +394,7 @@ function updateDeformations(t, earthScX, earthScZ) {
 
 // Per frame (from blackholes.js updateBHVisuals). Hole groups are already
 // positioned; debris positions are relative to their hole.
+const _hole = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 export function updateTdeVisuals(earthScX, earthScZ, pixelRatio = 1, t = G.t) {
     installHooks();
     syncSystems(t);
@@ -348,7 +406,12 @@ export function updateTdeVisuals(earthScX, earthScZ, pixelRatio = 1, t = G.t) {
         const u = sys.points.material.uniforms;
         u.uPixelRatio.value = pixelRatio;
         u.uProj.value = viewportSize.pxScale;
-        sys.update(t);
+        const pp = sys.points.position;
+        u.uCamRel.value.set(camera.position.x - pp.x, camera.position.y - pp.y, camera.position.z - pp.z);
+        u.uShadowR.value = SHADOW_RS * BH.rs[bi] * K;
+        _hole.x = eph.earthX + BH.x[bi]; _hole.y = eph.earthY + BH.y[bi]; _hole.z = BH.z[bi];
+        _hole.vx = eph.earthVx + BH.vx[bi]; _hole.vy = eph.earthVy + BH.vy[bi]; _hole.vz = BH.vz[bi];
+        sys.update(t, _hole);
     }
     updateDeformations(t, earthScX, earthScZ);
 }
