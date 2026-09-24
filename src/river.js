@@ -179,6 +179,17 @@ uniform vec3 uCam;
 uniform vec3 uCenterShift;
 varying vec2 vUv;
 ${FLOW_GLSL}
+// Universal halo rule (one formula, every source): fill at most 1.5x the
+// source's sphere of influence where one is defined (uSoi > 0); where none is
+// (Sun, stars, holes: uSoi = 0) the volume-fraction cap governs. min/max
+// instead of clamp: the lo floor can exceed the SOI cap at survey zoom, and
+// GLSL clamp is undefined for minVal > maxVal.
+float spawnReach(int chosen) {
+    float sink = sourceCore(uSink[chosen], uHole[chosen]);
+    float lo = uRadius * 0.02;
+    float hi = uSoi[chosen] > 0.0 ? min(uSoi[chosen] * 1.5, uRadius * 0.22) : uRadius * 0.22;
+    return min(max(sink * 30.0, lo), max(hi, sink * 2.0));
+}
 void main() {
     // Positions are stored relative to the river's own float64 center
     // (see uCenterShift's declaration site in river.js), never in absolute
@@ -188,20 +199,34 @@ void main() {
     // last frame's stored position it is re-expressed relative to THIS
     // frame's center by subtracting the frame-to-frame shift (computed in
     // float64 on the CPU, where large-magnitude drift is lossless).
-    vec3 p = texture2D(uPos, vUv).xyz - uCenterShift;
+    vec4 stored = texture2D(uPos, vUv);
+    vec3 p = stored.xyz - uCenterShift;
+    // w: the source whose halo spawned this streak (index + 1; 0 = ambient)
+    float owner = stored.w;
     vec3 v = flowField(p);
     vec3 stp = v * uDtSim;
     float sl = length(stp);
     float cap = uRadius * 0.05;
     if (sl > cap) stp *= cap / sl;
+    vec3 p0 = p;
     p += stp;
     bool kill = hash13(vec3(vUv * 719.3, uTick + 9.7)) < uRespawn;
     if (length(p) > uRadius * 1.04) kill = true;
     for (int i = 0; i < ${MAXB}; i++) {
         if (i >= uSinkNB) break;
         float sink = sourceCore(uSink[i], uHole[i]);
-        if (distance(p, uBody[i].xyz) < sink) { kill = true; break; }
+        // swept: at high warp one step is far longer than a planet's sink,
+        // and an end-point test let streaks hop across it and stay trapped
+        // in the well, oscillating round it
+        vec3 d0 = uBody[i].xyz - p0;
+        float s = clamp(dot(d0, stp) / max(dot(stp, stp), 1e-30), 0.0, 1.0);
+        if (length(d0 - stp * s) < sink) { kill = true; break; }
     }
+    // a halo streak shows its source's well: once the source has moved on
+    // (a planet at high warp crosses its halo in a few frames) it respawns
+    // instead of lingering as a wake where the well used to be
+    int own = int(owner + 0.5) - 1;
+    if (own >= 0 && own < uSinkNB && distance(p, uBody[own].xyz) > spawnReach(own) * 1.25) kill = true;
     if (hash13(vec3(vUv * 913.7, uTick)) < 0.002) kill = true;
     if (kill) {
         float h1 = hash13(vec3(vUv * 127.1, uTick + 0.17));
@@ -234,19 +259,13 @@ void main() {
                 if (pick <= acc) { chosen = i; break; }
             }
         }
+        owner = 0.0;
         if (chosen >= 0) {
             float sink = sourceCore(uSink[chosen], uHole[chosen]);
-            // Universal halo rule (one formula, every source): fill at most
-            // 1.5x the source's sphere of influence where one is defined
-            // (uSoi > 0); where none is (Sun, stars, holes: uSoi = 0) the
-            // volume-fraction cap governs. min/max instead of clamp: the lo
-            // floor can exceed the SOI cap at survey zoom, and GLSL clamp is
-            // undefined for minVal > maxVal.
-            float lo = uRadius * 0.02;
-            float hi = uSoi[chosen] > 0.0 ? min(uSoi[chosen] * 1.5, uRadius * 0.22) : uRadius * 0.22;
-            float reach = min(max(sink * 30.0, lo), max(hi, sink * 2.0));
+            float reach = spawnReach(chosen);
             float rad = sink * 1.2 + max(reach - sink * 1.2, 0.0) * pow(h3, 1.6);
             p = uBody[chosen].xyz + vec3(cos(th) * rr, yy, sin(th) * rr) * rad;
+            owner = float(chosen + 1);
         } else {
             float rad = uRadius * pow(h3, 0.3333333);
             p = vec3(cos(th) * rr, yy, sin(th) * rr) * rad;
@@ -261,7 +280,7 @@ void main() {
                 p = uBody[i].xyz + d / max(r, 1e-6) * (sink * (1.2 + 2.0 * h2));
         }
     }
-    gl_FragColor = vec4(p, 1.0);
+    gl_FragColor = vec4(p, owner);
 }`;
 
 const LINE_VERT = /* glsl */`
@@ -348,7 +367,11 @@ void main() {
         }
         if (i != 2 && uHole[i] < 0.5) {
             vec3 toBody = uBody[i].xyz - p;
-            float nearReach = max(uSink[i] * 18.0, uRadius * 0.16);
+            // funnel ink only where the body governs the flow (its sphere of
+            // influence, when defined): at survey zoom uRadius * 0.16 spans
+            // ~18 AU, and Sun-bound streaks merely passing a planet lit up
+            // in a comet-tail cone behind it
+            float nearReach = max(uSink[i] * 18.0, uSoi[i] > 0.0 ? min(uRadius * 0.16, uSoi[i]) : uRadius * 0.16);
             float nearBody = 1.0 - smoothstep(uSink[i] * 1.25, nearReach, dSrc);
             float align = dot(vDir, toBody / max(dSrc, 1e-6));
             float inward = smoothstep(0.22, 0.92, align);
@@ -457,7 +480,7 @@ export function initRiver() {
         seed[i * 4] = r * rr * Math.cos(th);
         seed[i * 4 + 1] = r * y;
         seed[i * 4 + 2] = r * rr * Math.sin(th);
-        seed[i * 4 + 3] = 1;
+        seed[i * 4 + 3] = 0; // no halo owner (see COMPUTE_FRAG)
     }
     const seedTex = new THREE.DataTexture(seed, TEXW, TEXW, THREE.RGBAFormat, THREE.FloatType);
     seedTex.needsUpdate = true;
