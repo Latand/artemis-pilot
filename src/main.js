@@ -2,7 +2,7 @@ import * as THREE from "three";
 import {
     R_EARTH, R_MOON, A_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS, PC_KM,
-    OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM,
+    OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM, MPC_KM, C_LIGHT,
 } from "./constants.js";
 import {
     G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents, setSimTime,
@@ -41,7 +41,10 @@ import {
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
-import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt } from "./cosmic.js";
+import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt, andromedaOffsetMpc } from "./cosmic.js";
+import { initGalaxyPopulation, updateGalaxyPopulation, galaxyPopulationStatus } from "./render/galaxyPopulationRender.js";
+import { stellarExposure } from "./render/stellarAppearance.js";
+import { galacticCenterScene } from "./universe/starfield.js";
 import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit } from "./render/galaxyVolume.js";
 import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
 import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
@@ -95,6 +98,11 @@ import { classifyContact } from "./universe/contactMath.js";
 import { initEvents, noteEvent, updateEvents } from "./events.js";
 
 // ============================ WIRING ============================
+// Milky Way stellar-disk diameter (~30 kpc) in scene units: sets the
+// volume -> galaxy-population handoff by angular size.
+const MW_DIAMETER_SCENE = 30000 * PC_KM * K;
+const MAX_POINT_PX = (() => { try { const gl = renderer.getContext(); return gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64; } catch { return 64; } })();
+const m31Mpc = [0, 0, 0];
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
 const query = new URLSearchParams(location.search);
 const bloomParam = query.get("bloom");
@@ -400,6 +408,11 @@ initCatalogStars(scene);
 // don't hold), partitioned with the volumetric light by one resolve limit.
 initResolvedField(scene, { seed: getSeed(), mobile: renderQuality.mobile });
 window.__fieldStatus = resolvedFieldStatus; // debug/testing handle
+// Every other galaxy (Local Group, Local Volume, 2MRS, the statistical
+// universe beyond) and the Milky Way once it is small: one population, one
+// shader (render/galaxyPopulationRender.js). Built in a worker at startup.
+initGalaxyPopulation(farTierGroup);
+window.__galaxyStatus = galaxyPopulationStatus; // debug/testing handle
 perfEnd("startup.initCosmicLayer", cosmicInitT0);
 // Tier-1 AT-HYG streaming star layer (WP9/WP10): fetches its manifest and
 // streams tiles over ~25 minutes, so it's fired without an `await` to avoid
@@ -2050,9 +2063,27 @@ function frame() {
     } : null);
     const cosmicT0 = perfStart();
     // Unresolved Milky Way light: one volumetric integral from the camera's
-    // true galactic position at every scale (render/galaxyVolume.js).
-    updateGalaxyVolume(camera, G.t, eraModulation(G.t), mergerDisruptFractionAt(G.t));
+    // true galactic position (render/galaxyVolume.js) while the Galaxy is
+    // resolved; once it spans fewer than ~40 px its entry in the galaxy
+    // population takes over (same luminosity, cross-faded by angular size).
+    const gcScene = galacticCenterScene();
+    const mwDistScene = Math.hypot(camera.position.x - gcScene[0], camera.position.y - gcScene[1], camera.position.z - gcScene[2]);
+    const mwSprite = 1 - smooth01(16, 40, MW_DIAMETER_SCENE * viewportSize.pxScale / Math.max(mwDistScene, 1));
+    const mergeFrac = mergerDisruptFractionAt(G.t);
+    updateGalaxyVolume(camera, G.t, eraModulation(G.t), mergeFrac, 1 - mwSprite);
     updateCosmicLayer();
+    // M31 on its trajectory at the time its light left it (retarded time).
+    andromedaOffsetMpc(G.t, m31Mpc);
+    {
+        const k = MPC_KM * K;
+        const dx = gcScene[0] + m31Mpc[0] * k - camera.position.x, dy = gcScene[1] + m31Mpc[2] * k - camera.position.y, dz = gcScene[2] - m31Mpc[1] * k - camera.position.z;
+        andromedaOffsetMpc(G.t - Math.hypot(dx, dy, dz) / K / C_LIGHT, m31Mpc);
+    }
+    updateGalaxyPopulation(camera, {
+        tSim: G.t, gcScene, exposure: stellarExposure.value, pxScale: viewportSize.pxScale, viewport: [viewportSize.w, viewportSize.h],
+        dpr: renderer.getPixelRatio(), maxPointPx: MAX_POINT_PX,
+        mwKeep: mwSprite, mergeMorph: mergeFrac, m31Mpc,
+    });
     // The Sun's point and evolving photosphere: every view, not only near it.
     updateSunView(camera, camera.position.distanceTo(sunPos) / K / PC_KM);
     perfEnd("cosmic.update", cosmicT0, PERF.enabled ? { cosmicView, dist: cam.dist } : null);

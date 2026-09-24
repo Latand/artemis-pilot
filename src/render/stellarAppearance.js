@@ -3,6 +3,12 @@ import * as THREE from 'three';
 // Shared display exposure for every stellar layer. Physical magnitudes remain
 // unchanged. This approximates a camera exposing for a resolved sunlit body.
 export const stellarExposure = { value: 1 };
+// Metered exposure for the extragalactic regime (render/galaxyPopulationRender.js)
+// and how far the camera is into that regime (0 inside the Milky Way, 1 once
+// its stars can no longer be resolved). The volumetric Milky Way composites
+// with stellarExposure^(1-blend) * extragalacticExposure^blend so it and its
+// galaxy-population entry stay photometrically continuous.
+export const extragalacticExposure = { value: 1, blend: 0 };
 
 // Sun and named stars share the same exposed signal and disk/point transition.
 // Callers reuse their output object to keep frame updates allocation free.

@@ -86,6 +86,11 @@ try {
     });
     await page.waitForFunction(async () => (await import("/src/cosmic.js")).isCosmicLayerBuilt(), null, { timeout: 180000 });
     await page.evaluate(async () => { const s = await import("/src/realSky.js"); return s.realSkyStatus?.().loaded; });
+    // The galaxy population builds in a worker at startup.
+    await page.waitForFunction(() => !window.__galaxyStatus || window.__galaxyStatus().ready || window.__galaxyStatus().error, null, { timeout: 180000, polling: 500 })
+        .catch(() => console.log("  (galaxy population still building)"));
+    const gs = await page.evaluate(() => window.__galaxyStatus?.());
+    if (gs) console.log("galaxies:", gs.galaxies, "chunks:", gs.chunks, "error:", gs.error, "ms:", JSON.stringify(gs.buildMs));
     const hide = await page.addStyleTag({ content: "body * { visibility: hidden !important } #gl, #gl canvas { visibility: visible !important }" });
 
     const shots = [];

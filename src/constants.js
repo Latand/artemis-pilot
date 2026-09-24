@@ -80,11 +80,15 @@ export const LY_KM = 9460730472580.8;
 export const PC_KM = LY_KM * 3.2615637771674;
 export const MPC_KM = PC_KM * 1e6;
 export const LY_SCENE = LY_KM * K;
-export const CAM_DIST_MAX = LY_SCENE * 4000000;
+// The camera may zoom out to 1.5 Gly: far enough to see the Local
+// Supercluster, Laniakea and the cosmic web around them, while staying inside
+// the rendered galaxy population (universe/galaxyPopulation.js, 650 Mpc).
+export const CAM_DIST_MAX = LY_SCENE * 1.5e9;
 export const COSMIC_ZOOMS = {
     SOLAR: 5.6e6,
     MILKY_WAY: LY_SCENE * 120000,
     LOCAL_GROUP: LY_SCENE * 3200000,
+    COSMIC_WEB: LY_SCENE * 4e8,
 };
 export const SUN_DIST = AU_KM * K;
 export const SUN_RADIUS = R_SUN * K;

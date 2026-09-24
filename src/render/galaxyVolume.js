@@ -22,7 +22,7 @@ import { K } from "../constants.js";
 import { W2G, worldKmToGalInto, getSunGalAnchor } from "../universe/coords.js";
 import { GALAXY_MODEL_GLSL, galaxyModelUniformValues, patternAngles, MW, EXTINCTION_RGB } from "../universe/galaxyModel.js";
 import { teffToRGB } from "./viewBrightness.js";
-import { stellarExposure } from "./stellarAppearance.js";
+import { stellarExposure, extragalacticExposure } from "./stellarAppearance.js";
 
 const q = typeof location !== "undefined" ? new URLSearchParams(location.search) : new URLSearchParams();
 const DISABLED = q.get("galaxyvol") === "0";
@@ -316,7 +316,10 @@ export function renderGalaxyVolume(renderer) {
     }
     renderer.setRenderTarget(prevTarget);
     renderer.autoClear = false;
-    state.compMat.uniforms.uExposure.value = stellarExposure.value;
+    const b = extragalacticExposure.blend;
+    state.compMat.uniforms.uExposure.value = b > 0
+        ? Math.exp(Math.log(Math.max(1e-6, stellarExposure.value)) * (1 - b) + Math.log(Math.max(1e-6, extragalacticExposure.value)) * b)
+        : stellarExposure.value;
     state.compMat.uniforms.uOpacity.value = state.opacity;
     renderer.render(state.compScene, state.orthoCam);
     renderer.autoClear = prevAuto;
