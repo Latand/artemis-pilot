@@ -2,8 +2,10 @@ import {
     AU_KM, SUN_TH0, E_EARTH, VARPI_EARTH, PL, A_MOON, E_MOON, OMEGA, MOON_ANG0,
     MU_E, MU_M, MU_S, C_LIGHT, BH_MAX, LY_KM, PC_KM, DARK_ENERGY, DARK_MATTER,
     I_EARTH, OM_EARTH, I_MOON, OM_MOON0, OM_MOON_RATE, OM_YEAR,
+    R_EARTH, R_MOON, R_SUN,
 } from "./constants.js";
-import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt } from "./state.js";
+import { G, BH, WORLD, EPHT, GS, gsPull, bhMuAt, BODY_SCALE_EARTH } from "./state.js";
+import { Q_MIN_TDE } from "./tde.js";
 import { GRAVITY_STARS } from "./universe/activeStars.js";
 import { darkEnergyAccel, darkMatterRelativeAccel } from "./cosmology.js";
 import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
@@ -19,13 +21,46 @@ bodyMu[IDX_MOON] = MU_M;
 bodyMu[IDX_SUN] = MU_S;
 for (let i = 0; i < PL.length; i++) bodyMu[IDX_PLANETS + i] = PL[i].mu;
 
+const bodyR = new Float64Array(NB);
+bodyR[IDX_MOON] = R_MOON;
+bodyR[IDX_SUN] = R_SUN;
+for (let i = 0; i < PL.length; i++) bodyR[IDX_PLANETS + i] = PL[i].R;
+
 function isBodyActive(i) {
     return i === IDX_MOON ? !WORLD.moonDestroyed :
         i === IDX_SUN ? !WORLD.sunDestroyed :
             !WORLD.plDestroyed[i - IDX_PLANETS];
 }
-function activeBodyMu(i) { return isBodyActive(i) ? bodyMu[i] : 0; }
-function activeEarthMu() { return WORLD.earthDestroyed ? 0 : MU_E; }
+// WORLD.muScale / rScale carry the surviving core of a partially disrupted
+// body (index order matches the ephemeris; Earth sits at BODY_SCALE_EARTH).
+function activeBodyMu(i) { return isBodyActive(i) ? bodyMu[i] * WORLD.muScale[i] : 0; }
+function activeEarthMu() { return WORLD.earthDestroyed ? 0 : MU_E * WORLD.muScale[BODY_SCALE_EARTH]; }
+export function liveBodyMu(i) { return activeBodyMu(i); }
+export function liveBodyRadius(i) { return bodyR[i] * WORLD.rScale[i]; }
+export function liveEarthMu() { return activeEarthMu(); }
+export function liveEarthRadius() { return R_EARTH * WORLD.rScale[BODY_SCALE_EARTH]; }
+
+// Hole–body pair force per unit source mass: Paczyński–Wiita outside the
+// body, the enclosed-mass (uniform-sphere) law inside it, so a hole passing
+// through a planet or star feels a finite, continuous pull instead of a point
+// singularity at the body's centre. Returns g with accel = mu * g * (d_vec/d).
+// rb = 0 (ship, photons) or a body smaller than the capture sphere: pure PW.
+// Softening radius of a hole-body pair. A body the hole can tidally disrupt
+// (q >= Q_MIN_TDE) is resolved by the encounter pipeline at or before its
+// pericentre, so the pair stays a point pair (PW) and its conic stays
+// Keplerian all the way in; only a hole too light to disrupt the body can
+// genuinely pass through it, and then the enclosed-mass law applies.
+export function pairRadius(bodyMu, bodyR, holeMu) {
+    return holeMu < Q_MIN_TDE * bodyMu ? bodyR : 0;
+}
+export function pairG(d, rs, rb) {
+    if (rb > 2 * rs && d < rb) {
+        const e = rb - rs;
+        return d / (rb * e * e);
+    }
+    const eff = Math.max(d - rs, rs * .02);
+    return 1 / (eff * eff);
+}
 
 const bodyX = new Float64Array(NB), bodyY = new Float64Array(NB), bodyZ = new Float64Array(NB);
 const bodyVx = new Float64Array(NB), bodyVy = new Float64Array(NB), bodyVz = new Float64Array(NB);
@@ -286,8 +321,8 @@ export function bodyStateForTarget(target, out, st = null) {
 // state). Live integration never sets the flag, so that path is untouched.
 const PRED_BH = {
     active: false, t0: 0,
-    x: new Float64Array(BH_MAX), y: new Float64Array(BH_MAX),
-    vx: new Float64Array(BH_MAX), vy: new Float64Array(BH_MAX),
+    x: new Float64Array(BH_MAX), y: new Float64Array(BH_MAX), z: new Float64Array(BH_MAX),
+    vx: new Float64Array(BH_MAX), vy: new Float64Array(BH_MAX), vz: new Float64Array(BH_MAX),
 };
 
 let PRED_STARS = null;
@@ -310,8 +345,8 @@ export function gravityStarsFor(wx, wy, wz) {
 export function beginPredictionBH() {
     PRED_BH.t0 = EPHT.t;
     for (let i = 0; i < BH.n; i++) {
-        PRED_BH.x[i] = BH.x[i]; PRED_BH.y[i] = BH.y[i];
-        PRED_BH.vx[i] = BH.vx[i]; PRED_BH.vy[i] = BH.vy[i];
+        PRED_BH.x[i] = BH.x[i]; PRED_BH.y[i] = BH.y[i]; PRED_BH.z[i] = BH.z[i];
+        PRED_BH.vx[i] = BH.vx[i]; PRED_BH.vy[i] = BH.vy[i]; PRED_BH.vz[i] = BH.vz[i];
     }
     PRED_BH.active = true;
 }
@@ -320,6 +355,7 @@ export function endPredictionBH() { PRED_BH.active = false; }
 // impact checks); falls back to the live state outside predictions
 export function predBHX(i, t) { return PRED_BH.active ? PRED_BH.x[i] + PRED_BH.vx[i] * (t - PRED_BH.t0) : BH.x[i]; }
 export function predBHY(i, t) { return PRED_BH.active ? PRED_BH.y[i] + PRED_BH.vy[i] * (t - PRED_BH.t0) : BH.y[i]; }
+export function predBHZ(i, t) { return PRED_BH.active ? PRED_BH.z[i] + PRED_BH.vz[i] * (t - PRED_BH.t0) : BH.z[i]; }
 
 // Indirect (frame) acceleration: every body and hole pulls the Earth-centered
 // origin. Identical for all field points, so callers evaluating many points
@@ -347,17 +383,21 @@ export function indirectAccel(st, out, tau = 0) {
         }
     }
     const bhDt = PRED_BH.active ? tEval - PRED_BH.t0 : tau;
+    const rEarth = liveEarthRadius(), muEarth = activeEarthMu();
     for (let i = 0; i < BH.n; i++) {
         const mu0 = bhMuAt(i, 0, 0, 0, tEval);
         if (mu0 <= 0) continue;
+        const rE = pairRadius(muEarth, rEarth, BH.mu[i]);
         const bx = PRED_BH.active ? PRED_BH.x[i] + PRED_BH.vx[i] * bhDt : BH.x[i] + BH.vx[i] * bhDt;
         const by = PRED_BH.active ? PRED_BH.y[i] + PRED_BH.vy[i] * bhDt : BH.y[i] + BH.vy[i] * bhDt;
-        const r0 = Math.sqrt(bx * bx + by * by);
+        const bz = PRED_BH.active ? PRED_BH.z[i] + PRED_BH.vz[i] * bhDt : BH.z[i] + BH.vz[i] * bhDt;
+        const r0 = Math.sqrt(bx * bx + by * by + bz * bz);
         if (r0 > 1e-9) {
-            const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
-            const am0 = mu0 / (eff0 * eff0) / r0;
+            // the hole's pull on Earth (the frame origin), Earth's extent included
+            const am0 = mu0 * pairG(r0, BH.rs[i], rE) / r0;
             ax -= bx * am0;
             ay -= by * am0;
+            az -= bz * am0;
         }
     }
     const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
@@ -431,17 +471,24 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
         }
     }
     const bhDt = PRED_BH.active ? tEval - PRED_BH.t0 : tau;
+    // a body feels a hole through the pair law (see pairRadius / pairG); the
+    // ship is a point
+    const bodyRad = skipBody >= 0 && skipBody < NB ? liveBodyRadius(skipBody) : 0;
+    const bodyMuSelf = skipBody >= 0 && skipBody < NB ? activeBodyMu(skipBody) : 0;
+    const rEarth = indir ? liveEarthRadius() : 0, muEarth = indir ? activeEarthMu() : 0;
     for (let i = 0; i < BH.n; i++) {
+        const rb = bodyRad > 0 ? pairRadius(bodyMuSelf, bodyRad, BH.mu[i]) : 0;
+        const rE = indir ? pairRadius(muEarth, rEarth, BH.mu[i]) : 0;
         const bx = PRED_BH.active ? PRED_BH.x[i] + PRED_BH.vx[i] * bhDt : BH.x[i] + BH.vx[i] * bhDt;
         const by = PRED_BH.active ? PRED_BH.y[i] + PRED_BH.vy[i] * bhDt : BH.y[i] + BH.vy[i] * bhDt;
-        const dx = x - bx, dy = y - by, dz = z;
+        const bz = PRED_BH.active ? PRED_BH.z[i] + PRED_BH.vz[i] * bhDt : BH.z[i] + BH.vz[i] * bhDt;
+        const dx = x - bx, dy = y - by, dz = z - bz;
         const r = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (r > 1e-9) {
             // only the mass whose light front has reached this point pulls
             const mu = bhMuAt(i, x, y, z, tEval);
             if (mu > 0) {
-                const eff = Math.max(r - BH.rs[i], BH.rs[i] * .02);
-                const am = mu / (eff * eff) / r;
+                const am = mu * pairG(r, BH.rs[i], rb) / r;
                 ax -= dx * am;
                 ay -= dy * am;
                 az -= dz * am;
@@ -450,12 +497,12 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
         if (indir) {
             const mu0 = bhMuAt(i, 0, 0, 0, tEval);
             if (mu0 > 0) {
-                const r0 = Math.sqrt(bx * bx + by * by);
+                const r0 = Math.sqrt(bx * bx + by * by + bz * bz);
                 if (r0 > 1e-9) {
-                    const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
-                    const am0 = mu0 / (eff0 * eff0) / r0;
+                    const am0 = mu0 * pairG(r0, BH.rs[i], rE) / r0;
                     ax -= bx * am0;
                     ay -= by * am0;
+                    az -= bz * am0;
                 }
             }
         }
@@ -602,26 +649,131 @@ function computeAccel(st) {
     if (WORLD.earthDestroyed) { _lfEarthAx = 0; _lfEarthAy = 0; }
     else { _lfEarthAx = -_ind3[0] + _pnEarth3[0]; _lfEarthAy = -_ind3[1] + _pnEarth3[1]; }
 }
-function leapfrogBodies(st, dt) {
+// ---- live black holes ride the same KDK ----
+// Holes are integrated in the same leapfrog steps as the bodies with the SAME
+// pair laws (pairG), so every hole-body kick is exactly equal and opposite
+// and the integration step bounds both sides of an encounter. (Integrating
+// the holes in a separate RK4 pass against interpolated bodies let the kicks
+// fail to cancel, which pumped momentum into the frame and made the outcome
+// depend on warp and frame rate.)
+const _hAx = new Float64Array(BH_MAX), _hAy = new Float64Array(BH_MAX), _hAz = new Float64Array(BH_MAX);
+const _gpH = [0, 0, 0], _dmH = [0, 0, 0];
+function computeHoleAccel(st) {
+    const tEval = st.t;
+    const muE = activeEarthMu(), rEarth = liveEarthRadius();
+    const ex = st.earthX, ey = st.earthY;
+    for (let i = 0; i < BH.n; i++) {
+        const x = BH.x[i], y = BH.y[i], z = BH.z[i], rsI = BH.rs[i];
+        const rE = pairRadius(muE, rEarth, BH.mu[i]);
+        let ax = 0, ay = 0, az = 0;
+        if (muE > 0) {
+            const d = Math.sqrt(x * x + y * y + z * z);
+            if (d > 1e-12) {
+                const w = muE * pairG(d, rsI, rE) / d;
+                ax -= w * x; ay -= w * y; az -= w * z;
+            }
+        }
+        for (let b = 0; b < NB; b++) {
+            const mu = activeBodyMu(b);
+            if (mu <= 0) continue;
+            const dx = x - st.x[b], dy = y - st.y[b], dz = z - st.z[b];
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (d > 1e-12) {
+                const w = mu * pairG(d, rsI, pairRadius(mu, liveBodyRadius(b), BH.mu[i])) / d;
+                ax -= w * dx; ay -= w * dy; az -= w * dz;
+            }
+        }
+        for (let j = 0; j < BH.n; j++) {
+            if (j === i) continue;
+            const dx = x - BH.x[j], dy = y - BH.y[j], dz = z - BH.z[j];
+            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            const mu = bhMuAt(j, x, y, z, tEval);
+            if (mu > 0 && d > 1e-12) {
+                // shared pair softening so unequal holes obey action-reaction
+                const rsP = rsI + BH.rs[j];
+                const eff = Math.max(d - rsP, rsP * .02);
+                const w = mu / (eff * eff * d);
+                ax -= w * dx; ay -= w * dy; az -= w * dz;
+            }
+        }
+        const stars = gravityStarsFor(ex + x, ey + y, z);
+        for (let k = 0; k < stars.length; k++) {
+            const star = stars[k];
+            const dx = x - (star.x - ex), dy = y - (star.y - ey), dz = z - (star.z || 0);
+            const r2 = dx * dx + dy * dy + dz * dz;
+            if (r2 > 1e-18) {
+                const w = star.mu / (r2 * Math.sqrt(r2));
+                ax -= w * dx; ay -= w * dy; az -= w * dz;
+            }
+        }
+        if (GS.length) {
+            _gpH[0] = 0; _gpH[1] = 0; _gpH[2] = 0;
+            gsPull(x, y, z, tEval, _gpH);
+            ax += _gpH[0]; ay += _gpH[1]; az += _gpH[2];
+        }
+        if (G.darkMatter && x * x + y * y + z * z >= DARK_MATTER_GRAVITY_MIN_R2) {
+            darkMatterRelativeAccel(x, y, z, ex, ey, 0, _dmH);
+            ax += _dmH[0]; ay += _dmH[1]; az += _dmH[2];
+        }
+        _hAx[i] = ax + _ind3[0]; _hAy[i] = ay + _ind3[1]; _hAz[i] = az + _ind3[2];
+    }
+}
+// Pre-drift positions of the step just taken, for the capture hook's
+// segment-vs-sphere tests (bodies in ephemeris index order, then holes).
+export const LF_SEG = {
+    bx: new Float64Array(NB), by: new Float64Array(NB), bz: new Float64Array(NB),
+    hx: new Float64Array(BH_MAX), hy: new Float64Array(BH_MAX), hz: new Float64Array(BH_MAX),
+    n: 0,
+};
+function leapfrogBodies(st, dt, live = false) {
     const h = dt / 2;
+    let holes = live && BH.n > 0;
     computeAccel(st);
+    if (holes) computeHoleAccel(st);
     for (let i = 0; i < NB; i++) {
         if (!isBodyActive(i)) continue; // frozen: matches the old zero-derivative behavior
         st.vx[i] += h * _lfAx[i]; st.vy[i] += h * _lfAy[i]; st.vz[i] += h * _lfAz[i];
     }
     st.earthVx += h * _lfEarthAx; st.earthVy += h * _lfEarthAy;
+    if (holes) {
+        for (let i = 0; i < BH.n; i++) {
+            BH.vx[i] += h * _hAx[i]; BH.vy[i] += h * _hAy[i]; BH.vz[i] += h * _hAz[i];
+            LF_SEG.hx[i] = BH.x[i]; LF_SEG.hy[i] = BH.y[i]; LF_SEG.hz[i] = BH.z[i];
+        }
+        LF_SEG.n = BH.n;
+        for (let i = 0; i < NB; i++) { LF_SEG.bx[i] = st.x[i]; LF_SEG.by[i] = st.y[i]; LF_SEG.bz[i] = st.z[i]; }
+    }
     for (let i = 0; i < NB; i++) {
         if (!isBodyActive(i)) continue;
         st.x[i] += dt * st.vx[i]; st.y[i] += dt * st.vy[i]; st.z[i] += dt * st.vz[i];
     }
     st.earthX += dt * st.earthVx; st.earthY += dt * st.earthVy; // earthZ stays 0
+    if (holes) {
+        for (let i = 0; i < BH.n; i++) {
+            BH.x[i] += dt * BH.vx[i]; BH.y[i] += dt * BH.vy[i]; BH.z[i] += dt * BH.vz[i];
+        }
+    }
     st.t += dt;
+    // encounters resolve here, at the drift end and BEFORE the closing kick:
+    // a body captured or disrupted at this instant never receives a kick from
+    // inside the capture sphere
+    if (holes && livePreKick) {
+        syncFromState(st);
+        livePreKick(st.t, dt);
+    }
     computeAccel(st);
+    holes = live && BH.n > 0;
+    if (holes) computeHoleAccel(st);
     for (let i = 0; i < NB; i++) {
         if (!isBodyActive(i)) continue;
         st.vx[i] += h * _lfAx[i]; st.vy[i] += h * _lfAy[i]; st.vz[i] += h * _lfAz[i];
     }
     st.earthVx += h * _lfEarthAx; st.earthVy += h * _lfEarthAy;
+    if (holes) {
+        for (let i = 0; i < BH.n; i++) {
+            BH.vx[i] += h * _hAx[i]; BH.vy[i] += h * _hAy[i]; BH.vz[i] += h * _hAz[i];
+        }
+    }
 }
 // Nominal nominal step ceiling: never step past 1/200 of the shortest
 // orbital period actually modeled (the Moon's, ~27.3 days) — small enough
@@ -634,7 +786,13 @@ function leapfrogBodies(st, dt) {
 const LUNAR_PERIOD_S = 2 * Math.PI * Math.sqrt((A_MOON * A_MOON * A_MOON) / (MU_E + MU_M));
 const LEAP_DT_MAX = LUNAR_PERIOD_S / 200;
 
-function bodyStepSize(st, rem, maxStep = 3600) {
+// free-fall timescale of a hole-body pair under pairG
+function pairTau(d, rs, rb, mu) {
+    if (rb > 2 * rs && d < rb) return Math.sqrt(rb * rb * rb / mu);
+    const eff = Math.max(d - rs, rs * .02);
+    return Math.sqrt(eff * eff * Math.max(d, rs * .02) / mu);
+}
+function bodyStepSize(st, rem, maxStep = 3600, live = false) {
     let dt = Math.min(rem, maxStep, LEAP_DT_MAX);
     const muE = activeEarthMu();
     for (let i = 0; i < NB; i++) {
@@ -649,16 +807,32 @@ function bodyStepSize(st, rem, maxStep = 3600) {
             const d2 = dx * dx + dy * dy + dz * dz;
             if (d2 > 1) dt = Math.min(dt, Math.sqrt(d2 * Math.sqrt(d2) / (mui + muj)) / 55);
         }
+        const rBody = liveBodyRadius(i);
         for (let b = 0; b < BH.n; b++) {
-            const dx = st.x[i] - BH.x[b], dy = st.y[i] - BH.y[b], dz = st.z[i];
+            const dx = st.x[i] - BH.x[b], dy = st.y[i] - BH.y[b], dz = st.z[i] - BH.z[b];
             const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            // free-fall timescale against the PW-softened pull; the floor keeps
-            // it finite even with the body's center inside the horizon
-            const eff = Math.max(d - BH.rs[b], BH.rs[b] * .02);
-            dt = Math.min(dt, Math.sqrt(eff * eff * Math.max(d, BH.rs[b] * .02) / (mui + BH.mu[b])) / 45);
+            dt = Math.min(dt, pairTau(d, BH.rs[b], pairRadius(mui, rBody, BH.mu[b]), mui + BH.mu[b]) / (45 * BH.stepFine[b]));
         }
     }
-    return Math.max(1e-3, dt);
+    if (live) {
+        const rEarth = liveEarthRadius();
+        for (let i = 0; i < BH.n; i++) {
+            if (muE > 0) {
+                const d = Math.hypot(BH.x[i], BH.y[i], BH.z[i]);
+                dt = Math.min(dt, pairTau(d, BH.rs[i], pairRadius(muE, rEarth, BH.mu[i]), muE + BH.mu[i]) / (45 * BH.stepFine[i]));
+            }
+            for (let j = i + 1; j < BH.n; j++) {
+                const d = Math.hypot(BH.x[i] - BH.x[j], BH.y[i] - BH.y[j], BH.z[i] - BH.z[j]);
+                const rsP = BH.rs[i] + BH.rs[j];
+                const eff = Math.max(d - rsP, rsP * .02);
+                dt = Math.min(dt, Math.sqrt(eff * eff * Math.max(d, rsP * .02) / (BH.mu[i] + BH.mu[j])) / 45);
+            }
+        }
+    }
+    // captures and disruptions are resolved by scheduled events and the
+    // segment-vs-sphere test, not by a step floor; the live floor only keeps
+    // the loop finite
+    return Math.max(live && BH.n ? 1e-6 : 1e-3, dt);
 }
 // ---- deep-time propagation ----
 // Exact planar two-body propagation over any dt: osculating elements from
@@ -786,7 +960,7 @@ const _kjP = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
 const _jx = new Float64Array(NB), _jy = new Float64Array(NB), _jz = new Float64Array(NB);
 const _jvx = new Float64Array(NB), _jvy = new Float64Array(NB), _jvz = new Float64Array(NB);
 function keplerJumpState(st, dt) {
-    const muS = bodyMu[IDX_SUN], muE = activeEarthMu(), muM = activeBodyMu(IDX_MOON);
+    const muS = bodyMu[IDX_SUN] * WORLD.muScale[IDX_SUN], muE = activeEarthMu(), muM = activeBodyMu(IDX_MOON);
     const sk = IDX_SUN;
     // heliocentric pieces (earth-relative differences cancel the frame)
     const eHx = -st.x[sk], eHy = -st.y[sk], eHz = -st.z[sk];
@@ -809,11 +983,11 @@ function keplerJumpState(st, dt) {
     const vBx = sWvx + ovx / M, vBy = sWvy + ovy / M;
     // advance every active piece on its own conic
     keplerAdvance3(eHx, eHy, eHz, eHvx, eHvy, eHvz, muS + muE, dt, _kjE);
-    if (muM > 0) keplerAdvance3(st.x[IDX_MOON], st.y[IDX_MOON], st.z[IDX_MOON], st.vx[IDX_MOON], st.vy[IDX_MOON], st.vz[IDX_MOON], muE + bodyMu[IDX_MOON], dt, _kjM);
+    if (muM > 0) keplerAdvance3(st.x[IDX_MOON], st.y[IDX_MOON], st.z[IDX_MOON], st.vx[IDX_MOON], st.vy[IDX_MOON], st.vz[IDX_MOON], muE + muM, dt, _kjM);
     for (let i = 0; i < PL.length; i++) {
         const k = IDX_PLANETS + i;
         if (activeBodyMu(k) <= 0) continue;
-        keplerAdvance3(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.z[k] - st.z[sk], st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], st.vz[k] - st.vz[sk], muS + bodyMu[k], dt, _kjP);
+        keplerAdvance3(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.z[k] - st.z[sk], st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], st.vz[k] - st.vz[sk], muS + activeBodyMu(k), dt, _kjP);
         _jx[k] = _kjP.x; _jy[k] = _kjP.y; _jz[k] = _kjP.z;
         _jvx[k] = _kjP.vx; _jvy[k] = _kjP.vy; _jvz[k] = _kjP.vz;
     }
@@ -850,8 +1024,16 @@ function keplerJumpState(st, dt) {
 // live-path guard wired by blackholes.js: a body can free-fall into a hole
 // well inside one flush interval, so disruption boundaries must be checked
 // per substep — never from predictions, which must not mutate the world
-let liveGuard = null;
+let liveGuard = null, livePreKick = null, liveNextEvent = null;
 export function setLiveGuard(fn) { liveGuard = fn; }
+// preKick(t, dt): after each live drift, before the closing kick (resolve
+// scheduled encounters and captures at exact times); nextEvent(t): earliest
+// scheduled encounter time, so a step never jumps across it.
+export function setLiveEventHooks({ preKick = null, nextEvent = null, guard = undefined } = {}) {
+    livePreKick = preKick;
+    liveNextEvent = nextEvent;
+    if (guard !== undefined) liveGuard = guard;
+}
 function advanceState(st, dtTotal, maxStep = 3600, live = false) {
     // deep-time gate (live path only — predictions keep full leapfrog fidelity):
     // holes, gravity ghosts, and a destroyed Sun or Earth all break the
@@ -866,13 +1048,18 @@ function advanceState(st, dtTotal, maxStep = 3600, live = false) {
     while (Math.abs(rem) > 1e-9 && guard++ < 2000) {
         // if the step collapses near a deep well, spend the remaining budget
         // anyway: bounded local error beats bodies silently losing time
-        const mag = Math.min(Math.abs(rem), Math.max(bodyStepSize(st, Math.abs(rem), maxStep), Math.abs(rem) / (2001 - guard)));
+        let mag = Math.min(Math.abs(rem), Math.max(bodyStepSize(st, Math.abs(rem), maxStep, live), Math.abs(rem) / (2001 - guard)));
+        // never step across a scheduled encounter: the step ends exactly on it
+        if (live && liveNextEvent && BH.n && rem > 0) {
+            const lead = liveNextEvent(st.t) - st.t;
+            if (lead > 0 && lead < mag) mag = lead;
+        }
         const dt = Math.sign(rem) * mag;
-        leapfrogBodies(st, dt);
+        leapfrogBodies(st, dt, live);
         rem -= dt;
         if (live && liveGuard && BH.n) {
             syncFromState(st); // the guard reads current body positions via eph
-            liveGuard();
+            liveGuard(st.t, dt);
         }
     }
 }

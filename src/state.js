@@ -1,4 +1,5 @@
 import { R_EARTH, MU_E, FUEL_DV0, BH_MAX, C_LIGHT, K, PL } from "./constants.js";
+import { accretedFraction } from "./tde.js";
 
 // ---- game state ----
 export const G = {
@@ -27,8 +28,18 @@ export const WORLD = {
     irreversibleFloorT: -Infinity,
     reverseBlocked: false,
     tdeInProgress: false,
+    // Live mass / radius factors of partially disrupted bodies, indexed like
+    // the ephemeris (0 Moon, 1 Sun, 2.. planets) with Earth last. A partial
+    // tidal disruption strips a mass fraction and leaves a smaller core.
+    muScale: new Float64Array(PL.length + 3).fill(1),
+    rScale: new Float64Array(PL.length + 3).fill(1),
 };
 window.__WORLD = WORLD;
+export const BODY_SCALE_EARTH = PL.length + 2;
+export function bodyScaleIndex(target) {
+    return target === "earth" ? BODY_SCALE_EARTH : target === "moon" ? 0 : target === "sun" ? 1 :
+        typeof target === "number" && target >= 0 && target < PL.length ? 2 + target : -1;
+}
 
 export function resetWorld() {
     WORLD.earthDestroyed = false;
@@ -38,6 +49,8 @@ export function resetWorld() {
     WORLD.irreversibleFloorT = -Infinity;
     WORLD.reverseBlocked = false;
     WORLD.tdeInProgress = false;
+    WORLD.muScale.fill(1);
+    WORLD.rScale.fill(1);
     GS.length = 0;
 }
 
@@ -123,30 +136,36 @@ export function resetShip() {
 export const BH = {
     n: 0,
     sizeIdx: 5,
-    x: new Float64Array(BH_MAX), y: new Float64Array(BH_MAX),
-    vx: new Float64Array(BH_MAX), vy: new Float64Array(BH_MAX),
+    x: new Float64Array(BH_MAX), y: new Float64Array(BH_MAX), z: new Float64Array(BH_MAX),
+    vx: new Float64Array(BH_MAX), vy: new Float64Array(BH_MAX), vz: new Float64Array(BH_MAX),
     mu: new Float64Array(BH_MAX), rs: new Float64Array(BH_MAX),
-    sx: new Float64Array(BH_MAX), sz: new Float64Array(BH_MAX),
+    sx: new Float64Array(BH_MAX), sy: new Float64Array(BH_MAX), sz: new Float64Array(BH_MAX),
     c: new Float64Array(BH_MAX), sinkS: new Float64Array(BH_MAX),
     obsT: new Float64Array(BH_MAX),
+    // leapfrog step refinement around this hole while a disruptive
+    // encounter is on its way in (1 = default t_dyn/45 steps)
+    stepFine: new Float64Array(BH_MAX).fill(1),
     kind: new Uint8Array(BH_MAX),      // 0 hole, 1 quasar, 2 pulsar (WP-X1 rail)
     period: new Float64Array(BH_MAX),  // pulsar spin period, s (0 otherwise)
     placeCount: 0,                     // user-action counter -> deterministic placement seeds
-    // per-hole mass-gain events {x, y, z, t, dmu}: birth, absorptions, and
-    // merger inheritance — each delta's influence expands at c from that point
+    // per-hole mass-gain events {x, y, z, t, dmu[, tFb]}: birth, absorptions,
+    // and merger inheritance — each delta's influence expands at c from that
+    // point. An event with tFb > 0 is a tidal-disruption fallback: its dmu (the
+    // bound debris) arrives as M_acc(t) = dmu [1 - ((t - t0)/tFb)^(-2/3)], and
+    // a distant point sees that profile retarded by its light-travel time.
     ev: new Array(BH_MAX).fill(null),
 };
 window.__BH = BH;
-export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0, events = null, kind = 0, period = 0) {
-    BH.x[i] = xKm; BH.y[i] = yKm; BH.rs[i] = rsKm;
-    BH.vx[i] = vx0; BH.vy[i] = vy0;
+export function bhRegister(i, xKm, yKm, rsKm, vx0 = 0, vy0 = 0, events = null, kind = 0, period = 0, zKm = 0, vz0 = 0) {
+    BH.x[i] = xKm; BH.y[i] = yKm; BH.z[i] = zKm; BH.rs[i] = rsKm;
+    BH.vx[i] = vx0; BH.vy[i] = vy0; BH.vz[i] = vz0;
     BH.mu[i] = rsKm * C_LIGHT * C_LIGHT / 2;
-    BH.sx[i] = xKm * K; BH.sz[i] = -yKm * K;
+    BH.sx[i] = xKm * K; BH.sy[i] = zKm * K; BH.sz[i] = -yKm * K;
     BH.c[i] = .001 * Math.sqrt(2 * BH.mu[i] / 1000);
     BH.sinkS[i] = rsKm * K;
     BH.obsT[i] = 1;
     BH.ev[i] = events && events.length ? events.map(e => ({ z: 0, ...e }))
-        : [{ x: xKm, y: yKm, z: 0, t: -1e18, dmu: BH.mu[i] }];
+        : [{ x: xKm, y: yKm, z: zKm, t: -1e18, dmu: BH.mu[i] }];
     BH.kind[i] = kind;
     BH.period[i] = period;
     if (kind === 2) BH.sinkS[i] = 12 * K; // neutron star captures at its ~12 km surface
@@ -164,14 +183,16 @@ export function bhMuAt(i, x, y, zOrT, maybeT) {
         const ft = (tEval - e.t) * C_LIGHT;
         if (ft <= 0) continue;
         const dx = x - e.x, dy = y - e.y, dz = z - (e.z || 0);
-        if (dx * dx + dy * dy + dz * dz <= ft * ft) mu += e.dmu;
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (e.tFb > 0) mu += e.dmu * accretedFraction(tEval - e.t - Math.sqrt(d2) / C_LIGHT, e.tFb);
+        else if (d2 <= ft * ft) mu += e.dmu;
     }
     return mu;
 }
 // restart rewinds the clock to 0: treat surviving holes as long-established
 export function rebaseBHEvents() {
     for (let i = 0; i < BH.n; i++)
-        BH.ev[i] = [{ x: BH.x[i], y: BH.y[i], z: 0, t: -1e18, dmu: BH.mu[i] }];
+        BH.ev[i] = [{ x: BH.x[i], y: BH.y[i], z: BH.z[i], t: -1e18, dmu: BH.mu[i] }];
 }
 window.__bhMuAt = bhMuAt; // debug/testing handle
 window.__EPHT = EPHT;

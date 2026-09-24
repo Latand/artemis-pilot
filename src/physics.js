@@ -5,10 +5,10 @@ import {
 } from "./constants.js";
 import {
     eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance3,
-    gravityStarsFor, currentGravityStars, STELLAR_GRAVITY_MIN_R,
+    gravityStarsFor, currentGravityStars, STELLAR_GRAVITY_MIN_R, pairG, pairRadius, liveEarthRadius, liveEarthMu,
 } from "./ephemeris.js";
 import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody } from "./state.js";
-import { bhAdvance } from "./blackholes.js";
+import { bhAdvance } from "./bhEncounters.js";
 import { fmtMET, fmtKm } from "./format.js";
 import { ACTIVE_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
 import { strongestActiveStarWell } from "./universe/starDominance.js";
@@ -225,7 +225,7 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 
     }
     let floor = 0.02;
     for (let i = 0; i < BH.n; i++) {
-        const dx = x - BH.x[i], dy = y - BH.y[i], dz = z;
+        const dx = x - BH.x[i], dy = y - BH.y[i], dz = z - BH.z[i];
         const d2 = dx * dx + dy * dy + dz * dz;
         const d = Math.sqrt(d2);
         const tB = Math.sqrt(d * d2 / BH.mu[i]) / 60;
@@ -544,9 +544,9 @@ function cosmologyJumpLocalClear(x0, y0, z0, x1, y1, z1, dt) {
         if (segmentSphereHit(x0, y0, z0, x1, y1, z1, AU_KM + p.a + p.soi)) return false;
     }
     for (let i = 0; i < BH.n; i++) {
-        const xBH1 = BH.x[i] + BH.vx[i] * dt, yBH1 = BH.y[i] + BH.vy[i] * dt;
+        const xBH1 = BH.x[i] + BH.vx[i] * dt, yBH1 = BH.y[i] + BH.vy[i] * dt, zBH1 = BH.z[i] + BH.vz[i] * dt;
         const lim = Math.max(BH.rs[i] * 150, 5000);
-        if (segmentSphereHit(x0 - BH.x[i], y0 - BH.y[i], z0, x1 - xBH1, y1 - yBH1, z1, lim)) return false;
+        if (segmentSphereHit(x0 - BH.x[i], y0 - BH.y[i], z0 - BH.z[i], x1 - xBH1, y1 - yBH1, z1 - zBH1, lim)) return false;
     }
     return true;
 }
@@ -640,7 +640,7 @@ function bodiesNeedFlush(x, y, z, lag) {
         if (dx * dx + dy * dy + dz * dz < PL[i].soi * PL[i].soi) return true;
     }
     for (let i = 0; i < BH.n; i++) {
-        const dx = x - (BH.x[i] + BH.vx[i] * lag), dy = y - (BH.y[i] + BH.vy[i] * lag), dz = z;
+        const dx = x - (BH.x[i] + BH.vx[i] * lag), dy = y - (BH.y[i] + BH.vy[i] * lag), dz = z - (BH.z[i] + BH.vz[i] * lag);
         const lim = Math.max(BH.rs[i] * 150, 5000);
         if (dx * dx + dy * dy + dz * dz < lim * lim) return true;
     }
@@ -810,7 +810,7 @@ export function advance(simAdv, atx, aty, atz, aMag) {
             if (hitSysP >= 0) { handleSystemPlanetContact(s, sys, hitSysP, sys.hostStar); break; }
         }
         for (let i = 0; i < BH.n; i++) {
-            const dBH = Math.hypot(s[0] - BH.x[i], s[1] - BH.y[i], s[2]);
+            const dBH = Math.hypot(s[0] - BH.x[i], s[1] - BH.y[i], s[2] - BH.z[i]);
             if (dBH <= BH.rs[i]) {
                 G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
                 H.award("bh");
@@ -868,31 +868,52 @@ export function advance(simAdv, atx, aty, atz, aMag) {
     return markAdvancePerf(perfT0, simAdv, simAdv - adv, perfStats || {});
 }
 
+// Advance the world without integrating the ship (dead or landed): the same
+// reverse guards as advance() — live debris, a disruption in progress and the
+// irreversible floor all block or clamp a negative step.
+export function advanceWorld(simAdv) {
+    WORLD.reverseBlocked = false;
+    if (simAdv < 0) {
+        if (GS.length > 0 || WORLD.tdeInProgress) {
+            WORLD.reverseBlocked = true;
+            return 0;
+        }
+        if (G.t + simAdv < WORLD.irreversibleFloorT) {
+            simAdv = Math.min(0, WORLD.irreversibleFloorT - G.t);
+            WORLD.reverseBlocked = true;
+        }
+    }
+    if (simAdv === 0) return 0;
+    advanceEphem(simAdv);
+    bhAdvance(simAdv, G.t + simAdv);
+    G.t += simAdv;
+    return simAdv;
+}
+
 function bhAccelAtShip(tau, out) {
     out[0] = 0; out[1] = 0; out[2] = 0;
     const tEval = EPHT.t + tau;
     for (let i = 0; i < BH.n; i++) {
-        const bx = BH.x[i] + BH.vx[i] * tau, by = BH.y[i] + BH.vy[i] * tau;
-        const dx = G.x - bx, dy = G.y - by, dz = G.z;
+        const bx = BH.x[i] + BH.vx[i] * tau, by = BH.y[i] + BH.vy[i] * tau, bz = BH.z[i] + BH.vz[i] * tau;
+        const dx = G.x - bx, dy = G.y - by, dz = G.z - bz;
         const r = Math.hypot(dx, dy, dz);
         if (r > 1e-9) {
             const mu = bhMuAt(i, G.x, G.y, G.z, tEval);
             if (mu > 0) {
-                const eff = Math.max(r - BH.rs[i], BH.rs[i] * .02);
-                const am = mu / (eff * eff) / r;
+                const am = mu * pairG(r, BH.rs[i], 0) / r;
                 out[0] -= dx * am;
                 out[1] -= dy * am;
                 out[2] -= dz * am;
             }
         }
         if (!WORLD.earthDestroyed) {
-            const r0 = Math.hypot(bx, by);
+            const r0 = Math.hypot(bx, by, bz);
             const mu0 = bhMuAt(i, 0, 0, 0, tEval);
             if (r0 > 1e-9 && mu0 > 0) {
-                const eff0 = Math.max(r0 - BH.rs[i], BH.rs[i] * .02);
-                const am0 = mu0 / (eff0 * eff0) / r0;
+                const am0 = mu0 * pairG(r0, BH.rs[i], pairRadius(liveEarthMu(), liveEarthRadius(), BH.mu[i])) / r0;
                 out[0] -= bx * am0;
                 out[1] -= by * am0;
+                out[2] -= bz * am0;
             }
         }
     }
@@ -907,14 +928,14 @@ function bhBridgeWindow(dt) {
     let maxDt = dt;
     let strongest = 0;
     for (let i = 0; i < BH.n; i++) {
-        const dx = G.x - BH.x[i], dy = G.y - BH.y[i], dz = G.z;
+        const dx = G.x - BH.x[i], dy = G.y - BH.y[i], dz = G.z - BH.z[i];
         const d = Math.hypot(dx, dy, dz);
         const danger = Math.max(BH.rs[i] * 240, 5000);
         if (d < danger) return 0;
         const eff = Math.max(d - BH.rs[i], BH.rs[i] * .02);
         const a = BH.mu[i] / Math.max(1e-18, eff * eff);
         strongest = Math.max(strongest, a);
-        const rvx = G.vx - BH.vx[i], rvy = G.vy - BH.vy[i], rvz = G.vz;
+        const rvx = G.vx - BH.vx[i], rvy = G.vy - BH.vy[i], rvz = G.vz - BH.vz[i];
         const closing = -(dx * rvx + dy * rvy + dz * rvz) / Math.max(d, 1e-9);
         if (closing > .01) maxDt = Math.min(maxDt, Math.max(1, (d - danger) / (closing * 8)));
         maxDt = Math.min(maxDt, Math.max(1, Math.sqrt(eff * eff * Math.max(d, BH.rs[i] * .02) / BH.mu[i]) * .18));

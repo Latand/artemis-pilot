@@ -5,8 +5,8 @@ import {
     OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM,
 } from "./constants.js";
 import { G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents } from "./state.js";
-import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
-import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
+import { eph, moonState, planetVel, sunVel, resetEphem } from "./ephemeris.js";
+import { initPhysicsHooks, advance, advanceWorld, snapLanded, orbitInfo, sampleAero } from "./physics.js";
 import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.js";
 import { loadAllMaps, dotTexture } from "./textures.js";
 import {
@@ -39,7 +39,7 @@ import {
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
 import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState } from "./cosmic.js";
-import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance, isBHPlacementMode } from "./blackholes.js";
+import { initBHHooks, updateBHVisuals, addBlackHole, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
@@ -215,12 +215,13 @@ function restart() {
 initPhysicsHooks({ die, award, banner: showBanner, hideBanner });
 initBHHooks({
     toast, predict: computePrediction,
+    // swallowed whole (no flare): `mode` carries the physical reason
     cataclysm(target, rs, mode, bi = -1) {
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), true, false);
         award("bh");
         if (bi >= 0) focusBlackHole(bi);
         if (name) {
-            const label = name + " absorbed by black hole · r_s now " + fmtKm(rs);
+            const label = name + " " + mode + " · r_s now " + fmtKm(rs);
             toast(label);
             noteEvent(label);
         }
@@ -1636,16 +1637,9 @@ function frame() {
                 advanced = advance(advanced, atx, aty, atz, aMag);
                 activeStarsFresh = true;
             }
-        } else if (G.dead) {
-            advanced = frameSimAdvance;
-            advanceEphem(advanced);
-            bhAdvance(advanced, G.t);
-            G.t += advanced;
-        } else if (G.landed) {
-            advanced = frameSimAdvance;
-            advanceEphem(advanced);
-            bhAdvance(advanced, G.t);
-            G.t += advanced;
+        } else if (G.dead || G.landed) {
+            // world-only advance with the same reverse guards as the ship path
+            advanced = advanceWorld(frameSimAdvance);
         } else {
             advanced = advance(frameSimAdvance, atx, aty, atz, aMag);
             activeStarsFresh = true;
