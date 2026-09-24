@@ -22,7 +22,7 @@ import { K } from "../constants.js";
 import { W2G, worldKmToGalInto, getSunGalAnchor } from "../universe/coords.js";
 import { GALAXY_MODEL_GLSL, galaxyModelUniformValues, patternAngles, MW, EXTINCTION_RGB } from "../universe/galaxyModel.js";
 import { teffToRGB } from "./viewBrightness.js";
-import { stellarExposure, extragalacticExposure } from "./stellarAppearance.js";
+import { stellarExposure, extragalacticExposure, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
 
 const q = typeof location !== "undefined" ? new URLSearchParams(location.search) : new URLSearchParams();
 const DISABLED = q.get("galaxyvol") === "0";
@@ -109,9 +109,14 @@ const COMPOSITE_FRAG = /* glsl */`
 uniform sampler2D uTex;
 uniform float uExposure;
 uniform float uOpacity;
+uniform float uStretch;
 varying vec2 vUv;
+${EXT_STRETCH_GLSL}
 void main() {
     vec3 c = texture2D(uTex, vUv).rgb * uExposure * uOpacity;
+    // extragalactic display stretch on luminance (stellarAppearance.js)
+    float y = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    if (uStretch > 0.0 && y > 0.0) c *= extStretch(y, uStretch) / y;
     gl_FragColor = vec4(c, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -140,7 +145,7 @@ const state = {
     compScene: null,
     orthoCam: null,
     dirty: true,
-    lastKey: new Float64Array(24),
+    lastKey: new Float64Array(40),
     enabled: !DISABLED,
     opacity: 1,
     renders: 0,
@@ -180,7 +185,7 @@ function init() {
         toneMapped: false,
     });
     state.compMat = new THREE.ShaderMaterial({
-        uniforms: { uTex: { value: null }, uExposure: { value: 1 }, uOpacity: { value: 1 } },
+        uniforms: { uTex: { value: null }, uExposure: { value: 1 }, uOpacity: { value: 1 }, uStretch: { value: 0 } },
         vertexShader: FULL_VERT,
         fragmentShader: COMPOSITE_FRAG,
         depthTest: false,
@@ -271,7 +276,16 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
     u.uSpiral.value = _ang.spiral;
     u.uBar.value = _ang.bar;
     u.uSfr.value = era ? era.blueFrac : 1;
-    u.uKeep.value = 1 - Math.max(0, Math.min(1, disrupt || 0));
+    // merger: per-radius keep factors from the tidal model, or (while it is
+    // still computing) a uniform disruption fraction
+    const kr = u.uKeepR.value;
+    if (disrupt && disrupt.length === kr.length) {
+        u.uKeep.value = 1;
+        for (let i = 0; i < kr.length; i++) kr[i] = Math.max(0, Math.min(1, disrupt[i]));
+    } else {
+        u.uKeep.value = 1 - Math.max(0, Math.min(1, disrupt || 0));
+        kr.fill(1);
+    }
     u.uOldFade.value = Number.isFinite(oldFade) ? Math.max(0, oldFade) : 1;
     state.opacity = opacity;
     // Dirty check: position (relative to its distance from the GC scale),
@@ -280,7 +294,7 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
     const vals = [
         _camGal[0], _camGal[1], _camGal[2],
         M[0][0], M[0][1], M[0][2], M[1][0], M[1][1], M[1][2], M[2][0], M[2][1], M[2][2],
-        _ang.spiral, _ang.bar, u.uSfr.value, u.uKeep.value, camera.aspect, tanY, u.uOldFade.value,
+        _ang.spiral, _ang.bar, u.uSfr.value, u.uKeep.value, camera.aspect, tanY, u.uOldFade.value, ...kr,
     ];
     const camDist = Math.hypot(_camGal[0] - sun[0], _camGal[1] - sun[1], _camGal[2] - sun[2]);
     const posTol = Math.max(0.05, 0.002 * Math.min(camDist, Math.hypot(_camGal[0], _camGal[1], _camGal[2])));
@@ -325,6 +339,7 @@ export function renderGalaxyVolume(renderer) {
         ? Math.exp(Math.log(Math.max(1e-6, stellarExposure.value)) * (1 - b) + Math.log(Math.max(1e-6, extragalacticExposure.value)) * b)
         : stellarExposure.value;
     state.compMat.uniforms.uOpacity.value = state.opacity;
+    state.compMat.uniforms.uStretch.value = b;
     renderer.render(state.compScene, state.orthoCam);
     renderer.autoClear = prevAuto;
 }

@@ -42,6 +42,7 @@
     "smoke:xrperf": "node scripts/smoke-xrperf.mjs",
     "smoke:river-deeptime": "node scripts/smoke-river-deeptime.mjs",
     "smoke:merger": "node scripts/smoke-merger.mjs",
+    "smoke:merger-tides": "node scripts/smoke-merger-tides.mjs",
     "smoke:brightness": "node scripts/smoke-brightness.mjs",
     "smoke:cosmic-era": "node scripts/smoke-cosmic-era.mjs",
     "smoke:bound-systems": "node scripts/smoke-bound-systems.mjs",

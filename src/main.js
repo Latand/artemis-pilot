@@ -2,7 +2,7 @@ import * as THREE from "three";
 import {
     R_EARTH, R_MOON, A_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
     MAIN_A, RCS_A, BOOST, ROT_RATE, MU_E, MU_M, MU_S, DARK_MATTER, LY_SCENE, LY_KM, STARS, PC_KM,
-    OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM, MPC_KM, C_LIGHT,
+    OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM, MPC_KM, C_LIGHT, SEC_YEAR,
 } from "./constants.js";
 import {
     G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents, setSimTime,
@@ -42,7 +42,9 @@ import {
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
 import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt, andromedaOffsetMpc } from "./cosmic.js";
-import { initGalaxyPopulation, updateGalaxyPopulation, galaxyPopulationStatus } from "./render/galaxyPopulationRender.js";
+import { initGalaxyPopulation, updateGalaxyPopulation, galaxyPopulationStatus, galaxySharedUniforms, mergerParticipants } from "./render/galaxyPopulationRender.js";
+import { initMergerTides, startMergerTides, updateMergerTides, mergerKeepAt, mergerTidesStatus } from "./render/mergerTidesRender.js";
+import { MW_LIGHT, MW_DISK_OF_TOTAL, TIDES, keepAtRadius } from "./universe/mergerTides.js";
 import { stellarExposure } from "./render/stellarAppearance.js";
 import { galacticCenterScene } from "./universe/starfield.js";
 import { evolutionAt } from "./universe/galaxyEvolution.js";
@@ -80,7 +82,7 @@ import { moonWorldState, planetFocusIndex, planetMoonFocusIndex, planetWorldStat
 import {
     darkEnergySpeedKmS, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc,
 } from "./cosmology.js";
-import { worldKmToGal } from "./universe/coords.js";
+import { worldKmToGal, worldKmToGalInto } from "./universe/coords.js";
 import { initTier1, updateTier1, refreshResiduals as refreshTier1Residuals, tier1Stats, setTier1Fade } from "./universe/athygTier1.js";
 import { setObserver } from "./universe/observerTime.js";
 import { getOrigin, maybeRebase, worldToResidualArr } from "./universe/renderOrigin.js";
@@ -106,6 +108,9 @@ const MW_DIAMETER_SCENE = 30000 * PC_KM * K;
 const MAX_POINT_PX = (() => { try { const gl = renderer.getContext(); return gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64; } catch { return 64; } })();
 const m31Mpc = [0, 0, 0];
 const _mwEvo = {};
+const GYR_S = 1e9 * SEC_YEAR;
+const _camGalPc = [0, 0, 0];
+let tidesPhot = null;
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
 const query = new URLSearchParams(location.search);
 const bloomParam = query.get("bloom");
@@ -130,6 +135,14 @@ let updateLensingImpl = null;
 let lensingReady = null;
 const lensPrecheckV = new THREE.Vector3();
 function perfStart() { return PERF.enabled ? performance.now() : 0; }
+// Merger keep factor of the Milky Way disk at the camera's galactocentric
+// radius (the procedural resolved stars thin out as the debris takes over).
+function localDiskKeep(xKm, yKm, zKm) {
+    const tk = mergerKeepAt(G.t / GYR_S, G.t / GYR_S);
+    if (!tk) return 1 - Math.max(0, Math.min(1, mergerDisruptFractionAt(G.t) || 0));
+    worldKmToGalInto(xKm, yKm, zKm, _camGalPc);
+    return keepAtRadius(tk.mwBins, TIDES.mwBinEdgesKpc, Math.hypot(_camGalPc[0], _camGalPc[1]) / 1000);
+}
 function perfEnd(name, start, detail = null) {
     if (PERF.enabled) markPerf(name, performance.now() - start, detail);
 }
@@ -416,6 +429,10 @@ window.__fieldStatus = resolvedFieldStatus; // debug/testing handle
 // shader (render/galaxyPopulationRender.js). Built in a worker at startup.
 initGalaxyPopulation(farTierGroup);
 window.__galaxyStatus = galaxyPopulationStatus; // debug/testing handle
+// Tidal debris of the Milky Way - Andromeda merger (restricted N-body in a
+// worker, started once the Local Group photometry is known).
+initMergerTides(farTierGroup, galaxySharedUniforms());
+window.__tidesStatus = mergerTidesStatus; // debug/testing handle
 perfEnd("startup.initCosmicLayer", cosmicInitT0);
 // Tier-1 AT-HYG streaming star layer (WP9/WP10): fetches its manifest and
 // streams tiles over ~25 minutes, so it's fired without an `await` to avoid
@@ -1997,7 +2014,7 @@ function frame() {
         const t1s = tier1Stats();
         updateResolvedField({
             camWorldKm: [camWorldKmX, camWorldKmY, camWorldKmZ], tSec: G.t,
-            sfr: fieldEra ? fieldEra.blueFrac : 1, keep: 1 - Math.max(0, Math.min(1, mergerDisruptFractionAt(G.t) || 0)),
+            sfr: fieldEra ? fieldEra.blueFrac : 1, keep: localDiskKeep(camWorldKmX, camWorldKmY, camWorldKmZ),
             active: activeNeighbourhood(), catalogMagLimit: t1s.initialized && t1s.tilesLoaded > 0 ? 11 : 8,
         });
         const resolveLimit = resolvedFieldMagLimit();
@@ -2079,20 +2096,43 @@ function frame() {
     const era = eraModulation(G.t);
     const mwEvo = evolutionAt(4, cosmicTimeGyr(G.t), _mwEvo);
     const mwLum = 0.04 * era.blueFrac + 0.96 * mwEvo.passive;
-    updateGalaxyVolume(camera, G.t, era, mergeFrac, 1 - mwSprite, mwEvo.passive);
-    updateCosmicLayer();
-    // M31 on its trajectory at the time its light left it (retarded time).
+    // Observer time: the Galaxy and Andromeda as they were when the light now
+    // arriving left them (M31 on its trajectory at its retarded time).
+    const tMwRet = G.t - mwDistScene / K / C_LIGHT;
     andromedaOffsetMpc(G.t, m31Mpc);
+    let tM31Ret = G.t;
     {
         const k = MPC_KM * K;
         const dx = gcScene[0] + m31Mpc[0] * k - camera.position.x, dy = gcScene[1] + m31Mpc[2] * k - camera.position.y, dz = gcScene[2] - m31Mpc[1] * k - camera.position.z;
-        andromedaOffsetMpc(G.t - Math.hypot(dx, dy, dz) / K / C_LIGHT, m31Mpc);
+        tM31Ret = G.t - Math.hypot(dx, dy, dz) / K / C_LIGHT;
+        andromedaOffsetMpc(tM31Ret, m31Mpc);
     }
+    // Merger: the disk light the tide has pulled into debris
+    // (mergerTides.js) leaves the smooth models; until the simulation has
+    // run, a uniform ramp stands in.
+    const tides = mergerKeepAt(tMwRet / GYR_S, tM31Ret / GYR_S);
+    updateGalaxyVolume(camera, G.t, era, tides ? tides.mwBins : mergeFrac, 1 - mwSprite, mwEvo.passive);
+    updateCosmicLayer();
+    const mwSpriteDisk = MW_LIGHT.halo + MW_DISK_OF_TOTAL;
     updateGalaxyPopulation(camera, {
         tSim: G.t, gcScene, exposure: stellarExposure.value, pxScale: viewportSize.pxScale, viewport: [viewportSize.w, viewportSize.h],
         dpr: renderer.getPixelRatio(), maxPointPx: MAX_POINT_PX,
         mwKeep: mwSprite, mergeMorph: mergeFrac, m31Mpc, mwLum,
+        mwDiskKeep: tides ? (MW_LIGHT.halo + MW_DISK_OF_TOTAL * tides.mwTotal) / mwSpriteDisk : 1 - mergeFrac,
+        m31DiskKeep: tides ? tides.m31 : 1 - mergeFrac,
     });
+    if (!tidesPhot) {
+        const mp = mergerParticipants();
+        if (mp) tidesPhot = {
+            m31HKpc: mp.m31.hKpc,
+            mwL: Math.pow(10, -0.4 * (mp.mw.MV - 4.83)) * MW_DISK_OF_TOTAL, mwBV: mp.mw.bv,
+            m31L: Math.pow(10, -0.4 * (mp.m31.MV - 4.83)) * (1 - mp.m31.bulge), m31BV: mp.m31.bv,
+        };
+    }
+    // the debris only exists from ~3.5 Gyr on: simulate it (~2 s in a
+    // worker) once the clock heads that way
+    if (tidesPhot && G.t > GYR_S) startMergerTides({ m31HKpc: tidesPhot.m31HKpc });
+    updateMergerTides(camera, { tMwGyr: tMwRet / GYR_S, tM31Gyr: tM31Ret / GYR_S, gcScene, lum: mwLum, red: mergeFrac, phot: tidesPhot });
     // The Sun's point and evolving photosphere: every view, not only near it.
     updateSunView(camera, camera.position.distanceTo(sunPos) / K / PC_KM);
     perfEnd("cosmic.update", cosmicT0, PERF.enabled ? { cosmicView, dist: cam.dist } : null);

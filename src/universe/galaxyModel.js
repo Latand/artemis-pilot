@@ -40,6 +40,7 @@
 import { DISK, HALO, REID_ARMS, armWidth } from "./astroConstants.js";
 import { R0_PC } from "./coords.js";
 import { FAINT_LIGHT_V, FAINT_LIGHT_V_YOUNG, FAINT_LIGHT_V_OLD } from "./resolvedLF.js";
+import { TIDES, MW_BIN_COUNT, keepAtRadius } from "./mergerTides.js";
 
 const DEG = Math.PI / 180;
 // 1 km/s/kpc in rad/s.
@@ -185,7 +186,10 @@ export function patternAngles(tSec, out = {}) {
 
 // Luminosity density (Lsun/pc^3) by component and dust opacity (V, per pc) at
 // galactocentric (x, y, z) pc. `era` is cosmicEra.eraModulation(t) (or null),
-// `disrupt` the merger disruption fraction 0..1.
+// `disrupt` the merger disruption: a fraction 0..1 of the disk light removed
+// everywhere, or the per-radius keep factors of the tidal model
+// (mergerTides.js keepAt().mwBins), which remove the disk light the debris
+// particles carry.
 // (sunX, sunY, sunZ): the Sun's CURRENT galactocentric position, centre of
 // the Local Bubble dust cavity (defaults to the t=0 anchor).
 export function mwSample(x, y, z, angles, era, disrupt, out, sunX = MW.R0, sunY = 0, sunZ = 20.8) {
@@ -193,7 +197,9 @@ export function mwSample(x, y, z, angles, era, disrupt, out, sunX = MW.R0, sunY 
     const beta = Math.atan2(y, x) / DEG - angles.spiral / DEG;
     const arm = armProfile(R, beta);
     const sfr = era ? era.blueFrac : 1;
-    const keep = 1 - Math.max(0, Math.min(1, disrupt || 0));
+    const keep = disrupt && disrupt.length === MW_BIN_COUNT
+        ? keepAtRadius(disrupt, TIDES.mwBinEdgesKpc, R / 1000)
+        : 1 - Math.max(0, Math.min(1, disrupt || 0));
     const j0 = MW.jSun;
     const hole = smoothstep(MW.diskHoleIn, MW.diskHoleOut, R);
     const young = hole * j0 * MW.fYoung * thinShape(R, z, MW.hrThin, MW.hzYoung) * (0.15 + MW.armAmpYoung * arm) / (0.15 + MW.armAmpYoung * armProfile(MW.R0, 0)) * sfr;
@@ -206,7 +212,7 @@ export function mwSample(x, y, z, angles, era, disrupt, out, sunX = MW.R0, sunY 
     const bar = barNorm() * Math.exp(-Math.sqrt(bx * bx + by * by + bz * bz));
     out.young = young * keep;
     out.thin = thin * keep;
-    out.thick = thick;
+    out.thick = thick * keep;
     out.halo = halo;
     out.bar = bar;
     const dSun = Math.hypot(x - sunX, y - sunY, z - sunZ);
@@ -271,12 +277,24 @@ export function rayExit(cx, cy, cz, dx, dy, dz) {
 // filled by render/galaxyVolume.js from the same MW constants (see
 // galaxyModelUniformValues), so the JS reference and the shader cannot drift
 // apart silently; smoke-galaxy-model.mjs compares both implementations.
+// GLSL body of gmKeep: bin centres from the tidal model's radial bins.
+function KEEP_GLSL() {
+    const e = TIDES.mwBinEdgesKpc, nb = MW_BIN_COUNT;
+    const c = i => i === 0 ? e[0] * 0.5 : i === nb - 1 ? e[nb - 2] + 2 : 0.5 * (e[i - 1] + e[i]);
+    let g = `if (rk <= ${c(0).toFixed(3)}) return uKeepR[0];\n`;
+    for (let i = 1; i < nb; i++) {
+        g += `    if (rk <= ${c(i).toFixed(3)}) return mix(uKeepR[${i - 1}], uKeepR[${i}], (rk - ${c(i - 1).toFixed(3)}) / ${(c(i) - c(i - 1)).toFixed(3)});\n`;
+    }
+    return g + `    return uKeepR[${nb - 1}];`;
+}
+
 export const GALAXY_MODEL_GLSL = /* glsl */`
 uniform float uArmRk[5], uArmTanIn[5], uArmTanOut[5], uArmSinIn[5], uArmSinOut[5];
 uniform float uArmBetaK[5], uArmW[5], uArmBMin[5], uArmBMax[5];
 uniform float uFaintY[21], uFaintO[21];
 uniform float uMagLimit;
 uniform float uSpiral, uBar, uSfr, uKeep;
+uniform float uKeepR[${MW_BIN_COUNT}];
 uniform vec3 uSun;
 uniform float uJ0, uFYoung, uFThin, uFThick, uFHalo, uYoungNorm;
 uniform float uBarNorm;
@@ -285,6 +303,12 @@ uniform float uKappaSun;
 const float R0 = ${MW.R0.toFixed(1)};
 const float DEG = 0.017453292519943295;
 float gmSmooth(float a, float b, float x) { float t = clamp((x - a) / (b - a), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
+// Disk light the tidal debris has not taken over (mergerTides.js), per
+// initial-radius bin, piecewise linear in R between bin centres.
+float gmKeep(float R) {
+    float rk = R / 1000.0;
+    ${KEEP_GLSL()}
+}
 float gmArm(float R, float betaDeg) {
     if (R < 1500.0 || R > ${MW.rDiskMax.toFixed(1)}) return 0.0;
     float Rkpc = R / 1000.0;
@@ -356,9 +380,10 @@ vec4 gmSample(vec3 p) {
     float hole = gmSmooth(${MW.diskHoleIn.toFixed(1)}, ${MW.diskHoleOut.toFixed(1)}, R);
     float az = abs(p.z);
     float radial = exp(-(R - R0) / ${MW.hrThin.toFixed(1)});
-    float young = hole * uJ0 * uFYoung * radial * exp(-az / ${MW.hzYoung.toFixed(1)}) * (0.15 + ${MW.armAmpYoung.toFixed(3)} * arm) * uYoungNorm * uSfr * uKeep * youngClump;
-    float thin = hole * uJ0 * uFThin * radial * exp(-az / ${MW.hzThin.toFixed(1)}) * (1.0 + ${MW.armAmpOld.toFixed(3)} * arm) * uKeep;
-    float thick = (0.3 + 0.7 * hole) * uJ0 * uFThick * exp(-(R - R0) / ${MW.hrThick.toFixed(1)}) * exp(-az / ${MW.hzThick.toFixed(1)});
+    float keep = uKeep * gmKeep(R);
+    float young = hole * uJ0 * uFYoung * radial * exp(-az / ${MW.hzYoung.toFixed(1)}) * (0.15 + ${MW.armAmpYoung.toFixed(3)} * arm) * uYoungNorm * uSfr * keep * youngClump;
+    float thin = hole * uJ0 * uFThin * radial * exp(-az / ${MW.hzThin.toFixed(1)}) * (1.0 + ${MW.armAmpOld.toFixed(3)} * arm) * keep;
+    float thick = (0.3 + 0.7 * hole) * uJ0 * uFThick * exp(-(R - R0) / ${MW.hrThick.toFixed(1)}) * exp(-az / ${MW.hzThick.toFixed(1)}) * keep;
     float rEff = length(vec2(R, p.z / ${MW.haloQ.toFixed(3)}));
     float halo = uJ0 * uFHalo * pow(R0 / max(rEff, 300.0), ${MW.haloN.toFixed(3)});
     float cb = cos(uBar), sb = sin(uBar);
@@ -366,7 +391,7 @@ vec4 gmSample(vec3 p) {
     float bar = uBarNorm * exp(-length(bq));
     float dSun = length(p - uSun);
     float kappa = uKappaSun * exp(-(R - R0) / ${MW.hrDust.toFixed(1)}) * exp(-az / ${MW.hzDust.toFixed(1)}) *
-        (${MW.armDustBase.toFixed(3)} + ${MW.armDust.toFixed(3)} * arm) / ${MW.armDustMean.toFixed(4)} * (0.25 + 0.75 * uSfr) * uKeep *
+        (${MW.armDustBase.toFixed(3)} + ${MW.armDust.toFixed(3)} * arm) / ${MW.armDustMean.toFixed(4)} * (0.25 + 0.75 * uSfr) * keep *
         gmSmooth(${(MW.dustHoleR * 0.45).toFixed(1)}, ${MW.dustHoleR.toFixed(1)}, R) * gmSmooth(${(MW.bubbleR * 0.4).toFixed(1)}, ${MW.bubbleR.toFixed(1)}, dSun) * dustClump;
     return vec4(young, thin + thick + halo, bar, kappa);
 }
@@ -397,5 +422,6 @@ export function galaxyModelUniformValues() {
         uKappaSun: MW.kappaSun,
         uClumpDust: MW.dustClump,
         uClumpYoung: MW.youngClump,
+        uKeepR: new Array(MW_BIN_COUNT).fill(1),
     };
 }

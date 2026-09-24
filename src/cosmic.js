@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { stellarExposure } from "./render/stellarAppearance.js";
-import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, PC_KM, SEC_YEAR, MPC_KM } from "./constants.js";
+import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, SEC_YEAR, MPC_KM } from "./constants.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
 import { cam } from "./scene.js";

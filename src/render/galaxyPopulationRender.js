@@ -36,15 +36,20 @@
 import * as THREE from "three";
 import { K, MPC_KM } from "../constants.js";
 import { GALAXY_DISPLAY_GAIN } from "./galaxyVolume.js";
-import { extragalacticExposure } from "./stellarAppearance.js";
+import { extragalacticExposure, EXT_STRETCH, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
 import { tierDepthRange } from "./tierDepth.js";
 import { RELATIVISTIC_VIEW_GLSL } from "./viewBrightness.js";
 import { relUniforms } from "../relView.js";
 import { buildLightConeTable, lnScaleFactorAt, cosmicTimeGyr, COSMO, H0_PER_GYR } from "../universe/cosmicExpansion.js";
 import { evolutionTable, EVOLUTION_NT, EVOLUTION_T, GALAXY_EVOLUTION_GLSL } from "../universe/galaxyEvolution.js";
+import { andromedaDiskFrame } from "../universe/mergerTides.js";
 import { PERF, markPerf } from "../perf.js";
 
 const LC_N = 512;
+// Display threshold (peak display value) below which a galaxy is not drawn;
+// scaled down with the extragalactic display stretch so the stretched faint
+// end does not pop.
+const CULL = 0.0015;
 
 const CHI_MAX_MPC = 2500;       // light-cone table reach (comoving Mpc; the farthest galaxy from the farthest camera is ~1.1 Gpc)
 const MPC_SCENE = MPC_KM * K;
@@ -60,6 +65,7 @@ uniform vec3 uCamRel;
 uniform mat3 uWorldToView;
 uniform sampler2D uLightCone;
 uniform float uChiMax, uAObs, uMpcScene, uFarClamp, uPxScale, uGainExposure, uMwKeep, uMergeMorph, uCull;
+uniform float uMwDiskKeep, uM31DiskKeep;
 uniform vec2 uViewport;
 uniform float uMaxPointPx, uDpr;
 uniform float uLnAObs, uMwLum;
@@ -152,9 +158,12 @@ void main() {
     float viewDepth = dScene * max(0.0, -dirV.z);
     if (-dirV.z <= 0.0 || viewDepth < uDepthRange.x || viewDepth >= uDepthRange.y) { offscreen(); return; }
     // --- shape: oblate body, symmetry axis n, intrinsic axis ratio q0
+    // (the merging pair keeps its own shapes: the disk light the tide pulls
+    // out is drawn as debris by render/mergerTidesRender.js and leaves the
+    // sprite through uMwDiskKeep / uM31DiskKeep; uMergeMorph only reddens)
     float morph = uMergeMorph * flagMerge;
-    float q0 = mix(aShape.w, 0.7, morph);
-    float bulge = mix(aPhot.w, 1.0, morph);
+    float q0 = aShape.w;
+    float bulge = aPhot.w;
     vec3 n = normalize(uWorldToView * aShape.xyz);
     vec3 l = dirV;
     float ci = abs(dot(n, l));
@@ -175,8 +184,12 @@ void main() {
     float q2 = mix(max(q, 0.65), q, spheroid);
     float w1 = mix(1.0 - bulge, 0.65, spheroid);
     float w2 = mix(bulge, 0.35, spheroid);
+    float diskKeep = flagMerge > 0.5 ? mix(uM31DiskKeep, uMwDiskKeep, flagMw) : 1.0;
+    float lumKeep = w1 * diskKeep + w2;
+    if (lumKeep <= 1e-6) { offscreen(); return; }
+    w1 *= diskKeep / lumKeep; w2 /= lumKeep;
     // --- photometry: V luminosity, cosmological dimming, Doppler (extended: D^4)
-    float L = pow(10.0, -0.4 * (aPhot.x - 4.83)) * evo.x;
+    float L = pow(10.0, -0.4 * (aPhot.x - 4.83)) * evo.x * lumKeep;
     float r4 = ratio * ratio * ratio * ratio;
     float dop4 = dopplerD * dopplerD * dopplerD * dopplerD;
     // flux / Omega_px in Lsun pc^-2 sr^-1: L/(4 pi d^2) * pxScale^2
@@ -260,6 +273,8 @@ void main() {
 
 const FRAG = /* glsl */`
 precision highp float;
+uniform float uStretch;
+${EXT_STRETCH_GLSL}
 #ifndef GAL_POINTS
 varying vec2 vPx;
 #endif
@@ -285,8 +300,8 @@ void main() {
     float yl = vPx.y / max(0.18 * vAB.y, 0.5);
     float lane = 1.0 - vLane * exp(-yl * yl) * smoothstep(0.0, 0.6, r1);
     float v = (vW.x * exp(-r1) * lane + vW.y * exp(-r2) * mix(1.0, lane, 0.5)) * edge;
-    if (v < 1e-5) discard;
-    gl_FragColor = vec4(vColor * min(v, 64.0), 1.0);
+    if (v < 1e-6) discard;
+    gl_FragColor = vec4(vColor * extStretch(min(v, 64.0), uStretch), 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
 }`;
@@ -323,7 +338,10 @@ function makeShared() {
         uGainExposure: { value: GALAXY_DISPLAY_GAIN },
         uMwKeep: { value: 0 },
         uMergeMorph: { value: 0 },
-        uCull: { value: 0.0015 },
+        uMwDiskKeep: { value: 1 },
+        uM31DiskKeep: { value: 1 },
+        uCull: { value: CULL },
+        uStretch: { value: 0 },
         uViewport: { value: new THREE.Vector2(1280, 800) },
         uMaxPointPx: { value: 128 },
         uDpr: { value: 1 },
@@ -437,9 +455,29 @@ function initLocalGroup(c, mesh) {
         // flag M31 as a merger participant (T + 200)
         c.t[m31] = 200 + c.t[m31];
         mesh.geometry.attributes.aT.needsUpdate = true;
+        // its disk axis: the orientation the tidal model uses (i = 77 deg,
+        // PA = 38 deg, near side NW), so sprite and debris agree
+        const nrm = andromedaDiskFrame().n;
+        c.shape[m31 * 4] = nrm[0]; c.shape[m31 * 4 + 1] = nrm[1]; c.shape[m31 * 4 + 2] = nrm[2];
+        mesh.geometry.attributes.aShape.needsUpdate = true;
     }
     state.lg = { mesh, base, rides, m31, m31Base: m31 >= 0 ? [base[m31 * 3], base[m31 * 3 + 1], base[m31 * 3 + 2]] : null, last: [NaN, NaN, NaN] };
 }
+
+// Photometry of the merging pair from the Local Group chunk:
+// { mw: { MV, bv, hKpc, bulge }, m31: {...} } or null until built.
+export function mergerParticipants() {
+    const lg = state.lg;
+    if (!lg || lg.m31 < 0) return null;
+    const ph = lg.mesh.geometry.attributes.aPhot.array, tt = lg.mesh.geometry.attributes.aT.array;
+    let mw = -1;
+    for (let k = 0; k < tt.length; k++) if (tt[k] > 99 && tt[k] < 199) { mw = k; break; }
+    if (mw < 0) return null;
+    const rec = k => ({ MV: ph[k * 4], bv: ph[k * 4 + 1], hKpc: ph[k * 4 + 2], bulge: ph[k * 4 + 3] });
+    return { mw: rec(mw), m31: rec(lg.m31) };
+}
+// The layer's shared uniforms (the tidal debris renders with the same ones).
+export function galaxySharedUniforms() { return state.shared; }
 
 // M31's GC-relative world-frame position (Mpc) at its catalog epoch, or null.
 export function andromedaCatalogMpc() {
@@ -586,6 +624,8 @@ export function updateGalaxyPopulation(camera, f) {
     if (f.maxPointPx) s.uMaxPointPx.value = Math.min(256, f.maxPointPx / (f.dpr || 1));
     s.uMwKeep.value = f.mwKeep;
     s.uMergeMorph.value = f.mergeMorph || 0;
+    s.uMwDiskKeep.value = f.mwDiskKeep ?? 1;
+    s.uM31DiskKeep.value = f.m31DiskKeep ?? 1;
     s.uFarClamp.value = camera.far * 0.8;
     updateLocalGroup(f.m31Mpc);
     // camera comoving position relative to the Galactic centre (float64)
@@ -608,6 +648,8 @@ export function updateGalaxyPopulation(camera, f) {
     EXPOSURE.value = Math.exp(Math.log(Math.max(1e-6, f.exposure)) * (1 - blend) + Math.log(EXPOSURE.auto) * blend);
     extragalacticExposure.value = EXPOSURE.auto;
     extragalacticExposure.blend = blend;
+    s.uStretch.value = blend;
+    s.uCull.value = CULL * (1 - blend + blend * EXT_STRETCH.cullScale);
     s.uGainExposure.value = GALAXY_DISPLAY_GAIN * EXPOSURE.value;
     // Chunk culling (CPU): outside the view cone, or too faint to reach the
     // display even at its brightest member's nearest possible distance.

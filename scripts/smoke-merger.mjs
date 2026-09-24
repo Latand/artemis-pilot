@@ -123,8 +123,21 @@ async function shootAtGyr(gyr, label) {
     const tick = () => { n++; if (n >= 8) resolve(); else requestAnimationFrame(tick); };
     requestAnimationFrame(tick);
   }));
+  // Past ~1 Gyr the tidal-debris simulation starts in its worker; once it
+  // has run the debris must be drawn after first passage.
+  let tides = null;
+  if (gyr >= 4) {
+    await page.waitForFunction(() => !window.__tidesStatus || window.__tidesStatus().ready || window.__tidesStatus().error, null, { timeout: 120000, polling: 250 });
+    await page.evaluate(() => new Promise(resolve => {
+      let n = 0;
+      const tick = () => { n++; if (n >= 4) resolve(); else requestAnimationFrame(tick); };
+      requestAnimationFrame(tick);
+    }));
+    tides = await page.evaluate(() => window.__tidesStatus?.() || null);
+  }
   const shot = await page.screenshot({ path: `${SCRATCH}/23a-merger-${label}.png` });
   const sum = checksum(shot);
+  sum.tides = tides;
   console.log(`screenshot T+${gyr}Gyr (${label}): bytes=${shot.length} ${JSON.stringify(sum)}`);
   return sum;
 }
@@ -186,6 +199,10 @@ try {
   }
   for (const [label, sum] of Object.entries(sums)) {
     assert(sum.nonZero > sum.sampled * 0.05, `screenshot at ${label} must have non-degenerate (non-blank) galaxy pixels`, sum);
+  }
+  for (const label of ["passage", "mid", "merged"]) {
+    const t = sums[label].tides;
+    assert(t && t.ready && !t.error && t.visible > 0, `tidal debris must be simulated and drawn at ${label}`, t);
   }
 
   if (errors.length) throw new Error("console errors: " + JSON.stringify(errors.slice(0, 20)));

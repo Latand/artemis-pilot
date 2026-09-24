@@ -9,6 +9,27 @@ export const stellarExposure = { value: 1 };
 // with stellarExposure^(1-blend) * extragalacticExposure^blend so it and its
 // galaxy-population entry stay photometrically continuous.
 export const extragalacticExposure = { value: 1, blend: 0 };
+// Display stretch for extended extragalactic light. Outside the Milky Way
+// the view is exposed like a photograph (see galaxyPopulationRender.js
+// metering), and galaxy light spans ~10^4 in surface brightness from bright
+// cores to disk outskirts and tidal debris (~6 mag fainter): a linear
+// display either burns the cores or loses everything below 1/255 (and the
+// ACES toe clips linear values below ~0.002 to black). Extended light is
+// therefore shown through an asinh stretch (Lupton et al. 2004, PASP 116,
+// 133 -- the standard for survey colour images), S(v) = asinh(v / beta) /
+// asinh(vmax / beta): linear with gain ~5.7 below beta, logarithmic
+// above, reaching display white only at vmax (bulges ~5x brighter than the
+// metered disk level stay unclipped), monotonic, applied to luminance so
+// colours keep their ratios. It blends in with the extragalactic exposure
+// (blend 0 inside the Galaxy, where every layer keeps the eye-calibrated
+// linear scale). Faint limits scale with it: EXT_STRETCH.cullScale.
+export const EXT_STRETCH = Object.freeze({ beta: 0.03, vmax: 5.0, gain: 5.7381, cullScale: 0.1743 });
+export const EXT_STRETCH_GLSL = /* glsl */`
+float extStretch(float v, float amount) {
+    float x = max(v, 0.0) / 0.03;
+    return mix(v, log(x + sqrt(x * x + 1.0)) * 0.172142, amount);
+}
+`;
 
 // Sun and named stars share the same exposed signal and disk/point transition.
 // Callers reuse their output object to keep frame updates allocation free.

@@ -20,18 +20,23 @@ function smooth01(a, b, x) {
 // Model: the reduced two-body problem for the MW-M31 separation vector,
 // integrated once into a cached time -> position lookup table (no per-frame
 // integration - a deterministic KDK leapfrog runs once, lazily, on first
-// use). Gravity uses a Plummer-softened 1/r^2 law (softening ~15 kpc, a
-// stand-in halo-core scale) so the point-mass force never diverges as the
-// galaxies interpenetrate. A velocity-proportional drag switches on once the
-// halos are close enough to overlap - the qualitative signature of
-// dynamical friction (Chandrasekhar 1943, ApJ 97, 255: drag opposes the
-// relative velocity and grows with local density) WITHOUT evaluating the
-// literal Chandrasekhar formula (that needs a halo density profile + Coulomb
-// logarithm this sim doesn't carry); the drag's radial turn-on scale and
-// strength are tuned so the resulting timeline (first passage ~3.9 Gyr,
-// captured under 50 kpc by ~7 Gyr, effectively coalesced within ~10-15 Gyr)
-// matches the literature's ~4 Gyr first-passage / ~10 Gyr merger-completion
-// range (van der Marel+ 2012 Sec.1; Cox & Loeb 2008, MNRAS 386, 461).
+// use). Each galaxy is a Hernquist (1990) sphere of its total mass (scale
+// radii 21 / 22 kpc, from the observed circular speeds; see
+// universe/mergerTides.js), and each centre is accelerated as a test mass
+// in the other's potential, G M / (r + a)^2: the same force the tidal-debris
+// particles feel, so a galaxy's own stars follow its centre instead of being
+// left behind (at pericentre a point-mass law would pull the centres twice
+// as hard as the extended halos pull their stars). A velocity-proportional
+// drag switches on once the halos are close enough to overlap - the
+// qualitative signature of dynamical friction (Chandrasekhar 1943, ApJ 97,
+// 255: drag opposes the relative velocity and grows with local density)
+// WITHOUT evaluating the literal Chandrasekhar formula (that needs a halo
+// density profile + Coulomb logarithm this sim doesn't carry); the drag's
+// radial turn-on scale and strength are tuned so the resulting timeline
+// (first passage ~4 Gyr, captured under 50 kpc by ~7 Gyr, effectively
+// coalesced within ~10-15 Gyr) matches the literature's ~4 Gyr first-passage
+// / ~6-10 Gyr merger-completion range (van der Marel+ 2012b, ApJ 753, 9;
+// Cox & Loeb 2008, MNRAS 386, 461; Schiavi+ 2020, A&A 642, A30).
 const G_SI = 6.674e-11;         // m^3 kg^-1 s^-2
 const MSUN_KG = 1.98892e30;
 const KPC_KM = PC_KM * 1000;
@@ -43,9 +48,11 @@ export const MERGER = {
     r0Kpc: 785,
     vr0KmS: -110,
     vt0KmS: 30,
-    softenKpc: 15,
+    hernquistMWKpc: 21,    // host potential scale radii (Hernquist 1990)
+    hernquistM31Kpc: 22,
+    coreKpc: 3,            // mutual-force taper once the bodies overlap (see buildMergerTable)
     frictionEta0PerGyr: 0.5,
-    frictionScaleKpc: 85,
+    frictionScaleKpc: 110,
     mergeKpc: 50,          // "coalesced" once separation drops (and stays) below this
     mergeReleaseKpc: 75,   // hysteresis: only clears the "coalesced" state above this
     disruptTailGyr: 1.5,   // extra ramp after permanent capture before disruptFrac reaches 1
@@ -62,8 +69,9 @@ let mergerTable = null;
 // KDK leapfrog integration of the relative separation vector (x,y), run once
 // and cached. See the module comment above for the physical model.
 export function buildMergerTable() {
-    const muTot = G_SI * 1e-9 * (MERGER.massMWMsun + MERGER.massM31Msun) * MSUN_KG; // km^3/s^2
-    const epsKm = MERGER.softenKpc * KPC_KM;
+    const gmMW = G_SI * 1e-9 * MERGER.massMWMsun * MSUN_KG;   // km^3/s^2
+    const gmM31 = G_SI * 1e-9 * MERGER.massM31Msun * MSUN_KG;
+    const aMW = MERGER.hernquistMWKpc * KPC_KM, aM31 = MERGER.hernquistM31Kpc * KPC_KM;
     const etaScaleKm = MERGER.frictionScaleKpc * KPC_KM;
     const eta0 = MERGER.frictionEta0PerGyr / GYR_SEC;
     const dt = MERGER.tableDtGyr * GYR_SEC;
@@ -73,6 +81,13 @@ export function buildMergerTable() {
     const tSec = new Float64Array(nSamples);
     const xKm = new Float64Array(nSamples);
     const yKm = new Float64Array(nSamples);
+    // relative acceleration magnitude / r: each centre falls in the other's
+    // potential. Inside a few kpc the two bodies overlap almost entirely and
+    // their mutual force must vanish at zero separation (a test mass in a
+    // cusp feels a finite pull there, which would pump energy into the
+    // late-time sloshing), so it is tapered by r^2 / (r^2 + core^2).
+    const core2 = (MERGER.coreKpc * KPC_KM) ** 2;
+    const gOverR = r => -(gmM31 / ((r + aM31) * (r + aM31)) + gmMW / ((r + aMW) * (r + aMW))) * r / (r * r + core2);
 
     let x = MERGER.r0Kpc * KPC_KM, y = 0;
     let vx = MERGER.vr0KmS, vy = MERGER.vt0KmS;
@@ -85,18 +100,14 @@ export function buildMergerTable() {
             tSec[si] = t; xKm[si] = x; yKm[si] = y; si++;
             nextSampleT += sampleDt;
         }
-        let r2 = x * x + y * y;
-        let rSoft = Math.sqrt(r2 + epsKm * epsKm);
-        let g = -muTot / (rSoft * rSoft * rSoft);
-        let r = Math.sqrt(r2);
+        let r = Math.hypot(x, y);
+        let g = gOverR(r);
         let eta = eta0 * Math.exp(-r / etaScaleKm);
         const ax0 = g * x - eta * vx, ay0 = g * y - eta * vy;
         const vxh = vx + ax0 * dt * 0.5, vyh = vy + ay0 * dt * 0.5;
         x += vxh * dt; y += vyh * dt;
-        r2 = x * x + y * y;
-        rSoft = Math.sqrt(r2 + epsKm * epsKm);
-        g = -muTot / (rSoft * rSoft * rSoft);
-        r = Math.sqrt(r2);
+        r = Math.hypot(x, y);
+        g = gOverR(r);
         eta = eta0 * Math.exp(-r / etaScaleKm);
         const ax1 = g * x - eta * vxh, ay1 = g * y - eta * vyh;
         vx = vxh + ax1 * dt * 0.5; vy = vyh + ay1 * dt * 0.5;
