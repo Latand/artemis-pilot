@@ -74,6 +74,10 @@ tone map.
 ## Star population continuity (provenance)
 
 - HYG v4.1 tier 0 and AT-HYG tier 1 (2.37 M stars, streamed) are measured.
+  HYG marks the 10,225 stars without a valid parallax with a 100 kpc
+  placeholder distance; they are given a photometric distance instead
+  (main-sequence from colour, no nearer than 500 pc; `universe/catalogData.js`)
+  so they no longer form a shell of false hypergiants around the Galaxy.
 - Beyond catalog completeness the procedural Milky Way (`universe/galaxy.js`,
   `universe/resolvedField.js`) draws the complementary stars from the same
   densities and luminosity functions the diffuse light uses.
