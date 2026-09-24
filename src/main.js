@@ -5,11 +5,11 @@ import {
     OMEGA_EARTH, FUEL_DV0, warpLabel, AU_KM,
 } from "./constants.js";
 import {
-    G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents,
-    advanceSimTime, setSimTime, syncEphemClock,
+    G, WORLD, keys, BH, resetShip, destroyBody, isBodyDestroyed, addGhost, rebaseBHEvents, setSimTime,
 } from "./state.js";
-import { eph, moonState, planetVel, sunVel, resetEphem, advanceEphem } from "./ephemeris.js";
+import { eph, moonState, planetVel, sunVel, resetEphem } from "./ephemeris.js";
 import { initPhysicsHooks, advance, snapLanded, orbitInfo, sampleAero } from "./physics.js";
+import { stepWorld, WORLD_STEP } from "./worldStep.js";
 import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.js";
 import { loadAllMaps, dotTexture } from "./textures.js";
 import {
@@ -27,7 +27,7 @@ import { addStarVisual, buildStars, updateStars, starVisualAlpha } from "./stars
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff, targetState } from "./autopilot.js";
-import { REL, relTravelStep, relCancel } from "./relTravel.js";
+import { REL, relCancel } from "./relTravel.js";
 import {
     shipG, craft, dot, flame, plasma, updateHeadingArrow,
     EXN, exPos, exVel, exLife, exMax, exCol, exPosAttr, exColAttr, exMat, exhaust, spawnExhaust,
@@ -42,7 +42,7 @@ import {
 import { flowCtx, flowVel } from "./flowfield.js";
 import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
 import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState } from "./cosmic.js";
-import { initBHHooks, updateBHVisuals, addBlackHole, bhAdvance, isBHPlacementMode } from "./blackholes.js";
+import { initBHHooks, updateBHVisuals, addBlackHole, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
@@ -84,7 +84,7 @@ import { updateRelView, initRelViewOverride } from "./relView.js";
 import { generateSwarms, propagateInto, propagateOne } from "./universe/minorBodies.js";
 import { initExplorerUI, moveExplorerCamera, updateExplorerUI } from "./explorerUI.js";
 import { initUiMode, setXrPresenting } from "./uiMode.js";
-import { cancelTimeJump, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
+import { cancelTimeJump, noteFrameDelivery, setExternalTimeDriver, settleTimeJump, setWarp, tickJump } from "./timeCtl.js";
 import { initTimeDock, renderTimeDock, sampleTimeDock } from "./timeDock.js";
 import { classifyContact } from "./universe/contactMath.js";
 import { initEvents, noteEvent, updateEvents } from "./events.js";
@@ -1629,34 +1629,13 @@ function frame() {
     setExternalTimeDriver(cinematic.isPlaying() || REL.active);
     const jumpFrame = tickJump(rawDtR, dtR, aMag > 0);
     const frameSimAdvance = jumpFrame ? jumpFrame.advanceSec : dtR * G.warp;
+    // one world step for every mode (flight, landed, dead, relativistic):
+    // Sun evolution + engulfment, reverse guards, budgeted integration, and
+    // the delivered time the jump runtime and Time Dock report
     if (!G.paused) {
-        if (REL.active) {
-            advanced = frameSimAdvance;
-            if (G.warp < 0) relCancel("reverse warp", toast);
-            if (REL.active) {
-                relTravelStep(advanced);
-                activeStarsFresh = false;
-            } else {
-                advanced = advance(advanced, atx, aty, atz, aMag);
-                activeStarsFresh = true;
-            }
-        } else if (G.dead) {
-            advanced = frameSimAdvance;
-            advanceEphem(advanced);
-            bhAdvance(advanced, G.t);
-            advanceSimTime(advanced);
-            syncEphemClock();
-        } else if (G.landed) {
-            advanced = frameSimAdvance;
-            advanceEphem(advanced);
-            bhAdvance(advanced, G.t);
-            advanceSimTime(advanced);
-            syncEphemClock();
-        } else {
-            advanced = advance(frameSimAdvance, atx, aty, atz, aMag);
-            activeStarsFresh = true;
-        }
-    }
+        advanced = stepWorld(frameSimAdvance, atx, aty, atz, aMag, toast);
+        activeStarsFresh = WORLD_STEP.activeStarsFresh;
+    } else noteFrameDelivery(0, 0);
     const jumpSettlement = jumpFrame ? settleTimeJump(jumpFrame, advanced, aMag > 0) : null;
     if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) setSimTime(jumpSettlement.syncTimeSec);
     snapLanded();

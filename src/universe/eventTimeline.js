@@ -18,6 +18,16 @@ export const RUNG_WALL_S = 0.7;
 
 const FIRST_LADDER_RUNG = WARPS.indexOf(1);
 const GHOST_REASON = "deep time blocked: absorbed matter's gravity ghosts force step-by-step physics";
+// Black holes break the two-body decomposition the analytic bridges rely on,
+// so a scene with holes is integrated step by step inside a per-frame budget
+// (ephemeris.js EPHEM_FRAME_STEP_BUDGET, subcycled by physics.js bridgeSpan).
+// That delivers years per second, not the Gyr/s ladder top: the planner
+// plans black-hole scenes at this rung instead of promising 1 Gyr/s and
+// delivering ~1e-9 of it. Manual warp stays unclamped (the Time Dock reports
+// the shortfall honestly).
+export const BH_FEASIBLE_WARP = SEC_YEAR;
+export const BH_REASON = "deep time limited: black holes are integrated step by step (≤ 1 yr/s)";
+const CAPPED_JUMP_MAX_ETA_SEC = 60;
 const TWO_PI = 2 * Math.PI;
 const GOLDEN_TOLERANCE_SEC = 3600;
 const DEFAULT_SCAN_SAMPLE_BUDGET = 256;
@@ -488,9 +498,9 @@ export function buildTimeline({ nowSec = 0, merger } = {}) {
 }
 
 export function maxFeasibleWarpScalar(gsCount = 0, landed = false, dead = false, bhN = 0) {
-    void bhN;
     if (dead) return 0;
     if (gsCount > 0 || landed) return Math.min(600, WARP_MAX);
+    if (bhN > 0) return Math.min(BH_FEASIBLE_WARP, WARP_MAX);
     return WARP_MAX;
 }
 
@@ -528,7 +538,8 @@ function shortJumpPlan(nowSec, targetSec, feas, preferredHoldWarp = JUMP_HOLD_WA
 }
 
 function enforceCappedJumpEta(plan, feas) {
-    if (feas <= 600 && plan.etaWallSec > 60) return { ok: false, reason: GHOST_REASON };
+    if (feas <= 600 && plan.etaWallSec > CAPPED_JUMP_MAX_ETA_SEC) return { ok: false, reason: GHOST_REASON };
+    if (feas < WARP_MAX && plan.etaWallSec > CAPPED_JUMP_MAX_ETA_SEC) return { ok: false, reason: BH_REASON };
     return plan;
 }
 
@@ -592,7 +603,7 @@ function validJumpPlan(plan, { simTimeSec, feasibleWarp } = {}) {
     if (!WARPS.includes(plan.holdWarp) || plan.holdWarp > WARP_MAX ||
         (validateFeasibility && (!(feasibleWarp > 0) || plan.holdWarp > feasibleWarp)) ||
         (validateLiveOrigin && !(plan.targetSec > simTimeSec)) ||
-        (validateFeasibility && feasibleWarp <= 600 && plan.etaWallSec > 60)) return false;
+        (validateFeasibility && feasibleWarp < WARP_MAX && plan.etaWallSec > CAPPED_JUMP_MAX_ETA_SEC)) return false;
 
     let previousToSimT = null;
     let totalWallSec = 0;

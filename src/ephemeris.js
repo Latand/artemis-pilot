@@ -865,26 +865,155 @@ function keplerJumpState(st, dt) {
     }
 }
 
+// Analytic advance that stays valid when Earth and/or the Sun are destroyed
+// (engulfed at the AGB tip, absorbed by a hole, smashed). keplerJumpState
+// above is the intact case. Without Earth the frame origin is a massless
+// point that coasts inertially (exactly what the leapfrog does: no indirect
+// term once Earth is gone), the Moon becomes a heliocentric body, and the
+// Sun still anchors every survivor's conic. Without the Sun nothing binds the
+// planets any more: they coast on straight lines (their mutual pulls are
+// negligible once they separate at their former orbital speeds), while an
+// intact Earth-Moon pair keeps its geocentric conic with the pair's
+// barycentre coasting. Destroyed bodies stay frozen in the origin-relative
+// frame, as in the integrator.
+const _gaW = new Float64Array(6);
+function analyticJumpState(st, dt) {
+    if (!WORLD.sunDestroyed && !WORLD.earthDestroyed) { keplerJumpState(st, dt); return; }
+    const sk = IDX_SUN;
+    const ox0 = st.earthX, oy0 = st.earthY, ovx = st.earthVx, ovy = st.earthVy;
+    if (!WORLD.sunDestroyed) {
+        // Earth gone, Sun intact: heliocentric conics about a coasting barycentre
+        const muS = bodyMu[sk];
+        const sWx = ox0 + st.x[sk], sWy = oy0 + st.y[sk], sWz = st.z[sk];
+        const sWvx = ovx + st.vx[sk], sWvy = ovy + st.vy[sk], sWvz = st.vz[sk];
+        let M = muS, bx = 0, by = 0, bz = 0, bvx = 0, bvy = 0, bvz = 0;
+        for (let k = 0; k < NB; k++) {
+            if (k === sk) continue;
+            const mu = activeBodyMu(k);
+            if (mu <= 0) continue;
+            M += mu;
+            bx += mu * (st.x[k] - st.x[sk]); by += mu * (st.y[k] - st.y[sk]); bz += mu * (st.z[k] - st.z[sk]);
+            bvx += mu * (st.vx[k] - st.vx[sk]); bvy += mu * (st.vy[k] - st.vy[sk]); bvz += mu * (st.vz[k] - st.vz[sk]);
+        }
+        const Bx = sWx + bx / M, By = sWy + by / M, Bz = sWz + bz / M;
+        const BVx = sWvx + bvx / M, BVy = sWvy + bvy / M, BVz = sWvz + bvz / M;
+        let nx = 0, ny = 0, nz = 0, nvx = 0, nvy = 0, nvz = 0;
+        for (let k = 0; k < NB; k++) {
+            if (k === sk) continue;
+            const mu = activeBodyMu(k);
+            if (mu <= 0) continue;
+            keplerAdvance3(st.x[k] - st.x[sk], st.y[k] - st.y[sk], st.z[k] - st.z[sk],
+                st.vx[k] - st.vx[sk], st.vy[k] - st.vy[sk], st.vz[k] - st.vz[sk], muS + mu, dt, _kjP);
+            _jx[k] = _kjP.x; _jy[k] = _kjP.y; _jz[k] = _kjP.z;
+            _jvx[k] = _kjP.vx; _jvy[k] = _kjP.vy; _jvz[k] = _kjP.vz;
+            nx += mu * _kjP.x; ny += mu * _kjP.y; nz += mu * _kjP.z;
+            nvx += mu * _kjP.vx; nvy += mu * _kjP.vy; nvz += mu * _kjP.vz;
+        }
+        const s1x = Bx + BVx * dt - nx / M, s1y = By + BVy * dt - ny / M, s1z = Bz + BVz * dt - nz / M;
+        const s1vx = BVx - nvx / M, s1vy = BVy - nvy / M, s1vz = BVz - nvz / M;
+        const ox1 = ox0 + ovx * dt, oy1 = oy0 + ovy * dt; // the origin coasts (z stays 0)
+        st.earthX = ox1; st.earthY = oy1;
+        st.x[sk] = s1x - ox1; st.y[sk] = s1y - oy1; st.z[sk] = s1z;
+        st.vx[sk] = s1vx - ovx; st.vy[sk] = s1vy - ovy; st.vz[sk] = s1vz;
+        for (let k = 0; k < NB; k++) {
+            if (k === sk || activeBodyMu(k) <= 0) continue;
+            st.x[k] = s1x + _jx[k] - ox1; st.y[k] = s1y + _jy[k] - oy1; st.z[k] = s1z + _jz[k];
+            st.vx[k] = s1vx + _jvx[k] - ovx; st.vy[k] = s1vy + _jvy[k] - ovy; st.vz[k] = s1vz + _jvz[k];
+        }
+        return;
+    }
+    // Sun gone: nothing binds the planets
+    let ox1 = ox0 + ovx * dt, oy1 = oy0 + ovy * dt, ovx1 = ovx, ovy1 = ovy;
+    let moonDone = false;
+    if (!WORLD.earthDestroyed) {
+        // the Earth-Moon pair keeps its conic; its barycentre coasts (x,y only:
+        // Earth's world z is pinned at 0, see the earthZ note)
+        const muE = MU_E, muM = activeBodyMu(IDX_MOON);
+        const share = muM / (muE + muM);
+        const bx = ox0 + share * st.x[IDX_MOON], by = oy0 + share * st.y[IDX_MOON];
+        const bvx = ovx + share * st.vx[IDX_MOON], bvy = ovy + share * st.vy[IDX_MOON];
+        if (muM > 0) {
+            keplerAdvance3(st.x[IDX_MOON], st.y[IDX_MOON], st.z[IDX_MOON],
+                st.vx[IDX_MOON], st.vy[IDX_MOON], st.vz[IDX_MOON], muE + muM, dt, _kjM);
+            _gaW[0] = _kjM.x; _gaW[1] = _kjM.y; _gaW[2] = _kjM.z;
+            _gaW[3] = _kjM.vx; _gaW[4] = _kjM.vy; _gaW[5] = _kjM.vz;
+        }
+        ox1 = bx + bvx * dt - share * (muM > 0 ? _gaW[0] : 0);
+        oy1 = by + bvy * dt - share * (muM > 0 ? _gaW[1] : 0);
+        ovx1 = bvx - share * (muM > 0 ? _gaW[3] : 0);
+        ovy1 = bvy - share * (muM > 0 ? _gaW[4] : 0);
+        if (muM > 0) {
+            st.x[IDX_MOON] = _gaW[0]; st.y[IDX_MOON] = _gaW[1]; st.z[IDX_MOON] = _gaW[2];
+            st.vx[IDX_MOON] = _gaW[3]; st.vy[IDX_MOON] = _gaW[4]; st.vz[IDX_MOON] = _gaW[5];
+        }
+        moonDone = true;
+    }
+    for (let k = 0; k < NB; k++) {
+        if (k === sk || (k === IDX_MOON && moonDone) || !isBodyActive(k)) continue;
+        // straight-line coast in the world frame, re-expressed about the new origin
+        const wx = ox0 + st.x[k] + (ovx + st.vx[k]) * dt, wy = oy0 + st.y[k] + (ovy + st.vy[k]) * dt;
+        const wvx = ovx + st.vx[k], wvy = ovy + st.vy[k];
+        st.x[k] = wx - ox1; st.y[k] = wy - oy1; st.z[k] += st.vz[k] * dt;
+        st.vx[k] = wvx - ovx1; st.vy[k] = wvy - ovy1;
+    }
+    st.earthX = ox1; st.earthY = oy1; st.earthVx = ovx1; st.earthVy = ovy1;
+}
+
+// ---- per-frame integration budget ----
+// worldStep.js opens a frame context for every rendered frame. Bulk advances
+// (deep-time bridges, the dead/landed/relativistic paths) that cannot ride the
+// analytic path integrate with HONEST steps (bodyStepSize, never stretched)
+// until either the request or this frame's step budget is used up, and report
+// the time they actually delivered; the caller advances the clock by that and
+// the shortfall is surfaced (timeCtl.noteFrameDelivery). Small advances
+// (ephemeris flushes inside the ship integrator, <= EPHEM_EXACT_MAX_SEC) and
+// predictions keep the old always-complete behaviour: their forced substeps
+// are at most a few seconds long.
+export const EPHEM_FRAME_STEP_BUDGET = 2500; // ~7 us/step with a hole in play: <= ~18 ms a frame
+const EPHEM_CALL_STEP_BUDGET = 20000; // a bulk call outside any frame (smokes, startup ?simt)
+const EPHEM_EXACT_MAX_SEC = 3600;
+const EPHEM_FRAME = { active: false, rate: 0, stepsLeft: 0, stepsUsed: 0, calls: 0, analyticCalls: 0, limited: false };
+export function beginEphemFrame(rateSecPerSec = 0, budget = EPHEM_FRAME_STEP_BUDGET) {
+    EPHEM_FRAME.active = true;
+    EPHEM_FRAME.rate = Math.abs(Number(rateSecPerSec)) || 0;
+    EPHEM_FRAME.stepsLeft = budget;
+    EPHEM_FRAME.stepsUsed = 0;
+    EPHEM_FRAME.calls = 0;
+    EPHEM_FRAME.analyticCalls = 0;
+    EPHEM_FRAME.limited = false;
+    return EPHEM_FRAME;
+}
+export function endEphemFrame() { EPHEM_FRAME.active = false; return EPHEM_FRAME; }
+export function ephemFrameStats() { return EPHEM_FRAME; }
+export function ephemBudgetLeft() { return EPHEM_FRAME.active ? EPHEM_FRAME.stepsLeft : EPHEM_CALL_STEP_BUDGET; }
+
 // live-path guard wired by blackholes.js: a body can free-fall into a hole
 // well inside one flush interval, so disruption boundaries must be checked
 // per substep — never from predictions, which must not mutate the world
 let liveGuard = null;
 export function setLiveGuard(fn) { liveGuard = fn; }
+// Returns the simulated time actually integrated (== dtTotal unless a live
+// bulk advance ran out of this frame's step budget).
 function advanceState(st, dtTotal, maxStep = 3600, live = false) {
     // deep-time gate (live path only — predictions keep full leapfrog fidelity):
-    // holes, gravity ghosts, and a destroyed Sun or Earth all break the
-    // two-body decomposition, so those fall through to the integrator
-    if (live && BH.n === 0 && GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed &&
+    // holes and gravity ghosts break the two-body decomposition, so those fall
+    // through to the integrator; destroyed bodies no longer do (see
+    // analyticJumpState) — that gate used to hand a post-engulfment system to
+    // 2000 forced steps of ~2.6e11 s each and fling Mars to 1e12 AU.
+    if (live && BH.n === 0 && GS.length === 0 &&
         Math.abs(dtTotal) > bodyStepSize(st, Math.abs(dtTotal), maxStep) * 150) {
-        keplerJumpState(st, dtTotal);
+        analyticJumpState(st, dtTotal);
         st.t += dtTotal;
-        return;
+        if (EPHEM_FRAME.active) EPHEM_FRAME.analyticCalls++;
+        return dtTotal;
     }
+    if (live && Math.abs(dtTotal) > EPHEM_EXACT_MAX_SEC) return budgetedLeapfrog(st, dtTotal, maxStep);
     let rem = dtTotal, guard = 0, elapsed = 0;
     const tStart = st.t;
     while (Math.abs(rem) > 1e-9 && guard++ < 2000) {
         // if the step collapses near a deep well, spend the remaining budget
         // anyway: bounded local error beats bodies silently losing time
+        // (only ever short, bounded intervals come through here)
         const mag = Math.min(Math.abs(rem), Math.max(bodyStepSize(st, Math.abs(rem), maxStep), Math.abs(rem) / (2001 - guard)));
         const dt = Math.sign(rem) * mag;
         elapsed += dt;
@@ -895,22 +1024,55 @@ function advanceState(st, dtTotal, maxStep = 3600, live = false) {
             liveGuard();
         }
     }
+    return dtTotal;
+}
+function budgetedLeapfrog(st, dtTotal, maxStep) {
+    const budget = ephemBudgetLeft();
+    // With holes in play the bulk path is the only way through deep time, so
+    // it may use the full accuracy ceiling (LEAP_DT_MAX, 1/200 of a lunar
+    // month) the step-size note above reserves for exactly this case;
+    // bodyStepSize still shrinks it near the holes.
+    if (BH.n > 0) maxStep = Math.max(maxStep, LEAP_DT_MAX);
+    let rem = dtTotal, elapsed = 0, steps = 0;
+    const tStart = st.t, sign = Math.sign(dtTotal);
+    while (Math.abs(rem) > 1e-9 && steps < budget) {
+        const mag = Math.min(Math.abs(rem), bodyStepSize(st, Math.abs(rem), maxStep));
+        const dt = sign * mag;
+        elapsed += dt;
+        leapfrogBodies(st, dt, tStart + elapsed);
+        rem -= dt;
+        steps++;
+        if (liveGuard && BH.n) {
+            syncFromState(st);
+            liveGuard();
+        }
+    }
+    const complete = Math.abs(rem) <= 1e-9;
+    if (EPHEM_FRAME.active) {
+        EPHEM_FRAME.stepsLeft -= steps;
+        EPHEM_FRAME.stepsUsed += steps;
+        if (!complete) EPHEM_FRAME.limited = true;
+    }
+    return complete ? dtTotal : elapsed;
 }
 const _adv = makeState(); // persistent scratch: advanceEphem runs every flush, allocation-free
+// Advance the live ephemeris; returns the time actually delivered (see the
+// budget note above) and advances the ephemeris clock by exactly that.
 export function advanceEphem(dtTotal) {
-    if (Math.abs(dtTotal) <= 1e-9) return 0;
+    if (!(Math.abs(dtTotal) > 1e-9)) return 0;
     copyLiveToState(_adv);
     const t0 = _adv.t, lo0 = _adv.tLo;
-    advanceState(_adv, dtTotal, 3600, true);
+    if (EPHEM_FRAME.active) EPHEM_FRAME.calls++;
+    const delivered = advanceState(_adv, dtTotal, 3600, true);
     // the ephemeris clock advances by exactly the integrated span through the
     // compensated adder (not by the state's own rounded sum of substeps)
     _adv.t = t0; _adv.tLo = lo0;
     copyStateToLive(_adv);
-    advanceEphemClock(dtTotal);
+    advanceEphemClock(delivered);
     // a ghost whose front has swept past Neptune influences nothing anymore
     for (let k = GS.length - 1; k >= 0; k--)
         if ((EPHT.t - GS[k].t) * C_LIGHT > 1e10) GS.splice(k, 1);
-    return dtTotal;
+    return delivered;
 }
 export function snapshotEphem(out = null) { return out ? copyLiveToState(out) : makeState(); }
 export function applyEphemSnapshot(st) { syncFromState(st); }
@@ -920,8 +1082,8 @@ export function advanceEphemSnapshot(st, dtTotal, maxStep = 3600) {
     copyStateToLive(st);
 }
 export function advanceEphemSnapshotKepler(st, dtTotal, syncLive = true) {
-    if (dtTotal > 0 && BH.n === 0 && GS.length === 0 && !WORLD.sunDestroyed && !WORLD.earthDestroyed) {
-        keplerJumpState(st, dtTotal);
+    if (dtTotal > 0 && BH.n === 0 && GS.length === 0) {
+        analyticJumpState(st, dtTotal);
         st.t += dtTotal;
     } else if (dtTotal > 0) advanceState(st, dtTotal, dtTotal);
     if (syncLive) copyStateToLive(st);
