@@ -40,7 +40,8 @@ import { extragalacticExposure } from "./stellarAppearance.js";
 import { tierDepthRange } from "./tierDepth.js";
 import { RELATIVISTIC_VIEW_GLSL } from "./viewBrightness.js";
 import { relUniforms } from "../relView.js";
-import { buildLightConeTable, lnScaleFactorAt, cosmicTimeGyr } from "../universe/cosmicExpansion.js";
+import { buildLightConeTable, lnScaleFactorAt, cosmicTimeGyr, COSMO, H0_PER_GYR } from "../universe/cosmicExpansion.js";
+import { evolutionTable, EVOLUTION_NT, EVOLUTION_T, GALAXY_EVOLUTION_GLSL } from "../universe/galaxyEvolution.js";
 import { PERF, markPerf } from "../perf.js";
 
 const LC_N = 512;
@@ -61,6 +62,14 @@ uniform sampler2D uLightCone;
 uniform float uChiMax, uAObs, uMpcScene, uFarClamp, uPxScale, uGainExposure, uMwKeep, uMergeMorph, uCull;
 uniform vec2 uViewport;
 uniform float uMaxPointPx, uDpr;
+uniform float uLnAObs, uMwLum;
+${GALAXY_EVOLUTION_GLSL}
+// Cosmic time (Gyr) at ln a, flat Lambda-CDM (cosmicExpansion.js).
+float cosmicTimeAtLnA(float lnA) {
+    float lnArg = ${(0.5 * Math.log(COSMO.OL / COSMO.Om)).toFixed(8)} + 1.5 * lnA;
+    float s = lnArg > 20.0 ? lnArg + 0.6931471806 : asinh(exp(lnArg));
+    return s / ${(1.5 * Math.sqrt(COSMO.OL) * H0_PER_GYR).toFixed(10)};
+}
 uniform vec2 uDepthRange;
 #ifndef GAL_POINTS
 varying vec2 vPx;          // pixel offset from the centre along (major, minor)
@@ -115,6 +124,11 @@ void main() {
     float chi = length(rel);
     float dlnA = lightCone(chi);
     float ratio = exp(dlnA);                          // a_emit / a_obs
+    // The galaxy as it was when this light left it: stellar-population
+    // evolution at the emission epoch (galaxyEvolution.js). The Milky Way and
+    // Andromeda (merging) share the Galaxy's own era model (uMwLum).
+    vec2 evo = flagMerge > 0.5 ? vec2(uMwLum, 0.0) : galaxyEvolution(T, cosmicTimeAtLnA(uLnAObs + dlnA));
+    if (evo.x <= 1e-12) { offscreen(); return; }
     vec3 appW = rel * (uAObs * ratio) + aDelta;       // apparent position, observer proper Mpc
     float dMpc = length(appW);
     if (dMpc <= 0.0) { offscreen(); return; }
@@ -125,7 +139,7 @@ void main() {
     // relativistic speed is allowed for by a generous factor.)
     {
         float dPc0 = dMpc * 1e6;
-        float L0 = pow(10.0, -0.4 * (aPhot.x - 4.83));
+        float L0 = pow(10.0, -0.4 * (aPhot.x - 4.83)) * evo.x;
         float r0 = ratio * ratio;
         float boost = uBeta > 0.0 ? 64.0 : 1.0;
         if (L0 / (12.566370614 * dPc0 * dPc0) * uPxScale * uPxScale * r0 * r0 * uGainExposure * keep * boost / 3.5343 < uCull) { offscreen(); return; }
@@ -162,7 +176,7 @@ void main() {
     float w1 = mix(1.0 - bulge, 0.65, spheroid);
     float w2 = mix(bulge, 0.35, spheroid);
     // --- photometry: V luminosity, cosmological dimming, Doppler (extended: D^4)
-    float L = pow(10.0, -0.4 * (aPhot.x - 4.83));
+    float L = pow(10.0, -0.4 * (aPhot.x - 4.83)) * evo.x;
     float r4 = ratio * ratio * ratio * ratio;
     float dop4 = dopplerD * dopplerD * dopplerD * dopplerD;
     // flux / Omega_px in Lsun pc^-2 sr^-1: L/(4 pi d^2) * pxScale^2
@@ -238,7 +252,7 @@ void main() {
     vExt = rVis;
     vW = vec2(p1, p2);
     float zfac = 1.0 / max(ratio, 1e-6) / max(dopplerD, 1e-3);
-    vColor = bvColor(mix(aPhot.y, 0.95, morph), zfac);
+    vColor = bvColor(mix(aPhot.y + evo.y, 0.95, morph), zfac);
     // edge-on spiral dust lane, only once the minor axis is resolved
     float spiral = step(0.5, T) * (1.0 - step(8.5, T)) * (1.0 - spheroid);
     vLane = spiral * 0.75 * smoothstep(0.75, 0.97, si) * smoothstep(1.5, 4.0, a1 * q);
@@ -291,6 +305,9 @@ function quadGeometry() {
 }
 
 function makeShared() {
+    const evoTex = new THREE.DataTexture(evolutionTable(), EVOLUTION_NT, EVOLUTION_T.length, THREE.RGBAFormat, THREE.FloatType);
+    evoTex.minFilter = THREE.NearestFilter; evoTex.magFilter = THREE.NearestFilter;
+    evoTex.needsUpdate = true;
     const tex = new THREE.DataTexture(state.lcData, LC_N, 1, THREE.RedFormat, THREE.FloatType);
     tex.minFilter = THREE.NearestFilter; tex.magFilter = THREE.NearestFilter;
     tex.needsUpdate = true;
@@ -310,6 +327,9 @@ function makeShared() {
         uViewport: { value: new THREE.Vector2(1280, 800) },
         uMaxPointPx: { value: 128 },
         uDpr: { value: 1 },
+        uEvolution: { value: evoTex },
+        uLnAObs: { value: 0 },
+        uMwLum: { value: 1 },
         uDepthRange: tierDepthRange,
         uBeta: relUniforms.uBeta,
         uBoostDirView: relUniforms.uBoostDirView,
@@ -545,6 +565,8 @@ export function updateGalaxyPopulation(camera, f) {
     }
     const aObs = Math.exp(lnAObs);
     s.uAObs.value = Number.isFinite(aObs) ? aObs : 1e30;
+    s.uLnAObs.value = Number.isFinite(lnAObs) ? lnAObs : 0;
+    s.uMwLum.value = f.mwLum ?? 1;
     // world axes -> view: view rotation * (world -> scene axis map)
     camera.updateMatrixWorld();
     _r.copy(camera.matrixWorldInverse);

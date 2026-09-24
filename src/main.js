@@ -45,6 +45,8 @@ import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState,
 import { initGalaxyPopulation, updateGalaxyPopulation, galaxyPopulationStatus } from "./render/galaxyPopulationRender.js";
 import { stellarExposure } from "./render/stellarAppearance.js";
 import { galacticCenterScene } from "./universe/starfield.js";
+import { evolutionAt } from "./universe/galaxyEvolution.js";
+import { cosmicTimeGyr } from "./universe/cosmicExpansion.js";
 import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit } from "./render/galaxyVolume.js";
 import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
 import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
@@ -103,6 +105,7 @@ import { initEvents, noteEvent, updateEvents } from "./events.js";
 const MW_DIAMETER_SCENE = 30000 * PC_KM * K;
 const MAX_POINT_PX = (() => { try { const gl = renderer.getContext(); return gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1] || 64; } catch { return 64; } })();
 const m31Mpc = [0, 0, 0];
+const _mwEvo = {};
 const ambientPos = { wx: 0, wy: 0, wz: 0 };
 const query = new URLSearchParams(location.search);
 const bloomParam = query.get("bloom");
@@ -2070,7 +2073,13 @@ function frame() {
     const mwDistScene = Math.hypot(camera.position.x - gcScene[0], camera.position.y - gcScene[1], camera.position.z - gcScene[2]);
     const mwSprite = 1 - smooth01(16, 40, MW_DIAMETER_SCENE * viewportSize.pxScale / Math.max(mwDistScene, 1));
     const mergeFrac = mergerDisruptFractionAt(G.t);
-    updateGalaxyVolume(camera, G.t, eraModulation(G.t), mergeFrac, 1 - mwSprite);
+    // Deep-time fading: the Galaxy's old light follows the passive evolution
+    // of its stellar population (galaxyEvolution.js), its young light the
+    // star formation of cosmicEra.js; its sprite and Andromeda's use the same.
+    const era = eraModulation(G.t);
+    const mwEvo = evolutionAt(4, cosmicTimeGyr(G.t), _mwEvo);
+    const mwLum = 0.04 * era.blueFrac + 0.96 * mwEvo.passive;
+    updateGalaxyVolume(camera, G.t, era, mergeFrac, 1 - mwSprite, mwEvo.passive);
     updateCosmicLayer();
     // M31 on its trajectory at the time its light left it (retarded time).
     andromedaOffsetMpc(G.t, m31Mpc);
@@ -2082,7 +2091,7 @@ function frame() {
     updateGalaxyPopulation(camera, {
         tSim: G.t, gcScene, exposure: stellarExposure.value, pxScale: viewportSize.pxScale, viewport: [viewportSize.w, viewportSize.h],
         dpr: renderer.getPixelRatio(), maxPointPx: MAX_POINT_PX,
-        mwKeep: mwSprite, mergeMorph: mergeFrac, m31Mpc,
+        mwKeep: mwSprite, mergeMorph: mergeFrac, m31Mpc, mwLum,
     });
     // The Sun's point and evolving photosphere: every view, not only near it.
     updateSunView(camera, camera.position.distanceTo(sunPos) / K / PC_KM);

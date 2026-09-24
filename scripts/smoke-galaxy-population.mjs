@@ -17,6 +17,7 @@ import {
     eventHorizonComovingMpc, emissionLnA, buildLightConeTable, cosmicTimeGyr, COSMO, HUBBLE_DISTANCE_MPC,
 } from "../src/universe/cosmicExpansion.js";
 import { packPopulation } from "../src/workers/galaxyPopulationWorker.js";
+import { evolutionAt, EVOLUTION_T, degenerateFactor, T_FORM_GYR } from "../src/universe/galaxyEvolution.js";
 import { DARK_ENERGY } from "../src/constants.js";
 import { W2G } from "../src/universe/coords.js";
 
@@ -70,6 +71,24 @@ for (const la of [-8, -2, 0, 3, 9, 13.5, 16]) {
     check(tbl.table.every(x => Number.isFinite(x) && x <= 0), "light-cone table finite and non-positive");
 }
 check(near(comovingFromCz(czFromComoving(123.4)), 123.4, 1e-6), "cz <-> comoving distance round-trip");
+
+// --- Stellar-population evolution ---------------------------------------------------
+{
+    let ok = true;
+    for (const T of EVOLUTION_T) {
+        const e = evolutionAt(T, T0_GYR);
+        if (Math.abs(e.L - 1) > 0.01 || Math.abs(e.dBV) > 0.01) ok = false;
+    }
+    check(ok, "every type is at its catalogue luminosity and colour today");
+    const e5 = [10, 30, 100, 1000, 10000].map(dt => evolutionAt(-5, T0_GYR + dt).L);
+    check(e5.every((v, i) => i === 0 || v < e5[i - 1]), "passive ellipticals fade monotonically in the future", e5);
+    check(evolutionAt(-5, T0_GYR + 100).L > 0.08 && evolutionAt(-5, T0_GYR + 100).L < 0.3, "an elliptical 100 Gyr on has faded ~2 mag (age^-0.8)");
+    check(evolutionAt(-5, T0_GYR - 8).L > 1.5, "an elliptical 8 Gyr ago was brighter (younger stars)");
+    check(evolutionAt(10, T0_GYR + 10).L > 1, "an irregular still forming stars brightens over the next 10 Gyr");
+    check(evolutionAt(4, T0_GYR + 100).dBV > 0.2, "a spiral reddens once star formation dies away");
+    check(evolutionAt(4, 0.5).L === 0 && T_FORM_GYR > 0.5, "no galaxy light before formation");
+    check(evolutionAt(4, 1e6).L < 1e-12 && degenerateFactor(1e6) < 1e-5, "degenerate era: galaxies are dark by 10^15 yr");
+}
 
 // --- Population -------------------------------------------------------------------
 const lv = decodeLocalVolume(readFileSync(new URL("../public/data/local-volume.json", import.meta.url), "utf8"));

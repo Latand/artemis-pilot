@@ -43,6 +43,7 @@ uniform vec2 uTanHalf;
 uniform vec3 uColYoung, uColOld, uColBar;
 uniform vec3 uExtRGB;
 uniform float uGain;
+uniform float uOldFade;
 varying vec2 vNdc;
 
 vec2 gmBounds(vec3 o, vec3 d) {
@@ -82,7 +83,7 @@ void main() {
         float sm = s + 0.5 * ds;
         vec4 smp = gmSample(o + d * sm);
         vec2 f = gmUnresolved(sm, 1.0857362 * tau.g);
-        vec3 em = smp.x * uColYoung * f.x + (smp.y * uColOld + smp.z * uColBar) * f.y;
+        vec3 em = smp.x * uColYoung * f.x + (smp.y * uColOld + smp.z * uColBar) * f.y * uOldFade;
         vec3 k = smp.w * uExtRGB;
         vec3 kd = k * ds;
         // Exact emission-absorption over the step: em * (1 - e^{-k ds}) / k.
@@ -139,7 +140,7 @@ const state = {
     compScene: null,
     orthoCam: null,
     dirty: true,
-    lastKey: new Float64Array(20),
+    lastKey: new Float64Array(24),
     enabled: !DISABLED,
     opacity: 1,
     renders: 0,
@@ -161,6 +162,8 @@ function init() {
         uBar: { value: MW.barAngle0 },
         uSfr: { value: 1 },
         uKeep: { value: 1 },
+        // passive fading of the old populations in deep time (galaxyEvolution.js)
+        uOldFade: { value: 1 },
         uSun: { value: new THREE.Vector3(MW.R0, 0, 20.8) },
         uBarAxes: { value: new THREE.Vector3(...model.uBarAxes) },
     };
@@ -239,7 +242,7 @@ const SCENE_TO_GAL = (() => {
 
 // Per-frame: camera state + model time -> uniforms; marks the target dirty
 // only when something visible changed.
-export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacity = 1) {
+export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacity = 1, oldFade = 1) {
     if (!state.enabled) return;
     init();
     const u = state.rayMat.uniforms;
@@ -269,6 +272,7 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
     u.uBar.value = _ang.bar;
     u.uSfr.value = era ? era.blueFrac : 1;
     u.uKeep.value = 1 - Math.max(0, Math.min(1, disrupt || 0));
+    u.uOldFade.value = Number.isFinite(oldFade) ? Math.max(0, oldFade) : 1;
     state.opacity = opacity;
     // Dirty check: position (relative to its distance from the GC scale),
     // orientation, pattern angle, era, aspect.
@@ -276,7 +280,7 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
     const vals = [
         _camGal[0], _camGal[1], _camGal[2],
         M[0][0], M[0][1], M[0][2], M[1][0], M[1][1], M[1][2], M[2][0], M[2][1], M[2][2],
-        _ang.spiral, _ang.bar, u.uSfr.value, u.uKeep.value, camera.aspect, tanY,
+        _ang.spiral, _ang.bar, u.uSfr.value, u.uKeep.value, camera.aspect, tanY, u.uOldFade.value,
     ];
     const camDist = Math.hypot(_camGal[0] - sun[0], _camGal[1] - sun[1], _camGal[2] - sun[2]);
     const posTol = Math.max(0.05, 0.002 * Math.min(camDist, Math.hypot(_camGal[0], _camGal[1], _camGal[2])));
