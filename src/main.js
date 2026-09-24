@@ -132,6 +132,7 @@ initXrPerf(renderer);
 const tier1RebaseEnabled = query.get("rebase") === "1";
 let lensingPass = { enabled: false };
 let updateLensingImpl = null;
+let renderLensedImpl = null;
 let lensingReady = null;
 const lensPrecheckV = new THREE.Vector3();
 function perfStart() { return PERF.enabled ? performance.now() : 0; }
@@ -180,7 +181,10 @@ function ensureLensingModule() {
         lensingReady = import("./lensing.js").then(mod => {
             lensingPass = mod.lensingPass;
             updateLensingImpl = mod.updateLensing;
-            return ensurePostProcessing(lensingPass).then(() => mod);
+            renderLensedImpl = mod.renderLensed;
+            // a bloom composer carries the pass; without one the lens bends
+            // the direct render (renderFrame)
+            return composer || bloomPass.enabled ? ensurePostProcessing(lensingPass).then(() => mod) : mod;
         }).catch(err => {
             console.warn("lensing load skipped", err);
             lensingReady = null;
@@ -199,9 +203,7 @@ function updateLensingLazy(camera, aspect) {
         ensureLensingModule();
         return false;
     }
-    const active = updateLensingImpl(camera, aspect);
-    if (active && !composer) ensurePostProcessing(lensingPass);
-    return active;
+    return updateLensingImpl(camera, aspect);
 }
 let catalogSearchHooks = null;
 let catalogSearchReady = null;
@@ -1553,7 +1555,8 @@ function renderFrame(showCockpit) {
     if (VR.active) { renderVRFrame(showCockpit && VR.mode === "ship"); return; }
     const renderT0 = perfStart();
     const worldRenderT0 = perfStart();
-    if ((bloomPass.enabled || lensingPass.enabled) && composer) composer.render();
+    if (bloomPass.enabled && composer) composer.render();
+    else if (lensingPass.enabled && renderLensedImpl) renderLensedImpl(renderer, scene, camera);
     else renderSceneTiered(renderer, scene, camera);
     perfEnd("render.world", worldRenderT0, PERF.enabled ? {
         bloom: !!bloomPass.enabled,
@@ -2165,7 +2168,8 @@ function frame() {
         arrow.visible = false; flowArrow.visible = false; tipV.visible = false; tipF.visible = false;
         moonSoiRing.visible = false;
         clearBodyPrediction();
-        lensingPass.enabled = false;
+        // a supermassive hole's Einstein ring stays pixels wide light-years out
+        updateLensingLazy(camera, camera.aspect);
         bloomPass.enabled = false;
         renderFrame(false);
         return;

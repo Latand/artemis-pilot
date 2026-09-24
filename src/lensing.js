@@ -1,24 +1,30 @@
 import * as THREE from "three";
 import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { FullScreenQuad } from "three/addons/postprocessing/Pass.js";
 import { K } from "./constants.js";
 import { BH } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
-import { composer, renderer, TIER_SPLIT_UNITS } from "./scene.js";
+import { composer, renderer, renderQuality, renderSceneTiered, TIER_SPLIT_UNITS } from "./scene.js";
 import { holeRoot } from "./holeOptics.js";
 
 // Gravitational lensing as a screen-space post pass, applied to the world
-// render before bloom. Up to four strongest lenses per frame, each a point
-// lens for sources far behind it: a pixel at angle theta from the lens shows
-// the sky at beta = theta - theta_E^2 / theta, theta_E = sqrt(2 r_s / d).
+// render (before bloom when bloom is on). Up to four strongest lenses per
+// frame, each a point lens for sources far behind it: a pixel at angle theta
+// from the lens shows the sky at beta = theta - theta_E^2 / theta,
+// theta_E = sqrt(2 r_s / d).
 //
 // Only what lies behind a lens is lensed. The holes' own light (shadow,
 // photon ring, accretion disk, tidal debris: holeRoot) sits at the lens, so
 // the pass renders the world without holeRoot, bends it, and then draws
 // holeRoot unbent on top; a body in front of a hole (the star it is about to
 // disrupt, say) is left alone by comparing the world pass's depth with the
-// lens's distance. The shadow itself (angular radius sqrt(27)/2 r_s / d) is
-// geometry in holeRoot.
+// lens's distance, and still hides the hole (the pass writes that depth, and
+// holeRoot is tested against it). The shadow itself (angular radius
+// sqrt(27)/2 r_s / d) is geometry in holeRoot.
+//
+// With bloom the composer carries the pass (LensPass); without it there is no
+// composer and renderLensed runs it on its own.
 const MAXL = 4;
 
 class LensPass extends ShaderPass {
@@ -33,11 +39,10 @@ class LensPass extends ShaderPass {
         super.render(rendererArg, writeBuffer, readBuffer, deltaTime, maskActive);
         if (!this.camera) { holeRoot.visible = true; return; }
         // the holes' own optics over the lensed world (their depth relations are
-        // analytic, so a cleared depth buffer is all they need)
+        // analytic; the world's depth the pass wrote hides them behind bodies)
         const oldAutoClear = rendererArg.autoClear;
         rendererArg.autoClear = false;
         rendererArg.setRenderTarget(this.renderToScreen ? null : writeBuffer);
-        rendererArg.clearDepth();
         holeRoot.visible = true;
         rendererArg.render(holeRoot, this.camera);
         rendererArg.autoClear = oldAutoClear;
@@ -77,23 +82,71 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
             vec2 q = p;
             // view depth of what the world pass drew here (the near tier's
             // projection; the far tier leaves the cleared depth, i.e. "far")
-            float zv = 1e30;
+            float zv = 1e30, dz = 1.0;
             if (uHasDepth == 1) {
-                float dz = texture2D(tDepth, vUv).x;
+                dz = texture2D(tDepth, vUv).x;
                 if (dz < 1.0) zv = uNear * uFar / (uFar - dz * (uFar - uNear));
             }
+            float zBent = 1e30;                       // nearest lens bending this ray
             for (int i = 0; i < ${MAXL}; i++) {
                 if (i >= uN) break;
                 if (zv < uDist[i]) continue;          // in front of this lens
                 vec2 d = p - uC[i];
                 float r2 = max(dot(d, d), 1e-9);
                 q -= d * (uT2[i] / r2);
+                zBent = min(zBent, uDist[i]);
             }
             q.x /= uAspect;
-            gl_FragColor = texture2D(tDiffuse, clamp(q * 0.5 + 0.5, 0.0, 1.0));
+            vec2 uvq = clamp(q * 0.5 + 0.5, 0.0, 1.0);
+            gl_FragColor = texture2D(tDiffuse, uvq);
+            if (uHasDepth == 1 && zBent < 1e29) {
+                // the sky this ray comes from is hidden behind a body in front
+                // of the lens (sampling it would show a ghost of that body):
+                // keep this pixel's own, unbent sky instead
+                float dq = texture2D(tDepth, uvq).x;
+                float zq = dq < 1.0 ? uNear * uFar / (uFar - dq * (uFar - uNear)) : 1e30;
+                if (zq < zBent) gl_FragColor = texture2D(tDiffuse, vUv);
+            }
+            // the world's depth, unbent (the full-range projection holeRoot is
+            // drawn with gives the near tier's depths well within a quantum)
+            gl_FragDepthEXT = dz;
         }`,
+    depthFunc: THREE.AlwaysDepth,
 }));
 lensingPass.enabled = false;
+
+// Without bloom the world is drawn into lensTarget exactly as onto the
+// canvas: flagged like an XR target, three applies each material's own tone
+// mapping and sRGB encoding there too (kept as plain bytes), so a lens moves
+// light and changes nothing else (the composer's linear target would band the
+// sky and swell every bright star). The pass then bends it onto the canvas.
+// Copying the antialiased canvas back mid-frame instead and drawing on showed
+// blank frames under ANGLE.
+const lensTarget = new THREE.WebGLRenderTarget(1, 1, {
+    samples: renderQuality.mobile ? 0 : 4, internalFormat: "RGBA8", colorSpace: THREE.SRGBColorSpace,
+});
+lensTarget.isXRRenderTarget = true;
+lensTarget.depthTexture = new THREE.DepthTexture(1, 1);
+const lensQuad = new FullScreenQuad(lensingPass.material);
+const _buf = new THREE.Vector2();
+export function renderLensed(rendererArg, sceneArg, camera) {
+    rendererArg.getDrawingBufferSize(_buf);
+    lensTarget.setSize(_buf.x, _buf.y);
+    holeRoot.visible = false;
+    rendererArg.setRenderTarget(lensTarget);
+    renderSceneTiered(rendererArg, sceneArg, camera);
+    rendererArg.setRenderTarget(null);
+    const u = lensingPass.uniforms;
+    u.tDiffuse.value = lensTarget.texture;
+    u.tDepth.value = lensTarget.depthTexture;
+    u.uHasDepth.value = 1;
+    lensQuad.render(rendererArg);
+    const oldAutoClear = rendererArg.autoClear;
+    rendererArg.autoClear = false;
+    holeRoot.visible = true;
+    rendererArg.render(holeRoot, camera);
+    rendererArg.autoClear = oldAutoClear;
+}
 
 const _v = new THREE.Vector3();
 const _cand = [];

@@ -11,6 +11,7 @@ import { renderQuality, scene, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
 import { ACTIVE_STARS, activeStarsTime } from "./universe/activeStars.js";
 import { applyTerrellToMaterial } from "./relView.js";
+import { holeRoot } from "./holeOptics.js";
 
 // Physical renderings for the named stellar destinations and the active stars
 // around the ship: each star gets a photosphere mesh that appears as its disk
@@ -225,7 +226,8 @@ export function addStarVisual(star) {
     if (point) g.add(point);
     if (star.activeCatalog) holdCatalogRow(star.hygIndex, true);
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
-    scene.add(g);
+    // a hole's own light sits at the lens: drawn unbent after it (lensing.js)
+    (star.bh ? holeRoot : scene).add(g);
     const entry = { g, glow, point, disk, photosphere, tempK, absMag, star, id, active, alpha: 0 };
     entries.push(entry);
     entryById.set(id, entry);
