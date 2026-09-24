@@ -14,8 +14,10 @@
 // Observer time: the Milky Way's particles are shown at the retarded time of
 // the Galactic centre, Andromeda's at the retarded time of Andromeda (the
 // same epochs its sprite and the volume use). Particles closer to the camera
-// than a few kernel widths fade out: that near field is resolved star light
-// of the observer's own neighbourhood, not a blob.
+// than a few kernel widths, or whose kernels span more than ~24-48 px, fade
+// out: seen from inside the debris its light is a diffuse near-field glow
+// that splats cannot draw at bounded cost (a known gap: that view would need
+// the volumetric treatment of galaxyVolume.js).
 import * as THREE from "three";
 import { K, PC_KM } from "../constants.js";
 import { RELATIVISTIC_VIEW_GLSL } from "./viewBrightness.js";
@@ -76,6 +78,11 @@ void main() {
     float PSF = PSF0 * clamp(pow(max(peak0 / 1.5, 1.0), 0.2), 1.0, 3.5);
     float s = sqrt(sPx * sPx + PSF * PSF);
     float peak = flux / (6.283185307 * s * s);
+    // A camera inside the debris sees kernels hundreds of pixels wide: that
+    // near field is a diffuse glow a splat cannot draw at bounded cost (it
+    // would need the volumetric treatment of galaxyVolume.js), so kernels
+    // wider than ~24-48 px fade out. Seen from outside, kernels are a few px.
+    peak *= 1.0 - smoothstep(24.0, 48.0, s);
     // many blobs overlap: keep ones far below a single display step
     const float FLOOR = 2e-5;
     if (peak < FLOOR) { offscreen(); return; }
@@ -85,7 +92,7 @@ void main() {
     vec4 clipC = projectionMatrix * vec4(dirV * drawD, 1.0);
     if (clipC.w <= 0.0) { offscreen(); return; }
     vec2 ndc = clipC.xy / clipC.w;
-    float hs = min(s * sqrt(2.0 * log(peak / FLOOR)), 0.5 * uMaxPointPx);
+    float hs = min(s * min(sqrt(2.0 * log(peak / FLOOR)), 3.5), 0.5 * uMaxPointPx);
     hs = max(hs, 1.0);
     vec2 margin = 2.0 * vec2(hs) / uViewport;
     if (abs(ndc.x) > 1.0 + margin.x || abs(ndc.y) > 1.0 + margin.y) { offscreen(); return; }
