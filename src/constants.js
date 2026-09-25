@@ -112,8 +112,11 @@ export const STARS = [
     skyStar("TAU CETI", 11.91, 26.0170, -15.9375, 0xffd89d, .78, .793),
     skyStar("VEGA", 25.04, 279.2347, 38.7837, 0xdce8ff, 2.14, 2.36),
     // Galactic-center supermassive black hole. Contact surface = photon sphere
-    // (1.5 r_s); position uses its observed sky direction.
-    skyStar("SGR A*", 26000, 266.4168, -29.0078, 0xd9c8ff, 4.154e6, 1.839e7 / R_SUN, { bh: true, rs: 1.226e7 }),
+    // (1.5 r_s); position uses its observed sky direction at R0 = 8178 pc
+    // (GRAVITY Collaboration 2019), the distance the Milky Way model is
+    // centred at (universe/coords.js R0_PC), so the hole sits in the drawn
+    // Galaxy's nucleus.
+    skyStar("SGR A*", 26673, 266.4168, -29.0078, 0xd9c8ff, 4.154e6, 1.839e7 / R_SUN, { bh: true, rs: 1.226e7 }),
     skyStar("ALPHA CEN B", 4.37, 219.9021, -60.8339, 0xffbf85, .907, .863, { companion: "ALPHA CEN A" }),
     skyStar("LUHMAN 16", 6.50, 162.3100, -53.3180, 0xb86a4f, .065, .10),
     skyStar("WISE 0855-0714", 7.43, 133.7925, -7.2450, 0x7d5b51, .005, .10),

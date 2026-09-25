@@ -7,7 +7,7 @@
 // spheroids) in its projected ellipse, normalised so the integrated display
 // flux is
 //     gain * exposure * L / (4 pi d_A^2) * (1+z)^-4 / Omega_px,
-// the same Lsun pc^-2 sr^-1 -> display conversion (GALAXY_DISPLAY_GAIN) the
+// the same Lsun pc^-2 sr^-1 -> display conversion (galaxyDisplayGain) the
 // volumetric Milky Way uses. Resolved, that is surface brightness
 // (distance-independent, like the Milky Way seen from outside); unresolved,
 // each component is widened by the point-spread function and the same flux
@@ -35,7 +35,7 @@
 // camera-relative positions stay exact at any distance.
 import * as THREE from "three";
 import { K, MPC_KM } from "../constants.js";
-import { GALAXY_DISPLAY_GAIN } from "./galaxyVolume.js";
+import { galaxyDisplayGain, galaxyVolumeMeter } from "./galaxyVolume.js";
 import { extragalacticExposure, EXT_STRETCH, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
 import { tierDepthRange } from "./tierDepth.js";
 import { RELATIVISTIC_VIEW_GLSL } from "./viewBrightness.js";
@@ -43,6 +43,7 @@ import { relUniforms } from "../relView.js";
 import { buildLightConeTable, lnScaleFactorAt, cosmicTimeGyr, COSMO, H0_PER_GYR } from "../universe/cosmicExpansion.js";
 import { evolutionTable, EVOLUTION_NT, EVOLUTION_T, GALAXY_EVOLUTION_GLSL } from "../universe/galaxyEvolution.js";
 import { andromedaDiskFrame } from "../universe/mergerTides.js";
+import { galacticToWorld } from "../universe/coords.js";
 import { PERF, markPerf } from "../perf.js";
 
 const LC_N = 512;
@@ -335,7 +336,7 @@ function makeShared() {
         uMpcScene: { value: MPC_SCENE },
         uFarClamp: { value: 1e18 },
         uPxScale: { value: 900 },
-        uGainExposure: { value: GALAXY_DISPLAY_GAIN },
+        uGainExposure: { value: galaxyDisplayGain(900) },
         uMwKeep: { value: 0 },
         uMergeMorph: { value: 0 },
         uMwDiskKeep: { value: 1 },
@@ -509,17 +510,18 @@ function updateLocalGroup(m31NowMpc) {
 // included, even while render/galaxyVolume.js draws it) and exposes so that
 // the brightest EXPOSURE.brightFrac of the screen's pixels sit at
 // EXPOSURE.target (the brightest objects may saturate; the field does not).
-// It adapts in log space with a ~0.6 s time constant, and blends in with the
-// camera's distance from the Galactic centre (150 -> 600 kly), where the
-// volumetric Milky Way switches to the same exposure
-// (stellarAppearance.extragalacticExposure). One exposure scales every
-// galaxy, so relative brightness is exact.
-const EXPOSURE = { sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
-const _mPeak = new Float32Array(EXPOSURE.n + 512), _mFoot = new Float32Array(EXPOSURE.n + 512), _mIdx = new Uint32Array(EXPOSURE.n + 512);
+// It adapts in log space with a ~0.6 s time constant, and blends in as the
+// camera leaves the Milky Way's stellar disk (galaxyExposureBlend: from 0.3
+// to 3 kpc outside it), where the volumetric Milky Way switches to the same
+// exposure (stellarAppearance.extragalacticExposure). A resolved galaxy in
+// view overrides the field metering (see the end of meterExposure). One
+// exposure scales every galaxy, so relative brightness is exact.
+const EXPOSURE = { gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
+const _mPeak = new Float32Array(EXPOSURE.n + 512), _mFoot = new Float32Array(EXPOSURE.n + 512), _mFootOwn = new Float32Array(EXPOSURE.n + 512), _mIdx = new Uint32Array(EXPOSURE.n + 512);
 // Peak display value (at exposure 1) and pixel footprint of one galaxy.
 function galaxyPeak(MV, hKpc, d, pxScale, out) {
     const dPc = d * 1e6;
-    const flux = Math.pow(10, -0.4 * (MV - 4.83)) / (12.566370614 * dPc * dPc) * pxScale * pxScale * GALAXY_DISPLAY_GAIN;
+    const flux = Math.pow(10, -0.4 * (MV - 4.83)) / (12.566370614 * dPc * dPc) * pxScale * pxScale * EXPOSURE.gain;
     const hPx = hKpc * 1e3 / dPc * pxScale;
     const area = Math.max(hPx * hPx * 0.5, 0.5625);
     out[0] = flux / (6.283185307 * area);
@@ -556,19 +558,27 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         const d = Math.hypot(x, y, z);
         if (!(d > 1e-4) || !inView(e, x, y, z, tanX, tanY)) continue;
         galaxyPeak(MV[i], cat.hKpc[i], d, pxScale, _pf);
-        _mPeak[m] = _pf[0]; _mFoot[m] = _pf[1] * w; m++;
+        _mPeak[m] = _pf[0]; _mFoot[m] = _pf[1] * w; _mFootOwn[m] = _pf[1]; m++;
     }
     const lg = state.lg;
+    // The Milky Way while the volume draws it: its measured brightest pixels
+    // (render/galaxyVolume.js), not the sprite model's estimate.
+    const vol = galaxyVolumeMeter();
+    if (vol.fresh && vol.peak > 0 && m < _mPeak.length) {
+        _mPeak[m] = vol.peak; _mFoot[m] = Math.min(vol.corePx, vol.cover * screenPx); _mFootOwn[m] = Math.max(_mFoot[m], vol.cover * screenPx); m++;
+    }
     if (lg) {
         const d3 = lg.mesh.geometry.attributes.aDelta.array;
         const ph = lg.mesh.geometry.attributes.aPhot.array;
+        const tt = lg.mesh.geometry.attributes.aT.array;
         for (let k = 0; k < lg.rides.length && m < _mPeak.length; k++) {
+            if (vol.fresh && tt[k] > 99 && tt[k] < 199) continue;   // measured above
             const x = d3[k * 3] - camGC[0], y = d3[k * 3 + 1] - camGC[1], z = d3[k * 3 + 2] - camGC[2];
             const d = Math.hypot(x, y, z);
             const rad = 4 * ph[k * 4 + 2] * 1e-3 / Math.max(d, 1e-6);
             if (!(d > 1e-5) || !inView(e, x, y, z, tanX, tanY, rad)) continue;
             galaxyPeak(ph[k * 4], ph[k * 4 + 2], d, pxScale, _pf);
-            _mPeak[m] = _pf[0]; _mFoot[m] = Math.min(_pf[1], screenPx); m++;
+            _mPeak[m] = _pf[0]; _mFoot[m] = Math.min(_pf[1], screenPx); _mFootOwn[m] = _mFoot[m]; m++;
         }
     }
     if (!m) return EXPOSURE.auto;
@@ -580,7 +590,19 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         acc += _mFoot[idx[k]];
         if (acc >= want) { ref = _mPeak[idx[k]]; break; }
     }
-    return ref > 0 ? EXPOSURE.target / ref : EXPOSURE.auto;
+    // Resolved galaxies: when a galaxy spans more than a few tens of pixels
+    // (the Milky Way seen from above its disk or from the Local Group, a
+    // neighbour), the brightest such core is exposed EXPOSURE.resolvedHeadroom
+    // above the metering target -- near white, its disk in the mid-tones --
+    // so it keeps its structure instead of burning to a white disk while the
+    // exposure chases the faint field around it, and zooming into it does
+    // not re-expose.
+    let resolvedPeak = 0;
+    for (let k = 0; k < m; k++) if (_mFootOwn[k] >= EXPOSURE.resolvedPx && _mPeak[k] > resolvedPeak) resolvedPeak = _mPeak[k];
+    // with a resolved galaxy in view its core sets the exposure (zooming into
+    // it keeps the picture), otherwise the field's brightest pixels
+    const field = ref > 0 ? EXPOSURE.target / ref : EXPOSURE.auto;
+    return resolvedPeak > 0 ? EXPOSURE.resolvedHeadroom * EXPOSURE.target / resolvedPeak : field;
 }
 
 // --- Per frame ---------------------------------------------------------------------
@@ -635,8 +657,9 @@ export function updateGalaxyPopulation(camera, f) {
     const now = typeof performance !== "undefined" ? performance.now() / 1000 : 0;
     const dt = EXPOSURE.t ? Math.min(0.5, Math.max(0, now - EXPOSURE.t)) : 1;
     EXPOSURE.t = now;
-    const dGCly = Math.hypot(cx, cy, cz) * 3.2615637771674e6;
-    const blend = smooth(1.5e5, 6e5, dGCly);
+    // display gain for this view's pixel scale (device px, galaxyVolume.js)
+    EXPOSURE.gain = galaxyDisplayGain(f.pxScale * (f.dpr || 1));
+    const blend = galaxyExposureBlend(cx, cy, cz);
     if (blend > 0 && (EXPOSURE.frame++ % EXPOSURE.every === 0)) {
         const tanY = Math.tan(camera.fov * Math.PI / 360), tanX = tanY * camera.aspect;
         const screenPx = f.viewport ? f.viewport[0] * f.viewport[1] : 1e6;
@@ -648,9 +671,16 @@ export function updateGalaxyPopulation(camera, f) {
     EXPOSURE.value = Math.exp(Math.log(Math.max(1e-6, f.exposure)) * (1 - blend) + Math.log(EXPOSURE.auto) * blend);
     extragalacticExposure.value = EXPOSURE.auto;
     extragalacticExposure.blend = blend;
-    s.uStretch.value = blend;
-    s.uCull.value = CULL * (1 - blend + blend * EXT_STRETCH.cullScale);
-    s.uGainExposure.value = GALAXY_DISPLAY_GAIN * EXPOSURE.value;
+    // A resolved galaxy filling much of the view is shown near-linearly so
+    // its dust lanes and arms keep their contrast (a log-like stretch lifts
+    // the interarm disk to the arms' level); a small one, the faint field
+    // and tidal debris get the full stretch.
+    const vm = galaxyVolumeMeter();
+    const stretch = blend * (1 - 0.7 * (vm.fresh ? smooth(0.02, 0.25, vm.cover) : 0));
+    extragalacticExposure.stretch = stretch;
+    s.uStretch.value = stretch;
+    s.uCull.value = CULL * (1 - stretch + stretch * EXT_STRETCH.cullScale);
+    s.uGainExposure.value = EXPOSURE.gain * EXPOSURE.value;
     // Chunk culling (CPU): outside the view cone, or too faint to reach the
     // display even at its brightest member's nearest possible distance.
     const tanY = Math.tan(camera.fov * Math.PI / 360), tanX = tanY * camera.aspect;
@@ -708,4 +738,16 @@ export function makeGalaxyChunkForTest(c) {
 function smooth(a, b, x) {
     const t = Math.max(0, Math.min(1, (x - a) / (b - a)));
     return t * t * (3 - 2 * t);
+}
+
+// How far the camera is out of the Milky Way's stellar disk, 0..1: inside
+// the disk (R < 20 kpc, |z| < 0.6 kpc) the sky is resolved stars and the
+// stellar exposure rules; a few kpc above it, or beyond its edge, the
+// Galaxy is an object in the view, photographed like any other. (x, y, z):
+// camera relative to the Galactic centre, world axes, Mpc.
+const NGP_WORLD = galacticToWorld([0, 0, 1]);
+export function galaxyExposureBlend(x, y, z) {
+    const zk = (x * NGP_WORLD[0] + y * NGP_WORLD[1] + z * NGP_WORLD[2]) * 1000;
+    const rk = Math.sqrt(Math.max(0, (x * x + y * y + z * z) * 1e6 - zk * zk));
+    return smooth(0.3, 3, Math.max(rk - 20, Math.abs(zk) - 0.6));
 }

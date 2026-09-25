@@ -3,7 +3,7 @@
 // the renderers and the world<->galactic conversions read) and the curated
 // galactic-centre black hole.
 //
-// Sgr A* is a STARS entry placed once from its RA/Dec at 26,000 ly -- a fixed
+// Sgr A* is a STARS entry placed once from its RA/Dec at R0 (26,673 ly) -- a fixed
 // point of the Sun-centred world frame. The Sun orbits the Galaxy
 // (solarOrbit.js) and the drawn disc and its centre move through that frame
 // accordingly, so the fixed entry drifted off the centre it marks: 247 pc

@@ -23,7 +23,7 @@ import {
     moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
 import { MOONS, moonOffset, moonFocusValue, moonFocusIndex, MOON_LABEL_DIST } from "./moons.js";
-import { addStarVisual, buildStars, updateStars, starVisualAlpha, syncActiveProceduralPoints } from "./stars.js";
+import { addStarVisual, buildStars, updateStars, updateHoleBeacons, starVisualAlpha, syncActiveProceduralPoints } from "./stars.js";
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff, targetState } from "./autopilot.js";
@@ -49,7 +49,7 @@ import { stellarExposure } from "./render/stellarAppearance.js";
 import { galacticCenterScene } from "./universe/starfield.js";
 import { evolutionAt } from "./universe/galaxyEvolution.js";
 import { cosmicTimeGyr } from "./universe/cosmicExpansion.js";
-import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit } from "./render/galaxyVolume.js";
+import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit, galaxyVolumeStats, galaxyVolumeExposureCap } from "./render/galaxyVolume.js";
 import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
 import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
 import { starViewUniforms } from "./render/starPointMaterial.js";
@@ -132,6 +132,7 @@ initXrPerf(renderer);
 const tier1RebaseEnabled = query.get("rebase") === "1";
 let lensingPass = { enabled: false };
 let updateLensingImpl = null;
+let renderLensedImpl = null;
 let lensingReady = null;
 const lensPrecheckV = new THREE.Vector3();
 function perfStart() { return PERF.enabled ? performance.now() : 0; }
@@ -180,7 +181,10 @@ function ensureLensingModule() {
         lensingReady = import("./lensing.js").then(mod => {
             lensingPass = mod.lensingPass;
             updateLensingImpl = mod.updateLensing;
-            return ensurePostProcessing(lensingPass).then(() => mod);
+            renderLensedImpl = mod.renderLensed;
+            // a bloom composer carries the pass; without one the lens bends
+            // the direct render (renderFrame)
+            return composer || bloomPass.enabled ? ensurePostProcessing(lensingPass).then(() => mod) : mod;
         }).catch(err => {
             console.warn("lensing load skipped", err);
             lensingReady = null;
@@ -199,9 +203,7 @@ function updateLensingLazy(camera, aspect) {
         ensureLensingModule();
         return false;
     }
-    const active = updateLensingImpl(camera, aspect);
-    if (active && !composer) ensurePostProcessing(lensingPass);
-    return active;
+    return updateLensingImpl(camera, aspect);
 }
 let catalogSearchHooks = null;
 let catalogSearchReady = null;
@@ -417,6 +419,7 @@ const cosmicInitT0 = perfStart();
 // the whole tier-1 streaming field into the far tier for free.
 initCosmicLayer(farTierGroup);
 addBackgroundHook(renderGalaxyVolume);
+window.__volStatus = galaxyVolumeStats; // debug/testing handle
 // Real stars (HYG catalog + curated destinations) at every camera distance,
 // one shared photometry with tier 1, the Sun and the active stars.
 initCatalogStars(scene);
@@ -1150,6 +1153,21 @@ function hoverVelocity(idx, out) {
     else { planetVel(idx, G.t, out); out.vx += eph.earthVx; out.vy += eph.earthVy; }
     return out;
 }
+// A velocity arrow keeps a constant on-screen length, so it says something
+// only while it is not much longer than the radius of the path its body moves
+// along: faded out as it grows from 2.5x to 10x that radius (at solar-system
+// scale an arrow of tens of AU stood over Earth's 1 AU orbit). Paths (km): a
+// planet's orbit, the Earth's, the Moon's and a hole's distance from the Sun,
+// the Sun's reflex orbit about the barycentre (~1 solar radius).
+function velocityGuideFade(target, lenU) {
+    let pathKm = R_SUN;
+    if (isBHTarget(target)) {
+        const bi = targetBHIndex(target);
+        pathKm = Math.hypot(BH.x[bi] - eph.sunX, BH.y[bi] - eph.sunY, BH.z[bi] - (eph.sunZ || 0));
+    } else if (target === BODY_EARTH || target === BODY_MOON) pathKm = Math.hypot(eph.sunX, eph.sunY, eph.sunZ || 0);
+    else if (target >= 0 && target < PL.length) pathKm = PL[target].a;
+    return smooth01(.1, .4, pathKm * K / Math.max(1e-9, lenU));
+}
 function updateHover(w, h) {
     let best = BODY_NONE, bestD = 18, bestPos = null;
     const ptr = labelPtr || lastPtr;
@@ -1225,13 +1243,15 @@ function updateHover(w, h) {
     hoverTipEl.style.display = "block";
     hoverTipEl.style.left = (ptr[0] + 16) + "px";
     hoverTipEl.style.top = (ptr[1] + 12) + "px";
-    if (v < 1e-9) {
-        hovLine.visible = false; hovCone.visible = false;
-        return;
-    }
     // direction arrow: where the body is heading in this frame
     const dCam = camera.position.distanceTo(bestPos);
     const len = dCam * .15;
+    const guide = velocityGuideFade(best, len);
+    if (v < 1e-9 || guide < .03) {
+        hovLine.visible = false; hovCone.visible = false;
+        return;
+    }
+    hovLine.material.opacity = hovCone.material.opacity = .9 * guide;
     hovDir.set(_hv.vx, 0, -_hv.vy).normalize();
     hovLinePos[0] = bestPos.x; hovLinePos[1] = bestPos.y; hovLinePos[2] = bestPos.z;
     hovLinePos[3] = bestPos.x + hovDir.x * len; hovLinePos[4] = bestPos.y; hovLinePos[5] = bestPos.z + hovDir.z * len;
@@ -1267,12 +1287,13 @@ function updateFocusVelocityVector(alpha = 1) {
     }
     velocityForTarget(target, focusVel);
     const v = Math.hypot(focusVel.vx, focusVel.vy);
-    if (v < 1e-9) {
+    const dCam = camera.position.distanceTo(pos);
+    const len = Math.min(dCam * .48, Math.max(dCam * .13, dCam * .018 * v));
+    alpha *= velocityGuideFade(target, len);
+    if (v < 1e-9 || alpha <= .03) {
         focusVelLine.visible = false; focusVelCone.visible = false;
         return;
     }
-    const dCam = camera.position.distanceTo(pos);
-    const len = Math.min(dCam * .48, Math.max(dCam * .13, dCam * .018 * v));
     focusVelDir.set(focusVel.vx, 0, -focusVel.vy).normalize();
     focusVelPos[0] = pos.x; focusVelPos[1] = pos.y; focusVelPos[2] = pos.z;
     focusVelPos[3] = pos.x + focusVelDir.x * len; focusVelPos[4] = pos.y; focusVelPos[5] = pos.z + focusVelDir.z * len;
@@ -1553,7 +1574,8 @@ function renderFrame(showCockpit) {
     if (VR.active) { renderVRFrame(showCockpit && VR.mode === "ship"); return; }
     const renderT0 = perfStart();
     const worldRenderT0 = perfStart();
-    if ((bloomPass.enabled || lensingPass.enabled) && composer) composer.render();
+    if (bloomPass.enabled && composer) composer.render();
+    else if (lensingPass.enabled && renderLensedImpl) renderLensedImpl(renderer, scene, camera);
     else renderSceneTiered(renderer, scene, camera);
     perfEnd("render.world", worldRenderT0, PERF.enabled ? {
         bloom: !!bloomPass.enabled,
@@ -1929,7 +1951,7 @@ function frame() {
         // stay centered at any warp; the lerp only glides out the residual
         // offset left by focus transitions and pans
         if (placed && camPrevFocus === G.focus) cam.tgt.add(camDelta.copy(tgt).sub(camPrevTgt));
-        // interstellar focus jumps snap: gliding 26,000 ly takes forever
+        // interstellar focus jumps snap: gliding 26,700 ly takes forever
         const glide = placed && G.uiMode !== "observe" && cam.tgt.distanceTo(tgt) < 1e8;
         cam.tgt.lerp(tgt, glide ? Math.min(1, dtR * 6) : 1);
         camPrevTgt.copy(tgt);
@@ -2113,6 +2135,10 @@ function frame() {
     const tides = mergerKeepAt(tMwRet / GYR_S, tM31Ret / GYR_S);
     updateGalaxyVolume(camera, G.t, era, tides ? tides.mwBins : mergeFrac, 1 - mwSprite, mwEvo.passive);
     updateCosmicLayer();
+    if (cosmicView) updateHoleBeacons(camera);
+    // one exposure for stars and diffuse light: lowered where the Galaxy's
+    // own light would clip (render/galaxyVolume.js, METER_TARGET)
+    stellarExposure.value = Math.min(stellarExposure.value, galaxyVolumeExposureCap());
     const mwSpriteDisk = MW_LIGHT.halo + MW_DISK_OF_TOTAL;
     updateGalaxyPopulation(camera, {
         tSim: G.t, gcScene, exposure: stellarExposure.value, pxScale: viewportSize.pxScale, viewport: [viewportSize.w, viewportSize.h],
@@ -2165,7 +2191,8 @@ function frame() {
         arrow.visible = false; flowArrow.visible = false; tipV.visible = false; tipF.visible = false;
         moonSoiRing.visible = false;
         clearBodyPrediction();
-        lensingPass.enabled = false;
+        // a supermassive hole's Einstein ring stays pixels wide light-years out
+        updateLensingLazy(camera, camera.aspect);
         bloomPass.enabled = false;
         renderFrame(false);
         return;
@@ -2184,7 +2211,11 @@ function frame() {
     const cd = camera.position.distanceTo(shipG.position);
     const cs = Math.min(2.4, Math.max(.012, cd * .02));
     const shipSpeed = Math.hypot(G.vx, G.vy, G.vz);
-    const directionAlpha = 1 - smooth01(DIR_FADE_START_KMS, DIR_FADE_END_KMS, shipSpeed);
+    // the direction guides fade by the same rule as the body arrows: the
+    // ship's path is its orbit about its primary (oi.r), set against the
+    // heading arrow's length
+    const shipPathGuide = smooth01(.1, .4, oi.r * K / Math.max(1e-9, cd * .21));
+    const directionAlpha = (1 - smooth01(DIR_FADE_START_KMS, DIR_FADE_END_KMS, shipSpeed)) * shipPathGuide;
     const velAngle = shipSpeed > 1e-9 ? Math.atan2(G.vy, G.vx) : G.heading;
     const headingRate = prevHeadingVis === null || dtR <= 0 ? 0 : Math.abs(angleDelta(G.heading, prevHeadingVis)) / dtR;
     const velAngleRate = prevVelAngleVis === null || dtR <= 0 ? 0 : Math.abs(angleDelta(velAngle, prevVelAngleVis)) / dtR;
@@ -2370,12 +2401,12 @@ function frame() {
             flArrPos[4] = oriY + fv[1] * fL;
             flArrPos[5] = oriZ + fv[2] * fL;
             flArrAttr.needsUpdate = true;
-            flowArrow.material.opacity = .95 * fRiver;
-            flowArrow.visible = true;
-            tipF.visible = true;
+            flowArrow.material.opacity = .95 * fRiver * shipPathGuide;
+            flowArrow.visible = shipPathGuide > .03;
+            tipF.visible = shipPathGuide > .03;
             tipF.position.set(flArrPos[3], flArrPos[4], flArrPos[5]);
             tipF.scale.setScalar(cd * .013);
-            tipF.material.opacity = fRiver;
+            tipF.material.opacity = fRiver * shipPathGuide;
             updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cd, fRiver);
         } else { flowArrow.visible = false; tipF.visible = false; hideCosmologyArrows(); }
     } else {

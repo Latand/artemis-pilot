@@ -8,7 +8,8 @@ export const stellarExposure = { value: 1 };
 // its stars can no longer be resolved). The volumetric Milky Way composites
 // with stellarExposure^(1-blend) * extragalacticExposure^blend so it and its
 // galaxy-population entry stay photometrically continuous.
-export const extragalacticExposure = { value: 1, blend: 0 };
+// stretch: how much of the display stretch below is applied.
+export const extragalacticExposure = { value: 1, blend: 0, stretch: 0 };
 // Display stretch for extended extragalactic light. Outside the Milky Way
 // the view is exposed like a photograph (see galaxyPopulationRender.js
 // metering), and galaxy light spans ~10^4 in surface brightness from bright

@@ -107,7 +107,7 @@ try {
         const errors = [];
         page.on("pageerror", e => errors.push(String(e)));
         page.on("console", m => { if (m.type() === "error") errors.push(m.text()); });
-        await page.goto(base + "?hidehelp=1&dpr=1&tier1=0&bloom=0&focus=sun&dist=2000" + (args.q ? "&" + args.q : ""));
+        await page.goto(base + "?hidehelp=1&dpr=1&tier1=0&galadapt=0&bloom=0&focus=sun&dist=2000" + (args.q ? "&" + args.q : ""));
         await page.waitForFunction(() => window.__AP_READY, null, { timeout: 120000 });
         const enter = page.getByRole("button", { name: "ENTER SIMULATION", exact: true });
         if (await enter.isVisible().catch(() => false)) await enter.click();

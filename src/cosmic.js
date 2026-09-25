@@ -17,7 +17,7 @@ export { mergerEpochGyr, mergerSeparationKpcAt, mergerDisruptFractionAt, mergerD
 import { PERF, markPerf } from "./perf.js";
 import { galaxyVolumeEnabled } from "./render/galaxyVolume.js";
 
-// Galactic-centre position in scene units (toward Sgr A*, ~26,000 ly). The
+// Galactic-centre position in scene units (toward Sgr A*, ~26,700 ly). The
 // procedural galaxy cloud and the real HYG catalog share this equatorial frame.
 const GC_SCENE = galacticCenterScene();
 export const GALAXY = {

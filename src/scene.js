@@ -203,6 +203,11 @@ export async function ensurePostProcessing(lensingPass = null) {
         // readable depth: the lensing pass bends only what lies behind a lens
         composerTarget.depthTexture = new THREE.DepthTexture(1, 1);
         composer = new EffectComposer(renderer, composerTarget);
+        // the composer's second target is a clone, and a cloned DepthTexture
+        // shares its source, i.e. one GL texture: the lens pass would sample
+        // the depth attachment of the target it draws into, a feedback loop
+        // the browser refuses to draw (no lensing, a black world). Its own one.
+        composer.renderTarget2.depthTexture = new THREE.DepthTexture(1, 1);
         composerPixelRatio = renderer.getPixelRatio();
         // Same multi-frustum tiering as the non-composer path (renderSceneTiered
         // above), just swapped in for RenderPass's single renderer.render() call
