@@ -69,19 +69,19 @@ if(!baseline) {
 // Exercise the real trails.js adapter, not a screenshot of a synthetic line.
 await page.evaluate(async()=>{
  const {renderer,camera,scene,THREE,mesh}=preview;mesh.visible=false;
- const before=new Set(scene.children),trails=await import('/src/trails.js'),{G,WORLD}=await import('/src/state.js'),{eph}=await import('/src/ephemeris.js'),{K,MU_E,R_EARTH}=await import('/src/constants.js');
+ const before=new Set(scene.children),trails=await import('/src/trails.js'),{G,WORLD}=await import('/src/state.js'),{eph}=await import('/src/ephemeris.js'),{K,MU_S,R_SUN}=await import('/src/constants.js');
  const paths=scene.children.filter(m=>!before.has(m)&&m.isLine&&!m.isLineLoop).slice(0,2);
  for(const m of scene.children) if(!before.has(m))m.visible=false;
- const r=R_EARTH+300,period=2*Math.PI*Math.sqrt(r*r*r/MU_E),speed=Math.sqrt(MU_E/r);
+ const r=0.6*149597870.7,period=2*Math.PI*Math.sqrt(r*r*r/MU_S),speed=Math.sqrt(MU_S/r);
  eph.earthX=eph.earthY=eph.earthZ=eph.earthVx=eph.earthVy=eph.earthVz=0;
- eph.moonX=384400;eph.moonY=eph.moonZ=0;eph.sunX=1.5e8;eph.sunY=eph.sunZ=0;
+ eph.moonX=384400;eph.moonY=eph.moonZ=0;eph.sunX=0;eph.sunY=eph.sunZ=0;
  for(let i=0;i<eph.plX.length;i++){eph.plX[i]=1e9;eph.plY[i]=eph.plZ[i]=0;}
- G.uiMode='pilot';G.warp=1;G.paused=true;G.dead=false;G.predict=false;WORLD.earthDestroyed=false;
- camera.position.set(0,r*K*3.2,0);camera.up.set(0,0,-1);camera.lookAt(0,0,0);camera.near=.001;camera.far=1000;camera.updateProjectionMatrix();camera.updateMatrixWorld();
- const earth=new THREE.Mesh(new THREE.SphereGeometry(R_EARTH*K,48,24),new THREE.MeshBasicMaterial({color:0x132837}));scene.add(earth);
+ G.uiMode='pilot';G.warp=1;G.paused=true;G.dead=false;G.predict=false;WORLD.earthDestroyed=true;WORLD.moonDestroyed=true;WORLD.sunDestroyed=false;
+ camera.position.set(0,r*K*3.2,0);camera.up.set(0,0,-1);camera.lookAt(0,0,0);camera.near=r*K*.01;camera.far=r*K*12;camera.updateProjectionMatrix();camera.updateMatrixWorld();
+ const centralBody=new THREE.Mesh(new THREE.SphereGeometry(R_SUN*K,32,16),new THREE.MeshBasicMaterial({color:0xffe0a3}));scene.add(centralBody);
  const ship=new THREE.Mesh(new THREE.SphereGeometry(r*K*.012,12,8),new THREE.MeshBasicMaterial({color:0xe6ebe9}));scene.add(ship);
  function position(theta,time){G.t=time;G.x=r*Math.cos(theta);G.y=r*Math.sin(theta);G.z=0;G.vx=-speed*Math.sin(theta);G.vy=speed*Math.cos(theta);G.vz=0;ship.position.set(G.x*K,0,-G.y*K);}
- function draw(){renderer.render(scene,camera);renderer.getContext().finish();return {png:renderer.domElement.toDataURL(),paths:trails.flightTrailStatus?.()||paths.map(m=>({visible:m.visible,vertices:m.geometry.drawRange.count})),time:G.t,period};}
+ function draw(){renderer.render(scene,camera);renderer.getContext().finish();return {png:renderer.domElement.toDataURL(),paths:trails.flightTrailStatus?.()||paths.map(m=>({visible:m.visible,vertices:m.geometry.drawRange.count})),time:G.t,period,primary:'Sun',orbitalRadiusAu:0.6};}
  preview.trailFade=(age)=>{G.t=preview.fadeStart+age*period;trails.setJourneyOpacity(0);return draw();};
  preview.trailCase=(name)=>{
   trails.clearTrail();for(const p of paths)p.visible=true;G.uiMode='pilot';G.warp=1;
