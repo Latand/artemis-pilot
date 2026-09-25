@@ -45,7 +45,7 @@ const browser = await pw.chromium.launch({
     "--ignore-gpu-blocklist",
   ],
 });
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+const page = await browser.newPage({ viewport: { width: 800, height: 500 }, deviceScaleFactor: 1 });
 page.setDefaultTimeout(180000);
 await page.addInitScript(() => {
   localStorage.clear();
