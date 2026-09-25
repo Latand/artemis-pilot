@@ -579,6 +579,28 @@ float gdDust(vec3 q, float wide, float amp) {
     }
     return exp(n);
 }
+// Average opacity along the integration segment, not across an isotropic
+// ball as wide as that segment. A long ray step need not erase a filament
+// that is resolved TRANSVERSE to the ray. Three filtered midpoint samples
+// retain the existing world-space cascade and its unit-mean normalization.
+// This is quadrature of density, not of log-density or transmission.
+// The pixel footprint still removes subpixel frequencies. A smooth blend
+// avoids a sample-count boundary when FOV, DPR or integration scale changes.
+// No new light, cloud seeds, frame noise or screen-space sharpening is added.
+uniform float uDustQuadrature;
+float gdDustSegment(vec3 q, vec3 dir, float wT, float wL, float amp) {
+    float longitudinal = max(2.0 * uWideK, 0.35 * length(dir.xy)) * wL;
+    float wide = max(wT, longitudinal);
+    float blend = uDustQuadrature * gmSmooth(0.8, 1.6, wide)
+        * (1.0 - gmSmooth(0.6, 1.0, wT / max(wide, 1e-6)));
+    if (blend <= 0.0) return gdDust(q, wide, amp);
+    float subWide = max(wT, longitudinal / 3.0);
+    vec3 offset = dir * (2.0 * wL / 3.0);
+    float fine = (gdDust(q - offset, subWide, amp)
+        + gdDust(q, subWide, amp) + gdDust(q + offset, subWide, amp)) / 3.0;
+    if (blend >= 1.0) return fine;
+    return mix(gdDust(q, wide, amp), fine, blend);
+}
 // Structure maps at pattern-frame q (pc), filtered to the footprint (pc) the
 // sample stands for: (young, old, dust, hii), each normalized like
 // galaxyMaps.sampleGalaxyMapsInto; smooth model until the maps exist.
@@ -628,7 +650,7 @@ vec4 gmSample(vec3 p, vec3 dir, float footPc, float wT, float wL, out float hii,
         youngC = yc.x; hiiC = yc.y;
         // the dust's clumpiness follows its density in the maps (arms and
         // lanes 2-5x the local mean, the interarm a fraction of it)
-        dustC = gdDust(q, wide, 0.4 + 0.6 * gmSmooth(0.4, 2.5, mp.z));
+        dustC = gdDustSegment(q, dq, wT, wL, 0.4 + 0.6 * gmSmooth(0.4, 2.5, mp.z));
     }
     float hole = gmSmooth(${MW.diskHoleIn.toFixed(1)}, ${MW.diskHoleOut.toFixed(1)}, R);
     float az = abs(p.z);
@@ -680,6 +702,7 @@ export function galaxyModelUniformValues() {
         uLongBarNorm: BAR_NORM.long,
         uKappaSun: MW.kappaSun,
         uClumpDust: MW.dustClump,
+        uDustQuadrature: 1,
         uClumpYoung: MW.youngClump,
         uKeepR: new Array(MW_BIN_COUNT).fill(1),
         uMapReady: 0,
