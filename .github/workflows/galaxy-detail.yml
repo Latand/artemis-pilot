@@ -1,0 +1,59 @@
+name: Milky Way detail comparison
+on:
+  pull_request:
+    paths:
+      - 'src/render/**'
+      - 'src/universe/galaxy*.js'
+      - 'scripts/measure-galaxy-detail.mjs'
+      - '.github/workflows/galaxy-detail.yml'
+permissions:
+  contents: read
+concurrency:
+  group: galaxy-detail-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  detail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [before, after, reference]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Record source identities and prepare merged baseline
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          printf '%s\n' "$BASE_SHA" > evidence/sources/base-sha.txt
+          cp package-lock.json evidence/sources/
+          git diff "$BASE_SHA" HEAD > evidence/sources/change.diff
+          if [ "$VARIANT" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/detail-base" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/detail-base/node_modules"
+            echo "CAPTURE_ROOT=$RUNNER_TEMP/detail-base" >> "$GITHUB_ENV"
+          else
+            echo "CAPTURE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          fi
+      - run: npx playwright install --with-deps chromium
+      - name: Capture matched views, translation sequence and timings
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: node scripts/measure-galaxy-detail.mjs "$CAPTURE_ROOT" evidence/detail
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: galaxy-detail-${{ matrix.variant }}
+          path: evidence/
+          retention-days: 14
