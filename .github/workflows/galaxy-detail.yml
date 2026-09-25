@@ -1,0 +1,91 @@
+name: Milky Way detail comparison
+on:
+  pull_request:
+    paths:
+      - 'src/render/**'
+      - 'src/universe/galaxy*.js'
+      - 'scripts/measure-galaxy-detail.mjs'
+      - 'docs/galaxy-detail/analyze.py'
+      - '.github/workflows/galaxy-detail.yml'
+permissions:
+  contents: read
+concurrency:
+  group: galaxy-detail-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  detail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {variant: before, shard: all, artifact: before}
+          - {variant: after, shard: all, artifact: after}
+          - {variant: reference, shard: static, artifact: reference-static}
+          - {variant: reference, shard: early, artifact: reference-early}
+          - {variant: reference, shard: late, artifact: reference-late}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Record source identities and prepare merged baseline
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          printf '%s\n' "$BASE_SHA" > evidence/sources/base-sha.txt
+          cp package-lock.json evidence/sources/
+          git diff "$BASE_SHA" HEAD > evidence/sources/change.diff
+          if [ "$VARIANT" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/detail-base" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/detail-base/node_modules"
+            echo "CAPTURE_ROOT=$RUNNER_TEMP/detail-base" >> "$GITHUB_ENV"
+          else
+            echo "CAPTURE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+          fi
+      - run: npx playwright install --with-deps chromium
+      - name: Capture matched views, translation sequence and timings
+        env:
+          VARIANT: ${{ matrix.variant }}
+          REFERENCE_SHARD: ${{ matrix.shard }}
+        run: node scripts/measure-galaxy-detail.mjs "$CAPTURE_ROOT" evidence/detail
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: galaxy-detail-${{ matrix.artifact }}
+          path: evidence/
+          retention-days: 14
+  compare:
+    needs: detail
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install numpy scipy Pillow
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: galaxy-detail-*
+          path: evidence/
+      - name: Assert independent-reference fidelity and temporal residual
+        run: python docs/galaxy-detail/analyze.py evidence/galaxy-detail-before evidence/galaxy-detail-after evidence evidence/comparison --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: galaxy-detail-comparison
+          path: evidence/comparison/
+          retention-days: 14
