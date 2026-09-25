@@ -516,8 +516,8 @@ function updateLocalGroup(m31NowMpc) {
 // exposure (stellarAppearance.extragalacticExposure). A resolved galaxy in
 // view overrides the field metering (see the end of meterExposure). One
 // exposure scales every galaxy, so relative brightness is exact.
-const EXPOSURE = { gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
-const _mPeak = new Float32Array(EXPOSURE.n + 512), _mFoot = new Float32Array(EXPOSURE.n + 512), _mFootOwn = new Float32Array(EXPOSURE.n + 512), _mIdx = new Uint32Array(EXPOSURE.n + 512);
+const EXPOSURE = { gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedSpan: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
+const _mPeak = new Float32Array(EXPOSURE.n + 512), _mFoot = new Float32Array(EXPOSURE.n + 512), _mFootOwn = new Float32Array(EXPOSURE.n + 512), _mW = new Float32Array(EXPOSURE.n + 512), _mIdx = new Uint32Array(EXPOSURE.n + 512);
 // Peak display value (at exposure 1) and pixel footprint of one galaxy.
 function galaxyPeak(MV, hKpc, d, pxScale, out) {
     const dPc = d * 1e6;
@@ -558,27 +558,32 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         const d = Math.hypot(x, y, z);
         if (!(d > 1e-4) || !inView(e, x, y, z, tanX, tanY)) continue;
         galaxyPeak(MV[i], cat.hKpc[i], d, pxScale, _pf);
-        _mPeak[m] = _pf[0]; _mFoot[m] = _pf[1] * w; _mFootOwn[m] = _pf[1]; m++;
+        _mPeak[m] = _pf[0]; _mFoot[m] = _pf[1] * w; _mFootOwn[m] = _pf[1]; _mW[m] = 1; m++;
     }
     const lg = state.lg;
     // The Milky Way while the volume draws it: its measured brightest pixels
-    // (render/galaxyVolume.js), not the sprite model's estimate.
+    // (render/galaxyVolume.js), not the sprite model's estimate. As the
+    // volume fades into the sprite (its opacity), the two entries share the
+    // weight, so the exposure follows the handover without a jump.
     const vol = galaxyVolumeMeter();
-    if (vol.fresh && vol.peak > 0 && m < _mPeak.length) {
-        _mPeak[m] = vol.peak; _mFoot[m] = Math.min(vol.corePx, vol.cover * screenPx); _mFootOwn[m] = Math.max(_mFoot[m], vol.cover * screenPx); m++;
+    if (vol.live && vol.peak > 0 && m < _mPeak.length) {
+        _mW[m] = vol.opacity;
+        _mPeak[m] = vol.peak; _mFootOwn[m] = vol.cover * screenPx;
+        _mFoot[m] = Math.min(vol.corePx, _mFootOwn[m]) * vol.opacity; m++;
     }
     if (lg) {
         const d3 = lg.mesh.geometry.attributes.aDelta.array;
         const ph = lg.mesh.geometry.attributes.aPhot.array;
         const tt = lg.mesh.geometry.attributes.aT.array;
         for (let k = 0; k < lg.rides.length && m < _mPeak.length; k++) {
-            if (vol.fresh && tt[k] > 99 && tt[k] < 199) continue;   // measured above
+            const wk = tt[k] > 99 && tt[k] < 199 ? 1 - vol.opacity : 1;   // the Milky Way: shared with the volume above
+            if (!(wk > 0)) continue;
             const x = d3[k * 3] - camGC[0], y = d3[k * 3 + 1] - camGC[1], z = d3[k * 3 + 2] - camGC[2];
             const d = Math.hypot(x, y, z);
             const rad = 4 * ph[k * 4 + 2] * 1e-3 / Math.max(d, 1e-6);
             if (!(d > 1e-5) || !inView(e, x, y, z, tanX, tanY, rad)) continue;
             galaxyPeak(ph[k * 4], ph[k * 4 + 2], d, pxScale, _pf);
-            _mPeak[m] = _pf[0]; _mFoot[m] = Math.min(_pf[1], screenPx); _mFootOwn[m] = _mFoot[m]; m++;
+            _mPeak[m] = _pf[0]; _mFootOwn[m] = Math.min(_pf[1], screenPx); _mFoot[m] = _mFootOwn[m] * wk; _mW[m] = wk; m++;
         }
     }
     if (!m) return EXPOSURE.auto;
@@ -596,13 +601,21 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
     // above the metering target -- near white, its disk in the mid-tones --
     // so it keeps its structure instead of burning to a white disk while the
     // exposure chases the faint field around it, and zooming into it does
-    // not re-expose.
-    let resolvedPeak = 0;
-    for (let k = 0; k < m; k++) if (_mFootOwn[k] >= EXPOSURE.resolvedPx && _mPeak[k] > resolvedPeak) resolvedPeak = _mPeak[k];
-    // with a resolved galaxy in view its core sets the exposure (zooming into
-    // it keeps the picture), otherwise the field's brightest pixels
+    // not re-expose. Otherwise the field's brightest pixels set it. A galaxy
+    // counts as resolved progressively, as its footprint grows from
+    // resolvedPx to resolvedPx * resolvedSpan pixels, so zooming out of the
+    // Local Group hands the exposure to the field gradually, not in a jump;
+    // the most demanding galaxy wins.
     const field = ref > 0 ? EXPOSURE.target / ref : EXPOSURE.auto;
-    return resolvedPeak > 0 ? EXPOSURE.resolvedHeadroom * EXPOSURE.target / resolvedPeak : field;
+    const lnField = Math.log(field), lnSpan = Math.log(EXPOSURE.resolvedSpan);
+    let ln = Infinity;
+    for (let k = 0; k < m; k++) {
+        if (!(_mFootOwn[k] > EXPOSURE.resolvedPx) || !(_mPeak[k] > 0)) continue;
+        const t = Math.min(1, Math.log(_mFootOwn[k] / EXPOSURE.resolvedPx) / lnSpan);
+        const lnRes = Math.log(EXPOSURE.resolvedHeadroom * EXPOSURE.target / _mPeak[k]);
+        ln = Math.min(ln, lnField + (lnRes - lnField) * t * t * (3 - 2 * t) * _mW[k]);
+    }
+    return ln < Infinity ? Math.exp(ln) : field;
 }
 
 // --- Per frame ---------------------------------------------------------------------

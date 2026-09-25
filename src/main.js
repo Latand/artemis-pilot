@@ -2203,6 +2203,9 @@ function frame() {
     bloomPass.enabled = !bloomDisabled && (cinematic.isPlaying() || bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
     if (bloomPass.enabled && !composer) ensurePostProcessing(lensingPass);
     updateBodyShaders(camera, G.t);
+    // the bodies meter the exposure afresh inside a planetary system: keep
+    // the diffuse-light cap on it too (see the cosmic layer above)
+    stellarExposure.value = Math.min(stellarExposure.value, galaxyVolumeExposureCap());
     const starsT0 = perfStart();
     updateStars(camera, dtR);
     perfEnd("stars.update", starsT0, PERF.enabled ? { entries: STARS.length, activeStars: ACTIVE_STARS.length } : null);

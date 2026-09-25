@@ -206,15 +206,17 @@ function linearRgbHii() {
 // the bulge, at the Galactic centre) its light reaches many times white at
 // that exposure, and a camera would expose for it. After each draft the
 // image is max-pooled (above) and read back on the next frame; the cap puts
-// the METER_PCT quantile of the blocks at METER_TARGET. Above the disk
-// (from METER_ALT_PC up), where the disk's glow fills the view instead of a
-// band across a dark sky, it also puts their median at METER_MID, so the
-// disk keeps a photographic tonal range instead of washing out into a haze.
+// the METER_PCT quantile of the blocks at METER_TARGET, and keeps their
+// median at most METER_MID_IN, so a band that fills much of the view (the
+// Solar System seen against the inner Galaxy) stays a band across a dark
+// sky. Above the disk (from METER_ALT_PC up), where the disk's glow fills
+// the view, the median goes to METER_MID, so the disk keeps a photographic
+// tonal range instead of washing out into a haze.
 // It only ever lowers the exposure (a faint sky keeps the stars'
 // calibration) and follows in log space with a METER_TAU time constant;
 // main.js applies it to the stellar exposure, so stars and diffuse light
 // stay on one exposure.
-const METER_TARGET = 1.0, METER_PCT = 0.99, METER_MID = 0.05, METER_ALT_PC = [300, 800], METER_TAU = 0.5;
+const METER_TARGET = 1.0, METER_PCT = 0.99, METER_MID = 0.05, METER_MID_IN = 0.12, METER_ALT_PC = [300, 800], METER_TAU = 0.5;
 const meter = { rt: null, mat: null, scene: null, buf: null, lum: null, pending: false, target: 1, cap: 1, t: 0, fresh: true };
 
 // Resolution. The draft (drawn every frame while the view changes) covers
@@ -585,7 +587,10 @@ function updateAnchor(camGal, M, tanX, tanY, pxScale, screenPx) {
 // its core covers, and the fraction of the view its disk covers.
 export function galaxyVolumeMeter() {
     const fresh = !!(state.enabled && state.maps && state.opacity > 0.5 && anchor.fresh && extragalacticExposure.blend > 0);
-    return { peak: anchor.peak * state.opacity, corePx: anchor.corePx, cover: anchor.cover, fresh };
+    // live: measured at all, for a metering that hands over to the Milky Way
+    // sprite gradually as the volume fades (opacity)
+    const live = !!(state.enabled && state.maps && state.opacity > 0.001 && anchor.fresh && extragalacticExposure.blend > 0);
+    return { peak: anchor.peak * state.opacity, corePx: anchor.corePx, cover: anchor.cover, fresh, live, opacity: live ? state.opacity : 0 };
 }
 // The meter's reading of the previous draft (see METER_TARGET).
 function meterRead(renderer) {
@@ -599,8 +604,9 @@ function meterRead(renderer) {
     let target = peak > 0 ? Math.min(1, METER_TARGET / peak) : 1;
     const t = Math.min(1, Math.max(0, (Math.abs(_camGal[2]) - METER_ALT_PC[0]) / (METER_ALT_PC[1] - METER_ALT_PC[0])));
     const w = t * t * (3 - 2 * t);
-    if (w > 0 && mid > METER_MID) target = Math.min(target, Math.pow(METER_MID / mid, w));
-    meter.target = target;
+    const midTarget = METER_MID_IN * Math.pow(METER_MID / METER_MID_IN, w);
+    if (mid > midTarget) target = Math.min(target, midTarget / mid);
+    meter.target = target; meter.peak = peak; meter.mid = mid;
 }
 function meterPool(renderer, rt) {
     meter.mat.uniforms.uSrc.value = rt.texture;
@@ -677,7 +683,7 @@ export function galaxyVolumeStats() {
         enabled: state.enabled, renders: state.renders, res: rt ? [rt.width, rt.height] : null, scale: RES_FORCED || state.scale,
         mapsReady: !!state.maps, mapsMs: state.maps?.ms ?? null, fade: state.mapFade, draft: !refined,
         anchor: { peak: anchor.peak, cover: anchor.cover, fresh: anchor.fresh },
-        budget: { draft: budget.draft, refine: budget.refine }, exposureCap: meter.cap,
+        budget: { draft: budget.draft, refine: budget.refine }, exposureCap: meter.cap, meterPeak: meter.peak, meterMid: meter.mid,
     };
 }
 

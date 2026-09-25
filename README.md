@@ -1,8 +1,41 @@
 # Artemis Pilot
 
+**One continuous universe, from low Earth orbit to the cosmic web, simulated and rendered live in the browser.**
+
 Artemis Pilot is a layered live-universe simulator in Three.js. The framing: far-future AI-human hybrids cross between stars for centuries, living inside the ship's simulation of the gravity outside the hull — this is that simulation. Fly from low Earth orbit to the Moon, Mars, Proxima Centauri, or the supermassive black hole at the galactic center; warp time to a billion years per second; hand the stick to the autopilot and take it back at any keystroke; and watch the spacetime river respond around planets and singularities. The simulation runs in layers — integrated local dynamics, analytic handoffs, reduced-order deep-time models, and labeled visual metaphors; the Model scope section states exactly what each layer covers.
 
-![Artemis Pilot: Earth orbit with spacetime river flow](docs/screenshots/01-earth-orbit-river.png)
+![The Milky Way seen face-on from 50,000 light-years: bar, spiral arms, dust lanes and star-forming regions, all rendered live](docs/screenshots/universe-01-milky-way-face-on.png)
+
+## One continuous universe
+
+There are no scene switches and no loading screens between scales. One camera, one clock and one photometric chain run from a planet's surface to the large-scale structure of the universe:
+
+- **Zoom out without a cut.** The Earth shrinks into the Solar System, the Sun becomes one star among the Milky Way's, the Milky Way becomes one galaxy of the Local Group, and the Local Group one knot of the cosmic web — 239,684 real galaxies from the Local Volume catalog and the 2MASS Redshift Survey.
+- **A Milky Way you can fly into.** The Galaxy is not a texture or a sprite: it is a volumetric barred spiral (Reid 2019 arms, V-band calibrated to M_V −21.65) with dust, a central molecular zone, star-forming complexes, clusters and HII bubbles, raymarched per pixel. The same model is the band across the sky from the Earth and the spiral seen from outside.
+- **Detail that follows the zoom.** The goal is a picture that stays sharp at every distance: from outside you see arms and dust lanes; closer in, the dust breaks into clumps and filaments and the arms into star-forming complexes, clusters and HII bubbles; farther away the same structures average out smoothly. Each level shows less detail rather than a blurrier copy of the same picture. While the camera moves a fast draft keeps the frame rate; once it stops, the view is refined at full device resolution. (Within a few thousand light-years of the disk the structure is still softer than in photographs; see the [known approximations](docs/universe-continuity.md#known-approximations-and-discrepancies).)
+- **Physically consistent light.** Resolved stars, the unresolved glow of the Milky Way and distant galaxies carry the same flux they would as stars: fly toward a star and it brightens by inverse square; leave the Galaxy and the photographic exposure hands over smoothly.
+- **Light takes time.** Every galaxy is drawn on the camera's past light cone (redshift, (1+z)^-4 dimming, expansion of unbound structure only); Andromeda, the merger debris, the Sun and black-hole flares are seen at their retarded time. A fast camera sees relativistic aberration and Doppler shifts, and black holes bend the light of what lies behind them.
+- **Deep time.** Warp to a billion years per second and watch the Milky Way and Andromeda merge, the Sun become a white dwarf, and the galaxies fade and redden toward the degenerate era.
+- **Honest about its limits.** Provenance, approximations and tests for every layer are in [`docs/universe-continuity.md`](docs/universe-continuity.md).
+
+### Tours
+
+| From the Earth to the cosmic web | Into the Milky Way |
+| --- | --- |
+| ![Continuous zoom from Earth orbit out through the Solar System, the Milky Way and the Local Group to the cosmic web](docs/screenshots/tour-earth-to-cosmic-web.gif) | ![Fly in from 160,000 light-years to the spiral arms, then swing round to see the disk in perspective](docs/screenshots/tour-into-the-milky-way.gif) |
+
+Every frame of these tours is an unedited render of the running simulation (`node scripts/capture-tour.mjs`).
+
+### Gallery
+
+| | |
+| --- | --- |
+| ![The Solar System against the band of the Milky Way](docs/screenshots/universe-02-solar-system.png) | ![The Milky Way band seen from ten light-years from the Sun](docs/screenshots/universe-03-sun-neighbourhood.png) |
+| **The Solar System** against the inner Milky Way: dust lanes, star clouds and HII regions in the band behind the planets' orbits | **Ten light-years out**: the Sun is one star among many, and the band is the same volumetric model seen from inside |
+| ![Spiral arms from 20,000 light-years](docs/screenshots/universe-04-spiral-arm.png) | ![A spiral arm from 8,000 light-years](docs/screenshots/universe-05-spiral-arm-close.png) |
+| **20,000 light-years**: dust lanes on the inner edge of the arms, young clusters strung along them | **8,000 light-years**: the dust breaks into clumps and filaments; pink HII regions mark star formation |
+| ![The Milky Way from 50,000 light-years, seen at a slant](docs/screenshots/universe-06-milky-way-tilted.png) | ![The Earth from 22,000 km](docs/screenshots/universe-07-earth.png) |
+| **The disk in perspective**: the bar and bulge behind thin dust lanes | **And back home**: the same simulation, 22,000 km above the Earth |
 
 ## Highlights
 
@@ -22,7 +55,7 @@ Artemis Pilot is a layered live-universe simulator in Three.js. The framing: far
 - **Mouse inertial control**: hold the ship marker deliberately, pull it through space, and release; the damped release velocity becomes the ship's new momentum.
 - **Cosmology fields**: Planck18-scale dark-energy terms are suppressed inside bound systems. Shift+O exposes a modeled differential NFW Milky Way surface with acceleration vectors. The NFW application remains under R2 physics review. Bound-system handling suppresses much of the applied effect in disk-regime states.
 - **Deep-time cosmic evolution**: the Milky Way and Andromeda form a contingent deterministic scenario under the chosen reduced-order equations and parameters: first pericentre around 4.0 Gyr, capture around 7.1 Gyr, with both stellar disks torn into bridges, tails and a remnant envelope by a restricted N-body model whose light is handed over exactly from the smooth galaxy models. A Sun-only evolution track covers red-giant and white-dwarf phases. Galaxies evolve (star formation histories, fading, reddening) and are seen at the epoch their light left them.
-- **One universe at every scale**: one photometric chain from stars to the diffuse Milky Way (a flux-preserving resolved/unresolved partition) to galaxies as extended sources; the Milky Way is one volumetric barred spiral seen from the Earth or from outside (Reid 2019 arms, dust lanes, star-forming knots, M_V -21.65), whose detail refines as the camera zooms in instead of blurring; 239,684 galaxies from the Local Volume catalog and the 2MASS Redshift Survey (groups, clusters, filaments, voids), with labelled statistical completion only beyond the data; flat-LCDM expansion for unbound structure only, and every galaxy drawn on the camera's past light cone (redshift, (1+z)^-4 dimming, event horizon in deep time). See `docs/universe-continuity.md` for provenance, approximations and tests.
+- **One universe at every scale**: one photometric chain from stars to the diffuse Milky Way (a flux-preserving resolved/unresolved partition) to galaxies as extended sources; the Milky Way is one volumetric barred spiral seen from the Earth or from outside (Reid 2019 arms, dust lanes, star-forming knots, M_V -21.65), whose detail refines as the camera zooms in instead of blurring (see [One continuous universe](#one-continuous-universe)); 239,684 galaxies from the Local Volume catalog and the 2MASS Redshift Survey (groups, clusters, filaments, voids), with labelled statistical completion only beyond the data; flat-LCDM expansion for unbound structure only, and every galaxy drawn on the camera's past light cone (redshift, (1+z)^-4 dimming, event horizon in deep time). See `docs/universe-continuity.md` for provenance, approximations and tests.
 - **Spacetime river view**: a velocity-field visualization renders GPU particle flow around integrated bodies and compact objects. It also renders modeled dark-energy and halo terms.
 - **Dynamic black holes**: player-placed holes use configurable Schwarzschild radii and the Paczynski-Wiita pseudo-Newtonian approximation, integrated with the planets under momentum-conserving pair forces. A quiet hole is a shadow and a photon ring; an accretion disk appears only while something accretes (a tidal disruption's returning debris, or a quasar): Novikov–Thorne temperatures from the ISCO scaled by the accretion rate, Keplerian rotation in sim time (orbit-averaged when an orbit is shorter than a frame), Doppler beaming and gravitational redshift (colour from T·g, brightness ×g⁴). Jets only for jetted sources, growing at ~c. Catalog and special-object black holes, including SGR A*, use the capped active-star Newtonian field. Merger bookkeeping and Hawking readouts cover the remaining black-hole features.
 - **Tidal disruptions**: a close encounter is classified from its osculating orbit — none, tidal distortion, partial or full disruption (Guillochon & Ramirez-Ruiz 2013 fits, β_d 0.9 / 1.85), or swallowed whole (r_t inside the horizon, or a plunge with L < 4GM/c) — and resolved at its analytic pericentre, so the outcome does not depend on warp or frame rate. Bodies stretch along the tidal axis as they approach; disrupted matter becomes up to 3000 fluid elements on precessing conics whose frozen-in energy spread produces the stream, the bound/unbound split and the t^-5/3 return by itself. The bound half circularizes into the disk and feeds the hole along M_acc(t) = ½M*[1−(t/t_fb)^−2/3] (t_fb = 41 d for the Sun and 10⁶ M☉); debris, disk and flare are drawn at the camera's retarded time, while the HUD light curve stays in coordinate time. Captures of every regime: `docs/tde-regimes/` (`node scripts/capture-tde.mjs`).
@@ -44,15 +77,11 @@ Current limits:
 - **Gravitational waves**: merger energy bookkeeping omits waveform generation and strain propagation.
 - **Gravity scale**: the model has bounded local active gravity and no galaxy-wide N-body integration.
 
-## Screenshots
+## Flight and physics screenshots
 
 ### Earth Orbit River Field
 
 ![Earth orbit river field](docs/screenshots/01-earth-orbit-river.png)
-
-### Solar System Overview
-
-![Solar System overview](docs/screenshots/02-solar-system-overview.png)
 
 ### Locked Body Prediction
 
@@ -65,10 +94,6 @@ Current limits:
 ### HYG Catalog Search
 
 ![HYG catalog search focused on Canopus](docs/screenshots/05-hyg-catalog-search.png)
-
-### Milky Way Scale
-
-![Milky Way scale with full galaxy LOD](docs/screenshots/06-milky-way-scale.png)
 
 ### Local Group Cosmology
 

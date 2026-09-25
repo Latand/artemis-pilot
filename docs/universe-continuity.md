@@ -67,22 +67,27 @@ tone map.
   stellar exposure, lowered where the Galaxy's own light would clip (from
   above the disk or beside the bulge, where the inner Galaxy shows through
   little dust): each draft of the volume is max-pooled and read back, and
-  the exposure is capped so the brightest 1 % of blocks sit at white and,
-  once the camera is more than ~0.3-0.8 kpc above the plane (the disk's
-  glow filling the view), their median at 0.05, the level the
+  the exposure is capped so the brightest 1 % of blocks sit at white and
+  their median at no more than 0.12 (a band filling much of the view, such
+  as the inner Galaxy behind the Solar System, stays a band across a dark
+  sky; the cap holds inside planetary systems too, where the bodies meter
+  the exposure first) and, once the camera is more than ~0.3-0.8 kpc above
+  the plane (the disk's glow filling the view), their median at 0.05, the level the
   photographic exposure outside gives the disk, so the transition keeps
   one tonal range instead of washing out. The cap never raises the exposure, so a dark
   sky keeps the stars' calibration. As the camera leaves the disk (0.3 to 3 kpc beyond a
   slab of R < 20 kpc, |z| < 0.6 kpc: `galaxyExposureBlend`) it blends into a
   photographic auto-exposure metered on the galaxies in view (0.6 s time
-  constant). With a resolved galaxy in view (>= 30 px) its core is exposed
+  constant). With a resolved galaxy in view (footprint >= 900 px) its core is exposed
   1.2x above the metering target, near white with the disk in the
   mid-tones; for the Milky Way the core's surface brightness comes from the
   model itself (face-on central column over a ~1 kpc^2 core, averaged over
   the pixel footprint), which does not change while zooming, so moving from
   the whole Galaxy into one arm keeps the exposure: the same picture with
   more detail. Without a resolved galaxy the brightest 0.2 % of pixels sit
-  at 0.9. One exposure scales every galaxy, so relative brightness is exact.
+  at 0.9. A galaxy counts as resolved progressively, as its footprint grows
+  from 30 to 900 px (log-smooth blend of the two exposures), so zooming out
+  of the Local Group hands the exposure to the field without a jump. One exposure scales every galaxy, so relative brightness is exact.
 - **Display stretch outside the Galaxy.** Extended light spans ~10^4 in
   surface brightness from galaxy cores to tidal debris, and the ACES tone
   map clips linear values below ~0.002. Outside the Milky Way (same blend as
@@ -276,6 +281,11 @@ with the smooth models.
   do not shear them. The dust clouds below the maps' texel dim the diffuse
   light only: a resolved star behind one is extinguished by the smooth
   model.
+- Within a few thousand light-years of the disk (camera about 1-3 kpc
+  from the structure it looks at) the volume is softer than photographs:
+  the finest dust octave and the clusters are statistical fields a few
+  tens of parsecs across, so an interarm view reads as smooth haze with
+  sparse stars rather than resolved clouds.
 - Tidal debris: no disk self-gravity, no gas or star formation, prescribed
   host orbit; the Magellanic Clouds and M33 are not perturbed. Seen from
   inside the debris (e.g. from the Sun after the merger) its diffuse
