@@ -556,7 +556,9 @@ float gdDust(vec3 q, float wide) {
     float n = 0.0, dense = 1.0;
     for (int o = 0; o < 4; o++) {
         float lam = 90.0 * pow(0.4, float(o));
-        float lod = (o < 2 ? 1.0 : uFine) * (1.0 - gmSmooth(0.35 * lam, 0.8 * lam, wide));
+        // on while a wavelength spans >= ~3 pixels (wide = half a pixel),
+        // gone below ~1.5: finer octaves would only speckle
+        float lod = (o < 2 ? 1.0 : uFine) * (1.0 - gmSmooth(0.15 * lam, 0.3 * lam, wide));
         if (lod <= 0.0) break;
         float ang = 2.39996 * float(o + 1);
         float c = cos(ang), sn = sin(ang);
@@ -609,11 +611,12 @@ vec4 gmSample(vec3 p, vec3 dir, float footPc, float wT, float wL, out float hii,
     // clusters for the young light, filamentary dust.
     float youngC = 1.0, hiiC = 1.0, dustC = 1.0;
     // the dust noise has no shape to stretch along the ray: its octaves fade
-    // by the coarser of the pixel and uWideK of the ray step (drafts, drawn
-    // while the view moves, fade by 0.3 of the step so their samples never
-    // alias; the still, refined image keeps octaves down to ~0.1 of the step,
-    // each step then sampling a slice of the finer clouds)
-    float wide = max(wT, 2.0 * uWideK * wL);
+    // by the coarsest of the pixel, uWideK of the ray step (drafts, drawn
+    // while the view moves, 0.3 so their samples never alias; the still,
+    // refined image 0.2, each step then sampling a slice of the finer
+    // clouds) and the step's reach across the disk on an oblique ray, which
+    // the pixel alone would understate
+    float wide = max(max(wT, 2.0 * uWideK * wL), 0.35 * wL * length(dir.xy));
     if (wide < 120.0 && abs(p.z) < 700.0) {
         vec2 yc = gdYoungClusters(q, dq, wT, wL);
         youngC = yc.x; hiiC = yc.y;

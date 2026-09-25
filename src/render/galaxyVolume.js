@@ -526,7 +526,7 @@ function rayRender(renderer, rt, rows = null) {
     const draft = rt === state.rtDraft;
     u.uFine.value = draft ? 0 : 1;
     u.uStepK.value = draft ? 0.09 : 0.045;
-    u.uWideK.value = draft ? 0.3 : 0.12;
+    u.uWideK.value = draft ? 0.3 : 0.2;
     if (rows) { rt.scissor.set(0, rows[0], rt.width, rows[1]); rt.scissorTest = true; }
     renderer.setRenderTarget(rt);
     renderer.autoClear = !rows;
