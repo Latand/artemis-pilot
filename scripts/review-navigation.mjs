@@ -23,7 +23,7 @@ const R=camera.matrixWorldInverse.elements;
 shared.uWorldToView.value.set(R[0],-R[8],R[4],R[1],-R[9],R[5],R[2],-R[10],R[6]);
 const px=innerHeight/(2*Math.tan(camera.fov*Math.PI/360));
 shared.uGainExposure.value=galaxyDisplayGain(px);shared.uPxScale.value=px;shared.uViewport.value.set(innerWidth,innerHeight);shared.uFarClamp.value=.8*scale;shared.uDepthRange.value.set(0,1e30);shared.uAObs.value=1;shared.uLnAObs.value=0;shared.uMwLum.value=1;shared.uCull.value=.0005;shared.uStretch.value=.3;mesh.material.uniforms.uCamRel.value.set(0,-.07,0);
-window.preview={stats(){const gl=renderer.getContext(), b=new Uint8Array(gl.drawingBufferWidth*gl.drawingBufferHeight*4);gl.readPixels(0,0,gl.drawingBufferWidth,gl.drawingBufferHeight,gl.RGBA,gl.UNSIGNED_BYTE,b);let light=0,nonblack=0;for(let i=0;i<b.length;i+=4){let v=.2126*b[i]+.7152*b[i+1]+.0722*b[i+2];light+=v;if(v>2)nonblack++;}return {light,nonblack,pixels:b.length/4};},THREE,renderer,camera,scene,mesh,c,shared,draw(type,inclination=0){c.t[0]=type;c.phot[3]=type<0?1:.22;const a=inclination*Math.PI/180;c.shape.set([0,Math.cos(a),Math.sin(a),type<0?.65:.12]);mesh.geometry.attributes.aT.needsUpdate=true;mesh.geometry.attributes.aPhot.needsUpdate=true;mesh.geometry.attributes.aShape.needsUpdate=true;renderer.render(scene,camera);renderer.getContext().finish();return renderer.domElement.toDataURL();}};
+window.preview={stats(){renderer.render(scene,camera);const gl=renderer.getContext(), b=new Uint8Array(gl.drawingBufferWidth*gl.drawingBufferHeight*4);gl.readPixels(0,0,gl.drawingBufferWidth,gl.drawingBufferHeight,gl.RGBA,gl.UNSIGNED_BYTE,b);let light=0,nonblack=0;for(let i=0;i<b.length;i+=4){let v=.2126*b[i]+.7152*b[i+1]+.0722*b[i+2];light+=v;if(v>2)nonblack++;}return {light,nonblack,pixels:b.length/4};},THREE,renderer,camera,scene,mesh,c,shared,draw(type,inclination=0){c.t[0]=type;c.phot[3]=type<0?1:.22;const a=inclination*Math.PI/180;c.shape.set([0,Math.cos(a),Math.sin(a),type<0?.65:.12]);mesh.geometry.attributes.aT.needsUpdate=true;mesh.geometry.attributes.aPhot.needsUpdate=true;mesh.geometry.attributes.aShape.needsUpdate=true;renderer.render(scene,camera);renderer.getContext().finish();return renderer.domElement.toDataURL();}};
 </script></body></html>`;
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'navigation-review',configureServer(s){s.middlewares.use((req,res,next)=>{if(req.url?.startsWith('/__galaxy-review')){res.setHeader('Content-Type','text/html');res.end(html);}else next();});}}]});
 await server.listen();
@@ -53,12 +53,12 @@ if(!baseline) {
    const gl=renderer.getContext(),b=new Uint8Array(4);gl.readPixels(50,50,1,1,gl.RGBA,gl.UNSIGNED_BYTE,b);return [...b];}
   const one=frame(1),many=frame(16);
   const rt=new THREE.WebGLRenderTarget(180,120),u={value:2};
-  renderer.setRenderTarget(rt);renderer.setViewport(2,3,110,90);renderer.setScissor(4,5,80,70);renderer.setScissorTest(true);renderer.autoClear=false;renderer.setClearColor(0x123456,.3);
-  const saved=()=>({viewport:renderer.getViewport(new THREE.Vector4()).toArray(),scissor:renderer.getScissor(new THREE.Vector4()).toArray(),test:renderer.getScissorTest(),auto:renderer.autoClear,color:renderer.getClearColor(new THREE.Color()).getHex(),alpha:renderer.getClearAlpha(),xr:renderer.xr.enabled});
+  renderer.setPixelRatio(2);renderer.setRenderTarget(rt);renderer.setViewport(2,3,55,45);renderer.setScissor(4,5,80,70);renderer.setScissorTest(true);renderer.autoClear=false;renderer.setClearColor(0x123456,.3);
+  const saved=()=>({viewport:renderer.getViewport(new THREE.Vector4()).toArray(),scissor:renderer.getScissor(new THREE.Vector4()).toArray(),physicalViewport:renderer.getCurrentViewport(new THREE.Vector4()).toArray(),physicalScissor:[...renderer.getContext().getParameter(renderer.getContext().SCISSOR_BOX)],test:renderer.getScissorTest(),auto:renderer.autoClear,color:renderer.getClearColor(new THREE.Color()).getHex(),alpha:renderer.getClearAlpha(),xr:renderer.xr.enabled});
   const before=saved();pass.render(renderer,source,cam,1,u);const after=saved();
   const restored=JSON.stringify(before)===JSON.stringify(after)&&renderer.getRenderTarget()===rt&&u.value===2;
   const bytes=pass.stats().bytes;
-  renderer.setRenderTarget(null);renderer.setViewport(0,0,innerWidth,innerHeight);renderer.setScissorTest(false);renderer.autoClear=true;renderer.setClearColor(0,1);
+  renderer.setPixelRatio(1);renderer.setRenderTarget(null);renderer.setViewport(0,0,innerWidth,innerHeight);renderer.setScissorTest(false);renderer.autoClear=true;renderer.setClearColor(0,1);
   rt.dispose();pass.dispose();g.dispose();for(const m of materials)m.dispose();return {one,many,restored,bytes};
  });
  check(tidal.one[0]>20&&Math.abs(tidal.one[0]-tidal.many[0])<=2,'Equal summed radiance is independent of particle splitting');

@@ -26,6 +26,8 @@ try{
  await page.waitForFunction(()=>window.__AP_READY&&window.__reviewFrame);
  await page.evaluate(async()=>{const s=await import('/src/scene.js');s.renderer.setAnimationLoop(null);__G.paused=true;__G.gr=false;__G.predict=false;window.reviewScene=s;});
  await page.waitForFunction(()=>window.__volStatus?.().mapsReady&&window.__galaxyStatus?.().ready);
+ report.browser=await browser.version();
+ report.renderer=await page.evaluate(()=>{const gl=reviewScene.renderer.getContext(),e=gl.getExtension('WEBGL_debug_renderer_info');return {renderer:e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER),version:gl.getParameter(gl.VERSION)};});
  const frames=async(n=3)=>{for(let i=0;i<n;i++){await page.evaluate(()=>{__reviewFrame();reviewScene.renderer.getContext().finish();});await page.waitForTimeout(50);}};
  const capture=async(name,canvas=false)=>{
   await frames();
@@ -62,13 +64,38 @@ try{
    const after=await page.evaluate(()=>({tgt:__cam.tgt.toArray(),ship:[__G.x,__G.y,__G.z]}));
    check(JSON.stringify(before.tgt)!==JSON.stringify(after.tgt),'Compact movement changes camera target');check(JSON.stringify(before.ship)===JSON.stringify(after.ship),'Compact movement does not move the ship');
    await page.locator('#exploreMoveToggle').click();
-   const cdp=await context.newCDPSession(page),startDist=await page.evaluate(()=>__cam.dist);
+   // A real canvas pinch, not events accidentally delivered to a label or
+   // an open overlay. Record native pointer delivery for reproducibility.
+   const gesture=await page.evaluate(()=>{
+    const canvas=reviewScene.renderer.domElement;
+    const top=document.getElementById('explorePanel').getBoundingClientRect().bottom+24;
+    const bottom=document.getElementById('timeDock').getBoundingClientRect().top-24;
+    window.__pinchTrace=[];
+    for(const type of ['pointerdown','pointermove','pointerup','pointercancel'])window.addEventListener(type,e=>{
+     __pinchTrace.push({type,id:e.pointerId,x:e.clientX,y:e.clientY,target:e.target.tagName,dist:__cam.dist});
+    },true);
+    for(let y=top+24;y<bottom-24;y+=24){
+     const points=[[1,innerWidth*.5-45,y],[2,innerWidth*.5+45,y]];
+     if(points.every(([,x,y])=>document.elementFromPoint(x,y)===canvas))return {points,dist:__cam.dist,top,bottom};
+    }
+    return null;
+   });
+   check(!!gesture,'Two unobstructed canvas contacts remain available');
+   const cdp=await context.newCDPSession(page);
    const touch=(type,points)=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(([id,x,y])=>({id,x,y,radiusX:4,radiusY:4,force:1}))});
-   await touch('touchStart',[[1,150,420],[2,240,420]]);
-   for(let i=1;i<=4;i++){await page.waitForTimeout(40);await touch('touchMove',[[1,150-8*i,420],[2,240+8*i,420]]);}
-   await page.waitForFunction(d=>Number.isFinite(__cam.dist)&&__cam.dist>0&&__cam.dist<d,startDist);
-   await touch('touchEnd',[]);
-   check(await page.evaluate(d=>Number.isFinite(__cam.dist)&&__cam.dist>0&&__cam.dist<d,startDist),'Two-finger pinch changes distance without invalid camera state');
+   try {
+    await touch('touchStart',gesture.points);await frames(1);
+    for(let i=1;i<=4;i++){
+     await touch('touchMove',gesture.points.map(([id,x,y],j)=>[id,x+(j===0?-1:1)*8*i,y]));
+     await frames(1);
+    }
+    await page.waitForFunction(d=>Number.isFinite(__cam.dist)&&__cam.dist>0&&__cam.dist<d,gesture.dist,{timeout:10000,polling:50});
+    check(await page.evaluate(d=>Number.isFinite(__cam.dist)&&__cam.dist>0&&__cam.dist<d,gesture.dist),'Two-finger pinch changes distance without invalid camera state');
+   } finally {
+    await touch('touchEnd',[]);
+    report.gesture={...gesture,end:await page.evaluate(()=>__cam.dist),events:await page.evaluate(()=>__pinchTrace)};
+    await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
+   }
    await page.locator('#exploreSearch').click();await capture('compact-search');await page.locator('#navClose').click();
    await page.locator('#exploreEvents').click();await capture('compact-events');await page.locator('#evClose').click();
   }
@@ -94,6 +121,9 @@ try{
    const tides=await page.evaluate(()=>window.__tidesStatus());check(!tides.error,`Merger ${gyr}: no worker failure`);
    if(gyr>=3.9)check(tides.ready&&tides.visible>0,`Merger ${gyr}: actual simulated tidal particles contribute`);
   }
+  await page.evaluate(()=>{__cam.dist*=.5;__cam.distTarget=null;});
+  await frames(10);await capture('merger-13.6-close',true);
+  if(!baseline){const pass=await page.evaluate(()=>__tidesStatus().linearPass);check(pass?.renders>0&&pass.bytes<=8388608,'Merger uses one bounded linear-radiance pass');}
  }
  check(report.errors.length===0,'No JavaScript or shader errors');
  if(report.errors.length)throw new Error(report.errors.join('\n')); 

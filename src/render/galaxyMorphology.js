@@ -50,27 +50,28 @@ vec3 galStructuredLight(vec2 pixel, vec4 ab, vec2 peak, vec3 color, float lane) 
     float gate = vMorph.z * smoothstep(0.12, 0.3, abs(vDiskFrame.z));
     float envelope = smoothstep(0.2, 0.65, r) * (1.0 - smoothstep(3.2, 4.5, r));
     float arms = 2.0 + floor(vMorph.x * 2.99);
-    float pitch = mix(3.9, 1.9, clamp(T / 9.0, 0.0, 1.0));
+    float pitch = mix(3.5, 1.65, clamp(T / 9.0, 0.0, 1.0));
     // Radius-only winding variations preserve the angular light integral.
     // Branches and knots retain identity through zoom and observer rotation.
-    float bend = 0.28 * sin(2.1 * r + seed) + 0.09 * sin(5.3 * r - seed);
+    float bend = 0.10 * sin(1.3 * r + seed) + 0.03 * sin(4.1 * r - seed);
     float phase = arms * (theta - pitch * log(max(r, 0.16)) + bend) + seed;
     // Derivatives of local coordinates avoid the atan branch-cut seam.
     float angular = length(fwidth(p)) / max(r, 0.16);
-    float radialSlope = -pitch / max(r, 0.16) + 0.588 * cos(2.1 * r + seed) + 0.477 * cos(5.3 * r - seed);
+    float radialSlope = -pitch / max(r, 0.16) + 0.13 * cos(1.3 * r + seed) + 0.123 * cos(4.1 * r - seed);
     float fp = arms * (angular + abs(radialSlope) * fwidth(r));
     float arm = galRidge(phase, fp);
     float dust = galRidge(phase + 0.48, fp);
     float branchPhase = phase + 1.3 + 0.45 * sin(3.7 * r + seed);
     float branches = galRidge(branchPhase, fp + 1.665 * arms * fwidth(r));
-    // Frequencies 17/23/31 cannot match the 2/3/4-arm ridge harmonics
-    // (maximum 16). Thus their product with arm still has zero annular mean.
-    float knots = 0.50 * cos(17.0 * theta + 19.0 * r + seed)
-        * exp(-0.5 * pow(min(20.0, 17.0 * angular + 19.0 * fwidth(r)), 2.0))
-        + 0.30 * cos(23.0 * theta - 31.0 * r + 2.0 * seed)
-        * exp(-0.5 * pow(min(20.0, 23.0 * angular + 31.0 * fwidth(r)), 2.0))
-        + 0.20 * cos(31.0 * theta + 43.0 * r - seed)
-        * exp(-0.5 * pow(min(20.0, 31.0 * angular + 43.0 * fwidth(r)), 2.0));
+    // Broad star-forming complexes, not a periodic necklace of tiny dots.
+    // 5/7/11 do not match any of the 2/3/4-arm ridge harmonics, so
+    // modulation redistributes the annular light without adding luminosity.
+    float knots = 0.50 * cos(5.0 * theta + 2.2 * sin(1.7 * r + seed) + seed)
+        * exp(-0.5 * pow(min(20.0, 5.0 * angular + 3.74 * fwidth(r)), 2.0))
+        + 0.30 * cos(7.0 * theta - 2.3 * r + 1.3 * sin(4.0 * r - seed))
+        * exp(-0.5 * pow(min(20.0, 7.0 * angular + 7.5 * fwidth(r)), 2.0))
+        + 0.20 * cos(11.0 * theta + 3.5 * r - seed)
+        * exp(-0.5 * pow(min(20.0, 11.0 * angular + 3.5 * fwidth(r)), 2.0));
     float strength = envelope * gate * (1.0 - 0.85 * vMorph.w);
     float structure = 1.0 + disk * strength * (0.57 * (arm - 1.0)
         - 0.20 * (dust - 1.0) + 0.10 * (branches - 1.0) + 0.26 * arm * knots);
@@ -78,7 +79,7 @@ vec3 galStructuredLight(vec2 pixel, vec4 ab, vec2 peak, vec3 color, float lane) 
         + 0.18 * cos(7.0 * theta - 4.0 * r + seed) * exp(-0.5 * pow(min(20.0, 7.0 * angular + 4.0 * fwidth(r)), 2.0));
     structure += irregular * strength * patches;
     float young = clamp(disk * strength * (arm - 0.5) * 0.34 + irregular * strength * (patches + 0.3), 0.0, 1.0);
-    vec3 diskColor = galUnitLuma(color * mix(vec3(1.0), mix(vec3(1.04, 1.0, 0.94), vec3(0.72, 0.94, 1.32), young), vMorph.z));
+    vec3 diskColor = galUnitLuma(color * mix(vec3(1.0), mix(vec3(1.04, 1.0, 0.94), vec3(0.80, 0.96, 1.22), young), vMorph.z));
     vec3 coreColor = galUnitLuma(color * mix(vec3(1.0), vec3(1.08, 1.0, 0.88), vMorph.z));
     float bulgeR = length(pixel / ab.zw);
     return peak.x * exp(-r) * lane * structure * diskColor

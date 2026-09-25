@@ -32,7 +32,7 @@ for(const arms of [2,3,4]) {
  const ridge=p=>1+1.6*Math.cos(p)+.8*Math.cos(2*p)+(8/35)*Math.cos(3*p)+(1/35)*Math.cos(4*p);
  for(let i=0;i<8192;i++) {
   const t=i*2*Math.PI/8192,p=arms*t+1.7,a=ridge(p),d=ridge(p+.48);
-  const knots=.5*Math.cos(17*t+2.3)+.3*Math.cos(23*t-1.2)+.2*Math.cos(31*t+3.1);
+  const knots=.5*Math.cos(5*t+2.3)+.3*Math.cos(7*t-1.2)+.2*Math.cos(11*t+3.1);
   const s=1+.57*(a-1)-.20*(d-1)+.10*(ridge(p+1.5)-1)+.26*a*knots;
   min=Math.min(min,s);sum+=s;
  }
