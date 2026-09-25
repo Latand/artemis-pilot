@@ -63,10 +63,10 @@ vec3 galStructuredLight(vec2 pixel, vec4 ab, vec2 peak, vec3 color, float lane) 
     // Multiplying this modulation by the arms keeps their angular mean.
     float strength = envelope * gate * (1.0 - 0.85 * vMorph.w);
     float structure = 1.0 + disk * strength * (0.58 * (arm - 1.0) - 0.15 * (dust - 1.0) + 0.12 * arm * knots);
-    float patch = 0.24 * cos(3.0 * theta + sin(2.0 * r + seed)) * exp(-4.5 * angular * angular)
+    float patches = 0.24 * cos(3.0 * theta + sin(2.0 * r + seed)) * exp(-4.5 * angular * angular)
         + 0.18 * cos(7.0 * theta - 4.0 * r + seed) * exp(-0.5 * pow(min(20.0, 7.0 * angular + 4.0 * fwidth(r)), 2.0));
-    structure += irregular * strength * patch;
-    float young = clamp(disk * strength * (arm - 0.5) * 0.34 + irregular * strength * (patch + 0.3), 0.0, 1.0);
+    structure += irregular * strength * patches;
+    float young = clamp(disk * strength * (arm - 0.5) * 0.34 + irregular * strength * (patches + 0.3), 0.0, 1.0);
     vec3 diskColor = galUnitLuma(color * mix(vec3(1.0), mix(vec3(1.04, 1.0, 0.94), vec3(0.72, 0.94, 1.32), young), vMorph.z));
     vec3 coreColor = galUnitLuma(color * mix(vec3(1.0), vec3(1.08, 1.0, 0.88), vMorph.z));
     float bulgeR = length(pixel / ab.zw);
