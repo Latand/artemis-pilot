@@ -1,4 +1,6 @@
 import { createServer } from "vite";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 
 // WP23a: the Milky Way-Andromeda merger. Verifies the cached two-body +
 // dynamical-friction trajectory table in cosmic.js (mergerSeparationKpcAt /
@@ -13,7 +15,8 @@ const GYR_SEC = 1e9 * SEC_YEAR;
 const LY_KM = 9460730472580.8;
 const K = 0.001;
 const LY_SCENE = LY_KM * K;
-const SCRATCH = "/tmp/claude-1000/-home-latand-Projects-artemis-pilot/3464e715-d9dc-487c-a901-5c8f9bd38368/scratchpad";
+const SCRATCH = resolve(process.env.ARTEMIS_EVIDENCE || "evidence/merger-smoke");
+await mkdir(SCRATCH, { recursive: true });
 
 let url = process.env.ARTEMIS_URL;
 let viteServer = null;
@@ -32,6 +35,7 @@ const pwModule = await import("playwright");
 const pw = pwModule.default ?? pwModule;
 const browser = await pw.chromium.launch({
   headless: true,
+  executablePath: process.env.CHROMIUM_PATH || undefined,
   args: [
     "--no-sandbox",
     "--disable-dev-shm-usage",
@@ -42,6 +46,12 @@ const browser = await pw.chromium.launch({
   ],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+page.setDefaultTimeout(180000);
+await page.addInitScript(() => {
+  localStorage.clear();
+  localStorage.setItem("ap_introSeen", "1");
+  localStorage.setItem("ap_helpSeen", "1");
+});
 const errors = [];
 page.on("console", msg => { if (msg.type() === "error") errors.push(msg.text()); });
 page.on("pageerror", err => errors.push(err.message));
@@ -62,10 +72,12 @@ function checksum(bytes) {
 }
 
 async function bootPage() {
-  await page.goto(url, { waitUntil: "networkidle" });
-  await page.evaluate(() => { localStorage.clear(); localStorage.setItem("ap_introSeen", "1"); localStorage.setItem("ap_helpSeen", "1"); });
-  await page.reload({ waitUntil: "networkidle" });
-  await page.waitForFunction(() => window.__G && window.__cam && window.__gl);
+  // Catalog/texture streaming and slow shader compilation are independent
+  // of application readiness. Do not reload an already compiling page.
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 });
+  await page.waitForFunction(() => window.__AP_READY && window.__G && window.__cam && window.__gl,
+    null, { timeout: 180000, polling: 250 });
+  await page.evaluate(() => { window.__G.paused = true; });
 }
 
 async function readMergerMath() {

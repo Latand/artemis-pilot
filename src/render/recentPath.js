@@ -16,6 +16,13 @@ export class RecentPath {
     clear() {
         this.start = 0; this.count = 0; this.hasHead = false; this.lastTime = NaN;
     }
+    sync(time, epoch) {
+        if (!Number.isFinite(time) || (this.epoch !== null && this.epoch !== epoch) ||
+            (this.hasHead && time < this.lastTime)) {
+            this.clear(); this.breaks++;
+        }
+        this.epoch = epoch;
+    }
     // dtLimit follows the shortest locally relevant orbital timescale. The
     // speed test also breaks teleports made without advancing the clock.
     sample(x, y, z, time, clock, color, { epoch = 0, spacing = 0.02, dtLimit = Infinity, speed = Infinity } = {}) {
@@ -61,6 +68,7 @@ export class RecentPath {
     // Independent line segments cannot connect across a reset or ring wrap.
     // Tail opacity reaches zero before old samples leave the buffer.
     write(positions, colors, alpha, origin, time, clock, lifetime) {
+        this.sync(time, this.epoch);
         this.expire(time, clock, lifetime);
         let vertices = 0;
         const emit = (p, i, ordinal) => {

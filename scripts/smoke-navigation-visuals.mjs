@@ -32,7 +32,8 @@ for(const arms of [2,3,4]) {
  const ridge=p=>1+1.6*Math.cos(p)+.8*Math.cos(2*p)+(8/35)*Math.cos(3*p)+(1/35)*Math.cos(4*p);
  for(let i=0;i<8192;i++) {
   const t=i*2*Math.PI/8192,p=arms*t+1.7,a=ridge(p),d=ridge(p+.48);
-  const s=1+.58*(a-1)-.15*(d-1)+.12*a*Math.cos(13*t+2.3);
+  const knots=.5*Math.cos(17*t+2.3)+.3*Math.cos(23*t-1.2)+.2*Math.cos(31*t+3.1);
+  const s=1+.57*(a-1)-.20*(d-1)+.10*(ridge(p+1.5)-1)+.26*a*knots;
   min=Math.min(min,s);sum+=s;
  }
  assert(min>0);assert(Math.abs(sum/8192-1)<1e-12);
@@ -49,3 +50,12 @@ assert(Array.from(stretch).every(Number.isFinite));
 for(let i=0;i<48;i++)assert(stretch[i*4+3]>=1&&stretch[i*4+3]<=2.5);
 assert.deepEqual(sampleDebrisShapes(points,ws,graph,new Float32Array(48*4)),stretch);
 console.log('PASS bounded/fading history, jumps/rewinds/epochs, slow sampling, precision, galaxy LOD/seed/annulus flux, tidal neighbour identity and deformation');
+
+// A paused display does not sample motion, but still invalidates old epochs.
+const paused = new RecentPath();
+paused.sample(0,0,0,100,0,color,{epoch:1});
+paused.sample(1,0,0,101,1,color,{epoch:1});
+paused.write(new Float32Array(4608),new Float32Array(4608),new Float32Array(1536),[0,0,0],99,1,20); assert.equal(paused.hasHead,false);
+paused.sample(2,0,0,101,2,color,{epoch:1});
+paused.sync(101,2); assert.equal(paused.hasHead,false);
+console.log('PASS paused rewind / epoch invalidate history without a new motion sample');

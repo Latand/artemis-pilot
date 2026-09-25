@@ -64,7 +64,10 @@ try{
    await page.locator('#exploreMoveToggle').click();
    const cdp=await context.newCDPSession(page),startDist=await page.evaluate(()=>__cam.dist);
    const touch=(type,points)=>cdp.send('Input.dispatchTouchEvent',{type,touchPoints:points.map(([id,x,y])=>({id,x,y,radiusX:4,radiusY:4,force:1}))});
-   await touch('touchStart',[[1,150,420],[2,240,420]]);await touch('touchMove',[[1,120,420],[2,270,420]]);await touch('touchEnd',[]);
+   await touch('touchStart',[[1,150,420],[2,240,420]]);
+   for(let i=1;i<=4;i++){await page.waitForTimeout(40);await touch('touchMove',[[1,150-8*i,420],[2,240+8*i,420]]);}
+   await page.waitForFunction(d=>Number.isFinite(__cam.dist)&&__cam.dist>0&&__cam.dist<d,startDist);
+   await touch('touchEnd',[]);
    check(await page.evaluate(d=>Number.isFinite(__cam.dist)&&__cam.dist>0&&__cam.dist<d,startDist),'Two-finger pinch changes distance without invalid camera state');
    await page.locator('#exploreSearch').click();await capture('compact-search');await page.locator('#navClose').click();
    await page.locator('#exploreEvents').click();await capture('compact-events');await page.locator('#evClose').click();

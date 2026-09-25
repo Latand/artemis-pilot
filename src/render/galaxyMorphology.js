@@ -50,19 +50,30 @@ vec3 galStructuredLight(vec2 pixel, vec4 ab, vec2 peak, vec3 color, float lane) 
     float gate = vMorph.z * smoothstep(0.12, 0.3, abs(vDiskFrame.z));
     float envelope = smoothstep(0.2, 0.65, r) * (1.0 - smoothstep(3.2, 4.5, r));
     float arms = 2.0 + floor(vMorph.x * 2.99);
-    float pitch = mix(5.0, 2.1, clamp(T / 9.0, 0.0, 1.0));
-    float phase = arms * (theta - pitch * log(max(r, 0.16))) + seed;
+    float pitch = mix(3.9, 1.9, clamp(T / 9.0, 0.0, 1.0));
+    // Radius-only winding variations preserve the angular light integral.
+    // Branches and knots retain identity through zoom and observer rotation.
+    float bend = 0.28 * sin(2.1 * r + seed) + 0.09 * sin(5.3 * r - seed);
+    float phase = arms * (theta - pitch * log(max(r, 0.16)) + bend) + seed;
     // Derivatives of local coordinates avoid the atan branch-cut seam.
     float angular = length(fwidth(p)) / max(r, 0.16);
-    float fp = angular * arms * sqrt(1.0 + pitch * pitch);
+    float radialSlope = -pitch / max(r, 0.16) + 0.588 * cos(2.1 * r + seed) + 0.477 * cos(5.3 * r - seed);
+    float fp = arms * (angular + abs(radialSlope) * fwidth(r));
     float arm = galRidge(phase, fp);
     float dust = galRidge(phase + 0.48, fp);
-    float knots = cos(13.0 * theta + 11.0 * r + seed) *
-        exp(-0.5 * pow(min(20.0, 13.0 * angular + 11.0 * fwidth(r)), 2.0));
-    // 13 is not a harmonic of any of the two/three/four-arm profiles.
-    // Multiplying this modulation by the arms keeps their angular mean.
+    float branchPhase = phase + 1.3 + 0.45 * sin(3.7 * r + seed);
+    float branches = galRidge(branchPhase, fp + 1.665 * arms * fwidth(r));
+    // Frequencies 17/23/31 cannot match the 2/3/4-arm ridge harmonics
+    // (maximum 16). Thus their product with arm still has zero annular mean.
+    float knots = 0.50 * cos(17.0 * theta + 19.0 * r + seed)
+        * exp(-0.5 * pow(min(20.0, 17.0 * angular + 19.0 * fwidth(r)), 2.0))
+        + 0.30 * cos(23.0 * theta - 31.0 * r + 2.0 * seed)
+        * exp(-0.5 * pow(min(20.0, 23.0 * angular + 31.0 * fwidth(r)), 2.0))
+        + 0.20 * cos(31.0 * theta + 43.0 * r - seed)
+        * exp(-0.5 * pow(min(20.0, 31.0 * angular + 43.0 * fwidth(r)), 2.0));
     float strength = envelope * gate * (1.0 - 0.85 * vMorph.w);
-    float structure = 1.0 + disk * strength * (0.58 * (arm - 1.0) - 0.15 * (dust - 1.0) + 0.12 * arm * knots);
+    float structure = 1.0 + disk * strength * (0.57 * (arm - 1.0)
+        - 0.20 * (dust - 1.0) + 0.10 * (branches - 1.0) + 0.26 * arm * knots);
     float patches = 0.24 * cos(3.0 * theta + sin(2.0 * r + seed)) * exp(-4.5 * angular * angular)
         + 0.18 * cos(7.0 * theta - 4.0 * r + seed) * exp(-0.5 * pow(min(20.0, 7.0 * angular + 4.0 * fwidth(r)), 2.0));
     structure += irregular * strength * patches;

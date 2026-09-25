@@ -28,8 +28,8 @@ jobs:
         run: |
           mkdir -p evidence/source
           git rev-parse HEAD > evidence/source/head-sha.txt
-          git bundle create evidence/source/repository.bundle HEAD
-          tar -czf evidence/source/dependencies.tar.gz node_modules package-lock.json
+          git archive --format=tar.gz -o evidence/source/rendering-source.tar.gz HEAD src scripts .github package.json vite.config.js index.html
+          cp package-lock.json evidence/source/
       - uses: actions/upload-artifact@v4
         with:
           name: navigation-source-bundle
