@@ -440,7 +440,7 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
     u.uSun.value.set(sun[0], sun[1], sun[2]);
     _rot.extractRotation(camera.matrixWorld);
     const e = _rot.elements;
-    const R = [[e[0], e[4], e[8]], [e[1], e[5], e[9]], [e[2], e[6], e[10]];
+    const R = [[e[0], e[4], e[8]], [e[1], e[5], e[9]], [e[2], e[6], e[10]]];
     const M = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
     for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
         let v = 0;
