@@ -19,6 +19,7 @@
 // that splats cannot draw at bounded cost (a known gap: that view would need
 // the volumetric treatment of galaxyVolume.js).
 import * as THREE from "three";
+import { linearFrame } from "./linearFrame.js";
 import { LinearTidalPass } from "./linearTidalPass.js";
 import { addBackgroundHook } from "../scene.js";
 import { sampleDebrisShapes } from "./debrisShape.js";
@@ -255,7 +256,7 @@ export function updateMergerTides(camera, f) {
     // nothing to draw before the first keyframe, or from far beyond the Local Group
     const first = model.times[0];
     const far = Math.hypot(cx, cy, cz) > 3e4;
-    if ((f.tMwGyr < first && f.tM31Gyr < first) || far) { mesh.visible = false; state.linearMesh.visible = false; state.visible = 0; return; }
+    if ((f.tMwGyr < first && f.tM31Gyr < first) || far) { mesh.visible = false; state.linearMesh.visible = false; state.visible = 0; linearFrame.requested = false; return; }
     u.uCamKpc.value.set(cx, cy, cz);
     u.uLum.value = f.lum ?? 1;
     u.uRed.value = f.red ?? 0;
@@ -277,6 +278,7 @@ export function updateMergerTides(camera, f) {
         g.attributes.aStretch.needsUpdate = true;
     }
     mesh.visible = state.linearMesh.visible = state.visible > 0;
+    linearFrame.requested = state.visible > 0;
     if (PERF.enabled) markPerf("galaxies.tides", performance.now() - t0, { visible: state.visible });
 }
 
@@ -296,7 +298,7 @@ export function renderMergerTides(renderer, camera) {
 }
 
 export function mergerTidesStatus() {
-    return { started: state.started, ready: !!state.model, error: state.error, ms: state.ms, visible: state.visible, particles: state.model?.n || 0, linearPass: state.pass?.stats() || null };
+    return { started: state.started, ready: !!state.model, error: state.error, ms: state.ms, visible: state.visible, particles: state.model?.n || 0, linearPass: state.pass?.stats() || null, linearFrame: { ...linearFrame } };
 }
 
 // Debug/test introspection (smokes).

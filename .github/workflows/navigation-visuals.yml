@@ -103,6 +103,7 @@ jobs:
           if [ "$VARIANT" = before ]; then ROOT="$RUNNER_TEMP/nav-baseline"; export BASELINE=1; fi
           if [ "$SUITE" = render ]; then
             node scripts/review-navigation.mjs "$ROOT" evidence/render
+            if [ "$VARIANT" = after ]; then node scripts/verify-linear-frame.mjs "$ROOT" evidence/linear-frame; fi
           else
             node scripts/review-compact-and-merger.mjs "$ROOT" "evidence/$SUITE"
           fi
