@@ -18,10 +18,13 @@ const server = await createServer({ root, logLevel: 'error', server: { host: '12
             res.end('<!DOCTYPE html><html><body style="margin:0;background:black"><div id="gl"></div></body></html>');
         });
     }, transform(code, id) {
-        if (!reference || !id.endsWith('/src/render/galaxyVolume.js')) return;
+        if (!reference) return;
+        if (id.endsWith('/src/universe/galaxyModel.js')) return code.replace('uDustQuadrature: 1', 'uDustQuadrature: 0');
+        if (!id.endsWith('/src/render/galaxyVolume.js')) return;
         const count = 'const MAX_STEPS = 360;', step = 'draft ? 0.055 : 0.03';
         if (!code.includes(count) || !code.includes(step)) throw new Error('Reference integration seam changed');
-        // Same field, exposure and pixel footprint; finer path quadrature.
+        // Same field/exposure/pixel footprint; independent finer midpoint integration.
+        // The reference disables the new segment quadrature instead of using it as truth.
         return code.replace(count, 'const MAX_STEPS = 1600;').replace(step, '0.006');
     } }] });
 await server.listen();
@@ -61,6 +64,7 @@ try {
                 if (data[i] + data[i + 1] + data[i + 2] > 3) lit++;
                 for (let j = 0; j < 3; j++) { sum += data[i + j]; if (probe.saved) delta += Math.abs(data[i + j] - probe.saved[i + j]); }
             }
+            result.renderAndReadbackMs = performance.now() - start;
             result.mean = sum / (data.length * 0.75); result.coverage = lit / (data.length / 4);
             result.returnMAE = probe.saved ? delta / (data.length * 0.75) : null;
             if (save) probe.saved = data;
@@ -77,6 +81,63 @@ try {
         return { renderer: x ? g.getParameter(x.UNMASKED_RENDERER_WEBGL) : g.getParameter(g.RENDERER),
             browser: navigator.userAgent, hardwareTimerAvailable: !!g.getExtension('EXT_disjoint_timer_query_webgl2') };
     });
+    // Execute the production GLSL quadrature with analytic density fixtures.
+    // This tests the shader, not a separately transcribed JS implementation.
+    report.quadrature = await page.evaluate(async () => {
+        const THREE = await import('/node_modules/three/build/three.module.js');
+        const { GALAXY_MODEL_GLSL } = await import('/src/universe/galaxyModel.js');
+        const body = GALAXY_MODEL_GLSL.match(/float gdDustSegment\([^]*?\n}/)?.[0];
+        if (!body) return { supported: false, cases: [] };
+        const smooth = GALAXY_MODEL_GLSL.match(/float gmSmooth[^]*?\n/)?.[0];
+        if (!smooth) throw new Error('Missing production smoothstep');
+        const r = probe.s.renderer, previous = r.getRenderTarget(), auto = r.autoClear;
+        const rt = new THREE.WebGLRenderTarget(1, 1, { type: THREE.FloatType, depthBuffer: false });
+        const u = { uCenter: { value: new THREE.Vector3() }, uDirection: { value: new THREE.Vector3(1, 0, 0) },
+            uTransverse: { value: 1 }, uLongitudinal: { value: 10 }, uWideK: { value: .2 },
+            uDustQuadrature: { value: 1 }, uTest: { value: 0 } };
+        const mat = new THREE.ShaderMaterial({ uniforms: u, depthTest: false, depthWrite: false, toneMapped: false,
+            vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+            fragmentShader: `uniform vec3 uCenter, uDirection;
+                uniform float uTransverse, uLongitudinal, uWideK, uDustQuadrature, uTest;
+                ${smooth}
+                float gdDust(vec3 p, float wide, float amp) {
+                    if (uTest < .5) return 7.0;
+                    if (uTest < 1.5) return 2.0 + .02 * p.x;
+                    if (uTest < 2.5) return 1.0 + .0001 * p.x * p.x;
+                    return 1.0 + .5 * cos(.15 * p.x) * (1.0 - gmSmooth(2.0, 4.0, wide));
+                }
+                ${body}
+                void main() { float v = gdDustSegment(uCenter, uDirection, uTransverse, uLongitudinal, 1.0);
+                    gl_FragColor = vec4(v, v, v, 1.0); }` });
+        const geo = new THREE.PlaneGeometry(2, 2), scene = new THREE.Scene(), mesh = new THREE.Mesh(geo, mat);
+        mesh.frustumCulled = false; scene.add(mesh);
+        const camera = new THREE.OrthographicCamera(), bytes = new Float32Array(4), cases = [];
+        function sample(mode, x, wL, wT = 0.1, direction = 1, enabled = 1) {
+            u.uTest.value = mode; u.uCenter.value.set(x, 0, 0); u.uDirection.value.set(direction, 0, 0);
+            u.uLongitudinal.value = wL; u.uTransverse.value = wT; u.uDustQuadrature.value = enabled;
+            r.setRenderTarget(rt); r.autoClear = true; r.render(scene, camera);
+            r.readRenderTargetPixels(rt, 0, 0, 1, 1, bytes); return bytes[0];
+        }
+        const test = (name, actual, expected, tolerance = .0002) =>
+            cases.push({ name, actual, expected, pass: Number.isFinite(actual) && Math.abs(actual - expected) < tolerance });
+        try {
+            test('Constant density retains its mean', sample(0, 25, 70), 7);
+            test('Linear density is integrated exactly', sample(1, 30, 70), 2.6);
+            test('Three equal midpoint weights for quadratic density', sample(2, 20, 70), 1 + .0001 * (400 + 8 * 4900 / 27));
+            test('Direction reversal retains the same segment', sample(3, 14, 20, .1, -1), sample(3, 14, 20));
+            test('Diagnostic disable retains midpoint evaluation', sample(2, 20, 70, .1, 1, 0), 1.04);
+            test('Pixel-limited frequencies still disappear', sample(3, 0, 20, 5), 1);
+            let mean = 0;
+            for (let i = 0; i < 32; i++) mean += sample(3, i * 2 * Math.PI / (.15 * 32), 10) / 32;
+            test('Filtered periodic density retains spatial mean', mean, 1);
+            test('LOD blend is continuous at onset', sample(3, 1, 2 + 1e-4), sample(3, 1, 2 - 1e-4));
+            test('LOD blend is continuous at full weight', sample(3, 1, 4 + 1e-4), sample(3, 1, 4 - 1e-4));
+            return { supported: true, cases };
+        } finally {
+            r.setRenderTarget(previous); r.autoClear = auto; rt.dispose(); mat.dispose(); geo.dispose();
+        }
+    });
+    if (variant !== 'before') check('Production quadrature analytic shader fixtures', report.quadrature.supported && report.quadrature.cases.every(c => c.pass));
     async function settle() {
         const costs = [], start = performance.now();
         for (let i = 0; i < 60; i++) {
@@ -120,7 +181,9 @@ try {
 } finally {
     const ms = report.frames.filter(f => /^motion-\d/.test(f.name)).map(f => f.renderAndFinishMs).sort((a,b) => a-b);
     report.motionTiming = ms.length ? { n: ms.length, p50: ms[Math.floor(ms.length * .5)], p95: ms[Math.min(ms.length - 1, Math.floor(ms.length * .95))], max: ms.at(-1), longFramesOver50ms: ms.filter(v => v > 50).length } : null;
-    report.timingMethod = 'JS draw + gl.finish wall time; excludes image encoding/readback. Not hardware GPU time or interactive FPS. Refinement latency includes 60ms polling delays.';
+    const complete = report.frames.filter(f => /^motion-\d/.test(f.name)).map(f => f.renderAndReadbackMs).sort((a,b) => a-b);
+    report.motionReadbackTiming = complete.length ? { n: complete.length, p50: complete[Math.floor(complete.length * .5)], p95: complete.at(-1), max: complete.at(-1), longFramesOver50ms: complete.filter(v => v > 50).length } : null;
+    report.timingMethod = 'renderAndFinishMs is JS draw + gl.finish wall time, NOT reliable GPU completion timing in this browser. renderAndReadbackMs includes a blocking readPixels and pixel-statistics loop; it excludes PNG encoding. Neither is hardware GPU time or interactive FPS. Refinement latency includes 60ms polling delays.';
     await writeFile(`${out}/report.json`, JSON.stringify(report, null, 2));
     await browser.close(); await server.close();
 }
