@@ -6,10 +6,16 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 const root = resolve(process.argv[2] || '.'), out = resolve(process.argv[3] || 'evidence/galaxy/app');
 await mkdir(out, { recursive: true });
-const report = { epoch: '2026-09-13T12:00:00Z', exposure: .15, frames: [], errors: [] };
+const report = { epoch: '2026-09-13T12:00:00Z', simulatedSeconds: 0, exposure: .15, frames: [], errors: [] };
 const server = await createServer({ root, logLevel: 'error', server: { host: '127.0.0.1', port: 0, hmr: false },
     plugins: [{ name: 'test-only-frame-capture', enforce: 'pre', transform(source, id) {
-        if (id.replaceAll('\\','/').endsWith('/src/main.js')) return source + '\nwindow.__captureAppFrame = frame; window.__captureRiverBlend = v => { grB = v; };\n';
+        if (!id.replaceAll('\\','/').endsWith('/src/main.js')) return;
+        const marker = 'const firstFrameT0 = perfStart();';
+        if (source.split(marker).length !== 2) throw new Error('Initial-frame hook changed: update the capture harness');
+        // Freeze simulation BEFORE its first frame, not at a machine-dependent
+        // elapsed time after startup. Both versions have identical ephemerides.
+        return source.replace(marker, 'G.t = 0; G.paused = true; resetEphem();\n' + marker) +
+            '\nwindow.__captureAppFrame = frame; window.__captureRiverBlend = v => { grB = v; };\n';
     } }] });
 await server.listen();
 const browser = await chromium.launch({ args: ['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'] });
@@ -26,12 +32,11 @@ try {
         const v = await import('/src/render/galaxyVolume.js');
         const { setPaused } = await import('/src/timeCtl.js'); setPaused(true, 'capture');
         s.renderer.setAnimationLoop(null); window.__G.predict = false; window.__G.gr = false; window.__G.uiMode = 'observe';
-        // Hold the same shared exposure in both revisions; no frame-dependent
-        // foreground meter can disguise missing galaxy signal in the comparison.
         Object.defineProperty(e.stellarExposure, 'value', { configurable: true, get: () => .15, set() {} });
         const p = []; c.galToSceneUnitsInto(0,0,0,p);
         const len = Math.hypot(...p), yaw = Math.atan2(-p[2],-p[0]), pitch = Math.asin(-p[1]/len);
         window.appTest = { s, b, e, c, v, yaw, pitch };
+        if (__G.t !== 0) throw new Error('Simulation advanced before capture');
     });
     await page.waitForFunction(() => appTest.v.galaxyVolumeStats().mapsReady);
     const states = [
@@ -61,16 +66,20 @@ try {
             }));
             await page.waitForTimeout(60);
         }
+        const start = performance.now();
         const captured = await page.evaluate(() => {
             __captureAppFrame(); const { s, v } = appTest, gl = s.renderer.getContext(); gl.finish();
+            if (__G.t !== 0) throw new Error('Capture epoch changed');
             const ext = gl.getExtension('WEBGL_debug_renderer_info');
             return { png: s.renderer.domElement.toDataURL('image/png'), camera: { position: s.camera.position.toArray(), quaternion: s.camera.quaternion.toArray(), fov: s.camera.fov, aspect: s.camera.aspect },
                 time: __G.t, focus: __G.focus, river: __G.gr, dpr: s.renderer.getPixelRatio(), size: [gl.drawingBufferWidth,gl.drawingBufferHeight],
                 volume: v.galaxyVolumeStats(), gpu: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER) };
         });
+        captured.captureRoundTripMs = performance.now() - start;
         await writeFile(`${out}/${state.name}.png`, Buffer.from(captured.png.split(',')[1], 'base64')); delete captured.png;
         report.frames.push({ name: state.name, state, ...captured, fullFrameAndFinishMs: costs });
-        console.log('APP CAPTURE', state.name, JSON.stringify({ camera: captured.camera, volume: captured.volume }));
+        await writeFile(`${out}/app-report.json`, JSON.stringify(report,null,2));
+        console.log('APP CAPTURE', state.name, JSON.stringify({ time: captured.time, camera: captured.camera, volume: captured.volume }));
     }
     if (report.errors.length) throw new Error(report.errors.join('\n'));
 } finally {
