@@ -54,8 +54,9 @@ export function galaxyDisplayGain(pxScaleDevice) {
 }
 
 // Ray steps grow by uStepK of the distance from the camera (drafts 0.09,
-// the refined image half that, so nearby dust and clusters inside the disk
-// keep their detail); MAX_STEPS bounds the loop.
+// the refined image 0.03, so the dust and clusters around a camera inside
+// the disk keep their detail out to kiloparsecs); MAX_STEPS bounds the loop
+// (log-spaced steps from 2 pc to 25 kpc need ~310 at 0.03).
 const MAX_STEPS = 360;
 const RAY_FRAG = /* glsl */`
 precision highp float;
@@ -525,7 +526,7 @@ function rayRender(renderer, rt, rows = null) {
     u.uPixAngle.value = 2 * u.uTanHalf.value.y / rt.height;
     const draft = rt === state.rtDraft;
     u.uFine.value = draft ? 0 : 1;
-    u.uStepK.value = draft ? 0.09 : 0.045;
+    u.uStepK.value = draft ? 0.09 : 0.03;
     u.uWideK.value = draft ? 0.3 : 0.2;
     if (rows) { rt.scissor.set(0, rows[0], rt.width, rows[1]); rt.scissorTest = true; }
     renderer.setRenderTarget(rt);
