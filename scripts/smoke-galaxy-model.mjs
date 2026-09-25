@@ -140,5 +140,44 @@ const MV = 4.83 - 2.5 * Math.log10(LV);
 check(MV > -22.2 && MV < -21.2, `Milky Way M_V ${MV.toFixed(2)} (L_V ${LV.toExponential(2)})`);
 check(Math.abs(MILKY_WAY.MV - MV) < 0.08, `population Milky Way entry M_V ${MILKY_WAY.MV.toFixed(2)} matches the volume integral`);
 
+// 10. Detail below the maps' texel keeps the mean: the dust cascade divides
+// each octave's lognormal factor exp(t v / std(v)) by exp(K(t)), K fitted to
+// the GLSL gradient noise (gmNoise, ported here). If the noise or the fit
+// changes, zooming would change the Galaxy's brightness.
+{
+    const fract = x => x - Math.floor(x);
+    const h33 = (x, y, z, o) => {
+        let px = fract(x * 0.1031), py = fract(y * 0.1030), pz = fract(z * 0.0973);
+        const d = px * (py + 33.33) + py * (px + 33.33) + pz * (pz + 33.33);
+        px += d; py += d; pz += d;
+        o[0] = fract((px + py) * pz) * 2 - 1; o[1] = fract((px + px) * py) * 2 - 1; o[2] = fract((py + px) * px) * 2 - 1;
+    };
+    const g = [0, 0, 0];
+    const noise = (x, y, z) => {
+        const ix = Math.floor(x), iy = Math.floor(y), iz = Math.floor(z), fx = x - ix, fy = y - iy, fz = z - iz;
+        const q = t => t * t * t * (t * (t * 6 - 15) + 10), L = (a, b, t) => a + (b - a) * t;
+        const c = (a, b, e) => { h33(ix + a, iy + b, iz + e, g); return g[0] * (fx - a) + g[1] * (fy - b) + g[2] * (fz - e); };
+        const ux = q(fx), uy = q(fy), uz = q(fz);
+        return L(L(L(c(0, 0, 0), c(1, 0, 0), ux), L(c(0, 1, 0), c(1, 1, 0), ux), uy), L(L(c(0, 0, 1), c(1, 0, 1), ux), L(c(0, 1, 1), c(1, 1, 1), ux), uy), uz);
+    };
+    const kFit = glsl.match(/float gdKg\(float t\) \{ return t \* \(([-\d.]+) \+ t \* \(([-\d.]+) \+ t \* \(([-\d.]+) - ([-\d.]+) \* t\)\)\); \}/);
+    check(!!kFit, "GLSL carries the dust cascade's K(t) fit");
+    if (kFit) {
+        const [c1, c2, c3, c4] = kFit.slice(1, 5).map(Number);
+        const K = t => t * (c1 + t * (c2 + t * (c3 - c4 * t)));
+        let seed = 0x9e3779b9;
+        const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+        const N = 200000, v = new Float64Array(N);
+        for (let i = 0; i < N; i++) v[i] = noise(rnd() * 5000 + 0.5, rnd() * 5000 + 0.5, rnd() * 5000 + 0.5) * 5.2247;
+        let worst = 0;
+        for (const t of [0.45, 0.9, 1.4, 1.75]) {
+            let s = 0;
+            for (let i = 0; i < N; i++) s += Math.exp(t * v[i]);
+            worst = Math.max(worst, Math.abs(s / N / Math.exp(K(t)) - 1));
+        }
+        check(worst < 0.03, `dust cascade octaves keep unit mean (worst deviation ${(100 * worst).toFixed(2)} %)`);
+    }
+}
+
 if (failures) { console.error(`smoke-galaxy-model: ${failures} failure(s)`); process.exit(1); }
 console.log("smoke-galaxy-model passed");

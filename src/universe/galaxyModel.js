@@ -140,6 +140,15 @@ export const MW = Object.freeze({
     bubbleR: 110,          // Local Bubble (low-dust cavity around the Sun)
     // bar dust lanes on the leading edges (in the bar frame)
     barLaneKappa: 7, barLaneW: 110,
+    // Central Molecular Zone: the nuclear ring of dense gas and star
+    // formation where the bar's lanes end (gas on x2 orbits, elongated
+    // across the bar; Molinari et al. 2011; Sormani et al. 2020): radius
+    // cmzR across the bar and cmzAxis * cmzR along it, Gaussian width cmzW
+    // in the plane, scale height cmzZ. Its young stars carry ~5% of the
+    // Galaxy's (SFR ~0.1 of 1.7 Msun/yr, e.g. Barnes et al. 2017); its dust
+    // (in units of kappaSun: n_H of several hundred cm^-3 against ~1.5 near
+    // the Sun) makes it opaque face-on.
+    cmzR: 100, cmzAxis: 0.6, cmzW: 22, cmzZ: 25, cmzYoung: 11000, cmzKappa: 300,
     // HII-region line emission (Halpha, [NII], Hbeta): its V-equivalent
     // luminosity relative to the young stars it ionizes (the Galaxy's
     // Halpha luminosity, SFR 1.7 Msun/yr and Kennicutt 1998, against the
@@ -149,9 +158,10 @@ export const MW = Object.freeze({
     // stellar arms' excess light over the smooth disk is younger (formed in
     // the arms within ~1 Gyr): teffArm.
     teffYoung: 14000, teffThin: 5700, teffArm: 8500, teffThick: 5100, teffBar: 4500, teffHalo: 5000,
-    // Detail below the maps' ~50 pc texels (GLSL, unit mean): dust filament
-    // contrast; young clusters are galaxyModel's gdYoungClusters.
-    dustClump: 2.1, youngClump: 0.65,
+    // Detail below the maps' ~50 pc texels (GLSL, unit mean): scale of the
+    // dust clouds' contrast (gdDust, <= 1.25 within its fit); young clusters
+    // are gdYoungClusters.
+    dustClump: 1.0, youngClump: 0.65,
 });
 
 // Extinction-law ratios A_lambda / A_V for the display R, G, B channels
@@ -216,6 +226,11 @@ export function barDensity(xb, yb, z) {
     return BAR_NORM.bulge * Math.exp(-Math.hypot(xb / MW.barA, yb / MW.barB, z / MW.barC)) +
         BAR_NORM.long * Math.exp(-Math.pow(Math.abs(xb) / MW.longBarL, 4)) * Math.exp(-Math.abs(yb) / MW.longBarB) * Math.exp(-az / MW.longBarZ);
 }
+// The Central Molecular Zone's ring profile (peak 1), bar frame.
+export function cmzRing(xb, yb, z) {
+    const q = (Math.hypot(xb / MW.cmzAxis, yb) - MW.cmzR) / MW.cmzW;
+    return Math.exp(-0.5 * q * q - Math.abs(z) / MW.cmzZ);
+}
 // Dust lanes along the bar's leading edges (the classic straight lanes of
 // barred galaxies: shocks in the bar's gas flow, Athanassoula 1992), relative
 // opacity in units of kappaSun, bar frame.
@@ -276,16 +291,18 @@ export function mwSample(x, y, z, angles, era, disrupt, out, sunX = MW.R0, sunY 
     const halo = j0 * MW.fHalo * Math.pow(MW.R0 / Math.max(rEff, 300), MW.haloN);
     const cb = Math.cos(angles.bar), sb = Math.sin(angles.bar);
     const xb = x * cb + y * sb, yb = -x * sb + y * cb;
-    out.young = young * keep;
+    const cmz = cmzRing(xb, yb, z);
+    const cmzYoung = j0 * MW.fYoung * MW.cmzYoung * cmz * sfr;
+    out.young = (young + cmzYoung) * keep;
     out.thin = thin * keep;
     out.thick = thick * keep;
     out.halo = halo;
     out.bar = barDensity(xb, yb, z);
-    out.hii = j0 * MW.fYoung * MW.hiiShare * radial * Math.exp(-az / MW.hzHii) * m.hii * sfr * keep;
+    out.hii = (j0 * MW.fYoung * MW.hiiShare * radial * Math.exp(-az / MW.hzHii) * m.hii * sfr + MW.hiiShare * cmzYoung) * keep;
     const dSun = Math.hypot(x - sunX, y - sunY, z - sunZ);
     const gas = 0.25 + 0.75 * sfr;
-    out.kappa = MW.kappaSun * (Math.exp(-(R - MW.R0) / MW.hrDust) * Math.exp(-az / MW.hzDust) * m.dust * keep *
-        smoothstep(MW.bubbleR * 0.4, MW.bubbleR, dSun) + barLaneDust(xb, yb, z)) * gas;
+    out.kappa = MW.kappaSun * ((Math.exp(-(R - MW.R0) / MW.hrDust) * Math.exp(-az / MW.hzDust) * m.dust *
+        smoothstep(MW.bubbleR * 0.4, MW.bubbleR, dSun) + MW.cmzKappa * cmz) * keep + barLaneDust(xb, yb, z)) * gas;
     out.arm = m.old - 1;
     return out;
 }
@@ -397,22 +414,34 @@ vec2 gmFaint(float M) {
 vec2 gmUnresolved(float sPc, float avMag) {
     return gmFaint(uMagLimit - 5.0 * log(max(sPc, 1e-3) / 10.0) / log(10.0) - avMag);
 }
-float gmHash(vec3 p) {
-    p = fract(p * 0.1031);
-    p += dot(p, p.zyx + 31.32);
-    return fract((p.x + p.y) * p.z);
+// 3-D gradient noise (random lattice gradients, quintic fade), within about
+// +-0.74 (std 0.19). Unlike value noise it has no preferred lattice
+// directions, so the dust clouds below do not weave into a grid.
+vec3 gmHash33(vec3 p) {
+    p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+    p += dot(p, p.yxz + 33.33);
+    return fract((p.xxy + p.yxx) * p.zyx) * 2.0 - 1.0;
 }
 float gmNoise(vec3 x) {
     vec3 i = floor(x), f = fract(x);
-    f = f * f * (3.0 - 2.0 * f);
-    float n000 = gmHash(i), n100 = gmHash(i + vec3(1, 0, 0)), n010 = gmHash(i + vec3(0, 1, 0)), n110 = gmHash(i + vec3(1, 1, 0));
-    float n001 = gmHash(i + vec3(0, 0, 1)), n101 = gmHash(i + vec3(1, 0, 1)), n011 = gmHash(i + vec3(0, 1, 1)), n111 = gmHash(i + vec3(1, 1, 1));
-    return mix(mix(mix(n000, n100, f.x), mix(n010, n110, f.x), f.y), mix(mix(n001, n101, f.x), mix(n011, n111, f.x), f.y), f.z) * 2.0 - 1.0;
+    vec3 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+    float n000 = dot(gmHash33(i), f), n100 = dot(gmHash33(i + vec3(1, 0, 0)), f - vec3(1, 0, 0));
+    float n010 = dot(gmHash33(i + vec3(0, 1, 0)), f - vec3(0, 1, 0)), n110 = dot(gmHash33(i + vec3(1, 1, 0)), f - vec3(1, 1, 0));
+    float n001 = dot(gmHash33(i + vec3(0, 0, 1)), f - vec3(0, 0, 1)), n101 = dot(gmHash33(i + vec3(1, 0, 1)), f - vec3(1, 0, 1));
+    float n011 = dot(gmHash33(i + vec3(0, 1, 1)), f - vec3(0, 1, 1)), n111 = dot(gmHash33(i + vec3(1, 1, 1)), f - vec3(1, 1, 1));
+    return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y), mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
 }
 uniform float uClumpDust, uClumpYoung;
+// 1 for the refined image, 0 for the draft drawn while the view moves: the
+// finest detail levels (clusters, the two smallest dust octaves) are left to
+// the refinement (unit-mean levels, so the draft is the same picture)
+uniform float uFine;
+// the dust octaves' fade, as a fraction of the ray step (gmSample)
+uniform float uWideK;
 // --- Detail below the structure maps' ~50 pc texels ---------------------------
-// Deterministic in the pattern frame (the JS twin of the young clusters is
-// resolvedField.js clusterOfCell, so resolved young stars sit in them).
+// Deterministic in the pattern frame (the JS twin of the young complexes and
+// clusters is resolvedField.js complexOfCell / clusterOfComplex, so resolved
+// young stars sit in them).
 float gdHash(vec2 p) {
     vec3 p3 = fract(vec3(p.xyx) * 0.1031);
     p3 += dot(p3, p3.yzx + 33.33);
@@ -423,62 +452,122 @@ vec3 gdHash3(vec2 p) {
     p3 += dot(p3, p3.yxz + 33.33);
     return fract((p3.xxy + p3.yzz) * p3.zyx);
 }
-float gdNoise(vec2 p) {
-    vec2 i = floor(p), f = fract(p);
-    f = f * f * (3.0 - 2.0 * f);
-    return mix(mix(gdHash(i), gdHash(i + vec2(1.0, 0.0)), f.x), mix(gdHash(i + vec2(0.0, 1.0)), gdHash(i + vec2(1.0, 1.0)), f.x), f.y) * 2.0 - 1.0;
+// Young light below the maps' texel, hierarchical like star formation
+// itself (Efremov & Elmegreen 1998): star-forming complexes, one per cell of
+// a 100 pc grid in the plane (cell units g = q.xy / 100 + 11.3) at a random
+// height drawn from the young layer (Laplace, scale height ${MW.hzYoung.toFixed(1)} pc), each a
+// 15 pc Gaussian; and inside each complex three star clusters (3 pc), offset
+// from its centre by a 12 pc Gaussian in the plane and +-20 pc in height.
+// Brightnesses follow the cluster luminosity function dN/dL ~ L^-2 (Zhang &
+// Fall 1999; Larsen 2002) over 3 decades with mean 1 per complex (1/3 per
+// cluster): most are faint, a few carry much of the light. Every blob is
+// widened to the sample's resolution, conserving its light: across the ray
+// by the pixel footprint (wT), along it by the ray step (wL), so a coarse
+// step does not alias a cluster and a cluster stays as sharp on screen as
+// the pixels allow (the Gaussian exp(-(|D|^2 - k (D.dir)^2) / 2 st2),
+// k = wL^2 / sl2, has covariance st2 I + wL^2 dir dir^T). Each field is
+// divided by the plane average its blobs would have at height z, p(z) / L^2
+// (p the pdf of the blobs' heights), so it has unit mean over a column of
+// the young layer (whose light follows p itself); the blobs' own extent
+// only smooths the layer vertically.
+float gdCellZ(vec2 cc) {
+    float u = gdHash(cc + 71.7) - 0.5;
+    return -${MW.hzYoung.toFixed(1)} * sign(u) * log(max(1.0 - 2.0 * abs(u), 1e-4));
 }
-// Young star clusters: 3-D Gaussian blobs, one per cell of an L-pc grid in
-// the plane (cell units g = q.xy / L + salt), at a random height drawn from
-// the young layer (Laplace, scale height ${MW.hzYoung} pc). Brightnesses
-// follow the cluster luminosity function dN/dL ~ L^-2 (Zhang & Fall 1999;
-// Larsen 2002) over 3 decades, normalized to a mean of 1: most clusters are
-// faint, a few carry much of the light. Each blob is widened to the
-// sample's resolution (wide: footprint and ray step), conserving its light,
-// so coarse sampling blurs clusters instead of aliasing them. The field has
-// unit mean at every height: the plane average at z is
-// (2 pi s2 / L^2) sqrt(2 pi s2) p(z).
-float gdClusters3(vec3 q, float L, float salt, float sig, float wide) {
-    vec2 g = q.xy / L + salt;
-    vec2 c = floor(g);
-    float s2 = sig * sig + wide * wide;
-    float acc = 0.0;
+// erf(x), x >= 0 (Abramowitz & Stegun 7.1.26, |error| < 1.5e-7)
+float gdErf(float x) {
+    float t = 1.0 / (1.0 + 0.3275911 * x);
+    return 1.0 - t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * exp(-x * x);
+}
+float gdLapCdf(float z) {
+    return z < 0.0 ? 0.5 * exp(z / ${MW.hzYoung.toFixed(1)}) : 1.0 - 0.5 * exp(-z / ${MW.hzYoung.toFixed(1)});
+}
+// The ionized gas of each complex is a shell (the bubble its massive stars
+// blow and ionize; e.g. Anderson et al. 2011: most Galactic HII regions
+// are bubbles) of radius 12-40 pc and a quarter of that thick, brighter on
+// one side (blister regions), with the complex's luminosity; its mean over
+// the sphere is the plain shell's, so the field keeps unit mean (normalised
+// by the exact volume integral of a Gaussian shell, which stays right when
+// the resolution blurs a shell into a ball).
+// (complexes, clusters, HII shells), each faded to 1 by f1, f2, f1
+vec3 gdYoungField(vec3 q, vec3 dir, float wT, float wL, float f1, float f2) {
+    vec2 c = floor(q.xy / 100.0 + 11.3);
+    float st1 = 225.0 + wT * wT, sl1 = st1 + wL * wL, k1 = wL * wL / sl1;
+    float st2 = 9.0 + wT * wT, sl2 = st2 + wL * wL, k2 = wL * wL / sl2;
+    float a1 = 0.0, a2 = 0.0, a3 = 0.0;
     for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
         vec2 cc = c + vec2(float(i), float(j));
         vec3 h = gdHash3(cc);
-        float u = gdHash(cc + 71.7) - 0.5;
-        float zc = -${MW.hzYoung.toFixed(1)} * sign(u) * log(max(1.0 - 2.0 * abs(u), 1e-4));
-        vec2 dxy = (g - cc - h.xy) * L;
-        float dz = q.z - zc;
-        acc += ${(1 / (1 + Math.log(1000))).toFixed(6)} / max(h.z, 1e-3) * exp(-(dot(dxy, dxy) + dz * dz) / (2.0 * s2));
+        vec3 D = q - vec3((cc + h.xy - 11.3) * 100.0, gdCellZ(cc));
+        float a = dot(D, dir);
+        float B = 0.126458 / max(h.z, 1e-3);
+        a1 += B * exp(-(dot(D, D) - k1 * a * a) / (2.0 * st1));
+        vec3 hs = gdHash3(cc + vec2(41.9, 7.3));
+        float Rs = 12.0 + 28.0 * hs.x, ss = sqrt(0.0625 * Rs * Rs + wT * wT + wL * wL);
+        float r = length(D), dr = r - Rs, xs = Rs / (1.4142136 * ss);
+        float vol = 12.566371 * ss * ((Rs * Rs + ss * ss) * 1.2533141 * (1.0 + gdErf(xs)) + Rs * ss * exp(-xs * xs));
+        vec3 side = normalize(vec3(hs.y - 0.5, hs.z - 0.5, 0.3 * hs.x - 0.15) + vec3(1e-4));
+        a3 += B * (1.0 + 0.8 * dot(D, side) / max(r, 1e-3)) * exp(-dr * dr / (2.0 * ss * ss)) / vol;
+        if (f2 > 0.0) for (int m = 1; m <= 3; m++) {
+            vec3 hk = gdHash3(cc + vec2(17.3, 5.7) * float(m));
+            float hz = gdHash(cc + vec2(3.1 * float(m), 29.9));
+            vec2 off = 12.0 * sqrt(-2.0 * log(max(hk.x, 1e-6))) * vec2(cos(6.2831853 * hk.y), sin(6.2831853 * hk.y));
+            vec3 Dk = D - vec3(off, 40.0 * hz - 20.0);
+            float ak = dot(Dk, dir);
+            a2 += 0.042153 / max(hk.z, 1e-3) * exp(-(dot(Dk, Dk) - k2 * ak * ak) / (2.0 * st2));
+        }
     }
-    float pz = exp(-abs(q.z) / ${MW.hzYoung.toFixed(1)}) / ${(2 * MW.hzYoung).toFixed(1)};
-    return acc * L * L / (15.749610 * s2 * sqrt(s2) * pz);
+    float p1 = exp(-abs(q.z) / ${MW.hzYoung.toFixed(1)}) / ${(2 * MW.hzYoung).toFixed(1)};
+    float c1 = a1 * 1e4 / (15.749610 * st1 * sqrt(sl1) * p1);
+    float c3 = a3 * 1e4 / p1;
+    float c2 = 1.0;
+    if (f2 > 0.0) {
+        float p2 = (gdLapCdf(q.z + 20.0) - gdLapCdf(q.z - 20.0)) / 40.0;
+        c2 = a2 * 1e4 / (15.749610 * st2 * sqrt(sl2) * max(p2, 1e-12));
+    }
+    return vec3(mix(1.0, c1, f1), mix(1.0, c2, f2), mix(1.0, c3, f1));
 }
-// Young light at full detail: 30% smooth, 35% in star-forming complexes
-// (100 pc cells, 15 pc blobs), 35% in clusters (25 pc cells, 3 pc blobs):
-// (young, complexes) -- the complexes also carry the HII regions.
-vec2 gdYoungClusters(vec3 q, float wide) {
-    if (wide > 120.0 || abs(q.z) > 5.0 * ${MW.hzYoung.toFixed(1)}) return vec2(1.0);
-    float c1 = gdClusters3(q, 100.0, 11.3, 15.0, wide);
-    float c2 = wide < 40.0 ? gdClusters3(q, 25.0, 57.1, 3.0, wide) : 1.0;
-    float fade = 1.0 - gmSmooth(70.0, 120.0, wide);
-    return vec2(mix(1.0, 0.3 + 0.35 * c1 + 0.35 * mix(1.0, c2, 1.0 - gmSmooth(25.0, 40.0, wide)), fade), mix(1.0, c1, fade));
+// Young light at full detail: 30% smooth, 35% in the complexes, 35% in their
+// clusters: (young, HII shells).
+// A level fades out where the pixel no longer resolves it or where the ray
+// step outgrows its cells.
+vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL) {
+    if (wT > 120.0 || wL > 110.0 || abs(q.z) > 5.0 * ${MW.hzYoung.toFixed(1)}) return vec2(1.0);
+    float f1 = (1.0 - gmSmooth(70.0, 120.0, wT)) * (1.0 - gmSmooth(70.0, 110.0, wL));
+    float f2 = uFine * (1.0 - gmSmooth(25.0, 40.0, wT)) * (1.0 - gmSmooth(20.0, 35.0, wL));
+    vec3 cf = gdYoungField(q, dir, wT, wL, f1, f2);
+    return vec2(0.3 + 0.35 * cf.x + 0.35 * cf.y, cf.z);
 }
-// Dust: turbulent filaments (ridged 3-D noise, flattened to the layer) from
-// ~90 pc down to ~5 pc, each octave only where the resolution resolves it.
+// Dust: turbulent clouds from ~90 pc down to ~6 pc, a multiplicative
+// cascade of lognormal factors (the density PDF of supersonic turbulence is
+// lognormal; e.g. Vazquez-Semadeni 1994) on 3-D gradient noise: large dark
+// clouds with ragged, fractal edges. The smaller octaves are strong only
+// inside the large clouds (the dense gas carries the small-scale structure;
+// between clouds the medium stays smooth instead of speckled). Each octave
+// is rotated about the pole so no lattice direction shows, flattened toward
+// the plane, and faded in only where the resolution resolves it (the two
+// smallest only in the refined image, uFine). Unit mean at every level of
+// detail: each octave's factor exp(t v / std(v)) is divided by its mean
+// exp(K(t)), K the noise's cumulant generating function (fitted on
+// t <= 1.8); an amplitude set by the larger octaves keeps that exact, the
+// octaves being independent.
+float gdKg(float t) { return t * (-0.001050 + t * (0.500426 + t * (-0.005287 - 0.005212 * t))); }
 float gdDust(vec3 q, float wide) {
-    float n = 0.0, w2 = 0.0;
+    float n = 0.0, dense = 1.0;
     for (int o = 0; o < 4; o++) {
         float lam = 90.0 * pow(0.4, float(o));
-        float lod = 1.0 - gmSmooth(0.35 * lam, 0.8 * lam, wide);
+        float lod = (o < 2 ? 1.0 : uFine) * (1.0 - gmSmooth(0.35 * lam, 0.8 * lam, wide));
         if (lod <= 0.0) break;
-        float r = 1.0 - abs(gmNoise(q * vec3(1.0, 1.0, 2.2) / lam + float(o) * 17.13));
-        float a = lod * (1.0 - 0.15 * float(o));
-        n += a * (r * r * r - 0.3);
-        w2 += a * a;
+        float ang = 2.39996 * float(o + 1);
+        float c = cos(ang), sn = sin(ang);
+        float v = 5.2247 * gmNoise(vec3(c * q.x - sn * q.y, sn * q.x + c * q.y, 1.8 * q.z) / lam + float(o) * 17.13);
+        float t = uClumpDust * lod * dense * (o == 0 ? 1.4 : o == 1 ? 1.0 : o == 2 ? 0.75 : 0.55);
+        n += t * v - gdKg(t);
+        // the cloud this sample sits in (in standard deviations of the
+        // largest octave) sets the smaller octaves' amplitude
+        if (o == 0) dense = gmSmooth(-0.6, 1.0, v);
     }
-    return exp(uClumpDust * n - 0.5 * uClumpDust * uClumpDust * 0.045 * w2);
+    return exp(n);
 }
 // Structure maps at pattern-frame q (pc), filtered to the footprint (pc) the
 // sample stands for: (young, old, dust, hii), each normalized like
@@ -503,22 +592,30 @@ vec4 gmMap(vec2 q, float R, float footPc) {
 }
 // Luminosity densities: x = young, y = old (thin+thick+halo), z = bar;
 // w = dust opacity (V, per pc); hii: HII line emission. footPc: the pixel
-// footprint (filters the maps); wide: the resolution of this sample (half
-// the footprint or ~a third of the ray step, whichever is coarser), which
-// widens and fades the detail below the maps' texel.
-vec4 gmSample(vec3 p, float footPc, float wide, out float hii, out float armExcess) {
+// footprint (filters the maps); dir: the ray direction; wT, wL: the
+// resolution of this sample across the ray (half the footprint) and along
+// it (half the ray step), which widen and fade the detail below the maps'
+// texel.
+vec4 gmSample(vec3 p, vec3 dir, float footPc, float wT, float wL, out float hii, out float armExcess) {
     float R = length(p.xy);
     // pattern-frame coordinates (structures co-rotate with the spiral)
     float cs = cos(uSpiral), sn = sin(uSpiral);
     vec3 q = vec3(p.x * cs + p.y * sn, -p.x * sn + p.y * cs, p.z);
+    vec3 dq = vec3(dir.x * cs + dir.y * sn, -dir.x * sn + dir.y * cs, dir.z);
     vec4 mp = gmMap(q.xy, R, footPc);
     // Detail below the maps' texels, each octave faded in only where the
     // footprint resolves it and unit-mean, so a distant view is the same
     // picture with less detail (galaxyDetail below): hierarchical star
     // clusters for the young light, filamentary dust.
     float youngC = 1.0, hiiC = 1.0, dustC = 1.0;
+    // the dust noise has no shape to stretch along the ray: its octaves fade
+    // by the coarser of the pixel and uWideK of the ray step (drafts, drawn
+    // while the view moves, fade by 0.3 of the step so their samples never
+    // alias; the still, refined image keeps octaves down to ~0.1 of the step,
+    // each step then sampling a slice of the finer clouds)
+    float wide = max(wT, 2.0 * uWideK * wL);
     if (wide < 120.0 && abs(p.z) < 700.0) {
-        vec2 yc = gdYoungClusters(q, wide);
+        vec2 yc = gdYoungClusters(q, dq, wT, wL);
         youngC = yc.x; hiiC = yc.y;
         dustC = gdDust(q, wide);
     }
@@ -544,8 +641,15 @@ vec4 gmSample(vec3 p, float footPc, float wide, out float hii, out float armExce
     float win = gmSmooth(500.0, 1300.0, axb) * (1.0 - gmSmooth(3600.0, 4600.0, axb));
     float ql = (yb - sign(xb) * (260.0 + 0.12 * axb)) / ${MW.barLaneW.toFixed(1)};
     kappa += ${MW.barLaneKappa.toFixed(3)} * win * exp(-0.5 * ql * ql) * exp(-az / ${MW.hzDust.toFixed(1)});
+    // the Central Molecular Zone's ring (cmzRing): young stars, their HII
+    // regions and dense dust, broken up like the disk's by the detail
+    float cq = (length(vec2(xb / ${MW.cmzAxis.toFixed(3)}, yb)) - ${MW.cmzR.toFixed(1)}) / ${MW.cmzW.toFixed(1)};
+    float cmz = exp(-0.5 * cq * cq - az / ${MW.cmzZ.toFixed(1)}) * keep;
+    float cmzYoung = uJ0 * uFYoung * ${MW.cmzYoung.toFixed(1)} * cmz * uSfr;
+    young += cmzYoung * youngC;
+    kappa += ${MW.cmzKappa.toFixed(1)} * cmz;
     kappa *= uKappaSun * gas * dustC;
-    hii = uJ0 * uFYoung * ${MW.hiiShare.toFixed(4)} * radial * exp(-az / ${MW.hzHii.toFixed(1)}) * mp.w * uSfr * keep * hiiC;
+    hii = (uJ0 * uFYoung * ${MW.hiiShare.toFixed(4)} * radial * exp(-az / ${MW.hzHii.toFixed(1)}) * mp.w * uSfr * keep + ${MW.hiiShare.toFixed(4)} * cmzYoung) * hiiC;
     // light of the stellar arms above the smooth disk: formed in the arms
     // within the last ~Gyr (A stars and intermediate ages), so bluer
     armExcess = thin * max(0.0, 1.0 - 1.0 / max(mp.y, 1e-3));

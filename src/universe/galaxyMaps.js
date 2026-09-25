@@ -191,12 +191,11 @@ export function generateGalaxyMaps({ size = MAP_SIZE, extentPc = MAP_EXTENT_PC, 
             const R = Math.hypot(x, y);
             const k = j * N + i;
             // the gas-poor bar region: young stars and dust taper in over
-            // 1.5-3.5 kpc (galaxyModel's disk hole), except the central
-            // molecular zone (dense dust and star formation within ~250 pc)
-            const cmz = Math.exp(-(R * R) / (2 * 160 * 160));
+            // 1.5-3.5 kpc (galaxyModel's disk hole); the central molecular
+            // zone is galaxyModel's analytic ring in the bar's frame
             const yHole = smoothstep(1500, 3500, R), dHole = smoothstep(1440, 3200, R);
             if (yHole <= 0 && dHole <= 0) {
-                young[k] = 0.5 * cmz; old[k] = 1; dust[k] = 3 * cmz; hii[k] = 0.35 * cmz;
+                young[k] = 0; old[k] = 1; dust[k] = 0; hii[k] = 0;
                 continue;
             }
             const lnR = Math.log(R);
@@ -245,13 +244,13 @@ export function generateGalaxyMaps({ size = MAP_SIZE, extentPc = MAP_EXTENT_PC, 
             const dClump = Math.exp(1.0 * dn - 0.28);
             // inner ring at the bar ends (the 3-kpc arms / molecular ring region)
             const ring = 0.35 * Math.exp(-((R - 4300) * (R - 4300)) / (2 * 450 * 450));
-            young[k] = yHole * (0.1 * floc + ring + 4 * yArm) + 0.5 * cmz;
+            young[k] = yHole * (0.1 * floc + ring + 4 * yArm);
             old[k] = 1 + 0.9 * oArm;
-            dust[k] = dHole * (0.1 * floc + 0.6 * ring + 1.9 * (dArm + lBest)) * dClump + 3 * cmz;
+            dust[k] = dHole * (0.1 * floc + 0.6 * ring + 1.9 * (dArm + lBest)) * dClump;
             laneS[k] = lS; laneW[k] = lW;
             laneA[k] = dHole * 1.9 * lAmp * dClump;
             laneV[k] = dHole * 1.9 * lBest * dClump;
-            hii[k] = yHole * 0.25 * yArm * yArm + 0.35 * cmz;
+            hii[k] = yHole * 0.25 * yArm * yArm;
         }
     }
     // Where the nearest lane switches from one arm (or winding) to another,

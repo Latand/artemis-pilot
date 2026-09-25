@@ -66,9 +66,10 @@ export const TIDES = Object.freeze({
 export const MW_BIN_COUNT = TIDES.mwBinEdgesKpc.length + 1;
 
 // V-light shares of the Milky Way model (galaxyModel.js, integrated over the
-// volume): young 3.0e9, thin 2.40e10, thick 2.0e9, halo 1.0e9, bar 9.0e9
-// Lsun. The particles carry the three disk components (74 % of the Galaxy).
-export const MW_LIGHT = Object.freeze({ young: 0.0767, thin: 0.6147, thick: 0.0514, halo: 0.0265, bar: 0.2307 });
+// volume): young 3.15e9 (with the Central Molecular Zone), thin 2.40e10,
+// thick 2.0e9, halo 1.0e9, bar 9.0e9 Lsun. The particles carry the three
+// disk components (74 % of the Galaxy).
+export const MW_LIGHT = Object.freeze({ young: 0.0806, thin: 0.6121, thick: 0.0512, halo: 0.0264, bar: 0.2297 });
 export const MW_DISK_OF_TOTAL = MW_LIGHT.young + MW_LIGHT.thin + MW_LIGHT.thick;
 const MW_COMPONENTS = [
     // share of the disk light, radial scale, vertical scale, inner-hole weight

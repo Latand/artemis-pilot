@@ -64,7 +64,12 @@ tone map.
   diffuse Milky Way therefore carries exactly the display flux of the stars
   it stands for, and a galaxy the flux of a star of its magnitude.
 - **Exposure.** Inside the Milky Way's stellar disk every layer shares the
-  stellar exposure. As the camera leaves the disk (0.3 to 3 kpc beyond a
+  stellar exposure, lowered where the Galaxy's own light would clip (from
+  above the disk or beside the bulge, where the inner Galaxy shows through
+  little dust): each draft of the volume is max-pooled and read back, and
+  the exposure is capped so the brightest 1 % of blocks sit at white; the
+  cap never raises the exposure, so a dark sky keeps the stars'
+  calibration. As the camera leaves the disk (0.3 to 3 kpc beyond a
   slab of R < 20 kpc, |z| < 0.6 kpc: `galaxyExposureBlend`) it blends into a
   photographic auto-exposure metered on the galaxies in view (0.6 s time
   constant). With a resolved galaxy in view (>= 30 px) its core is exposed
@@ -97,7 +102,9 @@ the band with its dust lanes from the Earth, the barred spiral from outside.
   2.0 kpc; young and thin with a central hole), an oblate stellar halo, the
   boxy/peanut bulge and long bar (Wegg et al. 2015 geometry), dust with
   scale height 100 pc and length 3.5 kpc plus lanes on the bar's leading
-  edges, HII line emission. V-band emissivities come from the procedural
+  edges, HII line emission, and the Central Molecular Zone as a nuclear
+  ring (~100 x 60 pc, elongated across the bar; Molinari et al. 2011) of
+  dense dust and star formation holding ~5 % of the young light. V-band emissivities come from the procedural
   star population's own luminosity function (`scripts/build-resolved-lf.mjs`,
   j_V = 0.072 Lsun/pc^3 locally); the young share is tied to the star
   formation rate. The model integrates to L_V = 3.9e10 Lsun, M_V = -21.65
@@ -115,23 +122,33 @@ the band with its dust lanes from the Earth, the barred spiral from outside.
   is normalised to its mean within 1 kpc of the Sun, so the local
   calibration survives the arms. The small-scale features (knots, feathers,
   arm breaks) are statistical, provenance PROCEDURAL, not real clusters.
-- **Detail at every zoom (LOD).** Every ray sample knows the footprint of
-  its pixel. The maps are sampled from a mip chain at that footprint;
-  where the texels are resolved the dust lanes are drawn analytically from
-  interpolated arm coordinates (sharp at any zoom); below the texels, young
-  light is broken into hierarchical 3-D star clusters (complexes on a
-  100 pc grid, clusters on a 25 pc grid, luminosity function dN/dL ~ L^-2,
-  heights from the young layer) and dust into ridged turbulent filaments
-  from ~90 to ~5 pc. Every detail octave has unit mean and fades in only
-  where the footprint resolves it, so a distant view is the same picture
-  with less detail, not a blurred or differently bright one. The procedural
-  resolved stars use the same cluster field, so the clusters seen from
-  outside are where their stars are drawn from inside.
-- **Cost.** The integral is rendered into a half-float target whose
-  resolution follows the Galaxy's screen coverage (full resolution when it
-  is an object in the view from outside, half from inside), at half of that
-  while the view moves, refined once it settles, and re-rendered only when
-  the camera or the model's time-dependent state changes.
+- **Detail at every zoom (LOD).** Every ray sample knows its pixel's
+  footprint and the ray step. The maps are sampled from a mip chain at that
+  footprint; where the texels are resolved the dust lanes are drawn
+  analytically from interpolated arm coordinates (sharp at any zoom). Below
+  the texels the young light breaks into star-forming complexes (one per
+  100 pc cell, 15 pc) that each hold three clusters (3 pc), with the
+  cluster luminosity function dN/dL ~ L^-2 (Efremov & Elmegreen 1998;
+  Zhang & Fall 1999); the ionized gas into bubble-shaped HII regions around
+  the complexes, brighter on one side; the dust into a cascade of lognormal
+  clouds from ~90 to ~6 pc with ragged, fractal edges, the small-scale
+  structure living inside the large clouds (3-D gradient noise rotated per
+  octave, so no lattice direction shows). Every level has unit
+  mean (normalised exactly, level by level) and fades in only where the
+  footprint resolves it; clusters are widened along the ray by the step and
+  across it only by the pixel, so they stay as sharp as the pixels allow.
+  A distant view is the same picture with less detail, not a blurred or
+  differently bright one. The procedural resolved stars are placed in the
+  same complexes and clusters, so what is seen from outside is where the
+  stars are drawn from inside.
+- **Resolution and cost.** While the view moves the integral is drawn as a
+  draft: ~0.33 Mpx over the Galaxy's part of the screen from outside, a
+  quarter of the screen's pixels from inside the disk, without the finest
+  detail levels. Once the view settles it is refined at the full device
+  resolution, a band of rows per frame (~0.3 Mpx, half that inside the
+  disk) so no frame stalls, and cross-faded in over 0.3 s. Nothing is
+  re-rendered while the camera and the model's time-dependent state stay
+  put.
 
 ## Star population continuity (provenance)
 
@@ -245,10 +262,13 @@ with the smooth models.
   (0.072 Lsun/pc^3) is ~30 % above measured values and the disk is
   correspondingly compact. It is kept because the procedural stars and the
   diffuse light share that population.
-- The Milky Way's knots, clusters, feathers and dust filaments are
-  statistical; only the arms (Reid et al. 2019), the bar and the smooth
-  components are measured. The structure maps co-rotate with the spiral
-  pattern; the stars' own orbits do not shear them.
+- The Milky Way's knots, clusters, HII bubbles, feathers and dust clouds
+  are statistical; only the arms (Reid et al. 2019), the bar, the Central
+  Molecular Zone's size and the smooth components are measured. The
+  structure maps co-rotate with the spiral pattern; the stars' own orbits
+  do not shear them. The dust clouds below the maps' texel dim the diffuse
+  light only: a resolved star behind one is extinguished by the smooth
+  model.
 - Tidal debris: no disk self-gravity, no gas or star formation, prescribed
   host orbit; the Magellanic Clouds and M33 are not perturbed. Seen from
   inside the debris (e.g. from the Sun after the merger) its diffuse

@@ -95,9 +95,10 @@ export function zEdgesFor(c) {
 }
 
 function fract(x) { return x - Math.floor(x); }
-// Young star clusters below the structure maps' texel: the JS twin of
-// galaxyModel's GLSL gdClusters3 (same hashes, same cells and heights), so
-// resolved young stars sit in the clusters the diffuse light shows.
+// Young star-forming complexes and their clusters below the structure maps'
+// texel: the JS twin of galaxyModel's GLSL gdYoungField (same hashes, same
+// cells, offsets and heights), so resolved young stars sit in the complexes
+// and clusters the diffuse light shows.
 function gdHash3(px, py, out) {
     let x = fract(px * 0.1031), y = fract(py * 0.1030), z = fract(px * 0.0973);
     const d = x * (y + 33.33) + y * (x + 33.33) + z * (z + 33.33);
@@ -112,31 +113,59 @@ function gdHash1(px, py) {
     return fract((x + y) * z);
 }
 const _h3 = [0, 0, 0];
-// Cluster of the cell containing (x, y) on an L-pc grid: [x, y, z] pc and
-// its brightness (dN/dL ~ L^-2 over 3 decades, mean 1).
-export function clusterOfCell(x, y, L, salt, out) {
-    const cx = Math.floor(x / L + salt), cy = Math.floor(y / L + salt);
+const LF_NORM = 1 / (1 + Math.log(1000));
+// Complex of the 100 pc cell containing (x, y): [x, y, z] pc and its
+// brightness (dN/dL ~ L^-2 over 3 decades, mean 1).
+export function complexOfCell(x, y, out) {
+    const cx = Math.floor(x / 100 + 11.3), cy = Math.floor(y / 100 + 11.3);
     gdHash3(cx, cy, _h3);
     const u = gdHash1(cx + 71.7, cy + 71.7) - 0.5;
-    out[0] = (cx + _h3[0] - salt) * L;
-    out[1] = (cy + _h3[1] - salt) * L;
+    out[0] = (cx + _h3[0] - 11.3) * 100;
+    out[1] = (cy + _h3[1] - 11.3) * 100;
     out[2] = -MW.hzYoung * Math.sign(u) * Math.log(Math.max(1 - 2 * Math.abs(u), 1e-4));
-    out[3] = 1 / (1 + Math.log(1000)) / Math.max(_h3[2], 1e-3);
+    out[3] = LF_NORM / Math.max(_h3[2], 1e-3);
     return out;
 }
-// Place a young star in the cluster structure: 30% stay in the smooth
-// layer, 35% join the star-forming complex of their 100 pc cell, 35% the
-// cluster of their 25 pc cell (brighter clusters keep more of them).
-const _cl = [0, 0, 0, 0];
+// Cluster m (1..3) of the complex of the 100 pc cell containing (x, y)
+// (complex: that complexOfCell result): [x, y, z] pc and its brightness
+// (mean 1/3).
+export function clusterOfComplex(x, y, m, complex, out) {
+    const cx = Math.floor(x / 100 + 11.3), cy = Math.floor(y / 100 + 11.3);
+    gdHash3(cx + 17.3 * m, cy + 5.7 * m, _h3);
+    const hz = gdHash1(cx + 3.1 * m, cy + 29.9);
+    const r = 12 * Math.sqrt(-2 * Math.log(Math.max(_h3[0], 1e-6)));
+    out[0] = complex[0] + r * Math.cos(2 * Math.PI * _h3[1]);
+    out[1] = complex[1] + r * Math.sin(2 * Math.PI * _h3[1]);
+    out[2] = complex[2] + 40 * hz - 20;
+    out[3] = LF_NORM / 3 / Math.max(_h3[2], 1e-3);
+    return out;
+}
+// Place a young star in that structure: 30% stay in the smooth layer, 35%
+// join a complex, 35% a cluster, chosen among the complexes (or their
+// clusters) of the 3 x 3 cells around it with probability proportional to
+// their brightness, so a bright complex gathers stars in proportion to the
+// light the diffuse layer gives it.
+const _cand = new Float64Array(27 * 4), _cl = [0, 0, 0, 0], _ck = [0, 0, 0, 0];
 function snapToClusters(rng, x, y, z, out) {
     out[0] = x; out[1] = y; out[2] = z;
     const r = rng();
     if (r < 0.3) return out;
-    const [L, salt, sig] = r < 0.65 ? [100, 11.3, 15] : [25, 57.1, 3];
-    clusterOfCell(x, y, L, salt, _cl);
-    if (rng() * 4 > _cl[3]) return out;
+    const clusters = r >= 0.65;
+    let n = 0, tot = 0;
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+        const px = x + i * 100, py = y + j * 100;
+        complexOfCell(px, py, _cl);
+        for (let m = 1; m <= (clusters ? 3 : 1); m++) {
+            const c = clusters ? clusterOfComplex(px, py, m, _cl, _ck) : _cl;
+            _cand[n * 4] = c[0]; _cand[n * 4 + 1] = c[1]; _cand[n * 4 + 2] = c[2]; _cand[n * 4 + 3] = c[3];
+            tot += c[3]; n++;
+        }
+    }
+    let pick = rng() * tot, k = 0;
+    while (k < n - 1 && (pick -= _cand[k * 4 + 3]) > 0) k++;
+    const sig = clusters ? 3 : 15;
     const g = () => Math.sqrt(-2 * Math.log(Math.max(1e-12, rng()))) * Math.cos(2 * Math.PI * rng());
-    out[0] = _cl[0] + sig * g(); out[1] = _cl[1] + sig * g(); out[2] = _cl[2] + sig * g();
+    out[0] = _cand[k * 4] + sig * g(); out[1] = _cand[k * 4 + 1] + sig * g(); out[2] = _cand[k * 4 + 2] + sig * g();
     return out;
 }
 const _snap = [0, 0, 0];
@@ -457,7 +486,9 @@ export function densityBound(family, x0, y0, z0, c, hz) {
     const thick = j0 * MW.fThick * Math.exp(-dr / MW.hrThick) * Math.exp(-zMin / MW.hzThick);
     const rEff = Math.hypot(rMin, zMin / MW.haloQ);
     const halo = j0 * MW.fHalo * Math.pow(MW.R0 / Math.max(rEff, 300), MW.haloN);
-    return { young, old: thin + thick + halo };
+    // the Central Molecular Zone's ring (galaxyModel cmzRing, any bar angle)
+    const cmz = rMin < MW.cmzR + 4 * MW.cmzW ? j0 * MW.fYoung * MW.cmzYoung * Math.exp(-zMin / MW.cmzZ) : 0;
+    return { young: young + cmz, old: thin + thick + halo };
 }
 
 const _boxes = [];

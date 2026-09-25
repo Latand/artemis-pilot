@@ -90,7 +90,7 @@ try {
         await page.waitForTimeout(settleMs + (v.wait || 0));
         await page.waitForFunction(() => !window.__fieldStatus || window.__fieldStatus().idle, null, { timeout: 600000, polling: 500 }).catch(() => {});
         // the volume refines its draft once the view has settled
-        await page.waitForFunction(() => !window.__volStatus || (!window.__volStatus().draft && window.__volStatus().fade >= 1), null, { timeout: 60000, polling: 100 }).catch(() => {});
+        await page.waitForFunction(() => !window.__volStatus || (!window.__volStatus().draft && window.__volStatus().fade >= 1), null, { timeout: 240000, polling: 100 }).catch(() => {});
         await frames(3);
         await page.evaluate(() => __PERF.clear());
         await frames(6);

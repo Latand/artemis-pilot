@@ -49,7 +49,7 @@ import { stellarExposure } from "./render/stellarAppearance.js";
 import { galacticCenterScene } from "./universe/starfield.js";
 import { evolutionAt } from "./universe/galaxyEvolution.js";
 import { cosmicTimeGyr } from "./universe/cosmicExpansion.js";
-import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit, galaxyVolumeStats } from "./render/galaxyVolume.js";
+import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit, galaxyVolumeStats, galaxyVolumeExposureCap } from "./render/galaxyVolume.js";
 import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
 import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
 import { starViewUniforms } from "./render/starPointMaterial.js";
@@ -2135,6 +2135,9 @@ function frame() {
     const tides = mergerKeepAt(tMwRet / GYR_S, tM31Ret / GYR_S);
     updateGalaxyVolume(camera, G.t, era, tides ? tides.mwBins : mergeFrac, 1 - mwSprite, mwEvo.passive);
     updateCosmicLayer();
+    // one exposure for stars and diffuse light: lowered where the Galaxy's
+    // own light would clip (render/galaxyVolume.js, METER_TARGET)
+    stellarExposure.value = Math.min(stellarExposure.value, galaxyVolumeExposureCap());
     const mwSpriteDisk = MW_LIGHT.halo + MW_DISK_OF_TOTAL;
     updateGalaxyPopulation(camera, {
         tSim: G.t, gcScene, exposure: stellarExposure.value, pxScale: viewportSize.pxScale, viewport: [viewportSize.w, viewportSize.h],
