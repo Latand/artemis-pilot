@@ -19,6 +19,7 @@
 // that splats cannot draw at bounded cost (a known gap: that view would need
 // the volumetric treatment of galaxyVolume.js).
 import * as THREE from "three";
+import { sampleDebrisShapes } from "./debrisShape.js";
 import { K, PC_KM } from "../constants.js";
 import { RELATIVISTIC_VIEW_GLSL } from "./viewBrightness.js";
 import { EXT_STRETCH_GLSL } from "./stellarAppearance.js";
@@ -32,6 +33,7 @@ const DEBUG_GAIN = (() => { try { return Number(new URLSearchParams(location.sea
 const VERT = /* glsl */`
 precision highp float;
 attribute vec2 aWS;          // (weight 0..1, kernel sigma kpc)
+attribute vec4 aStretch;    // world-space principal axis and bounded aspect ratio
 attribute float aGal;        // 0 Milky Way, 1 Andromeda
 uniform vec3 uCamKpc;
 uniform mat3 uWorldToView;
@@ -40,6 +42,7 @@ uniform vec2 uLp, uBV;
 uniform vec2 uDepthRange, uViewport;
 varying vec3 vColor;
 varying float vPeak, vS, vHalf;
+varying vec3 vEllipse;
 ${RELATIVISTIC_VIEW_GLSL}
 vec3 bvColor(float bv, float zfac) {
     float b = clamp(bv, -0.4, 2.0);
@@ -51,6 +54,7 @@ vec3 bvColor(float bv, float zfac) {
 void offscreen() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
     gl_PointSize = 0.0;
+    vEllipse = vec3(1.0, 0.0, 1.0);
     vColor = vec3(0.0); vPeak = 0.0; vS = 1.0; vHalf = 0.0;
 }
 void main() {
@@ -76,13 +80,21 @@ void main() {
     const float PSF0 = 0.75;
     float peak0 = flux / (6.283185307 * max(sPx * sPx, PSF0 * PSF0));
     float PSF = PSF0 * clamp(pow(max(peak0 / 1.5, 1.0), 0.2), 1.0, 3.5);
-    float s = sqrt(sPx * sPx + PSF * PSF);
-    float peak = flux / (6.283185307 * s * s);
+    // Project a volume-preserving 3-D Gaussian stretch. Each particle
+    // retains its fixed light share; the peak includes BOTH projected axes.
+    vec3 axisV = normalize(uWorldToView * aStretch.xyz);
+    vec3 tangent = axisV - dirV * dot(axisV, dirV);
+    float axial = max(1.0, aStretch.w), minor2 = sPx * sPx * pow(axial, -0.66666667);
+    float major2 = minor2 * (1.0 + (axial * axial - 1.0) * dot(tangent, tangent));
+    float s = sqrt(major2 + PSF * PSF), b = sqrt(minor2 + PSF * PSF);
+    vec2 rotation = length(tangent.xy) > 1e-6 ? normalize(tangent.xy) : vec2(1.0, 0.0);
+    vEllipse = vec3(rotation, b);
+    float peak = flux / (6.283185307 * s * b);
     // A camera inside the debris sees kernels hundreds of pixels wide: that
     // near field is a diffuse glow a splat cannot draw at bounded cost (it
     // would need the volumetric treatment of galaxyVolume.js), so kernels
     // wider than ~24-48 px fade out. Seen from outside, kernels are a few px.
-    peak *= 1.0 - smoothstep(24.0, 48.0, s);
+    peak *= 1.0 - smoothstep(24.0, 48.0, sqrt(s * b));
     // many blobs overlap: keep ones far below a single display step
     const float FLOOR = 2e-5;
     if (peak < FLOOR) { offscreen(); return; }
@@ -109,9 +121,12 @@ uniform float uStretch;
 ${EXT_STRETCH_GLSL}
 varying vec3 vColor;
 varying float vPeak, vS, vHalf;
+varying vec3 vEllipse;
 void main() {
-    vec2 q = (gl_PointCoord - 0.5) * 2.0 * vHalf;
-    float r2 = dot(q, q) / (vS * vS);
+    vec2 screen = (gl_PointCoord - 0.5) * vec2(2.0, -2.0) * vHalf;
+    vec2 q = vec2(dot(screen, vEllipse.xy), dot(screen, vec2(-vEllipse.y, vEllipse.x)));
+    vec2 normal = q / vec2(vS, vEllipse.z);
+    float r2 = dot(normal, normal);
     float edge = 1.0 - smoothstep(0.7, 1.0, length(q) / vHalf);
     float v = vPeak * exp(-0.5 * r2) * edge;
     if (v < 1e-6) discard;
@@ -122,7 +137,7 @@ void main() {
 
 const state = {
     group: null, shared: null, worker: null, started: false, model: null, error: null, ms: null,
-    mesh: null, pos: null, ws: null, keep: { mwBins: new Float32Array(MW_BIN_COUNT), mwTotal: 1, m31: 1 },
+    mesh: null, pos: null, ws: null, stretch: null, keep: { mwBins: new Float32Array(MW_BIN_COUNT), mwTotal: 1, m31: 1 },
     lastT: [NaN, NaN], visible: 0,
 };
 
@@ -163,11 +178,13 @@ function onDone(m) {
     const n = model.n;
     state.pos = new Float32Array(n * 3);
     state.ws = new Float32Array(n * 2);
+    state.stretch = new Float32Array(n * 4);
     const gal = new Float32Array(n);
     for (let p = model.nMW; p < n; p++) gal[p] = 1;
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(state.pos, 3).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute("aWS", new THREE.BufferAttribute(state.ws, 2).setUsage(THREE.DynamicDrawUsage));
+    g.setAttribute("aStretch", new THREE.BufferAttribute(state.stretch, 4).setUsage(THREE.DynamicDrawUsage));
     g.setAttribute("aGal", new THREE.BufferAttribute(gal, 1));
     const s = state.shared;
     const mat = new THREE.ShaderMaterial({
@@ -229,6 +246,7 @@ export function updateMergerTides(camera, f) {
     if (f.tMwGyr !== state.lastT[0] || f.tM31Gyr !== state.lastT[1]) {
         sampleParticles(model, f.tMwGyr, 0, model.nMW, state.pos, state.ws);
         sampleParticles(model, f.tM31Gyr, model.nMW, model.n, state.pos, state.ws);
+        sampleDebrisShapes(state.pos, state.ws, model.neighbours, state.stretch);
         state.lastT[0] = f.tMwGyr; state.lastT[1] = f.tM31Gyr;
         let vis = 0;
         for (let i = 0; i < model.n; i++) if (state.ws[i * 2] > 0.004) vis++;
@@ -236,6 +254,7 @@ export function updateMergerTides(camera, f) {
         const g = mesh.geometry;
         g.attributes.position.needsUpdate = true;
         g.attributes.aWS.needsUpdate = true;
+        g.attributes.aStretch.needsUpdate = true;
     }
     mesh.visible = state.visible > 0;
     if (PERF.enabled) markPerf("galaxies.tides", performance.now() - t0, { visible: state.visible });

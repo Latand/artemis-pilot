@@ -34,6 +34,7 @@
 // position relative to that centre is computed on the CPU in float64, so
 // camera-relative positions stay exact at any distance.
 import * as THREE from "three";
+import { galaxySeed, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
 import { K, MPC_KM } from "../constants.js";
 import { galaxyDisplayGain, galaxyVolumeMeter } from "./galaxyVolume.js";
 import { extragalacticExposure, EXT_STRETCH, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
@@ -62,6 +63,8 @@ attribute vec3 aDelta;
 attribute vec4 aShape;
 attribute vec4 aPhot;
 attribute float aT;
+attribute float aSeed;
+${MORPH_VARYINGS}
 uniform vec3 uCamRel;
 uniform mat3 uWorldToView;
 uniform sampler2D uLightCone;
@@ -114,6 +117,7 @@ void offscreen() {
 #ifndef GAL_POINTS
     vPx = vec2(0.0);
 #endif
+    vMorph = vec4(0.0); vDiskFrame = vec3(1.0, 0.0, 1.0);
     vAB = vec4(1.0); vW = vec2(0.0); vColor = vec3(0.0); vLane = 0.0; vExt = 1.0;
 #ifdef GAL_POINTS
     vRot = vec2(1.0, 0.0); vHalf = 0.0; gl_PointSize = 0.0;
@@ -262,6 +266,13 @@ void main() {
     // the far plane.
     gl_Position = vec4(clip.xy / clip.w, 0.9999, 1.0);
 #endif
+    // Stable intrinsic coordinates; changes of viewing angle do not rotate
+    // the arms within their parent disk. Fine structure vanishes below PSF.
+    vec3 nw = normalize(aShape.xyz);
+    vec3 e1w = normalize(cross(abs(nw.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0), nw));
+    vec3 e2w = cross(nw, e1w);
+    vDiskFrame = vec3(dot(maj, uWorldToView * e1w), dot(maj, uWorldToView * e2w), dot(n, l));
+    vMorph = vec4(aSeed, T, smoothstep(2.0, 9.0, a1 * q) * (1.0 - flagMw), morph);
     vAB = vec4(A1, B1, A2, B2);
     vExt = rVis;
     vW = vec2(p1, p2);
@@ -276,6 +287,8 @@ const FRAG = /* glsl */`
 precision highp float;
 uniform float uStretch;
 ${EXT_STRETCH_GLSL}
+${MORPH_VARYINGS}
+${MORPH_GLSL}
 #ifndef GAL_POINTS
 varying vec2 vPx;
 #endif
@@ -300,9 +313,13 @@ void main() {
     float edge = 1.0 - smoothstep(0.55, 1.0, length(e));
     float yl = vPx.y / max(0.18 * vAB.y, 0.5);
     float lane = 1.0 - vLane * exp(-yl * yl) * smoothstep(0.0, 0.6, r1);
-    float v = (vW.x * exp(-r1) * lane + vW.y * exp(-r2) * mix(1.0, lane, 0.5)) * edge;
+    vec3 c = galStructuredLight(vPx, vAB, vW, vColor, lane) * edge;
+    float v = dot(c, vec3(0.2126, 0.7152, 0.0722));
     if (v < 1e-6) discard;
-    gl_FragColor = vec4(vColor * extStretch(min(v, 64.0), uStretch), 1.0);
+    // Keep a resolved disk's contrast instead of lifting all interarm light
+    // with the faint-field stretch. This is display mapping, not extra flux.
+    float stretch = uStretch * (1.0 - 0.7 * vMorph.z);
+    gl_FragColor = vec4(c * extStretch(min(v, 64.0), stretch) / v, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
 }`;
@@ -358,8 +375,7 @@ function makeShared() {
 // The bulk of the population is drawn as GL points (one vertex per galaxy);
 // the Local Group chunk -- the only galaxies that grow to hundreds of pixels
 // -- as instanced quads with no size limit. Same shader, same photometry.
-function makeChunkMesh(c) {
-    const asPoints = !c.lg;
+function makeChunkMesh(c, asPoints = !c.lg) {
     const g = asPoints ? new THREE.BufferGeometry() : quadGeometry();
     const A = asPoints ? THREE.BufferAttribute : THREE.InstancedBufferAttribute;
     if (asPoints) g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(c.count * 3), 3));
@@ -368,6 +384,8 @@ function makeChunkMesh(c) {
     g.setAttribute("aShape", new A(c.shape, 4));
     g.setAttribute("aPhot", new A(c.phot, 4));
     g.setAttribute("aT", new A(c.t, 1));
+    if (!c.seed) c.seed = Float32Array.from({ length: c.count }, (_, i) => galaxySeed(c.gid?.[i] ?? i));
+    g.setAttribute("aSeed", new A(c.seed, 1));
     if (!asPoints) g.instanceCount = c.count;
     const defines = asPoints ? { GAL_POINTS: "" } : {};
     const mat = new THREE.ShaderMaterial({
@@ -389,6 +407,10 @@ function makeChunkMesh(c) {
     mesh.userData.radiusMpc = c.radiusMpc;
     mesh.userData.minMV = c.minMV ?? -30;
     mesh.userData.lg = !!c.lg;
+    mesh.userData.source = c;
+    let maxScale = 0;
+    for (let i = 0; i < c.count; i++) maxScale = Math.max(maxScale, c.phot[i * 4 + 2]);
+    mesh.userData.maxScaleKpc = maxScale;
     return mesh;
 }
 
@@ -701,13 +723,29 @@ export function updateGalaxyPopulation(camera, f) {
     const ev = _v.elements;
     const gainE = s.uGainExposure.value * f.pxScale * f.pxScale / (12.566370614 * 3.5343);
     let vis = 0;
-    for (const mesh of state.chunks) {
+    for (let index = 0; index < state.chunks.length; index++) {
+        let mesh = state.chunks[index];
         const c = mesh.userData.center;
         // The camera enters comoving coordinates (divided by a_obs) for every
         // chunk; the Local Group's members sit at the origin unit with
         // proper offsets, so they do not expand.
         const k = 1 / s.uAObs.value;
         const rx = cx * k - c[0], ry = cy * k - c[1], rz = cz * k - c[2];
+        // Nearby catalog galaxies need uncapped quads too, not only the
+        // Local Group. Swap the one representation before the GL point limit
+        // is reached, with hysteresis. No double-drawing or resident copy.
+        if (!mesh.userData.lg) {
+            const a = s.uAObs.value;
+            const quad = needsGalaxyQuads(Math.hypot(rx, ry, rz) * a,
+                (mesh.userData.radiusMpc * 1.05 + 0.5) * a, mesh.userData.maxScaleKpc,
+                f.pxScale, s.uMaxPointPx.value, !mesh.isPoints);
+            if (quad === !!mesh.isPoints) {
+                const old = mesh;
+                mesh = makeChunkMesh(old.userData.source, !quad);
+                state.group.remove(old); old.geometry.dispose(); old.material.dispose();
+                state.group.add(mesh); state.chunks[index] = mesh;
+            }
+        }
         mesh.material.uniforms.uCamRel.value.set(rx, ry, rz);
         if (mesh.userData.lg || s.uBeta.value > 0) { mesh.visible = true; vis++; continue; }
         const R = mesh.userData.radiusMpc * 1.05 + 0.5;

@@ -14,6 +14,8 @@ import { dotTexture, ringTexture } from "./textures.js";
 import { scene, renderQuality } from "./scene.js";
 import { segmentSphereHit } from "./geometry.js";
 import { PERF, markPerf } from "./perf.js";
+import { RecentPath } from "./render/recentPath.js";
+import { getEpochMs } from "./epoch.js";
 import { ACTIVE_STARS, activeStarForFocus } from "./universe/activeStars.js";
 
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
@@ -24,21 +26,6 @@ const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 const TURN_DEG = 5.5;
 const TURN_COS = Math.cos(TURN_DEG * Math.PI / 180);
 
-// ---- detailed trail (recent path, fine resolution near bodies) ----
-const TRN = 8000;
-const trPos = new Float32Array(TRN * 3), trCol = new Float32Array(TRN * 3);
-const trGeom = new THREE.BufferGeometry();
-const trPosAttr = new THREE.BufferAttribute(trPos, 3); trPosAttr.setUsage(THREE.DynamicDrawUsage);
-const trColAttr = new THREE.BufferAttribute(trCol, 3); trColAttr.setUsage(THREE.DynamicDrawUsage);
-trGeom.setAttribute("position", trPosAttr);
-trGeom.setAttribute("color", trColAttr);
-trGeom.setDrawRange(0, 0);
-const trail = new THREE.Line(trGeom, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .62 }));
-trail.frustumCulled = false;
-trail.renderOrder = 3;
-scene.add(trail);
-let trN = 0;
-const _tc = [0, 0, 0];
 function markAttrRange(attr, startItem, itemCount) {
     const count = itemCount * attr.itemSize;
     if (count <= 0) return;
@@ -53,131 +40,89 @@ function markAttrFull(attr, itemCount) {
     if (attr.clearUpdateRanges) attr.clearUpdateRanges();
     markAttrRange(attr, 0, itemCount);
 }
-export function pushTrail(force) {
+// Recent flight, not an unbounded archive of undersampled deep-time orbits.
+const pathQuery = new URLSearchParams(location.search);
+const pathsDisabled = pathQuery.get("trails") === "0";
+const pathsInExplore = pathQuery.get("trails") === "1";
+function makeRecentPath(name, capacity, opacity) {
+    const history = new RecentPath(capacity);
+    const geometry = new THREE.BufferGeometry();
+    for (const [key, size] of [["position", 3], ["color", 3], ["aFade", 1]]) {
+        geometry.setAttribute(key, new THREE.BufferAttribute(new Float32Array(capacity * 2 * size), size).setUsage(THREE.DynamicDrawUsage));
+    }
+    geometry.setDrawRange(0, 0);
+    const material = new THREE.ShaderMaterial({
+        uniforms: { uOpacity: { value: opacity } },
+        vertexShader: `attribute vec3 color; attribute float aFade;
+            varying vec3 vColor; varying float vFade;
+            void main() { vColor = color; vFade = aFade;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `uniform float uOpacity; varying vec3 vColor; varying float vFade;
+            void main() { gl_FragColor = vec4(vColor, uOpacity * vFade);
+                #include <colorspace_fragment>
+            }`,
+        transparent: true, depthWrite: false, toneMapped: false,
+    });
+    const mesh = new THREE.LineSegments(geometry, material);
+    mesh.name = name; mesh.frustumCulled = false; mesh.renderOrder = 3; mesh.visible = false;
+    scene.add(mesh);
+    return { history, mesh };
+}
+const recent = makeRecentPath("flightTrail.recent", 768, 0.48);
+const journey = makeRecentPath("flightTrail.journey", 256, 0.2);
+const _tc = [0, 0, 0], pathOrigin = [0, 0, 0];
+let pathClock = 0, pathWall = performance.now() / 1000, pathLifetime = 6000;
+function pathPeriod() {
+    let acceleration = 0, period = 86400 * 365;
+    const body = (x, y, z, mu) => {
+        const r = Math.max(1, Math.hypot(G.x - x, G.y - y, G.z - z)), a = mu / (r * r);
+        if (a > acceleration) { acceleration = a; period = 2 * Math.PI * Math.sqrt(r * r * r / mu); }
+    };
+    if (!WORLD.earthDestroyed) body(0, 0, 0, MU_E);
+    if (!WORLD.moonDestroyed) body(eph.moonX, eph.moonY, eph.moonZ, MU_M);
+    if (!WORLD.sunDestroyed) body(eph.sunX, eph.sunY, eph.sunZ, MU_S);
+    for (let i = 0; i < PL.length; i++) if (!WORLD.plDestroyed[i]) body(eph.plX[i], eph.plY[i], eph.plZ[i], PL[i].mu);
+    return Math.max(1, period);
+}
+function samplePath(path, coarse = false) {
+    if (pathsDisabled || G.warp < 0 || (G.uiMode === "observe" && !pathsInExplore)) { path.history.clear(); return; }
+    const period = pathPeriod();
+    // At high warp even a single frame skips too much orbital phase to draw
+    // a truthful polyline. Clear immediately, including while paused.
+    if (Math.abs(G.warp) / 60 > period / 48) { path.history.clear(); return; }
+    pathLifetime = period * 1.15;
     const sx = (eph.earthX + G.x) * K, sy = G.z * K, sz = -(eph.earthY + G.y) * K;
-    if (trN > 0 && !force) {
-        const lx = trPos[(trN - 1) * 3], ly = trPos[(trN - 1) * 3 + 1], lz = trPos[(trN - 1) * 3 + 2];
-        moonState(G.t, _m);
-        let rNear = Math.min(Math.hypot(G.x, G.y, G.z), Math.hypot(G.x - _m.mx, G.y - _m.my, G.z - eph.moonZ) * 2.5, Math.hypot(G.x - eph.sunX, G.y - eph.sunY, G.z - eph.sunZ));
-        for (let i = 0; i < PL.length; i++) rNear = Math.min(rNear, Math.hypot(G.x - eph.plX[i], G.y - eph.plY[i], G.z - eph.plZ[i]));
-        const thr = Math.max(.012, Math.min(400, rNear * K * .02));
-        const ddx = sx - lx, ddy = sy - ly, ddz = sz - lz;
-        const segLen = Math.hypot(ddx, ddy, ddz);
-        // a sharp heading change is committed as a real vertex even while
-        // still under the distance threshold, so turns never round off into
-        // a polygon corner just because the ship hasn't moved far yet
-        let sharpTurn = false;
-        if (segLen > 1e-9 && trN > 1) {
-            const px = lx - trPos[(trN - 2) * 3], py = ly - trPos[(trN - 2) * 3 + 1], pz = lz - trPos[(trN - 2) * 3 + 2];
-            const pLen = Math.hypot(px, py, pz);
-            if (pLen > 1e-9) sharpTurn = (ddx * px + ddy * py + ddz * pz) / (segLen * pLen) < TURN_COS;
-        }
-        if (segLen < thr && !sharpTurn) {
-            // refresh last point so the line always touches the ship
-            trPos[(trN - 1) * 3] = sx; trPos[(trN - 1) * 3 + 1] = sy; trPos[(trN - 1) * 3 + 2] = sz;
-            markAttrRange(trPosAttr, trN - 1, 1);
-            return;
-        }
-    }
-    let compacted = false;
-    if (trN >= TRN) { // keep newest half, decimated
-        const t0 = PERF.enabled ? performance.now() : 0;
-        const keep = TRN / 2, src = keep * 3, end = TRN * 3;
-        trPos.copyWithin(0, src, end);
-        trCol.copyWithin(0, src, end);
-        trN = keep;
-        compacted = true;
-        if (PERF.enabled) markPerf("trail.compact", performance.now() - t0, { kind: "detail", keep });
-    }
+    const speed = Math.hypot(G.vx + eph.earthVx, G.vy + eph.earthVy, G.vz) * K;
     speedColor(Math.hypot(G.vx, G.vy, G.vz), _tc);
-    const idx = trN;
-    trPos[idx * 3] = sx; trPos[idx * 3 + 1] = sy; trPos[idx * 3 + 2] = sz;
-    trCol[idx * 3] = _tc[0]; trCol[idx * 3 + 1] = _tc[1]; trCol[idx * 3 + 2] = _tc[2];
-    trN++;
-    if (compacted) {
-        markAttrFull(trPosAttr, trN);
-        markAttrFull(trColAttr, trN);
-    } else {
-        markAttrRange(trPosAttr, idx, 1);
-        markAttrRange(trColAttr, idx, 1);
-    }
-    trGeom.setDrawRange(0, trN);
+    const spacing = coarse ? Math.max(0.3, Math.hypot(sx, sy, sz) * 0.0002) : Math.max(0.002, Math.min(8, speed * period / 720));
+    path.history.sample(sx, sy, sz, G.t, pathClock, _tc, { epoch: getEpochMs(), spacing, dtLimit: period / 48, speed });
 }
-
-// ---- journey trail: the whole flight, coarse spacing, readable when zoomed
-// far out (the detailed trail is subpixel at interplanetary scale) ----
-const JRN = 6000;
-const jrPos = new Float32Array(JRN * 3), jrCol = new Float32Array(JRN * 3);
-const jrGeom = new THREE.BufferGeometry();
-const jrPosAttr = new THREE.BufferAttribute(jrPos, 3); jrPosAttr.setUsage(THREE.DynamicDrawUsage);
-const jrColAttr = new THREE.BufferAttribute(jrCol, 3); jrColAttr.setUsage(THREE.DynamicDrawUsage);
-jrGeom.setAttribute("position", jrPosAttr);
-jrGeom.setAttribute("color", jrColAttr);
-jrGeom.setDrawRange(0, 0);
-const journey = new THREE.Line(jrGeom, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0, depthWrite: false }));
-journey.frustumCulled = false;
-journey.renderOrder = 3;
-scene.add(journey);
-let jrN = 0;
-export function pushJourney() {
-    const sx = (eph.earthX + G.x) * K, sy = G.z * K, sz = -(eph.earthY + G.y) * K;
-    if (jrN > 0) {
-        const lx = jrPos[(jrN - 1) * 3], ly = jrPos[(jrN - 1) * 3 + 1], lz = jrPos[(jrN - 1) * 3 + 2];
-        // spacing scales with distance from Earth: fine in cislunar space,
-        // coarse on interplanetary arcs — 6000 points cover ~10 AU of path
-        const thr = Math.max(1.2, Math.hypot(sx, sz) * .01);
-        const ddx = sx - lx, ddy = sy - ly, ddz = sz - lz;
-        const segLen = Math.hypot(ddx, ddy, ddz);
-        let sharpTurn = false;
-        if (segLen > 1e-9 && jrN > 1) {
-            const px = lx - jrPos[(jrN - 2) * 3], py = ly - jrPos[(jrN - 2) * 3 + 1], pz = lz - jrPos[(jrN - 2) * 3 + 2];
-            const pLen = Math.hypot(px, py, pz);
-            if (pLen > 1e-9) sharpTurn = (ddx * px + ddy * py + ddz * pz) / (segLen * pLen) < TURN_COS;
-        }
-        if (segLen < thr && !sharpTurn) {
-            jrPos[(jrN - 1) * 3] = sx; jrPos[(jrN - 1) * 3 + 1] = sy; jrPos[(jrN - 1) * 3 + 2] = sz;
-            markAttrRange(jrPosAttr, jrN - 1, 1);
-            return;
-        }
-    }
-    let compacted = false;
-    if (jrN >= JRN) {
-        const t0 = PERF.enabled ? performance.now() : 0;
-        const keep = JRN / 2, src = keep * 3, end = JRN * 3;
-        jrPos.copyWithin(0, src, end);
-        jrCol.copyWithin(0, src, end);
-        jrN = keep;
-        compacted = true;
-        if (PERF.enabled) markPerf("trail.compact", performance.now() - t0, { kind: "journey", keep });
-    }
-    speedColor(Math.hypot(G.vx, G.vy, G.vz), _tc);
-    const idx = jrN;
-    jrPos[idx * 3] = sx; jrPos[idx * 3 + 1] = sy; jrPos[idx * 3 + 2] = sz;
-    // Keep a low floor for deep-space readability without turning dense
-    // repeated orbits into a white bloom mass.
-    jrCol[idx * 3] = .12 + .46 * _tc[0]; jrCol[idx * 3 + 1] = .12 + .42 * _tc[1]; jrCol[idx * 3 + 2] = .14 + .44 * _tc[2];
-    jrN++;
-    if (compacted) {
-        markAttrFull(jrPosAttr, jrN);
-        markAttrFull(jrColAttr, jrN);
-    } else {
-        markAttrRange(jrPosAttr, idx, 1);
-        markAttrRange(jrColAttr, idx, 1);
-    }
-    jrGeom.setDrawRange(0, jrN);
-}
-function densityFade(n, softStart, halfAt) {
-    return 1 / Math.sqrt(1 + Math.max(0, n - softStart) / halfAt);
-}
+export function pushTrail(force) { if (force) clearTrail(); samplePath(recent); }
+export function pushJourney() { samplePath(journey, true); }
 export function setJourneyOpacity(o) {
-    const jrFade = densityFade(jrN, 700, 520);
-    const trFade = densityFade(trN, 1200, 1100);
-    journey.material.opacity = Math.min(.34, o * jrFade);
-    trail.material.opacity = .62 * trFade;
+    const now = performance.now() / 1000;
+    if (!G.paused) pathClock += Math.min(0.25, Math.max(0, now - pathWall));
+    pathWall = now;
+    const allowed = !pathsDisabled && G.warp >= 0 && (G.uiMode !== "observe" || pathsInExplore) && Math.abs(G.warp) / 60 <= pathPeriod() / 48;
+    for (const path of [recent, journey]) {
+        if (!allowed) { path.history.clear(); path.mesh.visible = false; continue; }
+        const h = path.history, g = path.mesh.geometry;
+        if (!h.hasHead) { path.mesh.visible = false; continue; }
+        pathOrigin[0] = h.head[0]; pathOrigin[1] = h.head[1]; pathOrigin[2] = h.head[2];
+        path.mesh.position.set(...pathOrigin);
+        const n = h.write(g.attributes.position.array, g.attributes.color.array, g.attributes.aFade.array, pathOrigin, G.t, pathClock, pathLifetime);
+        for (const a of Object.values(g.attributes)) markAttrFull(a, n);
+        g.setDrawRange(0, n); path.mesh.visible = n > 1;
+    }
+    journey.mesh.material.uniforms.uOpacity.value = Math.min(0.2, Math.max(0, o));
+    recent.mesh.material.uniforms.uOpacity.value = 0.48 * (1 - Math.min(1, o / 0.48));
 }
 export function clearTrail() {
-    trN = 0; trGeom.setDrawRange(0, 0);
-    jrN = 0; jrGeom.setDrawRange(0, 0);
+    for (const p of [recent, journey]) { p.history.clear(); p.mesh.geometry.setDrawRange(0, 0); p.mesh.visible = false; }
+}
+export function flightTrailStatus() {
+    return [recent, journey].map(p => ({ name: p.mesh.name, count: p.history.count, capacity: p.history.capacity,
+        vertices: p.mesh.geometry.drawRange.count, visible: p.mesh.visible, breaks: p.history.breaks }));
 }
 
 // ---- prediction ----

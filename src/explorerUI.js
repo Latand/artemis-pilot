@@ -1,3 +1,4 @@
+import { initCompactExplorer } from "./compactExplorer.js";
 import * as THREE from "three";
 import { G, keys, WORLD, BH } from "./state.js";
 import { K, MU_E, MU_M, R_EARTH, R_MOON, R_SUN, PL, STARS, LY_SCENE } from "./constants.js";
@@ -26,6 +27,7 @@ function visit(focus) {
 
 export function initExplorerUI(options) {
     hooks=options;
+    initCompactExplorer({ stopMovement: () => { movement = null; } });
     document.querySelectorAll('[data-ui-mode]').forEach(btn => btn.addEventListener('click',()=>setUiMode(btn.dataset.uiMode)));
     document.querySelectorAll('[data-destination]').forEach(btn => btn.addEventListener('click',()=>visit(routes[btn.dataset.destination])));
     $('exploreHome').addEventListener('click',()=>visit('earth'));
