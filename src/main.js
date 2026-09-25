@@ -1951,7 +1951,7 @@ function frame() {
         // stay centered at any warp; the lerp only glides out the residual
         // offset left by focus transitions and pans
         if (placed && camPrevFocus === G.focus) cam.tgt.add(camDelta.copy(tgt).sub(camPrevTgt));
-        // interstellar focus jumps snap: gliding 26,000 ly takes forever
+        // interstellar focus jumps snap: gliding 26,700 ly takes forever
         const glide = placed && G.uiMode !== "observe" && cam.tgt.distanceTo(tgt) < 1e8;
         cam.tgt.lerp(tgt, glide ? Math.min(1, dtR * 6) : 1);
         camPrevTgt.copy(tgt);

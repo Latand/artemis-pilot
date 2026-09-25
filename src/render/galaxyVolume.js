@@ -229,10 +229,12 @@ const meter = { rt: null, mat: null, scene: null, buf: null, lum: null, pending:
 const DRAFT_BUDGET_PX = 0.33e6, DRAFT_INSIDE_SCALE = 0.25, REFINE_ROWS_PX = 0.3e6, REFINE_FADE_MS = 300;
 const FRAME_SLOW_MS = 30, FRAME_FAST_MS = 18;
 const budget = { draft: 1, refine: 1, t: 0 };
+// Over the target the budget scales toward what would fit it (a GPU that
+// takes seconds per band converges in two or three frames); under it, it
+// grows gently. A hitch elsewhere only costs a few frames of regrowth.
 function adaptBudget(key, now, lo, hi) {
     const dt = budget.t ? now - budget.t : 16;
-    if (dt > 250) return;                      // a hitch elsewhere (load, tab switch)
-    if (dt > FRAME_SLOW_MS) budget[key] = Math.max(lo, budget[key] * 0.75);
+    if (dt > FRAME_SLOW_MS) budget[key] = Math.max(lo, budget[key] * Math.min(0.75, Math.max(0.1, FRAME_SLOW_MS / dt)));
     else if (dt < FRAME_FAST_MS) budget[key] = Math.min(hi, budget[key] * 1.1);
 }
 
@@ -637,8 +639,8 @@ export function renderGalaxyVolume(renderer) {
         state.dirty = false;
         state.lastDrawn = state.rtDraft;
     } else if (state.refineRow < full.height) {
-        if (state.refineRow > 0) adaptBudget("refine", now, 0.05, 4);
-        const n = Math.max(8, Math.floor(REFINE_ROWS_PX * budget.refine * (state.inside ? 0.5 : 1) / full.width));
+        if (state.refineRow > 0) adaptBudget("refine", now, 0.02, 4);
+        const n = Math.max(2, Math.floor(REFINE_ROWS_PX * budget.refine * (state.inside ? 0.5 : 1) / full.width));
         rayRender(renderer, full, [state.refineRow, Math.min(n, full.height - state.refineRow)]);
         state.refineRow += n;
         if (state.refineRow >= full.height) state.refineT = now;

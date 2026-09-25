@@ -185,7 +185,7 @@ const SCENARIOS = [
         physicsCard: [
             "SGR A* is the Milky Way's central black hole: 4.15 million solar masses, r_s ≈ 12.3 million km.",
             "Its photon sphere at 1.5 r_s would swallow half of Mercury's orbit, yet its mean density is below water's.",
-            "It sits 26,000 ly away — even at 1 Myr/s warp, the crossing shows how empty a galaxy is.",
+            "It sits 26,700 ly away — even at 1 Myr/s warp, the crossing shows how empty a galaxy is.",
             "⇧T engages the crossing; contact here is the photon sphere, the boundary past which no path returns.",
         ],
         setup() {
