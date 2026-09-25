@@ -372,7 +372,11 @@ export function updateStars(camera, dtR) {
             e.alpha = Math.max(Number.isFinite(e.absMag) ? starPointAlpha(e.absMag, d, e.star.R, stellarExposure.value, pxScale) : 0, e.photosphere.visible ? disk : 0);
         } else {
             const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
-            const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, cameraSolarDistance);
+            // a supermassive hole's beacon gives way to the nucleus the
+            // Galaxy model draws around it (the Central Molecular Zone
+            // resolves inside ~10 kly): a lit marker there would cover it
+            const nucleus = e.star.mass > 1e5 ? smooth01(LY_SCENE * 5000, LY_SCENE * 12000, d) : 1;
+            const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, cameraSolarDistance) * nucleus;
             const alpha = Math.max(.82 * local, .85 * skyBeacon);
             e.g.visible = alpha > .012;
             e.glow.material.opacity = alpha;
