@@ -11,9 +11,33 @@ concurrency:
   group: navigation-visuals-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
+  sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Preserve exact sources and dependencies for offline reproduction
+        run: |
+          mkdir -p evidence/source
+          git rev-parse HEAD > evidence/source/head-sha.txt
+          git bundle create evidence/source/repository.bundle HEAD
+          tar -czf evidence/source/dependencies.tar.gz node_modules package-lock.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: navigation-source-bundle
+          path: evidence/source/
+          retention-days: 3
   model:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -23,6 +47,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      - run: npx playwright install --with-deps chromium
       - name: Model, trail and light-accounting regressions
         run: |
           node --check src/trails.js
