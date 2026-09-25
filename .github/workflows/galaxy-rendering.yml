@@ -23,26 +23,20 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Preserve exact comparison sources
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      - run: npm install
+      - name: Preserve dependency versions for offline comparison
         run: |
-          mkdir -p evidence/sources
-          git rev-parse HEAD > evidence/sources/head-sha.txt
-          printf '%s\n' "$BASE_SHA" > evidence/sources/base-sha.txt
-          git archive --format=tar.gz -o evidence/sources/head.tar.gz HEAD
-          git archive --format=tar.gz -o evidence/sources/base.tar.gz "$BASE_SHA"
+          mkdir -p evidence/runtime
+          tar -czf evidence/runtime/dependencies.tar.gz node_modules package-lock.json
       - uses: actions/upload-artifact@v4
         with:
-          name: galaxy-comparison-sources
-          path: evidence/sources/
+          name: galaxy-comparison-runtime
+          path: evidence/runtime/
           retention-days: 3
-      - run: npm install
       - name: Model and light-budget regressions
         run: |
           npm test
@@ -56,7 +50,6 @@ jobs:
         run: |
           if test -f scripts/verify-galaxy-continuity.mjs; then
             npx playwright install --with-deps chromium
-            npm run dev -- --host 127.0.0.1 > /tmp/galaxy-vite.log 2>&1 &
             node scripts/verify-galaxy-continuity.mjs
           fi
       - uses: actions/upload-artifact@v4
