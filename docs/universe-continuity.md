@@ -134,9 +134,10 @@ the band with its dust lanes from the Earth, the barred spiral from outside.
   Zhang & Fall 1999); the ionized gas into bubble-shaped HII regions around
   the complexes, brighter on one side; the dust into a cascade of lognormal
   clouds from ~90 to ~6 pc with ragged, fractal edges, the small-scale
-  structure living inside the large clouds, stretched ~2:1 into trailing
-  streaks by the Galaxy's shear (an area-preserving map, so the statistics
-  are unchanged; 3-D gradient noise rotated per octave, so no lattice
+  structure living inside the large clouds, clumpier in the arms and lanes
+  than in the smoother interarm medium, and leaning along the spiral with
+  the Galaxy's shear (an area-preserving map, so the statistics are
+  unchanged; 3-D gradient noise rotated per octave, so no lattice
   direction shows). Every level has unit
   mean (normalised exactly, level by level) and fades in only where the
   footprint resolves it; clusters are widened along the ray by the step and

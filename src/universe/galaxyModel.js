@@ -553,12 +553,13 @@ vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL) {
 // octaves being independent. Galactic shear: differential rotation drags
 // every cloud into a trailing spiral streak. Rotating each point by
 // C ln R before sampling the isotropic noise is an area-preserving simple
-// shear of strain C (along log spirals of pitch atan(1/C)), so the clouds
-// keep their statistics and line up like the flocculent dust of real disks
-// (C = 0.8: stretched ~2:1).
+// shear of strain C, so the clouds keep their statistics and lean along
+// the spiral (C = 0.35: stretched ~1.4:1). amp scales every octave: the
+// dense, clumpy molecular clouds lie in the arms and lanes, the interarm
+// medium is smoother (gmSample sets it from the maps' dust).
 float gdKg(float t) { return t * (-0.001050 + t * (0.500426 + t * (-0.005287 - 0.005212 * t))); }
-float gdDust(vec3 q, float wide) {
-    float sa = 0.8 * log(max(length(q.xy), 200.0) / ${MW.R0.toFixed(1)});
+float gdDust(vec3 q, float wide, float amp) {
+    float sa = 0.35 * log(max(length(q.xy), 200.0) / ${MW.R0.toFixed(1)});
     q.xy = vec2(cos(sa) * q.x - sin(sa) * q.y, sin(sa) * q.x + cos(sa) * q.y);
     float n = 0.0, dense = 1.0;
     for (int o = 0; o < 4; o++) {
@@ -570,7 +571,7 @@ float gdDust(vec3 q, float wide) {
         float ang = 2.39996 * float(o + 1);
         float c = cos(ang), sn = sin(ang);
         float v = 5.2247 * gmNoise(vec3(c * q.x - sn * q.y, sn * q.x + c * q.y, 1.8 * q.z) / lam + float(o) * 17.13);
-        float t = uClumpDust * lod * dense * (o == 0 ? 1.4 : o == 1 ? 1.0 : o == 2 ? 0.75 : 0.55);
+        float t = uClumpDust * amp * lod * dense * (o == 0 ? 1.4 : o == 1 ? 1.0 : o == 2 ? 0.75 : 0.55);
         n += t * v - gdKg(t);
         // the cloud this sample sits in (in standard deviations of the
         // largest octave) sets the smaller octaves' amplitude
@@ -627,7 +628,9 @@ vec4 gmSample(vec3 p, vec3 dir, float footPc, float wT, float wL, out float hii,
     if (wide < 120.0 && abs(p.z) < 700.0) {
         vec2 yc = gdYoungClusters(q, dq, wT, wL);
         youngC = yc.x; hiiC = yc.y;
-        dustC = gdDust(q, wide);
+        // the dust's clumpiness follows its density in the maps (arms and
+        // lanes 2-5x the local mean, the interarm a fraction of it)
+        dustC = gdDust(q, wide, 0.4 + 0.6 * gmSmooth(0.4, 2.5, mp.z));
     }
     float hole = gmSmooth(${MW.diskHoleIn.toFixed(1)}, ${MW.diskHoleOut.toFixed(1)}, R);
     float az = abs(p.z);
