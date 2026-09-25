@@ -67,9 +67,11 @@ tone map.
   stellar exposure, lowered where the Galaxy's own light would clip (from
   above the disk or beside the bulge, where the inner Galaxy shows through
   little dust): each draft of the volume is max-pooled and read back, and
-  the exposure is capped so the brightest 1 % of blocks sit at white; the
-  cap never raises the exposure, so a dark sky keeps the stars'
-  calibration. As the camera leaves the disk (0.3 to 3 kpc beyond a
+  the exposure is capped so the brightest 1 % of blocks sit at white and,
+  once the camera is more than ~0.4-1.2 kpc above the plane (the disk's
+  glow filling the view), their median at 0.12 so the disk keeps a
+  photographic tonal range. The cap never raises the exposure, so a dark
+  sky keeps the stars' calibration. As the camera leaves the disk (0.3 to 3 kpc beyond a
   slab of R < 20 kpc, |z| < 0.6 kpc: `galaxyExposureBlend`) it blends into a
   photographic auto-exposure metered on the galaxies in view (0.6 s time
   constant). With a resolved galaxy in view (>= 30 px) its core is exposed
@@ -148,9 +150,10 @@ the band with its dust lanes from the Earth, the barred spiral from outside.
   quarter of the screen's pixels from inside the disk, without the finest
   detail levels. Once the view settles it is refined at the full device
   resolution, a band of rows per frame (~0.3 Mpx, half that inside the
-  disk) so no frame stalls, and cross-faded in over 0.3 s. Nothing is
-  re-rendered while the camera and the model's time-dependent state stay
-  put.
+  disk) so no frame stalls, and cross-faded in over 0.3 s. Draft size and
+  band size follow the frame time (a slow GPU converges to smaller ones
+  within a few frames, a fast one grows them). Nothing is re-rendered while
+  the camera and the model's time-dependent state stay put.
 
 ## Star population continuity (provenance)
 
