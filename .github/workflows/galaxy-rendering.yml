@@ -6,6 +6,7 @@ on:
       - 'src/**'
       - 'scripts/**'
       - 'package*.json'
+      - 'vite.config.js'
       - '.github/workflows/galaxy-rendering.yml'
 
 permissions:
@@ -23,22 +24,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm install
-      - name: Preserve dependency versions for offline comparison
+      - name: Model, cache and light-budget regressions
         run: |
-          mkdir -p evidence/runtime
-          tar -czf evidence/runtime/dependencies.tar.gz node_modules package-lock.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: galaxy-comparison-runtime
-          path: evidence/runtime/
-          retention-days: 3
-      - name: Model and light-budget regressions
-        run: |
+          node --check src/render/galaxyVolume.js
+          node --check scripts/verify-galaxy-rendering.mjs
+          node scripts/smoke-galaxy-continuity.mjs
           npm test
           npm run smoke:galaxy-model
           npm run smoke:galaxy-population
@@ -46,12 +42,28 @@ jobs:
           npm run smoke:scaleladder
           npm run smoke:determinism
       - run: npm run build
-      - name: Browser regression when present
+      - name: Prepare reproducible before and after
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          if test -f scripts/verify-galaxy-continuity.mjs; then
-            npx playwright install --with-deps chromium
-            node scripts/verify-galaxy-continuity.mjs
-          fi
+          mkdir -p evidence/galaxy/sources
+          git rev-parse HEAD > evidence/galaxy/sources/head-sha.txt
+          printf '%s\n' "$BASE_SHA" > evidence/galaxy/sources/base-sha.txt
+          cp package-lock.json evidence/galaxy/sources/
+          git diff "$BASE_SHA" HEAD > evidence/galaxy/sources/implementation.diff
+          git archive --format=tar.gz -o evidence/galaxy/sources/rendering-source.tar.gz HEAD src/render src/universe/galaxyModel.js scripts/galaxy-preview-plugin.mjs scripts/verify-galaxy-rendering.mjs vite.config.js
+          git worktree add --detach "$RUNNER_TEMP/galaxy-baseline" "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/galaxy-baseline/node_modules"
+      - run: npx playwright install --with-deps chromium
+      - name: Real browser regressions and matched baseline captures
+        shell: bash
+        run: |
+          set +e
+          node scripts/verify-galaxy-rendering.mjs . evidence/galaxy/after
+          HEAD_STATUS=$?
+          BASELINE=1 node scripts/verify-galaxy-rendering.mjs "$RUNNER_TEMP/galaxy-baseline" evidence/galaxy/before
+          BASE_STATUS=$?
+          if [ "$HEAD_STATUS" != 0 ] || [ "$BASE_STATUS" != 0 ]; then exit 1; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
