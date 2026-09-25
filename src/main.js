@@ -23,7 +23,7 @@ import {
     moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
 import { MOONS, moonOffset, moonFocusValue, moonFocusIndex, MOON_LABEL_DIST } from "./moons.js";
-import { addStarVisual, buildStars, updateStars, starVisualAlpha, syncActiveProceduralPoints } from "./stars.js";
+import { addStarVisual, buildStars, updateStars, updateHoleBeacons, starVisualAlpha, syncActiveProceduralPoints } from "./stars.js";
 import { cockpitScene, cockpitCam, look, updateCockpit, setCockpitAspect, mfdScreens, setLeverThrottle } from "./cockpit.js";
 import { updateInstruments, mfdTextures } from "./instruments.js";
 import { AP, apStep, apOff, targetState } from "./autopilot.js";
@@ -2135,6 +2135,7 @@ function frame() {
     const tides = mergerKeepAt(tMwRet / GYR_S, tM31Ret / GYR_S);
     updateGalaxyVolume(camera, G.t, era, tides ? tides.mwBins : mergeFrac, 1 - mwSprite, mwEvo.passive);
     updateCosmicLayer();
+    if (cosmicView) updateHoleBeacons(camera);
     // one exposure for stars and diffuse light: lowered where the Galaxy's
     // own light would clip (render/galaxyVolume.js, METER_TARGET)
     stellarExposure.value = Math.min(stellarExposure.value, galaxyVolumeExposureCap());

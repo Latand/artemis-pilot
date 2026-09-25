@@ -330,6 +330,32 @@ export function syncActiveProceduralPoints() {
     for (const key of ["position", "color", "absMag", "teffK", "radiusKm"]) a[key].needsUpdate = true;
 }
 
+// A black hole's own light and its sky beacon: a fixed-angle marker that
+// finds it from afar. A supermassive hole's beacon gives way to the nucleus
+// the Galaxy model draws around it (the Central Molecular Zone resolves
+// inside ~10 kly): a lit marker there would cover it.
+function updateHoleVisual(e, d, cameraSolarDistance) {
+    const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
+    const nucleus = e.star.mass > 1e5 ? smooth01(LY_SCENE * 5000, LY_SCENE * 12000, d) : 1;
+    const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, cameraSolarDistance) * nucleus;
+    const alpha = Math.max(.82 * local, .85 * skyBeacon);
+    e.g.visible = alpha > .012;
+    e.glow.material.opacity = alpha;
+    const localScale = Math.min(e.star.rs * K * 14, Math.max(e.star.rs * K * 2.2, d * .002));
+    e.glow.scale.setScalar(Math.max(localScale, d * .0075 * skyBeacon));
+}
+// Cosmic frames skip updateStars (the near-field renderer) except at the
+// label cadence; the holes' beacons still follow the camera every frame, or
+// they keep a stale size and brightness from an earlier view.
+export function updateHoleBeacons(camera) {
+    const cameraSolarDistance = camera.position.length();
+    for (const e of entries) {
+        if (!e.star.bh) continue;
+        e.g.position.set(e.star.x * K, (e.star.z || 0) * K, -e.star.y * K);
+        updateHoleVisual(e, camera.position.distanceTo(e.g.position), cameraSolarDistance);
+    }
+}
+
 export function updateStars(camera, dtR) {
     syncActiveProceduralPoints();
     const cameraSolarDistance = camera.position.length();
@@ -370,19 +396,7 @@ export function updateStars(camera, dtR) {
             e.photosphere.visible = radiusPx > .3;
             e.g.visible = e.photosphere.visible || !!e.point;
             e.alpha = Math.max(Number.isFinite(e.absMag) ? starPointAlpha(e.absMag, d, e.star.R, stellarExposure.value, pxScale) : 0, e.photosphere.visible ? disk : 0);
-        } else {
-            const local = 1 - smooth01(LY_SCENE * .015, LY_SCENE * .16, d);
-            // a supermassive hole's beacon gives way to the nucleus the
-            // Galaxy model draws around it (the Central Molecular Zone
-            // resolves inside ~10 kly): a lit marker there would cover it
-            const nucleus = e.star.mass > 1e5 ? smooth01(LY_SCENE * 5000, LY_SCENE * 12000, d) : 1;
-            const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, cameraSolarDistance) * nucleus;
-            const alpha = Math.max(.82 * local, .85 * skyBeacon);
-            e.g.visible = alpha > .012;
-            e.glow.material.opacity = alpha;
-            const localScale = Math.min(e.star.rs * K * 14, Math.max(e.star.rs * K * 2.2, d * .002));
-            e.glow.scale.setScalar(Math.max(localScale, d * .0075 * skyBeacon));
-        }
+        } else updateHoleVisual(e, d, cameraSolarDistance);
         if (e.disk) e.disk.rotation.z += dtR * .05;
     }
 }
