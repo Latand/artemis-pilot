@@ -1,5 +1,13 @@
 import * as THREE from 'three';
 
+// Astronomical-camera sky is the default display interpretation: foreground
+// bodies keep their own surface exposure, rather than dimming all starlight.
+// ?skyexposure=adaptive restores the previous foreground-metered view.
+export const skyDisplay = {
+    mode: typeof location !== 'undefined' && new URLSearchParams(location.search).get('skyexposure') === 'adaptive'
+        ? 'adaptive' : 'photographic',
+};
+
 // Shared display exposure for every stellar layer. Physical magnitudes remain
 // unchanged. This approximates a camera exposing for a resolved sunlit body.
 export const stellarExposure = { value: 1 };
@@ -90,6 +98,7 @@ const forward = new THREE.Vector3();
 // Meter only the visible portion of a disk, with continuous coverage at the
 // viewport edges. Scratch vectors keep this bounded per-body work allocation free.
 export function meteredSkyExposure(camera, center, radius, lightPosition = null) {
+    if (skyDisplay.mode === "photographic") return 1;
     offset.copy(center).sub(camera.position);
     const distance = offset.length();
     camera.getWorldDirection(forward);
