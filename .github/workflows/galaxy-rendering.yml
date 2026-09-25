@@ -1,0 +1,68 @@
+name: Milky Way rendering regression
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'package*.json'
+      - '.github/workflows/galaxy-rendering.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: galaxy-rendering-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Preserve exact comparison sources
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          printf '%s\n' "$BASE_SHA" > evidence/sources/base-sha.txt
+          git archive --format=tar.gz -o evidence/sources/head.tar.gz HEAD
+          git archive --format=tar.gz -o evidence/sources/base.tar.gz "$BASE_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: galaxy-comparison-sources
+          path: evidence/sources/
+          retention-days: 3
+      - run: npm install
+      - name: Model and light-budget regressions
+        run: |
+          npm test
+          npm run smoke:galaxy-model
+          npm run smoke:galaxy-population
+          npm run smoke:brightness
+          npm run smoke:scaleladder
+          npm run smoke:determinism
+      - run: npm run build
+      - name: Browser regression when present
+        run: |
+          if test -f scripts/verify-galaxy-continuity.mjs; then
+            npx playwright install --with-deps chromium
+            npm run dev -- --host 127.0.0.1 > /tmp/galaxy-vite.log 2>&1 &
+            node scripts/verify-galaxy-continuity.mjs
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: galaxy-rendering-evidence
+          path: evidence/galaxy/
+          if-no-files-found: ignore
+          retention-days: 14
