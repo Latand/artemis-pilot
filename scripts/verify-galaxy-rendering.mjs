@@ -22,7 +22,7 @@ const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_C
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 const url = `http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&dpr=1&tier1=0&galadapt=0&focus=sun&dist=1e4&realsky=0&river=0`;
 async function openPage(fault = 'hold') {
-    const page = await browser.newPage({ viewport: { width: 800, height: 500 }, deviceScaleFactor: 1 });
+    const page = await browser.newPage({ viewport: { width: 640, height: 400 }, deviceScaleFactor: 1 });
     page.setDefaultTimeout(120000);
     page.on('pageerror', e => report.errors.push(e.message));
     page.on('console', m => { if (m.type() === 'error') report.errors.push(m.text()); });
@@ -57,7 +57,7 @@ async function openPage(fault = 'hold') {
         const origin = await import('/src/universe/renderOrigin.js');
         const { setPaused } = await import('/src/timeCtl.js'); setPaused(true, 'capture');
         s.renderer.setAnimationLoop(null); window.__G.predict = false;
-        s.renderQuality.mobile = false; s.renderer.setSize(640, 400, false);
+        s.renderQuality.mobile = false; s.renderer.setSize(400, 250, false);
         s.camera.aspect = 1.6; s.camera.fov = 48; s.camera.updateProjectionMatrix();
         e.stellarExposure.value = 0.15; e.extragalacticExposure.blend = 0; e.extragalacticExposure.stretch = 0;
         window.test = { s, v, c, K, e, T, origin, time: 0, saved: {}, empty: new T.Scene() };
@@ -95,9 +95,14 @@ async function openPage(fault = 'hold') {
     return page;
 }
 async function frame(page, name, args = {}) {
+    const start = performance.now();
     const f = await page.evaluate(args => draw(args), { ...args, png: !!name });
+    f.browserRoundTripMs = performance.now() - start;
     if (name) { await writeFile(`${out}/${name}.png`, Buffer.from(f.png.split(',')[1], 'base64')); }
-    delete f.png; report.frames.push({ name, ...f }); return f;
+    delete f.png; report.frames.push({ name, ...f });
+    await writeFile(`${out}/report.json`, JSON.stringify(report, null, 2));
+    if (name) console.log('FRAME', name, f.mean.toFixed(3), f.browserRoundTripMs.toFixed(1) + ' ms capture');
+    return f;
 }
 async function settle(page) {
     let f;
@@ -119,8 +124,7 @@ try {
     await settle(page);
     const still = await frame(page, '01-settled', { save: 'still' });
     check('Settled galaxy is nonblack', still.mean > 1);
-    // Same observer, orientation and projection: resizing alone used to black out.
-    await page.evaluate(() => test.s.renderer.setSize(800, 500, false));
+    await page.evaluate(() => test.s.renderer.setSize(480, 300, false));
     const resized = await frame(page, '02-first-frame-after-resize');
     check('No black first frame after render-target resize', resized.mean > 1, true);
     await settle(page);
@@ -134,11 +138,13 @@ try {
     check('Rotation preserves valid completed angular detail', motion.every(f => f.stats.historyUsed === true), true);
     report.timings.rotationRenderAndFinishMs = motion.map(f => f.renderAndFinishMs);
     await page.evaluate(() => pose()); await settle(page);
-    const returned = await frame(page, '04-return', { compare: 'resized' });
-    check('Returning to the same observer is deterministic', returned.mae < .05);
+    const returned = await frame(page, '04-return', { compare: 'resized', save: 'returned' });
+    // The baseline retains mixed old/new pixel gain in the resized refinement.
+    // Record that observed defect rather than relaxing the assertion for HEAD.
+    check('Returning to the same observer is deterministic', returned.mae < .05, true);
     await page.evaluate(() => { test.origin.setOrigin(1e15, -4e13, 2e12); });
-    const rebased = await frame(page, '05-rebased', { compare: 'resized' });
-    check('Floating render origin does not move the physical observer', rebased.mae < .05);
+    const rebased = await frame(page, '05-rebased', { compare: 'returned' });
+    check('Origin metadata leaves the absolute volume observer unchanged', rebased.mae < .05);
     await page.evaluate(() => pose([8178.01, 0, 20.8]));
     const translated = await frame(page, '06-translated');
     check('Translation rejects stale angular history', translated.stats.historyUsed === false, true);
@@ -147,7 +153,7 @@ try {
     const changed = await frame(page, '07-model-time-change');
     check('Changed galaxy model rejects angular history', changed.stats.historyUsed === false, true);
     await page.evaluate(() => { test.time = 0; pose(); }); await settle(page);
-    const direct = await frame(page, '08-direct', { save: 'direct' });
+    await frame(page, '08-direct', { save: 'direct' });
     const tier = await frame(page, '09-depth-tiers', { tier: true, compare: 'direct' });
     check('Depth-tier path preserves the same background', tier.mean > 1 && tier.mae < .1);
     const restored = await page.evaluate(() => {
@@ -173,7 +179,7 @@ try {
     const occult = await frame(page, '10-opaque-foreground', { tier: true, occlude: true });
     check('Opaque foreground covers the galaxy, not the other way around', Math.max(...occult.center) < 3 && occult.mean > 1);
     await page.evaluate(async () => {
-        await test.s.ensurePostProcessing(); test.s.composer.setSize(800,500);
+        await test.s.ensurePostProcessing(); test.s.composer.setSize(480,300);
         test.s.composer.passes[0].scene = test.empty; test.s.composer.passes[0].camera = test.s.camera;
         test.s.bloomPass.enabled = false;
     });
@@ -205,7 +211,7 @@ try {
     if (times?.length) {
         const sorted = [...times].sort((a,b) => a-b);
         report.timings.summary = { n: sorted.length, p50: sorted[Math.floor(sorted.length*.5)], p95: sorted[Math.min(sorted.length-1,Math.floor(sorted.length*.95))], max: sorted.at(-1),
-            meaning: 'Synchronous JS draw + gl.finish wall time, excluding PNG/readPixels and event delivery. Software rendering is not hardware frame time.' };
+            meaning: 'JS draw + gl.finish wall time, excluding readPixels and PNG. browserRoundTripMs includes capture/readback; neither is a hardware GPU timer or FPS benchmark.' };
     }
     await writeFile(`${out}/report.json`, JSON.stringify(report, null, 2));
     await browser.close(); await server.close();
