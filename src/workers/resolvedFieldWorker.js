@@ -2,6 +2,7 @@
 // (universe/resolvedField.js). Holds the box cache; each request selects one
 // bin for one camera and returns transferable arrays ready for a point layer.
 import { createFieldCache, trimFieldCache, buildBin, makeSelectionOut } from "../universe/resolvedField.js";
+import { ensureGalaxyMaps } from "../universe/galaxyMaps.js";
 import { teffToRGB } from "../render/viewBrightness.js";
 
 const cache = createFieldCache(3.5e6);
@@ -9,6 +10,8 @@ const _rgb = [1, 1, 1];
 const lin = c => (c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4));
 
 export function handleBuild(m) {
+    // the stars follow the same arms, knots and bar as the diffuse light
+    ensureGalaxyMaps();
     const out = makeSelectionOut(1024);
     const t0 = performance.now();
     buildBin(cache, m.seed, m.family, m.bin, m.params, out);

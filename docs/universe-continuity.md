@@ -57,19 +57,81 @@ tone map.
 - **Galaxies** are extended sources: sums of exponential components in their
   projected ellipse, integrated flux `gain * exposure * L / (4 pi d_A^2) *
   (1+z)^-4`, widened by the same PSF when unresolved. No point/extended switch.
-- **Exposure.** Inside the Galaxy every layer shares the stellar exposure.
-  Between 150 and 600 kly from the Galactic centre it blends into a
-  photographic auto-exposure metered on the galaxies in view (the brightest
-  0.2 % of pixels at 0.9, 0.6 s time constant). One exposure scales every
-  galaxy, so relative brightness is exact.
+- **Display gain.** Extended light uses the stars' own calibration: a
+  one-pixel star of flux F (Lsun/pc^2) shows `STAR_DISPLAY_PER_FLUX * F`
+  (`render/galaxyVolume.js`, from `BRIGHTNESS_CURVE`), so a surface of
+  radiance I shows `STAR_DISPLAY_PER_FLUX * I / pxScale^2` per pixel. The
+  diffuse Milky Way therefore carries exactly the display flux of the stars
+  it stands for, and a galaxy the flux of a star of its magnitude.
+- **Exposure.** Inside the Milky Way's stellar disk every layer shares the
+  stellar exposure. As the camera leaves the disk (0.3 to 3 kpc beyond a
+  slab of R < 20 kpc, |z| < 0.6 kpc: `galaxyExposureBlend`) it blends into a
+  photographic auto-exposure metered on the galaxies in view (0.6 s time
+  constant). With a resolved galaxy in view (>= 30 px) its core is exposed
+  1.2x above the metering target, near white with the disk in the
+  mid-tones; for the Milky Way the core's surface brightness comes from the
+  model itself (face-on central column over a ~1 kpc^2 core, averaged over
+  the pixel footprint), which does not change while zooming, so moving from
+  the whole Galaxy into one arm keeps the exposure: the same picture with
+  more detail. Without a resolved galaxy the brightest 0.2 % of pixels sit
+  at 0.9. One exposure scales every galaxy, so relative brightness is exact.
 - **Display stretch outside the Galaxy.** Extended light spans ~10^4 in
   surface brightness from galaxy cores to tidal debris, and the ACES tone
   map clips linear values below ~0.002. Outside the Milky Way (same blend as
   the exposure) extended light is shown through an asinh stretch (Lupton et
   al. 2004), `S(v) = asinh(v/0.03) / asinh(5/0.03)`: linear with gain ~5.7
   for faint light, logarithmic above, white only at 5x the metered disk
-  level so bulges stay unclipped; monotonic and applied to luminance. The
-  faint cull limits scale with it so nothing pops.
+  level so bulges stay unclipped; monotonic and applied to luminance. When
+  the Milky Way's disk fills much of the view (2-25 % screen coverage and
+  up) the stretch is reduced by 70 % so its arms and dust lanes keep their
+  contrast instead of being lifted to one level. The faint cull limits scale
+  with it so nothing pops.
+
+## The Milky Way model
+
+`universe/galaxyModel.js` is one light-and-dust model (V band) integrated
+along view rays by `render/galaxyVolume.js` from the camera's true position:
+the band with its dust lanes from the Earth, the barred spiral from outside.
+
+- **Components.** Young, thin and thick disks (exponential, R_d = 2.6 /
+  2.0 kpc; young and thin with a central hole), an oblate stellar halo, the
+  boxy/peanut bulge and long bar (Wegg et al. 2015 geometry), dust with
+  scale height 100 pc and length 3.5 kpc plus lanes on the bar's leading
+  edges, HII line emission. V-band emissivities come from the procedural
+  star population's own luminosity function (`scripts/build-resolved-lf.mjs`,
+  j_V = 0.072 Lsun/pc^3 locally); the young share is tied to the star
+  formation rate. The model integrates to L_V = 3.9e10 Lsun, M_V = -21.65
+  (measured -21.5 +- 0.4, Licquia et al. 2015); the population's MILKY_WAY
+  entry carries the same light. Local dust: A_V ~ 1.8 mag/kpc mean in the
+  plane, 0.14 mag toward the pole, opaque (~90 mag) toward the centre.
+- **Structure maps** (`universe/galaxyMaps.js`, 1024^2 texels over
+  +-24 kpc, 47 pc each, built in a worker in ~1-2 s). The measured part is the
+  Reid et al. (2019) maser spiral arms; beyond their observed azimuths the
+  pitch relaxes to the Galaxy's mean 12.5 deg. Scutum-Centaurus and Perseus
+  start at the bar ends and carry the old stellar arms (Benjamin et al.
+  2005); the young stars concentrate in all arms; dust lanes run along the
+  arms' concave (inner) edge with feathers trailing into the interarm; star
+  formation is broken into complexes of 100-300 pc and HII knots. Each map
+  is normalised to its mean within 1 kpc of the Sun, so the local
+  calibration survives the arms. The small-scale features (knots, feathers,
+  arm breaks) are statistical, provenance PROCEDURAL, not real clusters.
+- **Detail at every zoom (LOD).** Every ray sample knows the footprint of
+  its pixel. The maps are sampled from a mip chain at that footprint;
+  where the texels are resolved the dust lanes are drawn analytically from
+  interpolated arm coordinates (sharp at any zoom); below the texels, young
+  light is broken into hierarchical 3-D star clusters (complexes on a
+  100 pc grid, clusters on a 25 pc grid, luminosity function dN/dL ~ L^-2,
+  heights from the young layer) and dust into ridged turbulent filaments
+  from ~90 to ~5 pc. Every detail octave has unit mean and fades in only
+  where the footprint resolves it, so a distant view is the same picture
+  with less detail, not a blurred or differently bright one. The procedural
+  resolved stars use the same cluster field, so the clusters seen from
+  outside are where their stars are drawn from inside.
+- **Cost.** The integral is rendered into a half-float target whose
+  resolution follows the Galaxy's screen coverage (full resolution when it
+  is an object in the view from outside, half from inside), at half of that
+  while the view moves, refined once it settles, and re-rendered only when
+  the camera or the model's time-dependent state changes.
 
 ## Star population continuity (provenance)
 
@@ -177,10 +239,16 @@ with the smooth models.
 
 ## Known approximations and discrepancies
 
-- The Milky Way model integrates to ~1.1e11 Lsun (M_V ~ -22.7), about a
-  magnitude brighter than recent estimates (e.g. Licquia et al. 2015); it is
-  kept because the procedural star population and the diffuse light are
-  calibrated to it, and the sprite must match the volume.
+- The Milky Way's V surface brightness at the solar circle is ~40 Lsun/pc^2,
+  above the ~25-30 derived from local star counts (e.g. Flynn et al. 2006),
+  while its total (M_V -21.65) matches: the population's local emissivity
+  (0.072 Lsun/pc^3) is ~30 % above measured values and the disk is
+  correspondingly compact. It is kept because the procedural stars and the
+  diffuse light share that population.
+- The Milky Way's knots, clusters, feathers and dust filaments are
+  statistical; only the arms (Reid et al. 2019), the bar and the smooth
+  components are measured. The structure maps co-rotate with the spiral
+  pattern; the stars' own orbits do not shear them.
 - Tidal debris: no disk self-gravity, no gas or star formation, prescribed
   host orbit; the Magellanic Clouds and M33 are not perturbed. Seen from
   inside the debris (e.g. from the Sun after the merger) its diffuse
@@ -204,6 +272,11 @@ with the smooth models.
   equilibrium before the encounter, outside-in stripping, bound remnant,
   light bookkeeping, determinism.
 - `smoke:galaxy-model`, `smoke:brightness`, `smoke:cosmic-era`,
-  `smoke:deep-time` - the Milky Way model, photometry and deep time.
+  `smoke:deep-time` - the Milky Way model (its M_V, local dust columns, the
+  arms' and lanes' geometry in the structure maps), photometry and deep
+  time.
 - `node scripts/capture-scale-ladder.mjs <dir>` - a 40-rung zoom from the
   Earth to 1.5 Gly with per-frame luminance statistics (no black gaps).
+- `node scripts/capture-views.mjs <dir> <views.json>` - photographs named
+  camera views (focus, distance, orientation, epoch) with per-frame
+  statistics, for before/after comparisons of a rendering change.

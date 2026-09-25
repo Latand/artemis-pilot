@@ -420,9 +420,10 @@ export function selectionMK(chiMpc, opts = POP_DEFAULTS) {
 
 // The Milky Way entry: luminosity from the volumetric model's integral (so
 // the volume -> sprite handoff conserves light), structure from galaxyModel.
+// M_V = -21.65 (measured -21.5 +- 0.4, Licquia, Newman & Brinchmann 2015).
 export const MILKY_WAY = Object.freeze({
-    LBol: 1.083e11,        // Lsun: integral of galaxyModel.js mwSample over its volume
-    MV: 4.74 - 2.5 * Math.log10(1.083e11) + 0.12,
+    LV: 3.90e10,           // Lsun,V: integral of galaxyModel.js mwSample over its volume
+    MV: 4.83 - 2.5 * Math.log10(3.90e10),
     T: 4, hKpc: 2.6, bulge: 0.24, q0: 0.12, bv: 0.68,
 });
 

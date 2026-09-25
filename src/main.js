@@ -49,7 +49,7 @@ import { stellarExposure } from "./render/stellarAppearance.js";
 import { galacticCenterScene } from "./universe/starfield.js";
 import { evolutionAt } from "./universe/galaxyEvolution.js";
 import { cosmicTimeGyr } from "./universe/cosmicExpansion.js";
-import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit } from "./render/galaxyVolume.js";
+import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit, galaxyVolumeStats } from "./render/galaxyVolume.js";
 import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
 import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
 import { starViewUniforms } from "./render/starPointMaterial.js";
@@ -417,6 +417,7 @@ const cosmicInitT0 = perfStart();
 // the whole tier-1 streaming field into the far tier for free.
 initCosmicLayer(farTierGroup);
 addBackgroundHook(renderGalaxyVolume);
+window.__volStatus = galaxyVolumeStats; // debug/testing handle
 // Real stars (HYG catalog + curated destinations) at every camera distance,
 // one shared photometry with tier 1, the Sun and the active stars.
 initCatalogStars(scene);
