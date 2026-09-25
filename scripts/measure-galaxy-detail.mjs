@@ -7,8 +7,10 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 const root = resolve(process.argv[2] || '.'), out = resolve(process.argv[3] || 'evidence/detail');
 const variant = process.env.VARIANT || 'after', reference = variant === 'reference';
+const shard = reference ? (process.env.REFERENCE_SHARD || 'all') : 'all';
+assert(['all', 'static', 'early', 'late'].includes(shard), 'Unknown reference shard');
 await mkdir(out, { recursive: true });
-const report = { variant, epochSeconds: 0, exposure: 0.15, viewport: [480, 300], dpr: 1, frames: [], checks: [], errors: [] };
+const report = { variant, referenceShard: shard, completed: false, epochSeconds: 0, exposure: 0.15, viewport: [480, 300], dpr: 1, frames: [], checks: [], errors: [] };
 const check = (name, pass) => { report.checks.push({ name, pass: !!pass }); console.log(pass ? 'PASS' : 'FAIL', name); };
 const server = await createServer({ root, logLevel: 'error', server: { host: '127.0.0.1', port: 0, hmr: false },
     plugins: [{ name: 'test-only-volume-detail', enforce: 'pre', configureServer(s) {
@@ -161,23 +163,27 @@ try {
         { name: 'cygnus', p: [8178, 0, 20.8], target: [8178, 3000, 100], fov: 30 },
         { name: 'external', p: [0, -1000, 45000], target: [0, 0, 0], fov: 48 },
     ];
-    for (const state of views) {
+    for (const state of (shard === 'all' || shard === 'static' ? views : [])) {
         await page.evaluate(s => pose(s.p, s.target, s.fov), state);
         const refinement = await settle(); await capture(state.name, state, { refinement });
     }
     const home = views[1]; await page.evaluate(s => pose(s.p, s.target, s.fov), home); await settle();
     await capture('motion-start', home, {}, true);
     for (let i = 1; i <= 8; i++) {
+        if (shard === 'static' || (shard === 'early' && i > 4) || (shard === 'late' && i <= 4)) continue;
         const state = { p: [8178 + i * 0.5, i * 0.8, 20.8], target: [0, 0, 200], fov: 18 };
         await page.evaluate(s => pose(s.p, s.target, s.fov), state);
         const f = await capture(`motion-${String(i).padStart(2, '0')}`, state);
         check(`Translation ${i} rejects angular history`, f.stats.historyUsed === false);
     }
-    await page.evaluate(s => pose(s.p, s.target, s.fov), home); await settle();
-    const returned = await capture('motion-return', home);
-    check('Exact return pose is reproducible', returned.returnMAE < 0.05);
+    if (shard === 'all' || shard === 'late') {
+        await page.evaluate(s => pose(s.p, s.target, s.fov), home); await settle();
+        const returned = await capture('motion-return', home);
+        check('Exact return pose is reproducible', returned.returnMAE < 0.05);
+    }
     check('No JavaScript or shader errors', report.errors.length === 0);
     assert(report.checks.every(c => c.pass), 'Detail regression failed');
+    report.completed = true;
 } finally {
     const ms = report.frames.filter(f => /^motion-\d/.test(f.name)).map(f => f.renderAndFinishMs).sort((a,b) => a-b);
     report.motionTiming = ms.length ? { n: ms.length, p50: ms[Math.floor(ms.length * .5)], p95: ms[Math.min(ms.length - 1, Math.floor(ms.length * .95))], max: ms.at(-1), longFramesOver50ms: ms.filter(v => v > 50).length } : null;
