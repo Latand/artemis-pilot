@@ -228,11 +228,15 @@ const meter = { rt: null, mat: null, scene: null, buf: null, lum: null, pending:
 // larger, so neither moving nor refining stalls the frame on a slow GPU.
 const DRAFT_BUDGET_PX = 0.33e6, DRAFT_INSIDE_SCALE = 0.25, REFINE_ROWS_PX = 0.3e6, REFINE_FADE_MS = 300;
 const FRAME_SLOW_MS = 30, FRAME_FAST_MS = 18;
+// ?galadapt=0 holds both budgets at 1 (repeatable captures under software
+// rendering, where every frame is slow)
+const ADAPT = q.get("galadapt") !== "0";
 const budget = { draft: 1, refine: 1, t: 0 };
 // Over the target the budget scales toward what would fit it (a GPU that
 // takes seconds per band converges in two or three frames); under it, it
 // grows gently. A hitch elsewhere only costs a few frames of regrowth.
 function adaptBudget(key, now, lo, hi) {
+    if (!ADAPT) return;
     const dt = budget.t ? now - budget.t : 16;
     if (dt > FRAME_SLOW_MS) budget[key] = Math.max(lo, budget[key] * Math.min(0.75, Math.max(0.1, FRAME_SLOW_MS / dt)));
     else if (dt < FRAME_FAST_MS) budget[key] = Math.min(hi, budget[key] * 1.1);
