@@ -68,9 +68,10 @@ tone map.
   above the disk or beside the bulge, where the inner Galaxy shows through
   little dust): each draft of the volume is max-pooled and read back, and
   the exposure is capped so the brightest 1 % of blocks sit at white and,
-  once the camera is more than ~0.4-1.2 kpc above the plane (the disk's
-  glow filling the view), their median at 0.12 so the disk keeps a
-  photographic tonal range. The cap never raises the exposure, so a dark
+  once the camera is more than ~0.3-0.8 kpc above the plane (the disk's
+  glow filling the view), their median at 0.05, the level the
+  photographic exposure outside gives the disk, so the transition keeps
+  one tonal range instead of washing out. The cap never raises the exposure, so a dark
   sky keeps the stars' calibration. As the camera leaves the disk (0.3 to 3 kpc beyond a
   slab of R < 20 kpc, |z| < 0.6 kpc: `galaxyExposureBlend`) it blends into a
   photographic auto-exposure metered on the galaxies in view (0.6 s time

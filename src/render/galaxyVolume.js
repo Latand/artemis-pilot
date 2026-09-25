@@ -214,7 +214,7 @@ function linearRgbHii() {
 // calibration) and follows in log space with a METER_TAU time constant;
 // main.js applies it to the stellar exposure, so stars and diffuse light
 // stay on one exposure.
-const METER_TARGET = 1.0, METER_PCT = 0.99, METER_MID = 0.12, METER_ALT_PC = [350, 1200], METER_TAU = 0.5;
+const METER_TARGET = 1.0, METER_PCT = 0.99, METER_MID = 0.05, METER_ALT_PC = [300, 800], METER_TAU = 0.5;
 const meter = { rt: null, mat: null, scene: null, buf: null, lum: null, pending: false, target: 1, cap: 1, t: 0, fresh: true };
 
 // Resolution. The draft (drawn every frame while the view changes) covers
