@@ -386,6 +386,8 @@ uniform float uKappaSun;
 uniform sampler2D uGalMap, uLaneMap;
 uniform vec4 uMapNorm;
 uniform float uMapReady, uMapTexelPc;
+uniform sampler2D uCoarseMap;
+uniform float uCoarseTexelPc, uMapBlend, uMapLanes;
 const float R0 = ${MW.R0.toFixed(1)};
 const float DEG = 0.017453292519943295;
 const float MAP_HALF = ${MAP_EXTENT_PC.toFixed(1)};
@@ -432,9 +434,8 @@ float gmNoise(vec3 x) {
     return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y), mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
 }
 uniform float uClumpDust, uClumpYoung;
-// 1 for the refined image, 0 for the draft drawn while the view moves: the
-// finest detail levels (clusters, the two smallest dust octaves) are left to
-// the refinement (unit-mean levels, so the draft is the same picture)
+// Fine-detail availability. The volume renderer keeps this on in motion;
+// projected pixel/step footprints below select the resolved frequencies.
 uniform float uFine;
 // the dust octaves' fade, as a fraction of the ray step (gmSample)
 uniform float uWideK;
@@ -545,12 +546,11 @@ vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL) {
 // inside the large clouds (the dense gas carries the small-scale structure;
 // between clouds the medium stays smooth instead of speckled). Each octave
 // is rotated about the pole so no lattice direction shows, flattened toward
-// the plane, and faded in only where the resolution resolves it (the two
-// smallest only in the refined image, uFine). Unit mean at every level of
-// detail: each octave's factor exp(t v / std(v)) is divided by its mean
-// exp(K(t)), K the noise's cumulant generating function (fitted on
-// t <= 1.8); an amplitude set by the larger octaves keeps that exact, the
-// octaves being independent. Galactic shear: differential rotation drags
+// the plane, and faded in only where the resolution resolves it.
+// Unit mean at every level of detail: each octave's factor exp(t v / std(v))
+// is divided by its mean exp(K(t)), K the noise's cumulant generating function
+// (fitted on t <= 1.8); an amplitude set by the larger octaves keeps that exact,
+// the octaves being independent. Galactic shear: differential rotation drags
 // every cloud into a trailing spiral streak. Rotating each point by
 // C ln R before sampling the isotropic noise is an area-preserving simple
 // shear of strain C, so the clouds keep their statistics and lean along
@@ -591,12 +591,16 @@ vec4 gmMap(vec2 q, float R, float footPc) {
     // where the footprint resolves the texels, the dust lane is drawn from
     // its interpolated arm coordinates (galaxyMaps.laneProfile): sharp at
     // any zoom, replacing the lane the texels sampled
-    float fine = 1.0 - gmSmooth(0.5, 1.5, lod);
+    float fine = uMapLanes * (1.0 - gmSmooth(0.5, 1.5, lod));
     if (fine > 0.0) {
         vec4 ln = texture2D(uLaneMap, uv);
         float w = max(ln.y, 0.01);
         float d = (ln.x + ${LANE_OFFSET.toFixed(3)} * w) / max(0.045, 0.3 * w);
         m.z += fine * (ln.z * exp(-0.5 * d * d) - ln.w);
+    }
+    if (uMapBlend < 1.0) {
+        float coarseLod = max(0.0, log2(max(footPc / uCoarseTexelPc, 1.0)));
+        m = mix(texture2DLodEXT(uCoarseMap, uv, coarseLod), m, uMapBlend);
     }
     return max(m, vec4(0.0)) / uMapNorm;
 }
@@ -615,15 +619,9 @@ vec4 gmSample(vec3 p, vec3 dir, float footPc, float wT, float wL, out float hii,
     vec4 mp = gmMap(q.xy, R, footPc);
     // Detail below the maps' texels, each octave faded in only where the
     // footprint resolves it and unit-mean, so a distant view is the same
-    // picture with less detail (galaxyDetail below): hierarchical star
-    // clusters for the young light, filamentary dust.
+    // picture with less detail: hierarchical young clusters and dusty clouds.
     float youngC = 1.0, hiiC = 1.0, dustC = 1.0;
-    // the dust noise has no shape to stretch along the ray: its octaves fade
-    // by the coarsest of the pixel, uWideK of the ray step (drafts, drawn
-    // while the view moves, 0.3 so their samples never alias; the still,
-    // refined image 0.2, each step then sampling a slice of the finer
-    // clouds) and the step's reach across the disk on an oblique ray, which
-    // the pixel alone would understate
+    // Both pixel footprint and integration-step reach limit resolvable dust.
     float wide = max(max(wT, 2.0 * uWideK * wL), 0.35 * wL * length(dir.xy));
     if (wide < 120.0 && abs(p.z) < 700.0) {
         vec2 yc = gdYoungClusters(q, dq, wT, wL);
