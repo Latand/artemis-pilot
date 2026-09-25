@@ -550,9 +550,16 @@ vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL) {
 // detail: each octave's factor exp(t v / std(v)) is divided by its mean
 // exp(K(t)), K the noise's cumulant generating function (fitted on
 // t <= 1.8); an amplitude set by the larger octaves keeps that exact, the
-// octaves being independent.
+// octaves being independent. Galactic shear: differential rotation drags
+// every cloud into a trailing spiral streak. Rotating each point by
+// C ln R before sampling the isotropic noise is an area-preserving simple
+// shear of strain C (along log spirals of pitch atan(1/C)), so the clouds
+// keep their statistics and line up like the flocculent dust of real disks
+// (C = 0.8: stretched ~2:1).
 float gdKg(float t) { return t * (-0.001050 + t * (0.500426 + t * (-0.005287 - 0.005212 * t))); }
 float gdDust(vec3 q, float wide) {
+    float sa = 0.8 * log(max(length(q.xy), 200.0) / ${MW.R0.toFixed(1)});
+    q.xy = vec2(cos(sa) * q.x - sin(sa) * q.y, sin(sa) * q.x + cos(sa) * q.y);
     float n = 0.0, dense = 1.0;
     for (int o = 0; o < 4; o++) {
         float lam = 90.0 * pow(0.4, float(o));
