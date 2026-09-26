@@ -5,7 +5,7 @@ on:
       - 'src/render/**'
       - 'src/universe/galaxy*.js'
       - 'scripts/measure-galaxy-detail.mjs'
-      - 'docs/galaxy-detail/analyze.py'
+      - 'docs/galaxy-detail/*.py'
       - '.github/workflows/galaxy-detail.yml'
 permissions:
   contents: read
@@ -81,6 +81,8 @@ jobs:
         with:
           pattern: galaxy-detail-*
           path: evidence/
+      - name: Check image acceptance policy
+        run: python docs/galaxy-detail/test_analyze.py
       - name: Assert independent-reference fidelity and temporal residual
         run: python docs/galaxy-detail/analyze.py evidence/galaxy-detail-before evidence/galaxy-detail-after evidence evidence/comparison --check
       - uses: actions/upload-artifact@v4

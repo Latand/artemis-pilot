@@ -1,0 +1,116 @@
+name: Navigation visuals and compact screens
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - '.github/workflows/navigation-visuals.yml'
+permissions:
+  contents: read
+concurrency:
+  group: navigation-visuals-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Preserve exact sources and dependencies for offline reproduction
+        run: |
+          mkdir -p evidence/source
+          git rev-parse HEAD > evidence/source/head-sha.txt
+          git archive --format=tar.gz -o evidence/source/rendering-source.tar.gz HEAD src scripts .github package.json vite.config.js index.html
+          cp package-lock.json evidence/source/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: navigation-source-bundle
+          path: evidence/source/
+          retention-days: 3
+  model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - name: Model, trail and light-accounting regressions
+        run: |
+          node --check src/trails.js
+          node --check src/compactExplorer.js
+          node scripts/smoke-navigation-visuals.mjs
+          npm test
+          npm run smoke:merger-tides
+          npm run smoke:merger
+          npm run smoke:galaxy-population
+          npm run smoke:galaxy-model
+          npm run smoke:brightness
+          npm run smoke:determinism
+          npm run build
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [before, after]
+        suite: [render, mobile, merger]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Record and prepare exact comparison revisions
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          printf '%s\n' "$BASE_SHA" > evidence/sources/base-sha.txt
+          cp package-lock.json evidence/sources/
+          if [ "$VARIANT" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/nav-baseline" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/nav-baseline/node_modules"
+          fi
+      - run: npx playwright install --with-deps chromium
+      - name: Actual WebGL output and compact UI interactions
+        env:
+          VARIANT: ${{ matrix.variant }}
+          SUITE: ${{ matrix.suite }}
+        run: |
+          ROOT="$GITHUB_WORKSPACE"
+          export BASELINE=0
+          if [ "$VARIANT" = before ]; then ROOT="$RUNNER_TEMP/nav-baseline"; export BASELINE=1; fi
+          if [ "$SUITE" = render ]; then
+            node scripts/review-navigation.mjs "$ROOT" evidence/render
+            if [ "$VARIANT" = after ]; then node scripts/verify-linear-frame.mjs "$ROOT" evidence/linear-frame; fi
+          else
+            node scripts/review-compact-and-merger.mjs "$ROOT" "evidence/$SUITE"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: navigation-${{ matrix.suite }}-${{ matrix.variant }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

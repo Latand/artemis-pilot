@@ -1,0 +1,78 @@
+/* Collapsible compact chrome. Desktop keeps its existing layout. */
+.compactToggle { display:none; }
+#explorePanelBody[hidden], #tdOptions[hidden] { display:none!important; }
+body.compact-explorer { --compact-gap:10px; }
+body.compact-explorer #exploreBar {
+    inset:calc(8px + env(safe-area-inset-top,0px)) max(10px,env(safe-area-inset-right,0px)) auto max(10px,env(safe-area-inset-left,0px));
+    height:auto;gap:6px;flex-wrap:wrap;padding:0;
+}
+body.compact-explorer .exploreBrand { min-height:44px;font-size:14px!important;min-width:0; }
+body.compact-explorer .exploreBrand span { font-size:8px; }
+body.compact-explorer #exploreSearch { min-height:44px;height:44px;padding:0 10px;font-size:12px!important; }
+body.compact-explorer #exploreSearch span { margin-left:5px; }
+body.compact-explorer #exploreHelp { height:44px;width:44px; }
+body.compact-explorer .exploreModes { order:4;width:100%;box-sizing:border-box;padding:2px; }
+body.compact-explorer .exploreModes button { min-height:44px;flex:1;padding:0 8px;font-size:13px!important; }
+body.compact-explorer.mode-observe #explorePanel {
+    left:max(10px,env(safe-area-inset-left,0px));right:max(10px,env(safe-area-inset-right,0px));
+    top:calc(var(--explore-toolbar-bottom,108px) + 10px);width:auto;padding:10px 12px;
+    max-height:calc(var(--explore-visible-height,100dvh) - var(--explore-toolbar-bottom,108px) - var(--time-dock-height,130px) - 40px);
+    overflow:hidden;display:flex;flex-direction:column;gap:0;
+}
+body.compact-explorer .compactObjectHeader { display:flex;align-items:center;gap:8px;flex:none; }
+body.compact-explorer .compactObjectTitle { flex:1;min-width:0; }
+body.compact-explorer #explorePanel .exploreEyebrow { display:none; }
+body.compact-explorer #exploreObject { font-size:18px;line-height:1.15;margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+body.compact-explorer #exploreKind { font-size:11px;margin:4px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+body.compact-explorer .compactToggle {
+    display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:44px;min-height:44px;
+    padding:0 10px;border:1px solid var(--explore-line);border-radius:6px;background:#24282e;color:var(--explore-text);font:12px var(--font-ui);cursor:pointer;
+}
+body.compact-explorer #explorePanelBody { overflow:auto;overscroll-behavior:contain;min-height:0;margin-top:8px;scrollbar-width:thin; }
+body.compact-explorer #explorePanel summary { min-height:44px;box-sizing:border-box;display:flex;align-items:center;padding:4px 0;font-size:13px; }
+body.compact-explorer #explorePanel .exploreFacts { font-size:12px; }
+body.compact-explorer #explorePanel .explorePlaces button { min-height:52px; }
+body.compact-explorer #exploreGravity { min-height:44px; }
+body.compact-explorer.mode-observe #exploreCamera {
+    display:none;left:50%;width:min(340px,calc(100vw - 24px));bottom:calc(var(--time-dock-height,130px) + max(10px,env(safe-area-inset-bottom,0px)) + 8px);
+    padding:8px;background:var(--explore-surface);border:1px solid var(--explore-line);border-radius:8px;box-sizing:border-box;
+}
+body.compact-explorer.compact-moving.mode-observe #exploreCamera { display:block; }
+body.compact-explorer #exploreCamera>span { display:none; }
+body.compact-explorer .exploreMoveButtons { display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:0; }
+body.compact-explorer .exploreMoveButtons button { min-height:44px;height:44px;font-size:12px!important; }
+body.compact-explorer.mode-observe #timeDock {
+    left:max(10px,env(safe-area-inset-left,0px));right:max(10px,env(safe-area-inset-right,0px));transform:none;
+    width:auto;bottom:max(10px,env(safe-area-inset-bottom,0px))!important;padding:8px 10px;
+    max-height:calc(var(--explore-visible-height,100dvh) - var(--explore-toolbar-bottom,108px) - 24px);overflow:auto;overscroll-behavior:contain;
+}
+body.compact-explorer #timeDock .tdHeading { gap:6px;letter-spacing:0; }
+body.compact-explorer #timeDock .tdHeading>span { display:none; }
+body.compact-explorer #exploreEvents { margin-right:auto;min-height:44px;font-size:11px!important;text-align:left; }
+body.compact-explorer #tdMore { font-size:11px; }
+body.compact-explorer #tdDate { font-size:clamp(12px,3.5vw,16px);line-height:1.35;letter-spacing:0;overflow-wrap:anywhere; }
+body.compact-explorer #tdRow { gap:5px;margin-top:6px; }
+body.compact-explorer #tdRow button { height:44px;min-width:44px; }
+body.compact-explorer #tdRow #tdPause { width:62px;min-width:62px; }
+body.compact-explorer #tdRow #tdRev { min-width:56px;padding:0 6px;font-size:11px; }
+body.compact-explorer #tdWarpLabel { font-size:10px;min-width:0;overflow-wrap:anywhere; }
+body.compact-explorer #tdOptions { margin-top:6px; }
+body.compact-explorer .tdSpeedRow { flex-wrap:wrap;gap:6px; }
+body.compact-explorer #tdSpeed { flex-basis:100%;max-width:none;min-height:44px;font-size:14px; }
+body.compact-explorer #tdDirection { margin-left:0; }
+body.compact-explorer .tdFine summary { min-height:44px;display:flex;align-items:center;padding:0; }
+body.compact-explorer.mode-observe #cosmicScale { top:auto;bottom:calc(var(--time-dock-height,130px) + 22px);max-width:calc(100vw - 32px);font-size:10px; }
+body.compact-explorer.mode-observe #navPanel,
+body.compact-explorer.mode-observe #evPanel.open {
+    top:calc(var(--explore-toolbar-bottom,108px) + 10px);left:10px;right:10px;width:auto;
+    bottom:calc(var(--time-dock-height,130px) + 20px);max-height:none;z-index:22;overflow:auto;
+}
+@media (max-height:540px) and (orientation:landscape) {
+    body.compact-explorer #exploreBar { flex-wrap:nowrap; }
+    body.compact-explorer .exploreModes { order:0;width:auto; }
+    body.compact-explorer .exploreBrand span { display:none; }
+    body.compact-explorer.mode-observe #explorePanel { right:auto;width:250px;max-height:calc(var(--explore-visible-height,100dvh) - var(--explore-toolbar-bottom,60px) - 20px); }
+    body.compact-explorer.mode-observe #timeDock { left:auto;width:min(390px,calc(100vw - 285px)); }
+    body.compact-explorer.mode-observe #exploreCamera { left:auto;right:10px;transform:none;width:300px; }
+    body.compact-explorer.mode-observe #cosmicScale { left:auto;right:10px;transform:none; }
+}

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { renderLinearFrame } from "./render/linearFrame.js";
 import { G } from "./state.js";
 import { CAM_DIST_MAX, K, LY_SCENE } from "./constants.js";
 import { tierDepthRange } from "./render/tierDepth.js";
@@ -114,6 +115,7 @@ export function addBackgroundHook(fn) {
 
 const tierSavedVis = [];
 export function renderSceneTiered(rendererArg, sceneArg, cameraArg) {
+    if (renderLinearFrame(rendererArg, () => renderSceneTiered(rendererArg, sceneArg, cameraArg))) return;
     const savedNear = cameraArg.near, savedFar = cameraArg.far;
     const directAutoClear = rendererArg.autoClear;
     if (backgroundHooks.length) {
