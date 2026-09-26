@@ -23,11 +23,11 @@ const server = await createServer({ root, logLevel: 'error', server: { host: '12
         if (!reference) return;
         if (id.endsWith('/src/universe/galaxyModel.js')) return code.replace('uDustQuadrature: 1', 'uDustQuadrature: 0');
         if (!id.endsWith('/src/render/galaxyVolume.js')) return;
-        const count = 'const MAX_STEPS = 360;', step = 'draft ? 0.055 : 0.03';
-        if (!code.includes(count) || !code.includes(step)) throw new Error('Reference integration seam changed');
+        const count = 'const MAX_STEPS = 360;', step = /u\.uStepK\.value\s*=\s*[^;]+;/g;
+        if (!code.includes(count) || (code.match(step) || []).length !== 1) throw new Error('Reference integration seam changed');
         // Same field/exposure/pixel footprint; independent finer midpoint integration.
         // The reference disables the new segment quadrature instead of using it as truth.
-        return code.replace(count, 'const MAX_STEPS = 1600;').replace(step, '0.006');
+        return code.replace(count, 'const MAX_STEPS = 1600;').replace(step, 'u.uStepK.value = 0.006;');
     } }] });
 await server.listen();
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM || undefined,
@@ -177,7 +177,7 @@ try {
         check(`Translation ${i} rejects angular history`, f.stats.historyUsed === false);
     }
     if (shard === 'all' || shard === 'late') {
-        await page.evaluate(s => pose(s.p, s.target, s.fov), home); await settle();
+        await page.evaluate(s => pose(s.p, s.target,s.fov), home); await settle();
         const returned = await capture('motion-return', home);
         check('Exact return pose is reproducible', returned.returnMAE < 0.05);
     }
