@@ -101,6 +101,20 @@ for(const name of ['recent','undersampled','hidden-explore','high-warp']){
  else check(result.paths.every(p=>!p.visible||p.vertices<=1),`${name}: no fictitious or unwanted flight chords`);
  console.log('captured trail',name);
 }
+// Epoch replacement while paused has no new sample to invalidate the path.
+await page.evaluate(() => preview.trailCase('recent'));
+const changedEpoch = await page.evaluate(async () => {
+ const { getEpochMs, setEpochMs } = await import('/src/epoch.js');
+ const { setJourneyOpacity, flightTrailStatus } = await import('/src/trails.js');
+ const oldEpoch = getEpochMs();
+ try {
+  setEpochMs(oldEpoch + 86400000);
+  setJourneyOpacity(0);
+  return flightTrailStatus?.() || [];
+ } finally { setEpochMs(oldEpoch); }
+});
+check(changedEpoch.length === 2 && changedEpoch.every(p => !p.visible && p.count === 0 && p.vertices === 0),
+ 'Paused epoch replacement clears trail history and GPU draw range');
 // No further samples: old history must fade out instead of lingering forever.
 await page.evaluate(()=>preview.trailCase('recent'));
 for(const age of [0,.25,.5,.75,1,1.2]) {

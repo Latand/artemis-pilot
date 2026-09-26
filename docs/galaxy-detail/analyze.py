@@ -4,6 +4,9 @@ Usage: python docs/galaxy-detail/analyze.py BEFORE AFTER REFERENCE OUTPUT
 BEFORE/AFTER contain detail/report.json. REFERENCE is one complete artifact or a
 parent directory holding all three galaxy-detail-reference-* shard artifacts.
 Dependencies (analysis only): numpy, scipy, Pillow.
+The CI gate accepts strict improvement OR exact equality of every RGB pixel
+in all 14 views. Equal RMSE alone is not sufficient. --require-improvement
+retains the original PR11 improvement-only experiment.
 """
 from __future__ import annotations
 
@@ -96,17 +99,40 @@ def panel(arrays: list[np.ndarray], labels: list[str]) -> Image.Image:
     return out
 
 
+EXPECTED_FRAMES = {"gc-wide", "gc-zoom", "cygnus", "external", "motion-start", "motion-return"} | {
+    f"motion-{i:02d}" for i in range(1, 9)
+}
+
+
+def acceptance(frames: list[dict], temporal: dict, require_improvement: bool = False) -> dict:
+    # Do not let an empty or truncated capture qualify as unchanged.
+    assert len(frames) == len(EXPECTED_FRAMES)
+    assert {f["name"] for f in frames} == EXPECTED_FRAMES
+    moving = [f for f in frames if f["name"].startswith("motion-") and f["name"][-2:].isdigit()]
+    means = {key: float(np.mean([f[key]["luma_rmse"] for f in moving])) for key in ("before", "after")}
+    improved = means["after"] < means["before"]
+    identical = all(f["pixel_identical"] is True for f in frames)
+    # An unchanged Milky Way must not fail a PR fixing another renderer.
+    # All existing error bounds remain; equal aggregate metrics do not bypass them.
+    return {
+        "moving_rmse_improves_or_all_pixels_identical": improved or (identical and not require_improvement),
+        "static_rmse_within_five_percent": all(f["after"]["luma_rmse"] <= 1.05 * f["before"]["luma_rmse"] + 0.02 for f in frames if f["name"] in ("gc-wide", "gc-zoom", "cygnus", "external")),
+        "temporal_residual_within_ten_percent": temporal["after"] <= 1.1 * temporal["before"] + 0.002,
+    }
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("before", "after", "reference", "output"):
         p.add_argument(name, type=Path)
     p.add_argument("--check", action="store_true", help="Fail on the documented detail/temporal regression criteria")
+    p.add_argument("--require-improvement", action="store_true", help="Reject even pixel-identical output (original PR11 experiment)")
     args = p.parse_args()
     roots = [args.before, args.after, args.reference]
     loaded = [load(root) for root in roots]
     reports, frames = zip(*loaded, strict=True)
     names = list(frames[0])
-    assert all(set(f) == set(names) for f in frames), "Frame set changed"
+    assert all(set(f) == EXPECTED_FRAMES for f in frames), "Incomplete or changed frame set"
     assert all(r["epochSeconds"] == 0 and r["exposure"] == 0.15 for r in reports)
     for key in ("viewport", "dpr"):
         assert all(r[key] == reports[0][key] for r in reports), key
@@ -123,11 +149,11 @@ def main() -> None:
                 assert np.allclose(f[name]["pose"][key], frames[0][name]["pose"][key], rtol=0, atol=1e-8), (name, key)
         arrays = [image(root, name) for root in roots]
         assert len({a.shape for a in arrays}) == 1
-        data["frames"].append({"name": name, "before": measures(arrays[0], arrays[2]), "after": measures(arrays[1], arrays[2])})
+        data["frames"].append({"name": name, "pixel_identical": bool(np.array_equal(arrays[0], arrays[1])), "before": measures(arrays[0], arrays[2]), "after": measures(arrays[1], arrays[2])})
         if name in ("gc-wide", "gc-zoom", "cygnus", "external", "motion-08"):
-            panel(arrays, ["Merged PR10", "PR11", "Finer midpoint reference"]).save(args.output / f"{name}-comparison.png")
+            panel(arrays, ["PR base", "PR head", "Finer midpoint reference"]).save(args.output / f"{name}-comparison.png")
         if name.startswith("motion-") and name[-2:].isdigit():
-            gifs.append(panel(arrays[:2], ["Merged PR10 - moving", "PR11 - moving"]))
+            gifs.append(panel(arrays[:2], ["PR base - moving", "PR head - moving"]))
             for i in range(2):
                 residuals[i].append(luma(arrays[i]) - luma(arrays[2]))
     if gifs:
@@ -142,11 +168,13 @@ def main() -> None:
     moving = [f for f in data["frames"] if f["name"].startswith("motion-") and f["name"][-2:].isdigit()]
     means = {key: float(np.mean([f[key]["luma_rmse"] for f in moving])) for key in ("before", "after")}
     data["motion_mean_luma_rmse"] = means
-    data["acceptance"] = {
+    data["change_classification"] = {
         "moving_rmse_improves": means["after"] < means["before"],
-        "static_rmse_within_five_percent": all(f["after"]["luma_rmse"] <= 1.05 * f["before"]["luma_rmse"] + 0.02 for f in data["frames"] if f["name"] in ("gc-wide", "gc-zoom", "cygnus", "external")),
-        "temporal_residual_within_ten_percent": data["temporal_residual_rms"]["after"] <= 1.1 * data["temporal_residual_rms"]["before"] + 0.002,
+        "pixel_identical_frames": sum(f["pixel_identical"] for f in data["frames"]),
+        "total_frames": len(data["frames"]),
+        "require_improvement": args.require_improvement,
     }
+    data["acceptance"] = acceptance(data["frames"], data["temporal_residual_rms"], args.require_improvement)
     (args.output / "comparison.json").write_text(json.dumps(data, indent=2) + "\n")
     print(json.dumps(data, indent=2))
     if args.check:

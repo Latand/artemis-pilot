@@ -107,7 +107,10 @@ export function setJourneyOpacity(o) {
     for (const path of [recent, journey]) {
         if (!allowed) { path.history.clear(); path.mesh.visible = false; continue; }
         const h = path.history, g = path.mesh.geometry;
-        if (!h.hasHead) { path.mesh.visible = false; continue; }
+        // A restored epoch can change while paused, with no pushTrail call.
+        // Invalidate it on the display path as well as on motion sampling.
+        h.sync(G.t, getEpochMs());
+        if (!h.hasHead) { g.setDrawRange(0, 0); path.mesh.visible = false; continue; }
         pathOrigin[0] = h.head[0]; pathOrigin[1] = h.head[1]; pathOrigin[2] = h.head[2];
         path.mesh.position.set(...pathOrigin);
         const n = h.write(g.attributes.position.array, g.attributes.color.array, g.attributes.aFade.array, pathOrigin, G.t, pathClock, pathLifetime);
