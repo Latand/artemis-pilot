@@ -5,7 +5,6 @@
 // translated views are integrated afresh, never reprojected at a fake depth.
 
 import * as THREE from "three";
-import { GalaxyMotionDetail, motionDetailUniforms, MOTION_COMPOSITE_GLSL } from "./galaxyMotionDetail.js";
 import { K } from "../constants.js";
 import { W2G, worldKmToGalInto, getSunGalAnchor } from "../universe/coords.js";
 import { GALAXY_MODEL_GLSL, galaxyModelUniformValues, patternAngles, MW, EXTINCTION_RGB, mwSample } from "../universe/galaxyModel.js";
@@ -16,7 +15,6 @@ import { stellarExposure, extragalacticExposure, EXT_STRETCH_GLSL } from "./stel
 import { renderQuality } from "../scene.js";
 
 const q = typeof location !== "undefined" ? new URLSearchParams(location.search) : new URLSearchParams();
-const MOTION_DETAIL = q.get("galmotion") !== "0";
 const DISABLED = q.get("galaxyvol") === "0";
 const RES_FORCED = Number(q.get("galres")) ? Math.max(0.1, Math.min(1, Number(q.get("galres")))) : 0;
 // Radiance -> display flux per pixel, calibrated to the point-star layers.
@@ -31,6 +29,10 @@ export function galaxyDisplayGain(pxScaleDevice) {
 }
 
 const MAX_STEPS = 360;
+// The moving view was integration-limited in matched output/step ablations:
+// more output pixels alone did not recover the missing dust contrast. Use a
+// bounded intermediate step inside the disk; keep output buffers unchanged.
+const DRAFT_STEP_K = 0.04, SETTLED_STEP_K = 0.03;
 // Exact angular reprojection, not a single-depth reprojection of a volume.
 // Mips remove unresolved history frequencies; edge weights reject uncovered rays.
 const HISTORY_GLSL = /* glsl */`
@@ -140,9 +142,8 @@ uniform mat3 uRayToGal;
 uniform vec2 uTanHalf, uRayOffset;
 ${HISTORY_GLSL}
 ${EXT_STRETCH_GLSL}
-${MOTION_COMPOSITE_GLSL}
 void main() {
-    vec3 c = motionDetail(vUv, texture2D(uTex, vUv).rgb);
+    vec3 c = texture2D(uTex, vUv).rgb;
     vec2 hu; float hw;
     vec3 ray = normalize(uRayToGal * vec3((vUv * 2.0 - 1.0) * uTanHalf + uRayOffset, -1.0));
     vec3 hc = historyRay(ray, hu, hw);
@@ -211,7 +212,6 @@ const state = {
     maps: null, mapsWorker: null, mapFade: 1, mapT: 0, mapError: null, mapTimer: null,
     mapRevision: 0, targetSize: [], history: null, rtHistory: null,
     copyScene: null, copyMat: null, historySaved: false, historyUsed: false,
-    motion: null,
     camera: null, time: 0, era: null, disrupt: 0, oldFade: 1, invalidations: 0,
 };
 
@@ -248,11 +248,10 @@ function init() {
         depthTest: false, depthWrite: false, toneMapped: false,
     });
     state.compMat = new THREE.ShaderMaterial({
-        uniforms: { uTex: { value: null }, uTexFull: { value: null }, uMix: { value: 0 }, uExposure: { value: 1 }, uOpacity: { value: 1 }, uStretch: { value: 0 }, uRayToGal: uniforms.uRayToGal, uTanHalf: uniforms.uTanHalf, uRayOffset: uniforms.uRayOffset, ...historyUniforms(), ...motionDetailUniforms() },
+        uniforms: { uTex: { value: null }, uTexFull: { value: null }, uMix: { value: 0 }, uExposure: { value: 1 }, uOpacity: { value: 1 }, uStretch: { value: 0 }, uRayToGal: uniforms.uRayToGal, uTanHalf: uniforms.uTanHalf, uRayOffset: uniforms.uRayOffset, ...historyUniforms() },
         vertexShader: FULL_VERT, fragmentShader: COMPOSITE_FRAG,
         depthTest: false, depthWrite: false, blending: THREE.NoBlending,
     });
-    state.motion = new GalaxyMotionDetail(state.compMat.uniforms);
     const tri = fullScreenTriangle();
     state.rayScene = new THREE.Scene();
     const rayMesh = new THREE.Mesh(tri, state.rayMat);
@@ -409,7 +408,7 @@ function ensureTargets(renderer) {
     if (targetSizeChanged(state.targetSize, next)) {
         state.targetSize = next; state.dirty = true; state.lastDrawn = null;
         state.refineRow = 0; state.mix = 0; state.history = null; state.historySaved = false;
-        meter.pending = false; state.motion?.reset(); state.invalidations++;
+        meter.pending = false; state.invalidations++;
     }
     state.rtFull = sizeTarget(state.rtFull, w, h, 'galaxyVolume');
     state.rtDraft = sizeTarget(state.rtDraft, wd, hd, 'galaxyVolumeDraft');
@@ -532,7 +531,7 @@ function rayRender(renderer, rt, rows = null) {
     const draft = rt === state.rtDraft;
     u.uFine.value = 1; // projected footprint, not motion, selects detail
     u.uHistoryValid.value = draft && state.historyUsed ? 1 : 0;
-    u.uStepK.value = draft ? 0.055 : 0.03;
+    u.uStepK.value = draft ? (state.inside ? DRAFT_STEP_K : 0.055) : SETTLED_STEP_K;
     u.uWideK.value = 0.2;
     if (rows) { rt.scissor.set(0, rows[0], rt.width, rows[1]); rt.scissorTest = true; }
     renderer.setRenderTarget(rt);
@@ -642,7 +641,6 @@ export function renderGalaxyVolume(renderer, camera = state.camera) {
         if (meter.pending) meterRead(renderer);
         meterUpdate(now);
         if (state.dirty || !state.lastDrawn) {
-            state.motion.reset();
             adaptBudget("draft", now, 0.15, 2.5);
             if (RES_FORCED) {
                 rayRender(renderer, full);
@@ -652,13 +650,6 @@ export function renderGalaxyVolume(renderer, camera = state.camera) {
                 state.refineRow = 0; state.mix = 0;
             }
             meterPool(renderer, RES_FORCED ? full : state.rtDraft);
-            if (MOTION_DETAIL && !RES_FORCED && state.inside && !state.historyUsed) {
-                // Reuse the existing 48x30 metering readback, now in this frame
-                // so the quality mask cannot lag a camera cut. There is no
-                // extra readback and no stale radiance for translated views.
-                meterRead(renderer);
-                state.motion.render(renderer, state.rayMat, state.orthoCam, full, state.rtDraft, meter.buf, METER_W, METER_H);
-            }
             state.dirty = false; state.historySaved = false;
             state.lastDrawn = state.rtDraft;
         } else if (state.refineRow < full.height) {
@@ -699,9 +690,9 @@ export function galaxyVolumeStats() {
         mapsReady: !!state.maps?.full, coverageReady: !!state.maps, mapError: state.mapError, mapsMs: state.maps?.ms ?? null, fade: state.mapFade, draft: !refined,
         exposureMode: FIXED_EXPOSURE === null ? "shared-sky" : "fixed-diagnostic",
         historyUsed: state.historyUsed, historyReady: !!state.history, invalidations: state.invalidations,
+        integrationStep: state.rayMat?.uniforms.uStepK.value ?? null, maxRaySteps: MAX_STEPS,
         mapSize: state.maps?.size, mapBlend: state.rayMat?.uniforms.uMapBlend.value ?? 0,
-        motion: state.motion?.stats() || null,
-        targetBytes: (state.motion?.stats().targetBytes || 0) + (state.rtDraft ? state.rtDraft.width * state.rtDraft.height * 8 : 0) +
+        targetBytes: (state.rtDraft ? state.rtDraft.width * state.rtDraft.height * 8 : 0) +
             (state.rtFull ? state.rtFull.width * state.rtFull.height * 8 : 0) +
             (state.rtHistory ? Math.ceil(state.rtHistory.width * state.rtHistory.height * 8 * 4 / 3) : 0),
         anchor: { peak: anchor.peak, cover: anchor.cover, fresh: anchor.fresh },
@@ -710,7 +701,7 @@ export function galaxyVolumeStats() {
 }
 export function setGalaxyVolumeEnabled(on) {
     const enabled = !!on && !DISABLED;
-    if (enabled !== state.enabled) { state.dirty = true; state.history = null; state.lastDrawn = null; state.motion?.reset(); }
+    if (enabled !== state.enabled) { state.dirty = true; state.history = null; state.lastDrawn = null; }
     state.enabled = enabled;
 }
 export function galaxyVolumeEnabled() {

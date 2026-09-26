@@ -4,11 +4,12 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 const root=resolve(process.argv[2]||'.'), out=resolve(process.argv[3]||'evidence/motion');
 const mode=process.env.MOTION_VARIANT||'after';
-assert(['before','after','native','integration','reference'].includes(mode));
+assert(['before','after','native','integration','reference','step035','step045'].includes(mode));
 await mkdir(out,{recursive:true});
-const report={mode,completed:false,epoch:0,exposure:.15,frames:[],checks:[],errors:[]};
+const report={mode,executedSourceSha:execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),completed:false,epoch:0,exposure:.15,frames:[],checks:[],errors:[]};
 const check=(name,pass)=>{report.checks.push({name,pass:!!pass});console.log(pass?'PASS':'FAIL',name)};
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{
     name:'motion-regression-only',enforce:'pre',configureServer(s){s.middlewares.use((req,res,next)=>{
@@ -20,9 +21,10 @@ const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',
             assert(code.includes('DRAFT_INSIDE_SCALE = 0.5'),'Output ablation seam changed');
             return code.replace('DRAFT_INSIDE_SCALE = 0.5','DRAFT_INSIDE_SCALE = 1.0');
         }
-        if(mode==='integration'){
+        if(['integration','step035','step045'].includes(mode)){
             assert(code.includes('draft ? 0.055 : 0.03'),'Integration ablation seam changed');
-            return code.replace('draft ? 0.055 : 0.03','0.03');
+            const step=mode==='step035'? '0.035':mode==='step045'?'0.045':'0.03';
+            return code.replace('draft ? 0.055 : 0.03',`draft ? ${step} : 0.03`);
         }
     }
 }]});
@@ -53,13 +55,14 @@ try {
     await page.waitForFunction(()=>probe.v.galaxyVolumeStats().mapsReady);await page.waitForTimeout(700);
     report.gpu=await page.evaluate(()=>{const gl=probe.s.renderer.getContext(),x=gl.getExtension('WEBGL_debug_renderer_info');return {renderer:x?gl.getParameter(x.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER),browser:navigator.userAgent}});
     async function settle(){for(let i=0;i<100;i++){const f=await page.evaluate(()=>draw());if(!f.stats.draft&&f.stats.mapBlend===1)return;await page.waitForTimeout(60)}throw new Error('No settled image')}
-    async function shot(name){const f=await page.evaluate(()=>draw(true));await writeFile(`${out}/${name}.png`,Buffer.from(f.png.split(',')[1],'base64'));delete f.png;report.frames.push({name,...f});check(name+': finite visible image',Number.isFinite(f.mean)&&f.mean>.05);if(mode==='after'&&f.stats.motion?.active)check(name+': bounded native rays',f.stats.motion.rayPixels<=f.stats.motion.rayBudget);await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));return f;}
+    async function shot(name){const f=await page.evaluate(()=>draw(true));await writeFile(`${out}/${name}.png`,Buffer.from(f.png.split(',')[1],'base64'));delete f.png;report.frames.push({name,...f});check(name+': finite visible image',Number.isFinite(f.mean)&&f.mean>.05);await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));return f;}
     for(const [name,fov,target] of [['wide',48,[0,0,200]],['cygnus',30,[8178,3000,100]],['home',18,[0,0,200]]]){
         await page.evaluate(([f,t])=>pose([8178,0,20.8],f,t),[fov,target]);await settle();await shot(name);
     }
     for(let i=1;i<=8;i++){
         await page.evaluate(i=>pose([8178+i*.5,i*.8,20.8]),i);
         const f=await shot(`move-${String(i).padStart(2,'0')}`);check('Fresh translated rays '+i,f.stats.historyUsed===false);
+        if(mode==='after')check('Bounded integration '+i,f.stats.integrationStep===.04&&f.stats.maxRaySteps===360);
     }
     await shot('stop-immediate');await settle();await shot('stop-settled');
     await page.evaluate(()=>pose());await settle();await shot('return');
