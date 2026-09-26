@@ -1,0 +1,56 @@
+name: Milky Way moving detail
+on:
+  pull_request:
+    paths:
+      - 'src/render/galaxy*.js'
+      - 'scripts/*galaxy*motion*'
+      - 'docs/galaxy-motion/**'
+      - '.github/workflows/galaxy-motion.yml'
+permissions:
+  contents: read
+concurrency:
+  group: galaxy-motion-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [before, after, native, integration, reference]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: node scripts/smoke-galaxy-motion.mjs
+      - name: Freeze comparison sources
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          printf '%s\n' "$BASE" > evidence/sources/base-sha.txt
+          cp package-lock.json evidence/sources/
+          git worktree add --detach "$RUNNER_TEMP/motion-base" "$BASE"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/motion-base/node_modules"
+      - run: npx playwright install --with-deps chromium
+      - name: Matched motion and ablation captures
+        env:
+          MOTION_VARIANT: ${{ matrix.variant }}
+        run: |
+          ROOT="$RUNNER_TEMP/motion-base"
+          if [ "$MOTION_VARIANT" = after ]; then ROOT=.; fi
+          node scripts/verify-galaxy-motion.mjs "$ROOT" evidence/motion
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: galaxy-motion-${{ matrix.variant }}
+          path: evidence/
+          retention-days: 14
