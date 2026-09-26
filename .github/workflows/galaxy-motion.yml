@@ -79,3 +79,62 @@ jobs:
           name: galaxy-motion-comparison
           path: evidence/comparison/
           retention-days: 14
+
+  paired-cost:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/benchmark-galaxy-motion.mjs . evidence/cost
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: galaxy-motion-paired-cost
+          path: evidence/cost/
+          retention-days: 14
+
+  app-motion:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [before, after]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Exact application comparison source
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/app-base" "$BASE"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/app-base/node_modules"
+      - run: npx playwright install --with-deps chromium
+      - name: Moving camera through the full application with stationary ship
+        env:
+          REVISION: ${{ matrix.revision }}
+        run: |
+          ROOT=.
+          if [ "$REVISION" = before ]; then ROOT="$RUNNER_TEMP/app-base"; fi
+          node scripts/capture-galaxy-app-motion.mjs "$ROOT" evidence/app-motion
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: galaxy-motion-app-${{ matrix.revision }}
+          path: evidence/app-motion/
+          retention-days: 14
