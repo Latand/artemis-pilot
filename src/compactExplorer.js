@@ -56,7 +56,7 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
     const statusReload = button('renderRecoveryReload', 'Reload in Safe mode', null, 'Reload safe');
     status.append(statusText, statusButton, statusReload);
     // Keep compact chrome and legacy sheets in the same stacking context as the canvas/panels.\n    $('root').append(backdrop, menu, bar, controls, status);
-    const media = matchMedia('(max-width:760px), (max-height:540px) and (pointer:coarse)');
+    const media = matchMedia('(pointer:coarse) and (max-width:760px), (pointer:coarse) and (max-height:540px)');
     let compact = media.matches, opened = null, returnFocus = null, moveOpen = false, measureRaf = 0, nativeOpening = false;
     const roots = { details: panel, time: dock, menu, search: $('navPanel'), events: $('evPanel'), help: $('help'), catalog: $('hygSearch'), cinematic: $('cinePanel'), move: camera };
     const moved = [[$('exploreBar').querySelector('.exploreModes'), $('touchModeSlot')], [$('mThrottle'), $('touchThrottleSlot')], [$('mMenuGrid'), $('touchFlightSlot')], ...['mRcsL','mRcsR','mBoost'].map(id => [$(id), $('touchPilotActions')])]
