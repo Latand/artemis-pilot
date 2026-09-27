@@ -29,7 +29,7 @@ export const viewportSize = { w: 1, h: 1, pxScale: 1 };
 window.__renderQuality = renderQuality;
 let pixelLoadShed = 0;
 function isMobileLike() {
-    return window.matchMedia?.("(max-width: 760px), (hover: none) and (pointer: coarse)")?.matches || false;
+    return window.matchMedia?.("(hover: none) and (pointer: coarse)")?.matches || (navigator.maxTouchPoints || 0) > 0;
 }
 function choosePixelRatio() {
     const device = window.devicePixelRatio || 1;
