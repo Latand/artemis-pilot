@@ -182,7 +182,9 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
         if (e.shiftKey && (document.activeElement === first || !roots[opened].contains(document.activeElement))) { e.preventDefault(); last.focus(); }
         else if (!e.shiftKey && (document.activeElement === last || !roots[opened].contains(document.activeElement))) { e.preventDefault(); first.focus(); }
     }, true);
-    bindNavigationStick($('touchStick'));
+    const touchStick = controls.querySelector('#touchStick');
+    if (!touchStick) throw new Error('Mobile thumb control failed to initialize');
+    bindNavigationStick(touchStick);
     for (const b of controls.querySelectorAll('[data-touch-key]')) {
         let owner = null;
         const stop = () => { keys.delete(b.dataset.touchKey); const old = owner; owner = null; if (old !== null) try { b.releasePointerCapture(old); } catch { /* ended */ } };
