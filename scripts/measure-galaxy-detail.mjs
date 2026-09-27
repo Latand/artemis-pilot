@@ -34,6 +34,16 @@ const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_C
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 try {
     const page = await browser.newPage({ viewport: { width: 480, height: 300 }, deviceScaleFactor: 1 });
+    // Keep this numerical probe independent of the mobile rendering policy.
+    // The same init script executes for baseline and PR worktrees.
+    await page.addInitScript(() => {
+        const real = window.matchMedia.bind(window);
+        window.matchMedia = query => {
+            const m = real(query);
+            if (!/(max-width\s*:\s*760px|pointer\s*:\s*coarse|hover\s*:\s*none)/.test(query)) return m;
+            return new Proxy(m, { get(t, k) { if (k === 'matches') return false; const v = t[k]; return typeof v === 'function' ? v.bind(t) : v; } });
+        };
+    });
     page.setDefaultTimeout(120000);
     page.on('pageerror', e => report.errors.push(e.message));
     page.on('console', m => { if (m.type() === 'error' && !m.text().includes('favicon')) report.errors.push(m.text()); });
