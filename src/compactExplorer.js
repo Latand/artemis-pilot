@@ -56,6 +56,17 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
     menu.querySelector('#touchRecoveryActions').append(reset, reload, diagnostics, fullscreen);
     const controls = document.createElement('div'); controls.id = 'touchFlightControls';
     controls.innerHTML = `<div class="touchStickWrap"><button type="button" id="touchStick" aria-label="Move camera with thumb pad"><span></span></button><span id="touchStickLabel">MOVE VIEW</span></div><div id="touchLift"><button type="button" aria-label="Move camera up" data-touch-key="KeyE">↑</button><button type="button" aria-label="Move camera down" data-touch-key="KeyQ">↓</button></div><div id="touchPilotActions"></div><div id="touchThrottleSlot"></div>`;
+    const touchModeSlot = menu.querySelector('#touchModeSlot');
+    const touchFlightSlot = menu.querySelector('#touchFlightSlot');
+    const touchFlightSystems = menu.querySelector('#touchFlightSystems');
+    const quality = menu.querySelector('#touchGraphics');
+    const touchPilotActions = controls.querySelector('#touchPilotActions');
+    const touchThrottleSlot = controls.querySelector('#touchThrottleSlot');
+    const touchStickLabel = controls.querySelector('#touchStickLabel');
+    const touchStick = controls.querySelector('#touchStick');
+    if (![touchModeSlot, touchFlightSlot, touchFlightSystems, quality, touchPilotActions, touchThrottleSlot, touchStickLabel, touchStick].every(Boolean)) {
+        throw new Error('Mobile controls failed to build their owned DOM');
+    }
     const status = document.createElement('aside'); status.id = 'renderRecovery'; status.hidden = true; status.setAttribute('role', 'status');
     const statusText = document.createElement('span'), statusButton = button('renderRecoveryReset', 'Recover graphics', null, 'Recover');
     const statusReload = button('renderRecoveryReload', 'Reload in Safe mode', null, 'Reload safe');
@@ -64,7 +75,7 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
     const media = matchMedia('(pointer:coarse) and (max-width:760px), (pointer:coarse) and (max-height:540px)');
     let compact = media.matches, opened = null, returnFocus = null, moveOpen = false, measureRaf = 0, nativeOpening = false;
     const roots = { details: panel, time: dock, menu, search: $('navPanel'), events: $('evPanel'), help: $('help'), catalog: $('hygSearch'), cinematic: $('cinePanel'), move: camera };
-    const moved = [[$('exploreBar').querySelector('.exploreModes'), $('touchModeSlot')], [$('mThrottle'), $('touchThrottleSlot')], [$('mMenuGrid'), $('touchFlightSlot')], ...['mRcsL','mRcsR','mBoost'].map(id => [$(id), $('touchPilotActions')])]
+    const moved = [[$('exploreBar').querySelector('.exploreModes'), touchModeSlot], [$('mThrottle'), touchThrottleSlot], [$('mMenuGrid'), touchFlightSlot], ...['mRcsL','mRcsR','mBoost'].map(id => [$(id), touchPilotActions])]
         .filter(([node]) => node).map(([node, destination]) => {
             const marker = document.createComment('desktop control location'); node.before(marker); return { node, destination, marker };
         });
@@ -99,10 +110,10 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
         menu.hidden = !compact || opened !== 'menu'; backdrop.hidden = !compact || !opened;
         for (const [trigger, name] of [[details, 'details'], [more, 'time'], [menuButton, 'menu'], [search, 'search']]) trigger.setAttribute('aria-expanded', String(opened === name));
         move.setAttribute('aria-expanded', String(moveOpen));
-        $('touchFlightSystems').hidden = G.uiMode === 'observe';
+        touchFlightSystems.hidden = G.uiMode === 'observe';
         tour.hidden = G.uiMode !== 'direct';
-        $('touchStickLabel').textContent = G.uiMode === 'pilot' ? 'STEER' : 'MOVE VIEW';
-        $('touchStick').setAttribute('aria-label', G.uiMode === 'pilot' ? 'Steer ship: left/right yaw, up/down pitch' : 'Move camera: left/right strafe, up/down forward/back');
+        touchStickLabel.textContent = G.uiMode === 'pilot' ? 'STEER' : 'MOVE VIEW';
+        touchStick.setAttribute('aria-label', G.uiMode === 'pilot' ? 'Steer ship: left/right yaw, up/down pitch' : 'Move camera: left/right strafe, up/down forward/back');
         updateTitle(); measure();
     };
     const close = (focus = true) => {
@@ -182,8 +193,6 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
         if (e.shiftKey && (document.activeElement === first || !roots[opened].contains(document.activeElement))) { e.preventDefault(); last.focus(); }
         else if (!e.shiftKey && (document.activeElement === last || !roots[opened].contains(document.activeElement))) { e.preventDefault(); first.focus(); }
     }, true);
-    const touchStick = controls.querySelector('#touchStick');
-    if (!touchStick) throw new Error('Mobile thumb control failed to initialize');
     bindNavigationStick(touchStick);
     for (const b of controls.querySelectorAll('[data-touch-key]')) {
         let owner = null;
@@ -204,7 +213,7 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
     window.addEventListener('resize', measure);
     const observer = new ResizeObserver(measure); observer.observe(bar); observer.observe(dock);
     new MutationObserver(updateTitle).observe($('exploreObject'), { childList: true, characterData: true, subtree: true });
-    const quality = $('touchGraphics'); quality.value = renderSession.mode;
+    quality.value = renderSession.mode;
     quality.addEventListener('change', () => setMobileGraphics(quality.value));
     for (const b of [reset, statusButton]) b.addEventListener('click', () => { recoverGraphics(); quality.value = 'safe'; });
     for (const b of [reload, statusReload]) b.addEventListener('click', () => { if (confirm('Reload in Safe mode? Unsaved simulation state will reset. Recover graphics keeps the current simulation.')) reloadSafe(); });
