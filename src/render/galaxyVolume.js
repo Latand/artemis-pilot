@@ -29,6 +29,10 @@ export function galaxyDisplayGain(pxScaleDevice) {
 }
 
 const MAX_STEPS = 360;
+// The moving view was integration-limited in matched output/step ablations:
+// more output pixels alone did not recover the missing dust contrast. Use a
+// bounded intermediate step inside the disk; keep output buffers unchanged.
+const DRAFT_STEP_K = 0.04, SETTLED_STEP_K = 0.03;
 // Exact angular reprojection, not a single-depth reprojection of a volume.
 // Mips remove unresolved history frequencies; edge weights reject uncovered rays.
 const HISTORY_GLSL = /* glsl */`
@@ -527,7 +531,7 @@ function rayRender(renderer, rt, rows = null) {
     const draft = rt === state.rtDraft;
     u.uFine.value = 1; // projected footprint, not motion, selects detail
     u.uHistoryValid.value = draft && state.historyUsed ? 1 : 0;
-    u.uStepK.value = draft ? 0.055 : 0.03;
+    u.uStepK.value = draft ? (state.inside ? DRAFT_STEP_K : 0.055) : SETTLED_STEP_K;
     u.uWideK.value = 0.2;
     if (rows) { rt.scissor.set(0, rows[0], rt.width, rows[1]); rt.scissorTest = true; }
     renderer.setRenderTarget(rt);
@@ -686,6 +690,7 @@ export function galaxyVolumeStats() {
         mapsReady: !!state.maps?.full, coverageReady: !!state.maps, mapError: state.mapError, mapsMs: state.maps?.ms ?? null, fade: state.mapFade, draft: !refined,
         exposureMode: FIXED_EXPOSURE === null ? "shared-sky" : "fixed-diagnostic",
         historyUsed: state.historyUsed, historyReady: !!state.history, invalidations: state.invalidations,
+        integrationStep: state.rayMat?.uniforms.uStepK.value ?? null, maxRaySteps: MAX_STEPS,
         mapSize: state.maps?.size, mapBlend: state.rayMat?.uniforms.uMapBlend.value ?? 0,
         targetBytes: (state.rtDraft ? state.rtDraft.width * state.rtDraft.height * 8 : 0) +
             (state.rtFull ? state.rtFull.width * state.rtFull.height * 8 : 0) +
