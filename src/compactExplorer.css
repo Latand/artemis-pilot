@@ -114,3 +114,11 @@ body.compact-explorer #touchPilotActions #mBoost { grid-column:1/-1; }
 @media (orientation:landscape) and (max-height:540px) {
  body.compact-explorer #touchPilotActions { left:calc(var(--touch-side) + 126px);transform:none;bottom:var(--touch-bottom); }
 }
+
+/* The legacy Explore rule also uses !important. Match its mode guards and
+   explicitly select the collapsed state rather than inherit display:block. */
+body.compact-explorer:not(.mode-xr):not(.mode-cabin):not(.mode-clean) #timeDock:not(.expanded-time) { display:grid!important; }
+body.compact-explorer #tdDate { margin:0; }
+body.compact-explorer #timeDock,body.compact-explorer .touch-sheet-active { bottom:calc(var(--touch-bottom) + var(--touch-keyboard-offset,0px))!important; }
+body.compact-explorer #touchBar { top:calc(6px + env(safe-area-inset-top,0px) + var(--explore-viewport-top,0px)); }
+body.compact-explorer.mode-cabin #touchBar,body.compact-explorer.mode-cabin #touchFlightControls,body.compact-explorer.mode-cabin #timeDock { display:none!important; }
