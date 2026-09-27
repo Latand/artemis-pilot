@@ -55,7 +55,7 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
     const statusText = document.createElement('span'), statusButton = button('renderRecoveryReset', 'Recover graphics', null, 'Recover');
     const statusReload = button('renderRecoveryReload', 'Reload in Safe mode', null, 'Reload safe');
     status.append(statusText, statusButton, statusReload);
-    document.body.append(backdrop, menu, bar, controls, status);
+    // Keep compact chrome and legacy sheets in the same stacking context as the canvas/panels.\n    $('root').append(backdrop, menu, bar, controls, status);
     const media = matchMedia('(max-width:760px), (max-height:540px) and (pointer:coarse)');
     let compact = media.matches, opened = null, returnFocus = null, moveOpen = false, measureRaf = 0, nativeOpening = false;
     const roots = { details: panel, time: dock, menu, search: $('navPanel'), events: $('evPanel'), help: $('help'), catalog: $('hygSearch'), cinematic: $('cinePanel'), move: camera };
@@ -169,7 +169,7 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
     document.addEventListener('click', e => { if (compact && e.target.closest('[data-destination],.navItem,.hygResult,#exploreCatalog,#exploreScale,#touchFlightSlot button')) close(false); });
     document.addEventListener('keydown', e => {
         if (!compact || !opened) return;
-        if (e.key === 'Escape') { e.preventDefault(); close(); return; }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); close(); return; }
         if (e.key !== 'Tab') return;
         const nodes = [...roots[opened].querySelectorAll('button,input,select,summary,a[href],[tabindex="0"]')].filter(n => n.getClientRects().length && !n.disabled);
         if (!nodes.length) return;
