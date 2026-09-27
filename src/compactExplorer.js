@@ -13,6 +13,11 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
     const $ = id => document.getElementById(id);
     const panel = $('explorePanel'), dock = $('timeDock'), camera = $('exploreCamera');
     if (!panel || !dock || !camera) return;
+    // Mobile chrome owns touch/coarse-pointer layouts only. A narrow desktop
+    // capture/window keeps the ordinary desktop controls and never creates
+    // touch-only event owners or sheets.
+    const touchLike = matchMedia('(pointer:coarse)').matches || (navigator.maxTouchPoints || 0) > 0;
+    if (!touchLike) return;
     initialized = true;
     const button = (id, label, target, text = label) => {
         const b = document.createElement('button'); b.id = id; b.type = 'button'; b.textContent = text;
