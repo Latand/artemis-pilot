@@ -22,7 +22,7 @@ const browser=await (engine==='webkit'?webkit:chromium).launch(engine==='chromiu
 const context=await browser.newContext({viewport:{width:430,height:932},deviceScaleFactor:3,hasTouch:true,isMobile:true});
 await context.addInitScript(()=>{Date.now=()=>Date.UTC(2026,8,27,12);localStorage.setItem('ap_introSeen','1');localStorage.setItem('ap_intro_seen','1');});
 const page=await context.newPage();page.setDefaultTimeout(180000);
-page.on('pageerror',e=>report.errors.push(e.message));
+page.on('pageerror',e=>{const text=e.stack||e.message;report.errors.push(text);console.error(text);});
 page.on('console',m=>{if(m.type()==='error'&&/Shader Error|GL_INVALID|INVALID_OPERATION/.test(m.text()))report.errors.push(m.text());});
 const url=`http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&tier1=0&focus=earth&dist=25&river=0&lens=0`;
 const capture=async name=>{
