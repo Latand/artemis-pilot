@@ -10,7 +10,7 @@ const engine=process.env.BROWSER||'chromium', baseline=process.env.BASELINE==='1
 await mkdir(out,{recursive:true});
 const report={engine,baseline,checks:[],errors:[],frames:[],diagnostics:[],limitations:['Desktop browser engines and software GPU, not a physical iPhone or iOS GPU driver.']};
 const save=()=>writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
-const check=(ok,name,data)=>{report.checks.push({name,pass:!!ok,...(data===undefined?{}:{data})});if(!ok)throw new Error(name);};
+const check=(ok,name,data)=>{report.checks.push({name,pass:!!ok,...(data===undefined?{}:{data})});if(!ok)console.error('ASSERTION FAILED:',name);};
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{
  name:'mobile-frozen-epoch',enforce:'pre',transform(source,id){
   if(!id.replaceAll('\\','/').endsWith('/src/main.js'))return;
@@ -106,9 +106,34 @@ try{
   check(await page.evaluate(()=>__mobileDiagnostics().resizes)===resizeBefore,'Repeated unchanged window/visualViewport events do not resize buffers');
   check(await page.evaluate(()=>__syncMeterReads)===0,'Mobile exposure has no synchronous readRenderTargetPixels calls');
   check(await page.evaluate(()=>__volStatus().asyncMeter.reads)>0,'Asynchronous exposure readback actually completes');
+  // Exercise real scale-tier transitions, not only Earth-distance pinches.
+  const allocationBefore=await page.evaluate(()=>__mobileDiagnostics().resizes);
+  for(const [w,h] of [[420,910],[932,430],[400,800],[430,932],[390,844],[430,932]])await page.setViewportSize({width:w,height:h});
+  await page.waitForTimeout(400);await nextFrame(2);
+  const burst=await page.evaluate(()=>__mobileDiagnostics());
+  check(burst.resizes-allocationBefore<=2,'A real viewport-change burst coalesces to bounded allocations',{before:allocationBefore,after:burst.resizes});
+  for(const scale of ['system','inside-galaxy','outside-galaxy','earth-return']){
+   await page.evaluate(async scale=>{
+    const {AU_KM,K,LY_SCENE}=await import('/src/constants.js');
+    const {galacticCenterScene}=await import('/src/universe/starfield.js');
+    const {earthG,sunPos}=await import('/src/bodies.js');
+    __cam.distTarget=null;
+    if(scale==='system'){__G.focus='sun';__cam.tgt.copy(sunPos);__cam.dist=AU_KM*K*3;}
+    else if(scale==='earth-return'){__G.focus='earth';__cam.tgt.copy(earthG.position);__cam.dist=25;}
+    else{__G.focus='free';__cam.tgt.set(...galacticCenterScene());__cam.dist=LY_SCENE*(scale==='inside-galaxy'?10000:160000);}
+   },scale);
+   await nextFrame(2);await capture(scale);
+   const diag=await page.evaluate(()=>__mobileDiagnostics());
+   check(diag.volume.coverageReady&&diag.volume.targetBytes<=2000000,`${scale}: valid bounded galaxy coverage`);
+   check(await page.evaluate(()=>mobileScene.camera.position.toArray().every(Number.isFinite)),`${scale}: finite camera after tier transition`);
+  }
   // Pilot: steering and throttle are different owners, with immediate release.
   await page.locator('#touchMenuToggle').click();await page.locator('[data-ui-mode="pilot"]').click();await capture('pilot-controls');
   check(await page.locator('#mThrTrack').isVisible()&&await page.locator('#touchStick').isVisible(),'Pilot has separate reachable steering and throttle');
+  await page.setViewportSize({width:932,height:430});await page.waitForTimeout(400);await nextFrame();await capture('pilot-landscape');
+  const pilotBounds=await page.evaluate(()=>['touchStick','mThrTrack','mRcsL','mRcsR','mBoost','tdPause'].map(id=>{const r=document.getElementById(id).getBoundingClientRect();return {id,left:r.left,right:r.right,top:r.top,bottom:r.bottom,width:r.width,height:r.height};}));
+  check(pilotBounds.every(b=>b.left>=0&&b.right<=932&&b.top>=0&&b.bottom<=430&&b.width>=44&&b.height>=44),'Landscape Pilot touch targets remain reachable and at least 44px',pilotBounds);
+  await page.setViewportSize({width:430,height:932});await page.waitForTimeout(400);await nextFrame();
   const track=await page.locator('#mThrTrack').boundingBox();await page.mouse.move(track.x+track.width/2,track.y+12);await page.mouse.down();
   check(await page.evaluate(()=>mobileState.keys.has('KeyW')),'Throttle has its own press owner');
   await page.evaluate(()=>{document.getElementById('mThrKnob').dispatchEvent(new PointerEvent('pointermove',{pointerId:998,pointerType:'touch',clientY:10000,bubbles:true}));});
@@ -146,5 +171,6 @@ try{
   report.completed=true;
  }
  check(report.errors.length===0,'No unexpected JavaScript/GL errors',report.errors);
+ if(report.checks.some(c=>!c.pass))throw new Error(report.checks.filter(c=>!c.pass).map(c=>c.name).join('\n'));
 }catch(error){report.failure=String(error.stack||error);try{await page.screenshot({path:`${out}/failure.png`});report.failureState=await page.evaluate(()=>({diag:window.__mobileDiagnostics?.(),classes:document.body.className,ready:window.__AP_READY}));}catch{}throw error;}
 finally{await save();await browser.close();await server.close();}

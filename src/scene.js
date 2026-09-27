@@ -358,7 +358,7 @@ function startShipGrab(e) {
     if (G.uiMode === "observe") return false;
     if (G.cabin || G.dead || e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey || !pointerNearShip(e)) return false;
     shipScenePoint(grabShip);
-    grabNormal.setFromMatrixColumn(camera.matrixWorld, 2).normalize();
+    grabNormal.copy(camera.position).sub(grabShip).normalize();
     grabPlane.setFromNormalAndCoplanarPoint(grabNormal, grabShip);
     const hit = pointerToPlane(e);
     if (!hit) return false;

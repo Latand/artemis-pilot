@@ -70,7 +70,7 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
             // Do not resize the WebGL canvas from visualViewport events. Its
             // zoom scale/keyboard movement belongs only to DOM positioning.
             const h = Math.round(vv?.height || innerHeight), top = Math.round(vv?.offsetTop || 0);
-            const values = { '--explore-visible-height': `${h}px`, '--explore-viewport-top': `${top}px`, '--touch-bar-height': `${Math.ceil(bar.getBoundingClientRect().height)}px`, '--time-dock-height': `${Math.ceil(dock.getBoundingClientRect().height)}px` };
+            const values = { '--explore-visible-height': `${h}px`, '--explore-viewport-top': `${top}px`, '--touch-keyboard-offset': `${Math.max(0, innerHeight - h - top)}px`, '--touch-bar-height': `${Math.ceil(bar.getBoundingClientRect().height)}px`, '--time-dock-height': `${Math.ceil(dock.getBoundingClientRect().height)}px` };
             for (const [name, value] of Object.entries(values)) if (document.documentElement.style.getPropertyValue(name) !== value) document.documentElement.style.setProperty(name, value);
         });
     };
@@ -146,6 +146,16 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
     for (const [id,name] of [['navClose','search'],['evClose','events'],['helpClose','help'],['hygClose','catalog']]) $(id)?.addEventListener('click', () => {
         if (opened === name) { opened = null; render(); requestAnimationFrame(() => returnFocus?.focus({preventScroll:true})); }
     });
+    for (const name of ['search','events','help','catalog','cinematic']) {
+        const root = roots[name];
+        if (!root) continue;
+        new MutationObserver(() => {
+            if (!compact || opened !== name) return;
+            const closed = ['search','events'].includes(name) ? !root.classList.contains('open') : root.style.display === 'none';
+            if (closed) { opened = null; cancelTouchInput(); render(); returnFocus?.focus({preventScroll:true}); }
+        }).observe(root, {attributes:true,attributeFilter:['style','class']});
+    }
+    if ($('mReset')) $('mReset').textContent = 'Restart simulation';
     // A native entry point (for example Events inside time settings) must use
     // the same sheet owner and focus handling as the compact menu trigger.
     document.addEventListener('click', e => {
@@ -156,7 +166,7 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
         queueMicrotask(() => { close(false); opened = name; returnFocus = menuButton; render(); roots[name]?.querySelector('input,button')?.focus({preventScroll:true}); });
     }, true);
     // Destination and flight-system actions keep their original implementation.
-    document.addEventListener('click', e => { if (compact && e.target.closest('[data-destination],.navItem,#exploreCatalog,#exploreScale,#touchFlightSlot button')) close(false); });
+    document.addEventListener('click', e => { if (compact && e.target.closest('[data-destination],.navItem,.hygResult,#exploreCatalog,#exploreScale,#touchFlightSlot button')) close(false); });
     document.addEventListener('keydown', e => {
         if (!compact || !opened) return;
         if (e.key === 'Escape') { e.preventDefault(); close(); return; }
@@ -166,7 +176,7 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
         const first = nodes[0], last = nodes.at(-1);
         if (e.shiftKey && (document.activeElement === first || !roots[opened].contains(document.activeElement))) { e.preventDefault(); last.focus(); }
         else if (!e.shiftKey && (document.activeElement === last || !roots[opened].contains(document.activeElement))) { e.preventDefault(); first.focus(); }
-    });
+    }, true);
     bindNavigationStick($('touchStick'));
     for (const b of controls.querySelectorAll('[data-touch-key]')) {
         let owner = null;
