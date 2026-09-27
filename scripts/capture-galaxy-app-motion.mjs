@@ -19,7 +19,7 @@ await server.listen();
 const browser=await chromium.launch({args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try {
     const page=await browser.newPage({viewport:{width:640,height:400},deviceScaleFactor:1});page.setDefaultTimeout(120000);
-    page.on('pageerror',e=>report.errors.push(e.message));
+    page.on('pageerror',e=>{const text=e.stack||e.message;report.errors.push(text);console.error(text);});
     await page.addInitScript(()=>{Date.now=()=>Date.UTC(2026,8,13,12);localStorage.setItem('ap_introSeen','1')});
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&dpr=1&tier1=0&galadapt=0&focus=earth&dist=25&realsky=0&river=0&lens=0`,{waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>window.__AP_READY&&window.__captureAppFrame);
