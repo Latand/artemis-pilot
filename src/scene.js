@@ -1,4 +1,7 @@
 import * as THREE from "three";
+import { pixelRatioForSize, ResizeSettler } from "./mobile/renderPolicy.js";
+import { bindTouchCamera } from "./mobile/touchCamera.js";
+import { renderSession, currentMobileProfile, installRenderSession, markInteraction, onGraphicsProfile, onInputCancel } from "./mobile/renderSession.js";
 import { renderLinearFrame } from "./render/linearFrame.js";
 import { G } from "./state.js";
 import { CAM_DIST_MAX, K, LY_SCENE } from "./constants.js";
@@ -18,7 +21,7 @@ export const cvHost = document.getElementById("gl");
 // alternative to logarithmicDepthBuffer isn't available here; the
 // multi-frustum tiering below (`renderSceneTiered`) is the whole fix.
 // logarithmicDepthBuffer itself stays off per A6 (fill-rate cost).
-export const renderer = new THREE.WebGLRenderer({ antialias: true });
+export const renderer = new THREE.WebGLRenderer({ antialias: !isMobileLike() });
 const q = new URLSearchParams(location.search);
 const dprOverride = Number(q.get("dpr") || q.get("pixelRatio"));
 export const renderQuality = { mobile: false, dpr: 1, loadShed: 0, bloomScale: 1 };
@@ -32,17 +35,20 @@ function choosePixelRatio() {
     const device = window.devicePixelRatio || 1;
     const mobile = isMobileLike();
     renderQuality.mobile = mobile;
-    if (Number.isFinite(dprOverride) && dprOverride > 0) return Math.max(.5, Math.min(2.5, dprOverride));
-    let cap = mobile ? 1.15 : 1.5;
+    renderSession.mobile = mobile;
+    let cap = mobile ? currentMobileProfile().dpr : 1.5;
     if (pixelLoadShed >= 2) cap = Math.min(cap, mobile ? .92 : 1.1);
     else if (pixelLoadShed >= 1) cap = Math.min(cap, mobile ? 1.0 : 1.25);
-    return Math.min(device, cap);
+    const desired = Number.isFinite(dprOverride) && dprOverride > 0
+        ? Math.max(.5, Math.min(2.5, dprOverride)) : Math.min(device, cap);
+    return mobile ? pixelRatioForSize(cvHost.clientWidth, cvHost.clientHeight,
+        Math.min(desired, cap), currentMobileProfile().canvasPixels, renderer.capabilities.maxTextureSize) : desired;
 }
 function applyPixelRatio() {
     const next = choosePixelRatio();
     if (Math.abs(next - renderQuality.dpr) > .01) {
         renderQuality.dpr = next;
-        renderer.setPixelRatio(next);
+        // Applied with dimensions in one setDrawingBufferSize call below.
     }
     return renderQuality.dpr;
 }
@@ -117,47 +123,38 @@ const tierSavedVis = [];
 export function renderSceneTiered(rendererArg, sceneArg, cameraArg) {
     if (renderLinearFrame(rendererArg, () => renderSceneTiered(rendererArg, sceneArg, cameraArg))) return;
     const savedNear = cameraArg.near, savedFar = cameraArg.far;
-    const directAutoClear = rendererArg.autoClear;
-    if (backgroundHooks.length) {
-        // Clear once up front, paint the background, then let the far pass
-        // draw over it without clearing colour again.
-        if (directAutoClear) rendererArg.clear(true, true, true);
-        rendererArg.autoClear = false;
-        for (let i = 0; i < backgroundHooks.length; i++) backgroundHooks[i](rendererArg, cameraArg);
-        rendererArg.clearDepth();
-    }
+    const directAutoClear = rendererArg.autoClear, farVisible = farTierGroup.visible;
+    const depthNear = tierDepthRange.value.x, depthFar = tierDepthRange.value.y;
     tierSavedVis.length = 0;
-    for (let i = 0; i < nearTierOnly.length; i++) {
-        tierSavedVis.push(nearTierOnly[i].visible);
-        nearTierOnly[i].visible = false;
+    for (const object of nearTierOnly) tierSavedVis.push(object.visible);
+    try {
+        if (backgroundHooks.length) {
+            if (directAutoClear) rendererArg.clear(true, true, true);
+            rendererArg.autoClear = false;
+            for (const hook of backgroundHooks) hook(rendererArg, cameraArg);
+            rendererArg.clearDepth();
+        }
+        for (const object of nearTierOnly) object.visible = false;
+        farTierGroup.visible = true;
+        cameraArg.near = Math.min(savedFar, Math.max(savedNear, TIER_SPLIT_UNITS));
+        cameraArg.far = savedFar; cameraArg.updateProjectionMatrix();
+        tierDepthRange.value.set(cameraArg.near, 1e38);
+        rendererArg.render(sceneArg, cameraArg);
+        for (let i = 0; i < nearTierOnly.length; i++) nearTierOnly[i].visible = tierSavedVis[i];
+        farTierGroup.visible = false;
+        rendererArg.autoClear = false;
+        rendererArg.clearDepth();
+        cameraArg.near = savedNear; cameraArg.far = Math.min(savedFar, TIER_SPLIT_UNITS);
+        cameraArg.updateProjectionMatrix();
+        tierDepthRange.value.set(0, cameraArg.far);
+        rendererArg.render(sceneArg, cameraArg);
+    } finally {
+        for (let i = 0; i < nearTierOnly.length; i++) nearTierOnly[i].visible = tierSavedVis[i];
+        farTierGroup.visible = farVisible;
+        tierDepthRange.value.set(depthNear, depthFar);
+        cameraArg.near = savedNear; cameraArg.far = savedFar; cameraArg.updateProjectionMatrix();
+        rendererArg.autoClear = directAutoClear;
     }
-    farTierGroup.visible = true;
-    cameraArg.near = Math.min(savedFar, Math.max(savedNear, TIER_SPLIT_UNITS));
-    cameraArg.far = savedFar;
-    cameraArg.updateProjectionMatrix();
-    tierDepthRange.value.set(cameraArg.near, 1e38);
-    rendererArg.render(sceneArg, cameraArg);
-    for (let i = 0; i < nearTierOnly.length; i++) nearTierOnly[i].visible = tierSavedVis[i];
-    farTierGroup.visible = false;
-    // autoClear defaults to true, so an un-flagged second render() call would
-    // clear pass 1's color buffer right back to black before drawing the
-    // near tier on top of it -- same guard the existing cockpit-overlay pass
-    // already uses (see renderFrame in main.js).
-    const oldAutoClear = rendererArg.autoClear;
-    rendererArg.autoClear = false;
-    rendererArg.clearDepth();
-    cameraArg.near = savedNear;
-    cameraArg.far = Math.min(savedFar, TIER_SPLIT_UNITS);
-    cameraArg.updateProjectionMatrix();
-    tierDepthRange.value.set(0, cameraArg.far);
-    rendererArg.render(sceneArg, cameraArg);
-    tierDepthRange.value.set(0, 1e38);
-    rendererArg.autoClear = oldAutoClear;
-    farTierGroup.visible = true;
-    cameraArg.near = savedNear;
-    cameraArg.far = savedFar;
-    cameraArg.updateProjectionMatrix();
-    rendererArg.autoClear = directAutoClear;
 }
 
 // ---- post-processing: bloom / lensing ----
@@ -278,6 +275,7 @@ export function applyCameraRoll() {
     if (camRoll) camera.rotateZ(camRoll);
 }
 export function applyCamera() {
+    touchCamera?.flush();
     const cp = Math.cos(cam.pitch), spc = Math.sin(cam.pitch);
     camera.position.set(
         cam.tgt.x + cam.dist * cp * Math.cos(cam.yaw),
@@ -356,10 +354,11 @@ function resetShipGrab() {
     shipGrab.id = -1;
 }
 function startShipGrab(e) {
+    if (e.pointerType === "touch") return false; // touch is camera-only, never a ship throw
     if (G.uiMode === "observe") return false;
     if (G.cabin || G.dead || e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey || !pointerNearShip(e)) return false;
     shipScenePoint(grabShip);
-    grabNormal.copy(camera.position).sub(grabShip).normalize();
+    grabNormal.setFromMatrixColumn(camera.matrixWorld, 2).normalize();
     grabPlane.setFromNormalAndCoplanarPoint(grabNormal, grabShip);
     const hit = pointerToPlane(e);
     if (!hit) return false;
@@ -484,6 +483,7 @@ function finishShipGrab(e) {
     return true;
 }
 function onDown(e) {
+    if (e.pointerType === "touch") return;
     try { el.setPointerCapture(e.pointerId); } catch (err) { }
     if (startShipGrab(e)) return;
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, btn: e.button });
@@ -541,18 +541,35 @@ window.addEventListener("pointerup", onUp);
 window.addEventListener("pointercancel", onUp);
 el.addEventListener("wheel", onWheel, { passive: false });
 
-function resize() {
-    if (renderer.xr.isPresenting) return; // XR owns the framebuffer size
-    const pr = applyPixelRatio();
-    const w = cvHost.clientWidth || 1, h = cvHost.clientHeight || 1;
-    viewportSize.w = w;
-    viewportSize.h = h;
-    viewportSize.pxScale = h / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * .5));
-    renderer.setSize(w, h);
-    resizePostProcessing(w, h, pr);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+const resizeSettler = new ResizeSettler();
+let resizeTimer = 0;
+function requestResize() {
+    if (renderer.xr.isPresenting) return;
+    const pr = choosePixelRatio();
+    resizeSettler.request(cvHost.clientWidth, cvHost.clientHeight, pr, performance.now());
+    if (resizeSettler.pending && !resizeTimer) resizeTimer = setTimeout(flushResize, 150);
 }
+function flushResize(immediate = false) {
+    clearTimeout(resizeTimer); resizeTimer = 0;
+    if (renderer.xr.isPresenting || renderer.getContext().isContextLost()) return;
+    if (renderSession.gpuPending) { resizeTimer = setTimeout(flushResize, 50); return; }
+    const next = resizeSettler.take(performance.now(), immediate);
+    if (!next) {
+        if (resizeSettler.pending) resizeTimer = setTimeout(flushResize, 50);
+        return;
+    }
+    const [w, h, pr] = next;
+    viewportSize.w = w; viewportSize.h = h;
+    viewportSize.pxScale = h / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) * .5));
+    renderQuality.dpr = pr;
+    // Unlike setPixelRatio followed by setSize, this resizes the canvas once.
+    // Its CSS extent stays 100%, including during browser-toolbar animation.
+    renderer.setDrawingBufferSize(w, h, pr);
+    resizePostProcessing(w, h, pr);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    renderSession.resizes++;
+}
+
 function resizePostProcessing(w = viewportSize.w, h = viewportSize.h, pr = renderer.getPixelRatio()) {
     if (composer) {
         if (Math.abs(pr - composerPixelRatio) > .01) {
@@ -566,15 +583,40 @@ function resizePostProcessing(w = viewportSize.w, h = viewportSize.h, pr = rende
     bloomPass?.setSize?.(Math.max(1, Math.round(w * bloomScale)), Math.max(1, Math.round(h * bloomScale)));
     activeLensingPass?.uniforms?.uTexel?.value?.set(1 / Math.max(1, w * pr), 1 / Math.max(1, h * pr));
 }
-resize();
-new ResizeObserver(resize).observe(cvHost);
+const touchCamera = bindTouchCamera(el, ({ fingers, dx, dy, zoom }) => {
+    if (G.cabin) {
+        if (fingers === 1) {
+            look.yaw = Math.min(LOOK_YAW_MAX, Math.max(-LOOK_YAW_MAX, look.yaw + dx * .0042));
+            look.pitch = Math.min(LOOK_PITCH_MAX, Math.max(LOOK_PITCH_MIN, look.pitch - dy * .0042));
+        }
+        return;
+    }
+    if (fingers === 1) {
+        cam.yaw += dx * .0052;
+        cam.pitch = Math.min(1.45, Math.max(-1.45, cam.pitch + dy * .0052));
+    } else {
+        if (zoom) { cam.dist = Math.min(CAM_DIST_MAX, Math.max(.03, cam.dist * Math.exp(zoom))); cam.distTarget = null; }
+        if (Math.hypot(dx, dy) > .25) panBy(dx, dy);
+    }
+}, markInteraction);
+onInputCancel(() => {
+    for (const id of ptrs.keys()) try { el.releasePointerCapture(id); } catch { /* already released */ }
+    ptrs.clear(); pinchD = 0; resetShipGrab(); touchCamera.cancel();
+});
+installRenderSession(renderer, () => { touchCamera.flush(); flushResize(); });
+onGraphicsProfile(requestResize);
+el.addEventListener('webglcontextrestored', requestResize);
+requestResize(); flushResize(true);
+new ResizeObserver(requestResize).observe(cvHost);
+window.addEventListener('resize', requestResize);
+export const flushCameraGestures = () => touchCamera.flush();
 
 export function setRenderLoadShed(level = 0) {
     const next = Math.max(0, Math.min(2, level | 0));
     if (next === pixelLoadShed) return;
     pixelLoadShed = next;
     renderQuality.loadShed = next;
-    resize();
+    requestResize();
 }
 
 // ---- HTML label helpers ----
