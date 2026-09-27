@@ -20,7 +20,7 @@ try{
  const context=await browser.newContext({viewport:{width:suite==='mobile'?390:800,height:suite==='mobile'?844:500},deviceScaleFactor:1,hasTouch:suite==='mobile',isMobile:suite==='mobile'});
  await context.addInitScript(()=>{Date.now=()=>Date.UTC(2026,8,13,12);localStorage.setItem('ap_introSeen','1');localStorage.setItem('ap_intro_seen','1');});
  const page=await context.newPage();page.setDefaultTimeout(180000);
- page.on('pageerror',e=>report.errors.push(e.message));
+ page.on('pageerror',e=>{const text=e.stack||e.message;report.errors.push(text);console.error(text);});
  page.on('console',m=>{if(m.type()==='error'&&/Shader|WebGL|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&tier1=0&galadapt=0&focus=earth&dist=25&river=0&lens=0`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__reviewFrame);
