@@ -17,7 +17,7 @@ export function makePlanetMarker(color) {
         canvas.width = canvas.height = 64;
         const ctx = canvas.getContext('2d');
         const gradient = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
-        // Crisp 2.8 px coloured core, quiet feathered halo. Shared by all planets.
+        // Crisp 2.3 px coloured core, quiet feathered halo. Shared by all planets.
         gradient.addColorStop(0, 'rgba(255,255,255,1)');
         gradient.addColorStop(.23, 'rgba(255,255,255,1)');
         gradient.addColorStop(.34, 'rgba(255,255,255,.65)');

@@ -571,6 +571,8 @@ export function riverDebugReadPositions(rows = 4) {
         // at origin renders the river displaced by -smoothCenter)
         meshPos: lines ? { x: lines.position.x, y: lines.position.y, z: lines.position.z } : null,
         visible: lines ? lines.visible : false,
+        textureOrigin: { x: textureFrame.x, y: textureFrame.y, z: textureFrame.z },
+        drawCenterShift: uniformsShared.uDrawCenterShift.value.toArray(),
     };
 }
 

@@ -14,13 +14,14 @@ const server = await createServer({root, logLevel:'error', server:{host:'127.0.0
   if(!id.replaceAll('\\','/').endsWith('/src/main.js'))return;
   const marker='const firstFrameT0 = perfStart();';
   assert.equal(source.split(marker).length,2);
-  return source.replace(marker,'G.t = 0; G.paused = true; resetEphem();\n'+marker)
+  return source.replace(marker,'G.t = 0; G.paused = true; G.gr = false; resetEphem();\n'+marker)
+   .replace('const riverWarmed = warmRiverCompute();', 'const riverWarmed = false;')
    .replace('const rawDtR = clock.getDelta();','const rawDtR = 1 / 60;')
    +'\nwindow.__planetCaptureFrame=frame;window.__planetCaptureRiver=v=>{grB=v;};';
  }}]});await server.listen();
 const browser=await chromium.launch({args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try{
- const context=await browser.newContext({viewport:mobile?{width:390,height:844}:{width:1440,height:900},deviceScaleFactor:1,hasTouch:mobile,isMobile:mobile});
+ const context=await browser.newContext({viewport:mobile?{width:390,height:600}:{width:900,height:600},deviceScaleFactor:1,hasTouch:mobile,isMobile:mobile});
  await context.addInitScript(()=>{Date.now=()=>Date.UTC(2026,8,30,12);localStorage.setItem('ap_introSeen','1');localStorage.setItem('ap_intro_seen','1');});
  const page=await context.newPage();page.setDefaultTimeout(180000);
  page.on('pageerror',e=>report.errors.push(e.message));
@@ -30,10 +31,14 @@ try{
  await page.evaluate(async()=>{
   const s=await import('/src/scene.js'),b=await import('/src/bodies.js'),r=await import('/src/river.js');
   const {WORLD}=await import('/src/state.js');
-  s.renderer.setAnimationLoop(null);__G.paused=true;__G.predict=false;__G.gr=true;__planetCaptureRiver(1);
+  s.renderer.setAnimationLoop(null);__G.paused=true;__G.predict=false;__G.gr=false;__planetCaptureRiver(0);
   window.capture={s,b,r,WORLD};
  });
- await page.waitForFunction(()=>window.__volStatus?.().mapsReady);
+ // Let the background worker finish before the first costly river shader compile.
+ await page.waitForFunction(()=>window.__volStatus?.().mapsReady||window.__volStatus?.().mapError);
+ report.startupVolume=await page.evaluate(()=>window.__volStatus());
+ assert.ok(report.startupVolume.mapsReady,report.startupVolume.mapError||'full galaxy maps missing');
+ await page.setViewportSize(mobile?{width:390,height:844}:{width:1440,height:900});
  report.browser=await browser.version();
  report.renderer=await page.evaluate(()=>{const gl=capture.s.renderer.getContext(),e=gl.getExtension('WEBGL_debug_renderer_info');return e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER)});
  async function frames(n=8){for(let i=0;i<n;i++)await page.evaluate(()=>{__planetCaptureFrame();capture.s.renderer.getContext().finish()});}
@@ -78,6 +83,49 @@ try{
   await view({focus:'sun',dist:1.3e7,river:enabled});await frames(5);
   const samples=[];for(let i=0;i<12;i++)samples.push(await page.evaluate(()=>{let t=performance.now();__planetCaptureFrame();capture.s.renderer.getContext().finish();return performance.now()-t}));
   report.timings.push({river:enabled,completedFrameMs:samples});
+ }
+
+ // Verify retinal-density rendering without shrinking the CSS-space marker.
+ await view({focus:'sun',dist:1.3e7});
+ const lowDprScale=await page.evaluate(()=>capture.b.plGlows[5].scale.x);
+ await page.evaluate(()=>capture.s.renderer.setPixelRatio(2));
+ await shot('solar-system-dpr2');
+ assert.equal(await page.evaluate(()=>capture.s.renderer.getPixelRatio()),2);
+ assert.ok(Math.abs(await page.evaluate(()=>capture.b.plGlows[5].scale.x)-lowDprScale)<1e-6);
+ await page.evaluate(()=>capture.s.renderer.setPixelRatio(1));
+ if(!baseline){
+  // An actual foreground globe must hide the marker; moving it in front must
+  // change the same central pixels. Render the fixed scene without simulation.
+  await view({focus:'earth',dist:25,river:false});
+  report.occlusion=await page.evaluate(async()=>{
+   const {makePlanetMarker}=await import('/src/planetMarker.js');
+   const {s,b}=capture,gl=s.renderer.getContext();
+   const marker=makePlanetMarker(0xff3333);marker.material.opacity=1;marker.scale.setScalar(1);
+   const direction=s.camera.position.clone().sub(b.earthG.position).normalize();
+   const read=()=>{s.renderSceneTiered(s.renderer,s.scene,s.camera);gl.finish();const out=new Uint8Array(15*15*4);gl.readPixels(Math.floor(gl.drawingBufferWidth/2)-7,Math.floor(gl.drawingBufferHeight/2)-7,15,15,gl.RGBA,gl.UNSIGNED_BYTE,out);return out;};
+   const clean=read();marker.position.copy(b.earthG.position).addScaledVector(direction,-20);s.scene.add(marker);const behind=read();
+   marker.position.copy(b.earthG.position).addScaledVector(direction,15);const front=read();
+   s.scene.remove(marker);marker.material.dispose();
+   return {hidden:clean.every((v,i)=>v===behind[i]),visibleInFront:clean.some((v,i)=>Math.abs(v-front[i])>4)};
+  });
+  assert.ok(report.occlusion.hidden&&report.occlusion.visibleInFront,'planet globe occludes a guide behind it');
+  // Exercise real high-warp delivery and mobile's every-other-frame compute,
+  // including a moving camera origin while dispatch is skipped.
+  await view({focus:'sun',dist:1.3e7});
+  await page.evaluate(()=>{__G.focus='free';__G.warp=1e5;__G.paused=false});
+  report.highWarp=[];
+  for(let i=0;i<10;i++){
+   report.highWarp.push(await page.evaluate(()=>{
+    const {s,r}=capture;s.cam.tgt.x+=100;s.cam.tgt.y+=40;s.cam.tgt.z-=70;
+    __planetCaptureFrame();s.renderer.getContext().finish();
+    return {time:__G.t,skipped:r.river.skippedCompute,every:r.river.computeEvery,...r.riverDebugReadPositions(1)};
+   }));
+  }
+  assert.ok(report.highWarp.at(-1).time>0,'high-warp simulation advances');
+  assert.ok(report.highWarp.every(row=>row.finite&&row.distinct>0),'live GPU positions remain finite and distinct');
+  if(mobile)assert.ok(report.highWarp.some(row=>row.skipped),'mobile skipped-compute path exercised');
+  for(const row of report.highWarp)for(const [index,axis] of ['x','y','z'].entries())
+   assert.ok(Math.abs(row.drawCenterShift[index]-(row.center[axis]-row.textureOrigin[axis]))<.01,'draw shift matches the texture origin');
  }
  assert.equal(report.errors.length,0,report.errors.join('\n'));
 }finally{await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}

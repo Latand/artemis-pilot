@@ -181,11 +181,12 @@ export function updateBodyShaders(camera, t) {
         u.atmoUniforms.uCamera.value.copy(bodyCamera);
     }
     const pxScale = viewportSize.pxScale;
+    const markerPxScale = viewportSize.h * camera.projectionMatrix.elements[5] * .5;
     const earthPx = radius * pxScale / Math.max(radius, camera.position.distanceTo(earthG.position));
     if (earthG.visible && earthPx > 2) requestCloudDetails();
     clouds.visible = earth.visible && !!clouds.material.alphaMap && earthPx > 1;
     earthAtmo.visible = earth.visible && earthPx > 1;
-    updatePlanetMarker(earthMarker, camera, earthG.position, radius, pxScale, earthMarker.userData.guideFade ?? 1);
+    updatePlanetMarker(earthMarker, camera, earthG.position, radius, markerPxScale, earthMarker.userData.guideFade ?? 1);
     let exposure = 1;
     if (earthG.visible) exposure = Math.min(exposure, meteredSkyExposure(camera, earthG.position, radius, sunPos));
     if (sunCore.visible) exposure = Math.min(exposure, meteredSkyExposure(camera, sunPos, SUN_RADIUS * sunCore.scale.x));
@@ -207,7 +208,7 @@ export function updateBodyShaders(camera, t) {
         exposure = Math.min(exposure, meteredSkyExposure(camera, group.position, p.R * K, sunPos));
         if (rpx > 2) requestPlanetTexture(i);
         // A distant marker fades continuously as the physical disk resolves.
-        updatePlanetMarker(plGlows[i], camera, group.position, p.R * K, pxScale, plGlows[i].userData.guideFade ?? 1);
+        updatePlanetMarker(plGlows[i], camera, group.position, p.R * K, markerPxScale, plGlows[i].userData.guideFade ?? 1);
         for (const child of group.children) {
             const direction = child.material?.userData.sunDirection;
             if (direction) {
