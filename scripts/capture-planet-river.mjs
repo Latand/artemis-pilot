@@ -11,6 +11,10 @@ await mkdir(out, { recursive: true });
 const report = { baseline, mobile, epoch: '2026-09-30T12:00:00Z', comparison: 'Matched cameras and epoch; dynamic river phases are qualitative, not pixel-identical', errors: [], frames: [], timings: [] };
 const server = await createServer({root, logLevel:'error', server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{
  name:'planet-river-capture',enforce:'pre',transform(source,id){
+  // Software rendering can block the startup thread past the normal 30 s
+  // worker deadline. Keep full-quality data mandatory; only the CI deadline grows.
+  if(id.replaceAll('\\','/').endsWith('/src/render/galaxyVolume.js'))
+   return source.replace("setTimeout(() => fail('Galaxy map generation timed out'), 30000)","setTimeout(() => fail('Galaxy map generation timed out'), 180000)");
   if(!id.replaceAll('\\','/').endsWith('/src/main.js'))return;
   const marker='const firstFrameT0 = perfStart();';
   assert.equal(source.split(marker).length,2);
@@ -20,10 +24,11 @@ const server = await createServer({root, logLevel:'error', server:{host:'127.0.0
    +'\nwindow.__planetCaptureFrame=frame;window.__planetCaptureRiver=v=>{grB=v;};';
  }}]});await server.listen();
 const browser=await chromium.launch({args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+let page;
 try{
  const context=await browser.newContext({viewport:mobile?{width:390,height:600}:{width:900,height:600},deviceScaleFactor:1,hasTouch:mobile,isMobile:mobile});
  await context.addInitScript(()=>{Date.now=()=>Date.UTC(2026,8,30,12);localStorage.setItem('ap_introSeen','1');localStorage.setItem('ap_intro_seen','1');});
- const page=await context.newPage();page.setDefaultTimeout(180000);
+ page=await context.newPage();page.setDefaultTimeout(180000);
  page.on('pageerror',e=>report.errors.push(e.message));
  page.on('console',m=>{if(m.type()==='error'&&/Shader|WebGL|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&dpr=1&tier1=0&galadapt=0&realsky=0&focus=sun&dist=13000000&pitch=.78&yaw=.7&lens=0`,{waitUntil:'domcontentloaded'});
@@ -43,7 +48,7 @@ try{
  report.renderer=await page.evaluate(()=>{const gl=capture.s.renderer.getContext(),e=gl.getExtension('WEBGL_debug_renderer_info');return e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER)});
  async function frames(n=8){for(let i=0;i<n;i++)await page.evaluate(()=>{__planetCaptureFrame();capture.s.renderer.getContext().finish()});}
  async function view(state){
-  if(mobile && state.focus==='sun' && state.dist>=1e7)state={...state,dist:state.dist*2};
+  if(mobile && state.focus==='sun' && state.dist>=1e7)state={...state,dist:state.dist*2.6};
   await page.evaluate(state=>{
   const {s,b}=capture;__G.focus=state.focus;__G.gr=state.river!==false;__planetCaptureRiver(__G.gr?1:0);
   s.cam.dist=state.dist;s.cam.distTarget=null;s.cam.yaw=.7;s.cam.pitch=.78;
@@ -57,7 +62,7 @@ try{
   assert.equal(state.time,0,'matched capture epoch');
   await writeFile(`${out}/${name}-canvas.png`,Buffer.from(state.png.split(',')[1],'base64'));delete state.png;
   await page.screenshot({path:`${out}/${name}.png`});
-  report.frames.push({name,...state});console.log('CAPTURE',name);
+  report.frames.push({name,...state});await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));console.log('CAPTURE',name);
  }
  for(const state of [
   {name:'solar-system',focus:'sun',dist:1.3e7},
@@ -133,4 +138,4 @@ try{
    assert.ok(Math.abs(row.drawCenterShift[index]-(row.center[axis]-row.textureOrigin[axis]))<.01,'draw shift matches the texture origin');
  }
  assert.equal(report.errors.length,0,report.errors.join('\n'));
-}finally{await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}
+}catch(error){report.failure=error.message;if(page)await page.screenshot({path:`${out}/failure.png`,timeout:10000}).catch(()=>{});throw error;}finally{await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}
