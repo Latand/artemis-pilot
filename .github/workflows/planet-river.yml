@@ -1,0 +1,71 @@
+name: Planet markers and gravity river
+on:
+  pull_request:
+    paths:
+      - 'src/bodies.js'
+      - 'src/main.js'
+      - 'src/planetMarker.js'
+      - 'src/river*.js'
+      - 'src/scene.js'
+      - 'scripts/*planet*'
+      - 'scripts/*river*'
+      - '.github/workflows/planet-river.yml'
+permissions:
+  contents: read
+concurrency:
+  group: planet-river-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: node scripts/smoke-planet-markers.mjs && node scripts/smoke-river-resources.mjs && npm run smoke:river-visual && npm test && npm run build
+  screenshots:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      matrix:
+        revision: [before, after]
+        screen: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npx playwright install --with-deps chromium
+      - name: Capture matched app views and completed-frame timings
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          REVISION: ${{ matrix.revision }}
+          SCREEN: ${{ matrix.screen }}
+        run: |
+          ROOT=.
+          export BASELINE=0 MOBILE=0
+          if [ "$REVISION" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/planet-before" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/planet-before/node_modules"
+            ROOT="$RUNNER_TEMP/planet-before"
+            export BASELINE=1
+          fi
+          if [ "$SCREEN" = mobile ]; then export MOBILE=1; fi
+          node scripts/capture-planet-river.mjs "$ROOT" evidence
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: planet-river-${{ matrix.revision }}-${{ matrix.screen }}
+          path: evidence/
+          retention-days: 14

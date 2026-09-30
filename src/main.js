@@ -18,7 +18,7 @@ import {
     farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
-    buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
+    buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, earthMarker, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
     plGroups, plSurfaces, plGlows, plOrbitRings, plLabels, galaxyBackdrop, sunDirW, updateBodyShaders, scheduleDeferredRealSkyLoad, requestEarthNightTexture,
     moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
@@ -1129,11 +1129,8 @@ scene.add(focusVelLine, focusVelCone);
 // (never meaningfully at galactic distance) but opt out of frustum culling
 // to survive camera-relative repositioning, so without this they'd cost one
 // wasted (fully clipped, invisible) draw call in the far pass every frame.
-// river.js's particle `lines` and trails.js's `predLine`/`bodyPredLine`/
-// `bodyPredDots` are the same kind of always-near, frustumCulled:false
-// content but aren't exported by their owning module this wave, so they
-// still pay that one extra draw call — a documented, harmless (invisible
-// either way) follow-up.
+// The river registers its own conservative, conditional near-tier bound.
+// Trail meshes retain their own tier handling.
 registerNearTierOnly(
     shipG, dot, flame, plasma, exhaust, explosion, xpFlash,
     arrow, flowArrow, darkEnergyArrow, haloArrow, tipV, tipF, tipDE, tipHalo,
@@ -1835,14 +1832,6 @@ function frame() {
                 plOrbitRings[i].position.copy(sunPos);
                 plGroups[i].rotation.z = PL[i].visualTilt || 0;
                 plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
-                const dCamP = camera.position.distanceTo(plGroups[i].position);
-                const glowNear = PL[i].R * K * (PL[i].gas ? 2.7 : 2.25);
-                const glowFar = PL[i].R * K * (PL[i].gas ? 11.5 : 8.25);
-                plGlows[i].scale.setScalar(Math.min(glowFar, Math.max(glowNear, dCamP * (PL[i].gas ? .0024 : .0021))));
-                const farGlow = smooth01(PL[i].R * K * 30, PL[i].R * K * 210, dCamP);
-                const tinyGlow = smooth01(PL[i].R * K * 150, PL[i].R * K * 520, dCamP);
-                const glowGain = PL[i].gas ? 1.18 : 1;
-                plGlows[i].material.opacity = Math.min(.34, (.055 + .16 * farGlow + .055 * tinyGlow) * glowGain);
             }
         }
         for (let i = 0; i < MOONS.length; i++) {
@@ -1881,13 +1870,17 @@ function frame() {
     perfEnd("scene.bodies", sceneBodiesT0, PERF.enabled ? { nearFieldDue, nearVisualDue, cosmicView } : null);
     const sceneFocusT0 = perfStart();
     const sunCamDist = Math.max(1e-9, camera.position.distanceTo(sunPos));
+    const earthGuide = smooth01(2, 8, AU_KM * K * viewportSize.pxScale / sunCamDist);
+    earthMarker.visible = earthVisible && earthGuide > .01;
+    earthMarker.userData.guideFade = earthGuide;
     for (let i = 0; i < PL.length; i++) {
         plGroups[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
-        // Orbit rings and planet markers are guides: they fade out as the
-        // orbit shrinks below ~6-24 px instead of stacking over the Sun.
+        // Rings recede first; compact markers remain until the whole orbit
+        // is only 2–8 px wide, then fade before stacking over the Sun.
         const guide = smooth01(6, 24, PL[i].a * K * viewportSize.pxScale / sunCamDist);
-        plGlows[i].visible = !WORLD.plDestroyed[i] && guide > .01;
-        plGlows[i].userData.guideFade = guide;
+        const markerGuide = smooth01(2, 8, PL[i].a * K * viewportSize.pxScale / sunCamDist);
+        plGlows[i].visible = !WORLD.plDestroyed[i] && !cosmicView && markerGuide > .01;
+        plGlows[i].userData.guideFade = markerGuide;
         plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed && guide > .01;
         plOrbitRings[i].material.opacity = .5 * guide;
     }

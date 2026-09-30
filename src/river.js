@@ -3,12 +3,13 @@ import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, 
 import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { dotTexture } from "./textures.js";
-import { scene, renderer, camera, cam, renderQuality } from "./scene.js";
+import { scene, renderer, camera, cam, renderQuality, registerNearTierOnlyWhen, TIER_SPLIT_UNITS } from "./scene.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
 import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW, shipFrameW, frameVelToScene, scaleFade, RIVER_VIS } from "./riverMath.js";
 import { eph } from "./ephemeris.js";
+import { riverArcAttributes, fillRiverSpawnCdf, RiverTextureFrame, riverFitsNearTier } from "./riverResources.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
 // Positions live in a float texture advected by a compute pass; the analytic
@@ -28,7 +29,7 @@ import { eph } from "./ephemeris.js";
 // that tracks the camera and is subtracted on the CPU before upload. Because
 // `smoothCenter` itself moves every frame, the persistent particle-position
 // texture is re-based each frame by `uCenterShift` (this frame's center minus
-// last frame's, computed in float64) so stored positions keep meaning across
+// last computed frame's, calculated in float64) so stored positions keep meaning across
 // frames instead of drifting. See WP22 deep-time fix.
 const SEGS = renderQuality.mobile ? 1 : 2;
 // Desktop's default particle count is traded down (176 -> 124, ~1/sqrt(2))
@@ -45,7 +46,8 @@ const TEXW = (() => {
 const NPART = TEXW * TEXW;
 const RIVER_QUALITY_TEXW = renderQuality.mobile ? 136 : 124;
 const RIVER_DENSITY_GAIN = Math.min(1.12, Math.sqrt(RIVER_QUALITY_TEXW / TEXW));
-const VPP = SEGS * 2; // vertices per particle (SEGS segments × 2 endpoints)
+const VPP = SEGS + 1; // shared arc endpoints per particle
+const IPP = SEGS * 2; // indices per particle (two endpoints per segment)
 const RIVER_STAR_SOURCE_MAX = 24;
 const RIVER_STAR_SOURCE_START_R = LY_SCENE * 0.01;
 const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX;
@@ -63,6 +65,9 @@ export const river = {
     starRefreshed: false,
     sinkSources: 0,
     texW: TEXW,
+    verticesPerParticle: VPP,
+    indicesPerParticle: IPP,
+    farPassSkipped: false,
     frame: 0,
     dtAccum: 0,
     computeMs: 0,
@@ -74,6 +79,7 @@ if (typeof window !== "undefined") window.__river = river;
 
 let rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines;
 const bodyVals = [], sinkVals = new Array(MAXB).fill(0), rsVals = new Array(MAXB).fill(0), holeVals = new Array(MAXB).fill(0), soiVals = new Array(MAXB).fill(0);
+const spawnCdf = new Float32Array(MAXB);
 const colorVals = [];
 for (let i = 0; i < MAXB; i++) bodyVals.push(new THREE.Vector4());
 for (let i = 0; i < MAXB; i++) colorVals.push(new THREE.Vector3(0.32, 0.58, 0.9));
@@ -85,6 +91,9 @@ const uniformsShared = {
     uPos: { value: null },
     uDtSim: { value: 0 },
     uCenterShift: { value: new THREE.Vector3() },
+    uDrawCenterShift: { value: new THREE.Vector3() },
+    uSpawnCdf: { value: spawnCdf },
+    uSpawnTotal: { value: 0 },
     uOrigin: { value: new THREE.Vector3() },
     uRadius: { value: 22 },
     uCam: { value: new THREE.Vector3() },
@@ -177,6 +186,7 @@ uniform sampler2D uPos;
 uniform float uDtSim, uTick, uRespawn;
 uniform vec3 uCam;
 uniform vec3 uCenterShift;
+uniform float uSpawnCdf[${MAXB}], uSpawnTotal;
 varying vec2 vUv;
 ${FLOW_GLSL}
 // Universal halo rule (one formula, every source): fill at most 1.5x the
@@ -244,19 +254,12 @@ void main() {
         // sqrt-weighted pick: linear C let the Sun hog ~94% of biased spawns
         // (starved halos, empty inter-orbit space); sqrt gives ~62/11/8% for
         // Sun/Jupiter/Saturn (see riverMath pickWeight + the smoke's table).
-        float totalW = 0.0;
-        for (int i = 0; i < ${MAXB}; i++) {
-            if (i >= uSinkNB) break;
-            totalW += sqrt(max(uBody[i].w, 0.0));
-        }
         int chosen = -1;
-        if (totalW > 1e-6 && h4 < 0.68) {
-            float pick = hash13(vec3(vUv * 811.3, uTick + 4.7)) * totalW;
-            float acc = 0.0;
+        if (uSpawnTotal > 1e-6 && h4 < 0.68) {
+            float pick = hash13(vec3(vUv * 811.3, uTick + 4.7)) * uSpawnTotal;
             for (int i = 0; i < ${MAXB}; i++) {
                 if (i >= uSinkNB) break;
-                acc += sqrt(max(uBody[i].w, 0.0));
-                if (pick <= acc) { chosen = i; break; }
+                if (pick <= uSpawnCdf[i]) { chosen = i; break; }
             }
         }
         owner = 0.0;
@@ -286,14 +289,14 @@ void main() {
 const LINE_VERT = /* glsl */`
 uniform sampler2D uPos;
 uniform float uVRef, uOpacity, uPhase;
-uniform vec3 uCam;
+uniform vec3 uCam, uDrawCenterShift;
 uniform int uSegs;
 attribute vec2 ref;
 attribute float aSeg;
 varying vec3 vColor;
 ${FLOW_GLSL}
 void main() {
-    vec3 p = texture2D(uPos, ref).xyz;
+    vec3 p = texture2D(uPos, ref).xyz - uDrawCenterShift;
     vec3 v = flowField(p);
     float spd = max(length(v), 1e-12);
     vec3 vDir = v / spd;
@@ -496,26 +499,15 @@ export function initRiver() {
     });
     computeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), computeMat));
 
-    // SEGS connected legs per particle = SEGS line segments = VPP vertices,
-    // laid out as consecutive endpoint pairs (0,1),(1,2)...(SEGS-1,SEGS) so
-    // LineSegments draws a connected (bent, when SEGS>1) arc per particle.
-    const refs = new Float32Array(NPART * VPP * 2);
-    const segs = new Float32Array(NPART * VPP);
-    for (let i = 0; i < NPART; i++) {
-        const u = ((i % TEXW) + .5) / TEXW, v = (Math.floor(i / TEXW) + .5) / TEXW;
-        for (let s = 0; s < SEGS; s++) {
-            const base = i * VPP + s * 2;
-            refs[base * 2] = u; refs[base * 2 + 1] = v;
-            refs[(base + 1) * 2] = u; refs[(base + 1) * 2 + 1] = v;
-            segs[base] = s; segs[base + 1] = s + 1;
-        }
-    }
+    // Index shared joints once: [0,1],[1,2] gives the identical bent arc,
+    // with three rather than four expensive vertex invocations on desktop.
+    const arcs = riverArcAttributes(TEXW, SEGS);
     const geom = new THREE.BufferGeometry();
-    // positions come from the texture; the attribute only exists so three.js
-    // has a draw count
-    geom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(NPART * VPP * 3), 3));
-    geom.setAttribute("ref", new THREE.BufferAttribute(refs, 2));
-    geom.setAttribute("aSeg", new THREE.BufferAttribute(segs, 1));
+    // Positions come from the texture; this attribute supplies vertex count.
+    geom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(arcs.vertexCount * 3), 3));
+    geom.setAttribute("ref", new THREE.BufferAttribute(arcs.refs, 2));
+    geom.setAttribute("aSeg", new THREE.BufferAttribute(arcs.segs, 1));
+    geom.setIndex(new THREE.BufferAttribute(arcs.indices, 1));
     lineMat = new THREE.ShaderMaterial({
         uniforms: uniformsShared,
         vertexShader: LINE_VERT,
@@ -526,6 +518,14 @@ export function initRiver() {
     lines.frustumCulled = false;
     lines.renderOrder = 1;
     scene.add(lines);
+    // Do not execute all source/arc loops again in the far pass when every
+    // lit endpoint fits in the near frustum. Keep both passes for uncertain
+    // bounds (including XR eye transforms and transient zoom changes).
+    registerNearTierOnlyWhen(lines, view => {
+        river.farPassSkipped = !renderer.xr.isPresenting && view === camera &&
+            riverFitsNearTier(view.position.distanceTo(smoothCenter), smoothR, TIER_SPLIT_UNITS);
+        return river.farPassSkipped;
+    });
     river.enabled = true;
 }
 
@@ -571,6 +571,8 @@ export function riverDebugReadPositions(rows = 4) {
         // at origin renders the river displaced by -smoothCenter)
         meshPos: lines ? { x: lines.position.x, y: lines.position.y, z: lines.position.z } : null,
         visible: lines ? lines.visible : false,
+        textureOrigin: { x: textureFrame.x, y: textureFrame.y, z: textureFrame.z },
+        drawCenterShift: uniformsShared.uDrawCenterShift.value.toArray(),
     };
 }
 
@@ -583,12 +585,11 @@ const shellRnd = mulberry32(20260702);
 let frameW = 0, lastFrameKind = -1, lastFrameIdx = -1;
 const frameVelScene = [0, 0, 0];
 const smoothCenter = new THREE.Vector3();
-// Absolute (scene-space, float64-as-JS-number) center from the previous
-// frame, used only to compute uCenterShift — never uploaded to the GPU
-// itself. Kept equal to smoothCenter on any frame that resets/snaps the
-// center so the shift is exactly zero instead of a stale, possibly huge
-// jump on the frame where the center relocates.
-const prevCenter = new THREE.Vector3();
+// Absolute float64 origin of the last computed position texture. A skipped
+// compute frame must neither commit this origin nor lose its display shift.
+// Hard camera snaps deliberately reinterpret the cloud around the new
+// center, preserving the existing bounded-respawn behavior.
+const textureFrame = new RiverTextureFrame();
 let smoothR = 0;
 const bhRiverPos = new THREE.Vector3();
 const riverStarPickIndex = new Int32Array(RIVER_STAR_SOURCE_MAX);
@@ -765,7 +766,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     if (renderQuality.mobile) drawFrac = Math.min(drawFrac, renderQuality.loadShed >= 2 ? .72 : .84);
     const drawCount = Math.max(256, Math.min(NPART, Math.floor(NPART * drawFrac)));
     if (drawCount !== river.drawCount) {
-        lines.geometry.setDrawRange(0, drawCount * VPP);
+        lines.geometry.setDrawRange(0, drawCount * IPP);
         river.drawCount = drawCount;
     }
     if (PERF.enabled) markPerf("river.focus", performance.now() - riverFocusT0, { renderShed, localFocus, drawCount });
@@ -780,7 +781,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         smoothCenter.copy(c);
         smoothR = targetR;
         respawn = 1;
-        prevCenter.copy(smoothCenter); // first frame: no prior center to shift from
+        textureFrame.commit(smoothCenter); // first frame: no prior center to shift from
     } else {
         const move = Math.hypot(c.x - smoothCenter.x, c.y - smoothCenter.y, c.z - smoothCenter.z);
         const zoomDelta = Math.abs(Math.log(Math.max(1e-9, targetR / smoothR)));
@@ -794,7 +795,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
             smoothCenter.copy(c);
             smoothR = targetR;
             respawn = .28;
-            prevCenter.copy(smoothCenter); // hard snap: treat as a fresh center, zero shift
+            textureFrame.commit(smoothCenter); // hard snap: treat as a fresh center, zero shift
         }
     }
     respawn = Math.min(.18, respawn + localFocus * .075);
@@ -812,12 +813,8 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // stays small and float32-precise regardless of how far smoothCenter has
     // drifted in deep time/space. uCenterShift re-bases the persistent
     // particle-position texture onto this frame's center (see COMPUTE_FRAG).
-    uniformsShared.uCenterShift.value.set(
-        smoothCenter.x - prevCenter.x,
-        smoothCenter.y - prevCenter.y,
-        smoothCenter.z - prevCenter.z,
-    );
-    prevCenter.copy(smoothCenter);
+    textureFrame.shiftTo(smoothCenter, uniformsShared.uCenterShift.value);
+    uniformsShared.uDrawCenterShift.value.copy(uniformsShared.uCenterShift.value);
     uniformsShared.uOrigin.value.set(earthV.x - smoothCenter.x, earthV.y - smoothCenter.y, earthV.z - smoothCenter.z);
     uniformsShared.uRadius.value = smoothR;
     uniformsShared.uCam.value.set(camera.position.x - smoothCenter.x, camera.position.y - smoothCenter.y, camera.position.z - smoothCenter.z);
@@ -923,6 +920,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     nb = sinkSourceCount + flowCtx.starCount;
     uniformsShared.uNB.value = nb;
     uniformsShared.uSinkNB.value = nb;
+    uniformsShared.uSpawnTotal.value = fillRiverSpawnCdf(bodyVals, nb, spawnCdf);
     river.sourceCount = nb;
     river.starSources = flowCtx.starCount;
     river.starRefreshed = starUniformDirty;
@@ -1020,6 +1018,8 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         else if (!renderQuality.mobile) river.computeEveryAdaptive = 1;
         const sw = rtA; rtA = rtB; rtB = sw;
         uniformsShared.uPos.value = rtA.texture;
+        textureFrame.commit(smoothCenter);
+        uniformsShared.uDrawCenterShift.value.set(0, 0, 0);
     } else uniformsShared.uDtSim.value = 0;
 }
 
