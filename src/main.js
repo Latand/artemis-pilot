@@ -1,3 +1,4 @@
+import { initRiverStyles } from "./riverStyles.js";
 import * as THREE from "three";
 import {
     R_EARTH, R_MOON, A_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
@@ -303,6 +304,7 @@ initLog();
 cinematic.bindCinematic({ camera, cam, G, renderer, setCamRoll, applyCameraRoll });
 cinematic.initCine();
 initQuickControls();
+initRiverStyles();
 initTimeDock();
 initEvents({ mergerState: mergerDebugState });
 initUiMode();
@@ -1129,11 +1131,8 @@ scene.add(focusVelLine, focusVelCone);
 // (never meaningfully at galactic distance) but opt out of frustum culling
 // to survive camera-relative repositioning, so without this they'd cost one
 // wasted (fully clipped, invisible) draw call in the far pass every frame.
-// river.js's particle `lines` and trails.js's `predLine`/`bodyPredLine`/
-// `bodyPredDots` are the same kind of always-near, frustumCulled:false
-// content but aren't exported by their owning module this wave, so they
-// still pay that one extra draw call — a documented, harmless (invisible
-// either way) follow-up.
+// River visuals register themselves; prediction trails still pay one
+// clipped extra draw because this module does not own those objects.
 registerNearTierOnly(
     shipG, dot, flame, plasma, exhaust, explosion, xpFlash,
     arrow, flowArrow, darkEnergyArrow, haloArrow, tipV, tipF, tipDE, tipHalo,
@@ -1835,14 +1834,6 @@ function frame() {
                 plOrbitRings[i].position.copy(sunPos);
                 plGroups[i].rotation.z = PL[i].visualTilt || 0;
                 plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
-                const dCamP = camera.position.distanceTo(plGroups[i].position);
-                const glowNear = PL[i].R * K * (PL[i].gas ? 2.7 : 2.25);
-                const glowFar = PL[i].R * K * (PL[i].gas ? 11.5 : 8.25);
-                plGlows[i].scale.setScalar(Math.min(glowFar, Math.max(glowNear, dCamP * (PL[i].gas ? .0024 : .0021))));
-                const farGlow = smooth01(PL[i].R * K * 30, PL[i].R * K * 210, dCamP);
-                const tinyGlow = smooth01(PL[i].R * K * 150, PL[i].R * K * 520, dCamP);
-                const glowGain = PL[i].gas ? 1.18 : 1;
-                plGlows[i].material.opacity = Math.min(.34, (.055 + .16 * farGlow + .055 * tinyGlow) * glowGain);
             }
         }
         for (let i = 0; i < MOONS.length; i++) {
@@ -1886,7 +1877,7 @@ function frame() {
         // Orbit rings and planet markers are guides: they fade out as the
         // orbit shrinks below ~6-24 px instead of stacking over the Sun.
         const guide = smooth01(6, 24, PL[i].a * K * viewportSize.pxScale / sunCamDist);
-        plGlows[i].visible = !WORLD.plDestroyed[i] && guide > .01;
+        plGlows[i].visible = !WORLD.plDestroyed[i] && !cosmicView && guide > .01;
         plGlows[i].userData.guideFade = guide;
         plOrbitRings[i].visible = !WORLD.plDestroyed[i] && !WORLD.sunDestroyed && guide > .01;
         plOrbitRings[i].material.opacity = .5 * guide;

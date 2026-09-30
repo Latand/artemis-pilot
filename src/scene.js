@@ -90,12 +90,9 @@ export const camera = new THREE.PerspectiveCamera(48, 1, .02, CAM_DIST_MAX * 1.3
 // camera-relative repositioning tricks) and would otherwise still cost one
 // wasted, GPU-clipped-to-nothing draw call in the far pass every frame;
 // `registerNearTierOnly` hides those for that one pass instead. A few
-// objects that are always near-field but aren't exported by their owning
-// module this wave (river.js's particle `lines`, trails.js's `predLine`/
-// `bodyPredLine`/`bodyPredDots`) aren't reachable from here without editing
-// files owned by other WPs this wave; they keep costing one harmless (fully
-// clipped, invisible) extra draw call in the far pass -- flagged as a small
-// follow-up for whichever WP next touches those files.
+// prediction trails still cost one clipped extra draw because they have not
+// registered here. River visuals register themselves in river.js.
+
 export const farTierGroup = new THREE.Group();
 farTierGroup.name = "scaleTier.far";
 scene.add(farTierGroup);
