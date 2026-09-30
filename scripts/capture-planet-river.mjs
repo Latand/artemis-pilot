@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 const root = resolve(process.argv[2] || '.'), out = resolve(process.argv[3] || 'evidence/planet-river');
 const baseline = process.env.BASELINE === '1', mobile = process.env.MOBILE === '1';
 await mkdir(out, { recursive: true });
-const report = { baseline, mobile, epoch: '2026-09-30T12:00:00Z', errors: [], frames: [], timings: [] };
+const report = { baseline, mobile, epoch: '2026-09-30T12:00:00Z', comparison: 'Matched cameras and epoch; dynamic river phases are qualitative, not pixel-identical', errors: [], frames: [], timings: [] };
 const server = await createServer({root, logLevel:'error', server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{
  name:'planet-river-capture',enforce:'pre',transform(source,id){
   if(!id.replaceAll('\\','/').endsWith('/src/main.js'))return;
@@ -38,15 +38,17 @@ try{
  await page.waitForFunction(()=>window.__volStatus?.().mapsReady||window.__volStatus?.().mapError);
  report.startupVolume=await page.evaluate(()=>window.__volStatus());
  assert.ok(report.startupVolume.mapsReady,report.startupVolume.mapError||'full galaxy maps missing');
- await page.setViewportSize(mobile?{width:390,height:844}:{width:1440,height:900});
+ await page.setViewportSize(mobile?{width:390,height:844}:{width:1280,height:800});
  report.browser=await browser.version();
  report.renderer=await page.evaluate(()=>{const gl=capture.s.renderer.getContext(),e=gl.getExtension('WEBGL_debug_renderer_info');return e?gl.getParameter(e.UNMASKED_RENDERER_WEBGL):gl.getParameter(gl.RENDERER)});
  async function frames(n=8){for(let i=0;i<n;i++)await page.evaluate(()=>{__planetCaptureFrame();capture.s.renderer.getContext().finish()});}
- async function view(state){await page.evaluate(state=>{
+ async function view(state){
+  if(mobile && state.focus==='sun' && state.dist>=1e7)state={...state,dist:state.dist*2};
+  await page.evaluate(state=>{
   const {s,b}=capture;__G.focus=state.focus;__G.gr=state.river!==false;__planetCaptureRiver(__G.gr?1:0);
   s.cam.dist=state.dist;s.cam.distTarget=null;s.cam.yaw=.7;s.cam.pitch=.78;
   s.cam.tgt.copy(state.focus==='sun'?b.sunPos:state.focus==='earth'?b.earthG.position:b.plGroups[state.focus].position);
- },state);await frames(12);}
+ },state);await frames(3);}
  async function shot(name){
   const state=await page.evaluate(()=>{
    __planetCaptureFrame();const {s,b,r}=capture;s.renderer.getContext().finish();
@@ -79,12 +81,15 @@ try{
  await view({focus:'sun',dist:1.3e7});await shot('solar-return');
  // Paired on/off cost, synchronization included. This is not isolated GPU time.
  // Keep both orders and raw samples: SwiftShader noise makes FPS promises invalid.
+ await page.setViewportSize(mobile?{width:390,height:600}:{width:800,height:500});
+ report.timingViewport=page.viewportSize();
  for(const enabled of [false,true,true,false]){
-  await view({focus:'sun',dist:1.3e7,river:enabled});await frames(5);
-  const samples=[];for(let i=0;i<12;i++)samples.push(await page.evaluate(()=>{let t=performance.now();__planetCaptureFrame();capture.s.renderer.getContext().finish();return performance.now()-t}));
+  await view({focus:'sun',dist:1.3e7,river:enabled});await frames(2);
+  const samples=[];for(let i=0;i<6;i++)samples.push(await page.evaluate(()=>{let t=performance.now();__planetCaptureFrame();capture.s.renderer.getContext().finish();return performance.now()-t}));
   report.timings.push({river:enabled,completedFrameMs:samples});
  }
 
+ await page.setViewportSize(mobile?{width:390,height:844}:{width:1280,height:800});
  // Verify retinal-density rendering without shrinking the CSS-space marker.
  await view({focus:'sun',dist:1.3e7});
  const lowDprScale=await page.evaluate(()=>capture.b.plGlows[5].scale.x);
