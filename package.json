@@ -50,6 +50,7 @@
     "smoke:reltravel": "node scripts/smoke-reltravel.mjs",
     "smoke:river-visual": "node scripts/smoke-river-visual.mjs",
     "smoke:river-styles": "node scripts/verify-river-styles.mjs",
+    "smoke:mobile-startup": "node scripts/verify-mobile-startup.mjs",
     "benchmark:river-render": "node scripts/benchmark-river-render.mjs",
     "build": "vite build",
     "preview": "vite preview",
