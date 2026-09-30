@@ -89,21 +89,22 @@ export const camera = new THREE.PerspectiveCamera(48, 1, .02, CAM_DIST_MAX * 1.3
 // CPU-side frustum culling (`frustumCulled = false`, so they survive
 // camera-relative repositioning tricks) and would otherwise still cost one
 // wasted, GPU-clipped-to-nothing draw call in the far pass every frame;
-// `registerNearTierOnly` hides those for that one pass instead. A few
-// objects that are always near-field but aren't exported by their owning
-// module this wave (river.js's particle `lines`, trails.js's `predLine`/
-// `bodyPredLine`/`bodyPredDots`) aren't reachable from here without editing
-// files owned by other WPs this wave; they keep costing one harmless (fully
-// clipped, invisible) extra draw call in the far pass -- flagged as a small
-// follow-up for whichever WP next touches those files.
+// `registerNearTierOnly` hides those for that one pass instead. Dynamic
+// volumes can register a conservative per-view predicate; the river uses
+// this to retain both passes whenever its lit bounds can cross the split.
 export const farTierGroup = new THREE.Group();
 farTierGroup.name = "scaleTier.far";
 scene.add(farTierGroup);
 export const TIER_SPLIT_UNITS = LY_SCENE * .02; // ~1265 AU: past Neptune/Oort-inner, short of Proxima (4.24 ly)
 
 const nearTierOnly = [];
+const nearTierConditions = new WeakMap();
 export function registerNearTierOnly(...objects) {
     for (const o of objects) if (o && !nearTierOnly.includes(o)) nearTierOnly.push(o);
+}
+export function registerNearTierOnlyWhen(object, fitsNearTier) {
+    registerNearTierOnly(object);
+    nearTierConditions.set(object, fitsNearTier);
 }
 
 // Background layers drawn before both depth tiers (the volumetric unresolved
@@ -128,8 +129,10 @@ export function renderSceneTiered(rendererArg, sceneArg, cameraArg) {
     }
     tierSavedVis.length = 0;
     for (let i = 0; i < nearTierOnly.length; i++) {
-        tierSavedVis.push(nearTierOnly[i].visible);
-        nearTierOnly[i].visible = false;
+        const object = nearTierOnly[i];
+        tierSavedVis.push(object.visible);
+        const fitsNearTier = nearTierConditions.get(object);
+        if (object.visible && (!fitsNearTier || fitsNearTier(cameraArg))) object.visible = false;
     }
     farTierGroup.visible = true;
     cameraArg.near = Math.min(savedFar, Math.max(savedNear, TIER_SPLIT_UNITS));

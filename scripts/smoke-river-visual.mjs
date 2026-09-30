@@ -131,7 +131,7 @@ const GLSL_SYNC = [
   // WP-R2..R6 append exact literals here
   "float wave = fract(ph + uPhase * kq + segT * 0.5)",
   "0.72 + 0.55 * pow(0.5 + 0.5 * cos(6.2831853 * wave), 3.0)",
-  "totalW += sqrt(max(uBody[i].w, 0.0))",
+  "if (pick <= uSpawnCdf[i]) { chosen = i; break; }", // source weights verified in smoke-river-resources
   "float lo = uRadius * 0.02",
   "uSoi[chosen] > 0.0 ? min(uSoi[chosen] * 1.5, uRadius * 0.22) : uRadius * 0.22",
   "min(max(sink * 30.0, lo), max(hi, sink * 2.0))",

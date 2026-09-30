@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { makePlanetMarker, updatePlanetMarker } from "./planetMarker.js";
 import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT } from "./constants.js";
 import { earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
 import { stellarExposure, meteredSkyExposure, linearStarColor } from "./render/stellarAppearance.js";
@@ -18,7 +19,7 @@ import { sunStateAt, AGB_TIP_R_RSUN } from "./universe/sunEvolution.js";
 
 export const sunPos = new THREE.Vector3();
 export let sunLight, sunCore, sunGlow, sunCorona, sunPN, sky, skyStars, galaxyBackdrop;
-export let earthG, earth, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing;
+export let earthG, earth, earthMarker, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing;
 export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], plLabels = [];
 // planetary moons: small textured-free spheres + always-on glow dot + label
 export const moonGroups = [], moonSurfaces = [], moonGlows = [], moonLabels = [];
@@ -184,6 +185,7 @@ export function updateBodyShaders(camera, t) {
     if (earthG.visible && earthPx > 2) requestCloudDetails();
     clouds.visible = earth.visible && !!clouds.material.alphaMap && earthPx > 1;
     earthAtmo.visible = earth.visible && earthPx > 1;
+    updatePlanetMarker(earthMarker, camera, earthG.position, radius, pxScale, earthMarker.userData.guideFade ?? 1);
     let exposure = 1;
     if (earthG.visible) exposure = Math.min(exposure, meteredSkyExposure(camera, earthG.position, radius, sunPos));
     if (sunCore.visible) exposure = Math.min(exposure, meteredSkyExposure(camera, sunPos, SUN_RADIUS * sunCore.scale.x));
@@ -205,7 +207,7 @@ export function updateBodyShaders(camera, t) {
         exposure = Math.min(exposure, meteredSkyExposure(camera, group.position, p.R * K, sunPos));
         if (rpx > 2) requestPlanetTexture(i);
         // A distant marker fades continuously as the physical disk resolves.
-        plGlows[i].material.opacity = 0.24 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4)) * (plGlows[i].userData.guideFade ?? 1);
+        updatePlanetMarker(plGlows[i], camera, group.position, p.R * K, pxScale, plGlows[i].userData.guideFade ?? 1);
         for (const child of group.children) {
             const direction = child.material?.userData.sunDirection;
             if (direction) {
@@ -489,6 +491,8 @@ export function buildBodies(maps) {
         moonSoiRing.renderOrder = 1;
         scene.add(moonSoiRing);
     }
+    earthMarker = makePlanetMarker(0x73b8ff);
+    scene.add(earthMarker);
     // ---- planets ----
     const rootEl = document.getElementById("root");
     for (let i = 0; i < PL.length; i++) {
@@ -513,10 +517,7 @@ export function buildBodies(maps) {
             g.add(ring);
         }
         scene.add(g);
-        const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: dotTexture(rgbaFromHex(p.color, .46), rgbaFromHex(p.color, .16)),
-            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .28,
-        }));
+        const glow = makePlanetMarker(p.color);
         scene.add(glow);
         const og = orbitEllipseGeometry(p.a, p.e, p.varpi, undefined, p.i || 0, p.Om || 0);
         // Guide overlay: depth-tested against bodies, never occluding them.
