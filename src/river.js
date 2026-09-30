@@ -3,7 +3,7 @@ import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, 
 import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { dotTexture } from "./textures.js";
-import { scene, renderer, camera, cam, renderQuality } from "./scene.js";
+import { scene, renderer, camera, cam, renderQuality, registerNearTierOnly } from "./scene.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
@@ -37,15 +37,18 @@ const SEGS = renderQuality.mobile ? 1 : 2;
 // single-segment baseline instead of ~doubling it — measured on a loaded
 // headless run: unadjusted this cost went from a ~15% river frame-time hit
 // to ~27%; with the trade it's back near the original. `np=` still overrides.
+// Mobile uses 9,216 compute texels instead of 18,496; desktop keeps its
+// density. Explicit np= overrides remain available for profiling.
 const TEXW = (() => {
     const m = location.search.match(/np=(\d+)/);
-    const v = m ? +m[1] : renderQuality.mobile ? 136 : 124;
+    const v = m ? +m[1] : renderQuality.mobile ? 96 : 124;
     return Math.min(1024, Math.max(64, v));
 })();
 const NPART = TEXW * TEXW;
-const RIVER_QUALITY_TEXW = renderQuality.mobile ? 136 : 124;
+const RIVER_QUALITY_TEXW = renderQuality.mobile ? 96 : 124;
 const RIVER_DENSITY_GAIN = Math.min(1.12, Math.sqrt(RIVER_QUALITY_TEXW / TEXW));
-const VPP = SEGS * 2; // vertices per particle (SEGS segments × 2 endpoints)
+const VPP = SEGS + 1;
+const IPP = SEGS * 2; // indexed endpoints: adjacent legs share their middle vertex
 const RIVER_STAR_SOURCE_MAX = 24;
 const RIVER_STAR_SOURCE_START_R = LY_SCENE * 0.01;
 const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX;
@@ -72,7 +75,7 @@ export const river = {
 };
 if (typeof window !== "undefined") window.__river = river;
 
-let rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines;
+let rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines, dots;
 const bodyVals = [], sinkVals = new Array(MAXB).fill(0), rsVals = new Array(MAXB).fill(0), holeVals = new Array(MAXB).fill(0), soiVals = new Array(MAXB).fill(0);
 const colorVals = [];
 for (let i = 0; i < MAXB; i++) bodyVals.push(new THREE.Vector4());
@@ -82,6 +85,8 @@ const plColors = PL.map(p => new THREE.Color(p.color));
 const C2 = C_LIGHT * C_LIGHT;
 const rsScene = mu => 2 * mu / C2 * K;
 const uniformsShared = {
+    uStyle: { value: 1 },
+    uPixelRatio: { value: 1 },
     uPos: { value: null },
     uDtSim: { value: 0 },
     uCenterShift: { value: new THREE.Vector3() },
@@ -285,12 +290,13 @@ void main() {
 
 const LINE_VERT = /* glsl */`
 uniform sampler2D uPos;
-uniform float uVRef, uOpacity, uPhase;
+uniform float uVRef, uOpacity, uPhase, uStyle, uPixelRatio;
 uniform vec3 uCam;
 uniform int uSegs;
 attribute vec2 ref;
 attribute float aSeg;
 varying vec3 vColor;
+varying float vAlong, vPhase;
 ${FLOW_GLSL}
 void main() {
     vec3 p = texture2D(uPos, ref).xyz;
@@ -401,6 +407,9 @@ void main() {
     // to the same camera-distance-relative bounds so it can't run away back
     // into the old "explodes with scale" failure mode
     L = clamp(L * mix(1.0, 2.2, localViewInk) * mix(1.0, 0.55, lapseInk) * mix(1.0, 0.55, holeInk), minL, maxL * 1.6);
+    // Styles only change the ink, never the field or particle advection.
+    float styleLength = uStyle < 0.5 ? 0.55 : uStyle < 1.5 ? 1.45 : uStyle < 3.5 ? 2.1 : 1.8;
+    L *= styleLength;
     // Walk the arc backward from the head, SEGS short legs, resampling the
     // flow direction at each leg's start — a low-order streamline integrator
     // (Heun/midpoint-style) so multi-segment streaks visibly bend along the
@@ -413,15 +422,15 @@ void main() {
     vec3 dir = vDir;
     float stepLen = L / float(uSegs);
     for (int s = 0; s < 2; s++) {
-        if (s >= segIdx) break;
+        if (s >= segIdx || uStyle == 2.0) break;
         cur -= dir * stepLen;
-        if (s + 1 < uSegs) {
+        if (s + 1 < segIdx && uStyle > 0.5) {
             vec3 vv = flowField(cur);
             float vvLen = length(vv);
             if (vvLen > 1e-9) dir = vv / vvLen;
         }
     }
-    vec3 pos = cur;
+    vec3 pos = uStyle < 0.5 ? p - vDir * L * float(segIdx) / float(uSegs) : cur;
     float segT = float(segIdx) / float(uSegs);
     // Brightness band traveling tail→head along each streak (with the flow,
     // toward the sink) at a rate floored in REAL elapsed time (uPhase is fed
@@ -449,12 +458,50 @@ void main() {
     // steeper, smoother gradient than the old linear head/tail mix)
     float cometFade = mix(0.94, 0.08, pow(segT, 0.8));
     vColor = fieldColor * fade * fieldInk * (1.0 + localInk * mix(1.7, 1.0, uLocalFocus) + uLocalFocus * 0.4) * mix(0.85, 1.24, tVis) * cometFade * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime) * pulse;
+    if (uStyle < 0.5) vColor *= 1.5;
+    else if (uStyle < 1.5) vColor *= 1.8;
+    else if (uStyle < 2.5) vColor *= 4.0;
+    else if (uStyle < 3.5) vColor *= 3.4;
+    else {
+        vec3 currents = mix(vec3(0.12, 0.78, 1.0), max(localColor * 1.7, vec3(0.32)), localInk);
+        currents = mix(currents, vec3(1.0, 0.55, 0.16), gold);
+        currents = mix(currents, vec3(0.72, 0.35, 1.0), max(violet, holeInk));
+        vColor = currents * max(length(vColor), 0.0) * 1.5;
+    }
+    vAlong = segT;
+    vPhase = ph + uPhase * kq;
+    gl_PointSize = (2.2 + tVis * 1.6) * uPixelRatio;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
 
 const LINE_FRAG = /* glsl */`
+uniform float uStyle;
 varying vec3 vColor;
-void main() { gl_FragColor = vec4(vColor, 1.0); }`;
+varying float vAlong, vPhase;
+void main() {
+    float ink = 1.0;
+    if (uStyle > 2.5 && uStyle < 3.5) {
+        float wave = fract(vPhase + vAlong * 1.5);
+        ink = 0.10 + 0.90 * smoothstep(0.30, 0.42, wave) * (1.0 - smoothstep(0.64, 0.78, wave));
+    }
+    gl_FragColor = vec4(vColor * ink, 1.0);
+}`;
+const DOT_FRAG = /* glsl */`
+varying vec3 vColor;
+void main() {
+    float r = length(gl_PointCoord - vec2(0.5));
+    if (r > 0.5) discard;
+    gl_FragColor = vec4(vColor * (1.0 - smoothstep(0.12, 0.5, r)), 1.0);
+}`;
+
+export function setRiverStyle(index) {
+    const n = Number(index);
+    if (!Number.isInteger(n) || n < 0 || n > 4) return false;
+    river.style = n;
+    uniformsShared.uStyle.value = n;
+    return true;
+}
+setRiverStyle(1);
 
 export function initRiver() {
     if (location.search.includes("river=0")) return;
@@ -496,26 +543,30 @@ export function initRiver() {
     });
     computeScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), computeMat));
 
-    // SEGS connected legs per particle = SEGS line segments = VPP vertices,
-    // laid out as consecutive endpoint pairs (0,1),(1,2)...(SEGS-1,SEGS) so
-    // LineSegments draws a connected (bent, when SEGS>1) arc per particle.
+    // Share each bend vertex across its two legs. This cuts desktop vertex
+    // invocations from four to three per streak without changing the arc.
     const refs = new Float32Array(NPART * VPP * 2);
     const segs = new Float32Array(NPART * VPP);
+    const indices = new Uint32Array(NPART * IPP);
+    const pointRefs = new Float32Array(NPART * 2);
     for (let i = 0; i < NPART; i++) {
         const u = ((i % TEXW) + .5) / TEXW, v = (Math.floor(i / TEXW) + .5) / TEXW;
-        for (let s = 0; s < SEGS; s++) {
-            const base = i * VPP + s * 2;
+        pointRefs[i * 2] = u; pointRefs[i * 2 + 1] = v;
+        for (let s = 0; s <= SEGS; s++) {
+            const base = i * VPP + s;
             refs[base * 2] = u; refs[base * 2 + 1] = v;
-            refs[(base + 1) * 2] = u; refs[(base + 1) * 2 + 1] = v;
-            segs[base] = s; segs[base + 1] = s + 1;
+            segs[base] = s;
+        }
+        for (let s = 0; s < SEGS; s++) {
+            indices[i * IPP + s * 2] = i * VPP + s;
+            indices[i * IPP + s * 2 + 1] = i * VPP + s + 1;
         }
     }
     const geom = new THREE.BufferGeometry();
-    // positions come from the texture; the attribute only exists so three.js
-    // has a draw count
     geom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(NPART * VPP * 3), 3));
     geom.setAttribute("ref", new THREE.BufferAttribute(refs, 2));
     geom.setAttribute("aSeg", new THREE.BufferAttribute(segs, 1));
+    geom.setIndex(new THREE.BufferAttribute(indices, 1));
     lineMat = new THREE.ShaderMaterial({
         uniforms: uniformsShared,
         vertexShader: LINE_VERT,
@@ -526,6 +577,19 @@ export function initRiver() {
     lines.frustumCulled = false;
     lines.renderOrder = 1;
     scene.add(lines);
+    const pointGeom = new THREE.BufferGeometry();
+    pointGeom.setAttribute("position", new THREE.BufferAttribute(new Float32Array(NPART * 3), 3));
+    pointGeom.setAttribute("ref", new THREE.BufferAttribute(pointRefs, 2));
+    pointGeom.setAttribute("aSeg", new THREE.BufferAttribute(new Float32Array(NPART), 1));
+    dots = new THREE.Points(pointGeom, new THREE.ShaderMaterial({
+        uniforms: uniformsShared, vertexShader: LINE_VERT, fragmentShader: DOT_FRAG,
+        transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
+    }));
+    dots.frustumCulled = false; dots.renderOrder = 1; dots.visible = false;
+    scene.add(dots);
+    // The river fades before its camera-relative volume reaches the far
+    // tier. Avoid executing these expensive vertex shaders there a second time.
+    registerNearTierOnly(lines, dots);
     river.enabled = true;
 }
 
@@ -687,8 +751,9 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // solar-system survey and whenever the camera is near a star/system.
     const zoomFade = 1 - smooth01(LY_SCENE * 0.004, LY_SCENE * 0.02, cam.dist);
     const fEff = fB * zoomFade * scaleFade(cam.dist);
-    lines.visible = fEff > .01;
-    if (!lines.visible) {
+    lines.visible = fEff > .01 && river.style !== 2;
+    dots.visible = fEff > .01 && river.style === 2;
+    if (fEff <= .01) {
         river.computeEvery = 1;
         river.skippedCompute = false;
         return;
@@ -757,6 +822,8 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // GL depth test needs no shader rebuild and leaves every other view
     // byte-identical.
     lineMat.depthTest = surfaceProx > 0.5;
+    dots.material.depthTest = lineMat.depthTest;
+    uniformsShared.uPixelRatio.value = renderQuality.dpr;
     uniformsShared.uLocalFocus.value = localFocus;
     const mobileOpacity = renderQuality.mobile ? 1.08 : 1;
     uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + localFocus * .7) * (1 - loadShed * .12);
@@ -765,7 +832,8 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     if (renderQuality.mobile) drawFrac = Math.min(drawFrac, renderQuality.loadShed >= 2 ? .72 : .84);
     const drawCount = Math.max(256, Math.min(NPART, Math.floor(NPART * drawFrac)));
     if (drawCount !== river.drawCount) {
-        lines.geometry.setDrawRange(0, drawCount * VPP);
+        lines.geometry.setDrawRange(0, drawCount * IPP);
+        dots.geometry.setDrawRange(0, drawCount);
         river.drawCount = drawCount;
     }
     if (PERF.enabled) markPerf("river.focus", performance.now() - riverFocusT0, { renderShed, localFocus, drawCount });
@@ -805,6 +873,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // the river renders around the focus, not at scene origin. The view*model
     // translation cancels in float64 before any float32 upload, preserving the
     // precision win (review C1).
+    dots.position.copy(smoothCenter);
     lines.position.copy(smoothCenter);
     lines.updateMatrixWorld();
     // Everything handed to the GPU below is expressed relative to smoothCenter

@@ -132,6 +132,7 @@
         <button id="exploreCatalog" class="exploreTextButton" type="button">Search the star catalog ↗</button>
       </details>
       <button id="exploreGravity" type="button" aria-pressed="false">Gravity flow <span id="exploreGravityStatus">Natural view</span></button>
+      <label class="riverStyleControl" for="exploreFlowStyle">Flow of time<select id="exploreFlowStyle" data-river-style></select></label>
       <p class="exploreNote">Gravity flow is a visual metaphor. Object motion follows the simulation.</p>
     </aside>
     <div id="exploreCamera" aria-label="Free camera controls">
@@ -232,6 +233,7 @@
     <!-- ============ TOP-CENTER · SPACETIME RIVER ============ -->
     <div id="flowPanel" class="panel">
       <div class="flow__title">SPACETIME FLOW · RIVER MODEL</div>
+      <label class="riverStyleControl" for="pilotFlowStyle">Flow of time<select id="pilotFlowStyle" data-river-style></select></label>
       <div class="flow__row">
         <span class="fl fl--cyan"><i id="flMode" class="flMode">INFALL</i> <b id="fFlow">—</b></span>
         <span class="fl fl--violet">EXPANSION <b id="fDark">—</b></span>
@@ -413,6 +415,7 @@
             <div><span>FOCUS</span><b id="mFocus">SHIP</b></div>
             <div><span>WARP</span><b id="mWarp">—</b></div>
           </div>
+          <label class="riverStyleControl" for="mobileFlowStyle">Flow of time<select id="mobileFlowStyle" data-river-style></select></label>
           <div id="mMenuGrid">
             <button id="mNav" class="mMItem mMItem--wide" type="button"><b>◎</b><i>GO TO · NAVIGATOR</i></button>
             <button id="mWarpDown" class="mMItem" type="button"><b>≪</b><i>WARP −</i></button>

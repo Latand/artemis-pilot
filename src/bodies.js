@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT } from "./constants.js";
+import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT, AU_KM } from "./constants.js";
 import { earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
 import { stellarExposure, meteredSkyExposure, linearStarColor } from "./render/stellarAppearance.js";
 import { makeStarPointMaterial } from "./render/starPointMaterial.js";
@@ -18,7 +18,7 @@ import { sunStateAt, AGB_TIP_R_RSUN } from "./universe/sunEvolution.js";
 
 export const sunPos = new THREE.Vector3();
 export let sunLight, sunCore, sunGlow, sunCorona, sunPN, sky, skyStars, galaxyBackdrop;
-export let earthG, earth, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing;
+export let earthG, earth, clouds, earthAtmo, earthBeacon, moon, moonOrbitRing, moonSoiRing;
 export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], plLabels = [];
 // planetary moons: small textured-free spheres + always-on glow dot + label
 export const moonGroups = [], moonSurfaces = [], moonGlows = [], moonLabels = [];
@@ -180,7 +180,12 @@ export function updateBodyShaders(camera, t) {
         u.atmoUniforms.uCamera.value.copy(bodyCamera);
     }
     const pxScale = viewportSize.pxScale;
-    const earthPx = radius * pxScale / Math.max(radius, camera.position.distanceTo(earthG.position));
+    const earthDistance = camera.position.distanceTo(earthG.position);
+    const earthPx = radius * pxScale / Math.max(radius, earthDistance);
+    earthBeacon.scale.setScalar(earthDistance * (renderQuality.mobile ? 12 : 10) / Math.max(1, pxScale));
+    const earthGuide = THREE.MathUtils.smoothstep(AU_KM * K * pxScale / Math.max(1e-9, camera.position.distanceTo(sunPos)), 6, 24);
+    earthBeacon.material.opacity = .9 * (1 - THREE.MathUtils.smoothstep(earthPx, 1, 4)) * earthGuide;
+    earthBeacon.visible = earthBeacon.material.opacity > .01;
     if (earthG.visible && earthPx > 2) requestCloudDetails();
     clouds.visible = earth.visible && !!clouds.material.alphaMap && earthPx > 1;
     earthAtmo.visible = earth.visible && earthPx > 1;
@@ -205,7 +210,8 @@ export function updateBodyShaders(camera, t) {
         exposure = Math.min(exposure, meteredSkyExposure(camera, group.position, p.R * K, sunPos));
         if (rpx > 2) requestPlanetTexture(i);
         // A distant marker fades continuously as the physical disk resolves.
-        plGlows[i].material.opacity = 0.24 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4)) * (plGlows[i].userData.guideFade ?? 1);
+        plGlows[i].scale.setScalar(distance * (renderQuality.mobile ? 12 : 10) / Math.max(1, pxScale));
+        plGlows[i].material.opacity = 0.9 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4)) * (plGlows[i].userData.guideFade ?? 1);
         for (const child of group.children) {
             const direction = child.material?.userData.sunDirection;
             if (direction) {
@@ -460,7 +466,12 @@ export function buildBodies(maps) {
         sphere((R_EARTH + EARTH_ATMOSPHERE_HEIGHT_KM) * K, 96, 72, 48, 32), atmosphereMaterial(R_EARTH));
     shaderTick.atmoUniforms = earthAtmo.material.uniforms;
     earthAtmo.renderOrder = 2;
-    earthG.add(earth, clouds, earthAtmo);
+    earthBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: dotTexture("rgba(105,175,255,1)", "rgba(62,130,255,.22)"),
+        transparent: true, depthWrite: false, blending: THREE.NormalBlending,
+    }));
+    earthBeacon.renderOrder = 5;
+    earthG.add(earth, clouds, earthAtmo, earthBeacon);
     scene.add(earthG);
     // ---- moon ----
     const moonMap = maps.moon;
@@ -514,9 +525,10 @@ export function buildBodies(maps) {
         }
         scene.add(g);
         const glow = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: dotTexture(rgbaFromHex(p.color, .46), rgbaFromHex(p.color, .16)),
-            transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .28,
+            map: dotTexture(rgbaFromHex(p.color, 1), rgbaFromHex(p.color, .22)),
+            transparent: true, depthWrite: false, blending: THREE.NormalBlending, opacity: .9,
         }));
+        glow.renderOrder = 5;
         scene.add(glow);
         const og = orbitEllipseGeometry(p.a, p.e, p.varpi, undefined, p.i || 0, p.Om || 0);
         // Guide overlay: depth-tested against bodies, never occluding them.
