@@ -56,6 +56,8 @@ try{
  check(await page.evaluate(()=>__G.focus==='earth'),'Galaxy zoom retains the pinned object');
  check(await page.locator('.gravityPrediction').isHidden(),'No invented galaxy-wide forecast is offered');
  check((await page.locator('.gravityContributors').innerText()).includes('Andromeda'),'Neighboring galaxy replaces stellar-member clutter');
+ const galaxyLedger=await page.evaluate(async()=>{const s=(await import('/src/gravityGalaxyInspection.js')).getGalaxyGravityInspection();return {ids:s.contributions.map(r=>r.id),count:s.contributions.length};});
+ check(new Set(galaxyLedger.ids).size===galaxyLedger.count,'Local and distant aggregate cell identities remain distinct');
  await capture('galaxy-context');
  const hysteresis=await page.evaluate(async()=>{const {cam}=await import('/src/scene.js'),{LY_KM,K}=await import('/src/constants.js');const states=[];for(const d of [19000,21000,18000,13000]){cam.dist=d*LY_KM*K;cam.distTarget=null;__inspectorFrame();states.push(document.querySelector('.gravityScope').textContent);}return states;});
  check(JSON.stringify(hysteresis)===JSON.stringify(['Estimated','Estimated','Estimated','Local']),'Scale hysteresis avoids boundary flicker');

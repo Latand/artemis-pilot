@@ -20,7 +20,8 @@ export function getGalaxyGravityInspection() {
         cached=galaxyFlowSources(camera,scale,18,G.darkMatter,false,origin);
         sampledAt=now;lastScale=scale;lastEpoch=G.t;lastHalo=G.darkMatter;
     }
-    const wells=[...galaxyFlowSources(camera,scale,18,G.darkMatter,true,origin),...cached];
+    const wells=[...galaxyFlowSources(camera,scale,18,G.darkMatter,true,origin).map(w=>({...w,partition:'local'})),
+        ...cached.map(w=>({...w,partition:'distant'}))];
     const contributions=[];
     for(let i=0;i<wells.length;i++){
         const w=wells[i],dx=(w.x-origin.x)/K,dy=-(w.z-origin.z)/K,dz=(w.y-origin.y)/K;
@@ -28,7 +29,7 @@ export function getGalaxyGravityInspection() {
         if(!(r2>0&&w.mass>0))continue;
         const k=MU_S*w.mass/(r2*Math.sqrt(r2));
         const members=w.members||1;
-        contributions.push({id:`galaxy:${w.groupKey}`,label:w.label==='Andromeda'?`Andromeda${members>1?' group':''}`:`Catalog group · ${members} ${members===1?'galaxy':'galaxies'}`,
+        contributions.push({id:`galaxy:${w.partition}:${w.groupKey}`,label:w.label==='Andromeda'?`Andromeda${members>1?' group':''}`:`Catalog group · ${members} ${members===1?'galaxy':'galaxies'}`,
             acceleration:[dx*k,dy*k,dz*k],position:[w.x/K,-w.z/K,w.y/K],kind:'galaxy'});
     }
     const net=[0,0,0];for(const c of contributions)for(let i=0;i<3;i++)net[i]+=c.acceleration[i];
