@@ -1,14 +1,16 @@
 import * as THREE from "three";
-import { BH_MAX, BH_SIZES, C_LIGHT, MU_S, K, LY_SCENE, LY_KM } from "./constants.js";
+import { BH_MAX, BH_SIZES, C_LIGHT, MU_S, K, LY_SCENE, LY_KM, R_SUN } from "./constants.js";
 import { tdeLuminosityW, fallbackRate, L_EDD_PER_MSUN, TDE_ETA } from "./tde.js";
 import { G, BH } from "./state.js";
 import { eph } from "./ephemeris.js";
-import { fmtAccel, fmtDist, fmtKm } from "./format.js";
+import { fmtAccel, fmtDist, fmtKm, fmtMET } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
 import { scene, camera, cam, cvHost, lastPtr, renderer, renderQuality, viewportSize } from "./scene.js";
 import { noteNotable } from "./discoveryLog.js";
 import { hashInts, splitSeed } from "./universe/prng.js";
 import { registerPlacedPulsar, unregisterPlacedPulsar } from "./ambientAudio.js";
+import { gasGalacticDomain, gasWorldState } from "./universe/gasDynamics.js";
+import { validGasMass } from "./universe/formedStarEvolution.js";
 import { gasStateAt, gasWatchWarp, GAS_RADIUS_KM, GAS_MASSES, GAS_MODEL_VERSION } from "./universe/gasFormation.js";
 import { setWarp, setPaused, maxFeasibleWarp } from "./timeCtl.js";
 import { onModeChange } from "./uiMode.js";
@@ -193,6 +195,7 @@ const BH_PLACE = {
     sizeRailKey: "",
     kind: 0,
     presetIdx: 0,
+    gasMassSolar: 1,
     bodyMode: null,
     hintKey: "",
     hintText: "",
@@ -203,6 +206,7 @@ const BH_PLACE = {
     canvas: null,
 };
 function activePreset() {
+    if (BH_PLACE.kind === 4) return {massSolar:BH_PLACE.gasMassSolar,radiusKm:GAS_RADIUS_KM};
     if (BH_PLACE.kind === 0) return { label: bhSizeShort(BH_SIZES[BH.sizeIdx]), rsKm: BH_SIZES[BH.sizeIdx], period: 0 };
     const rows = EXO_PRESETS[BH_PLACE.kind] || [];
     const idx = Math.max(0, Math.min(BH_PLACE.presetIdx, rows.length - 1));
@@ -351,17 +355,23 @@ function ensureBHPanel() {
         rail.before(kindRail);
         const actions = document.createElement("div");
         actions.id = "gasActions";
-        actions.innerHTML = '<button id="gasRelease" type="button">Release gas ahead</button><button id="gasCancel" type="button">Cancel aim</button><label>Gas temperature <select id="gasTemperature"><option value="10">Cold · 10 K</option><option value="30">Warm · 30 K</option><option value="200">Hot · 200 K</option></select></label><label>Initial motion <select id="gasMotion"><option value="0">Nearly at rest</option><option value="3">Expanding · unbound</option></select></label><p>Tap space or release ahead. Gravity competes with gas pressure.</p>';
+        actions.innerHTML = '<label class="gasMassLabel" for="gasMass">Initial gas mass <span><input id="gasMass" type="number" min="0.1" max="30" step="0.1" value="1" inputmode="decimal"> M☉</span></label><p id="gasMassHelp">0.1–30 solar masses. Star size follows assembled mass; formation is not guaranteed.</p><button id="gasRelease" type="button">Release gas ahead</button><button id="gasCancel" type="button">Cancel aim</button><label>Gas temperature <select id="gasTemperature"><option value="10">Cold · 10 K</option><option value="30">Warm · 30 K</option><option value="200">Hot · 200 K</option></select></label><label>Initial motion <select id="gasMotion"><option value="0">Nearly at rest</option><option value="3">Expanding · unbound</option></select></label><p>Tap space or release ahead. Gravity competes with gas pressure.</p>';
         rail.after(actions);
+        actions.querySelector('#gasMass').addEventListener('input', e => {
+            const mass=e.target.valueAsNumber, valid=validGasMass(mass);
+            e.target.setAttribute('aria-invalid',String(!valid));
+            actions.querySelector('#gasRelease').disabled=!valid;
+            if(valid){BH_PLACE.gasMassSolar=mass;BH_PLACE.presetIdx=-1;updateBHPlacementUI(true);}
+        });
         actions.querySelector("#gasRelease").onclick = () => {
             if (BH_PLACE.kind !== 4) return;
             const rect = renderer.domElement.getBoundingClientRect();
-            commitBHPlacement(rect.left + rect.width / 2, rect.top + rect.height / 2);
+            commitBHPlacement(rect.left + rect.width / 2, rect.top + rect.height / 2, true);
         };
         actions.querySelector("#gasCancel").onclick = () => setBHPlacementMode(false);
         const live = document.createElement("section");
         live.id = "gasLive"; live.hidden = true;
-        live.innerHTML = '<div id="gasStage"></div><progress id="gasProgress" max="1" value="0" aria-label="Mass accreted into the core"></progress><p id="gasBudget"></p><div class="gasButtons"><button id="gasWatch" type="button">Watch star form</button><button id="gasRemove" type="button">Remove cloud</button></div><p id="gasModel">96-parcel SPH · isothermal gas. Sink = unresolved protostellar core, not a fusion model. Reverse replays checkpoints.</p>';
+        live.innerHTML = '<div id="gasStage"></div><progress id="gasProgress" max="1" value="0" aria-label="Mass accreted into the core"></progress><p id="gasBudget"></p><p id="gasMotionNote"></p><p id="gasStellarFacts"></p><p id="gasLifeTrack"></p><div class="gasButtons"><button id="gasWatch" type="button">Watch star form</button><button id="gasRemove" type="button">Remove cloud</button></div><p id="gasModel">96-parcel SPH · isothermal gas. A moving cloud/core shares local gravity. Galactic motion and stellar life use reduced models; no resolved external gas tides. No fusion/interior solver. Reverse replays gas checkpoints.</p>';
         document.getElementById("bhActiveList").before(live);
         const toggle = document.createElement("button"); toggle.id = "gasCreateToggle"; toggle.type = "button";
         toggle.textContent = "Create controls"; toggle.setAttribute("aria-expanded","true");
@@ -403,6 +413,7 @@ function renderBHSizeRail() {
             e.preventDefault();
             if (BH_PLACE.kind === 0) BH.sizeIdx = preset.index;
             else BH_PLACE.presetIdx = i;
+            if(BH_PLACE.kind===4){BH_PLACE.gasMassSolar=preset.massSolar;const input=document.getElementById('gasMass');if(input){input.value=preset.massSolar;input.setAttribute('aria-invalid','false');}document.getElementById('gasRelease').disabled=false;}
             setBHPlacementMode(true);
             updateBHPlacementUI(true);
         };
@@ -485,6 +496,7 @@ function updateBHPlacementUI(force = false) {
     updateGasLive();
     const gasActions = document.getElementById("gasActions");
     if (gasActions) gasActions.hidden = BH_PLACE.kind !== 4;
+    document.getElementById("bhSizeRail").hidden = BH_PLACE.kind === 4;
     if (BH_PLACE.bodyMode !== BH_PLACE.active) {
         document.body.classList.toggle("bh-place-mode", BH_PLACE.active);
         BH_PLACE.bodyMode = BH_PLACE.active;
@@ -537,6 +549,7 @@ function updateBHPlacementUI(force = false) {
         BH_PLACE.valid ? 1 : 0,
         BH_PLACE.kind,
         BH_PLACE.presetIdx,
+        BH_PLACE.gasMassSolar,
         BH.sizeIdx,
         BH.n,
         NEBULAE.length,
@@ -632,13 +645,16 @@ export function cancelBHPlacementMode() {
     if (!BH_PLACE.active) return;
     setBHPlacementMode(false);
 }
-function commitBHPlacement(clientX, clientY) {
+function commitBHPlacement(clientX, clientY, releaseAhead = false) {
     if (BH_PLACE.kind === 4) {
         if (NEBULAE.length >= NEB_MAX) { H.toast("Maximum " + NEB_MAX + " gas clouds / nebulae. Remove one first."); return; }
+        const input=document.getElementById('gasMass');
+        if(!validGasMass(input?.valueAsNumber)){input?.focus();H.toast('Choose a gas mass from 0.1 to 30 solar masses');return;}
+        BH_PLACE.gasMassSolar=input.valueAsNumber;
         const preset = activePreset(), ray = setPlacementRay(clientX, clientY);
         // A local stellar-birth sandbox outside the 0.02 ly solar exclusion.
         // Solve the ray/sphere exit if the initial point would be too near Sol.
-        let range = Math.max(cam.dist, LY_SCENE * .16);
+        let range = Math.max(cam.dist, LY_SCENE * .16 * (releaseAhead ? Math.sqrt(Math.max(1,preset.massSolar)) : 1));
         placeHit.copy(ray.origin).addScaledVector(ray.direction, range);
         const safeR = LY_SCENE * .12;
         if (placeHit.length() < safeR) {
@@ -646,7 +662,9 @@ function commitBHPlacement(clientX, clientY) {
             range = Math.max(range, -b + Math.sqrt(Math.max(0,b*b-ray.origin.lengthSq()+safeR*safeR)));
             placeHit.copy(ray.origin).addScaledVector(ray.direction, range);
         }
-        const i = addNebula({ xKm: placeHit.x / K, yKm: -placeHit.z / K, zKm: placeHit.y / K,
+        const proposed={xKm:placeHit.x/K,yKm:-placeHit.z/K,zKm:placeHit.y/K,formation:{bornAtSec:G.t}};
+        const galactic=gasGalacticDomain(proposed).supported;
+        const i = addNebula({ xKm: proposed.xKm, yKm: proposed.yKm, zKm: proposed.zKm,
             radiusKm: GAS_RADIUS_KM, seed: splitSeed(hashInts(0x47415321, BH.placeCount++), 4), archetype: 1,
             formation: { v: GAS_MODEL_VERSION, bornAtSec: G.t, massSolar: preset.massSolar, temperatureK:Number(document.getElementById("gasTemperature").value), radialVelocity:Number(document.getElementById("gasMotion").value) } });
         if (i < 0) return;
@@ -658,7 +676,7 @@ function commitBHPlacement(clientX, clientY) {
         const toggle = document.getElementById("gasCreateToggle");
         if (toggle) { toggle.setAttribute("aria-expanded","false"); toggle.textContent = "Create controls"; }
         BH_PLACE.active = false; updateBHPlacementPreview(); updateBHPlacementUI(true);
-        H.toast("Gas released · gravity and pressure decide whether it collapses"); return;
+        H.toast(galactic?"Gas released · gravity and pressure decide whether it collapses":"Gas released · free center of mass + local gravity; no galactic background at this location"); return;
     }
     if (BH_PLACE.kind === 3) {
         if (!nebulaPlacementEnabled()) {
@@ -974,16 +992,27 @@ function updateGasLive() {
     document.body.classList.toggle("gas-view", i >= 0);
     if (i < 0) return;
     const s = gasStateAt(NEBULAE[i], G.t);
-    document.getElementById("gasStage").textContent = s.phase + " · numerical SPH";
+    document.getElementById("gasStage").textContent = s.phase + (s.born ? " · stellar track" : " · numerical SPH");
     document.getElementById("gasProgress").value = s.progress;
-    document.getElementById("gasBudget").textContent = s.gasMassSolar.toFixed(2) + " M☉ gas + " + s.coreMassSolar.toFixed(2) + " M☉ sink · " + s.temperatureK + " K · ρ/ρ₀ " + s.densityContrast.toFixed(1);
-    document.getElementById("gasWatch").textContent = s.born ? "Inspect core" : "Run physics · 1k yr/s";
+    document.getElementById("gasBudget").textContent = s.gasMassSolar.toFixed(2) + " M☉ gas + " + s.coreMassSolar.toFixed(2) + " M☉ assembled · " + s.temperatureK + " K · ρ/ρ₀ " + s.densityContrast.toFixed(1);
+    const track=s.stellar;
+    const motion=gasWorldState(NEBULAE[i],G.t);
+    document.getElementById('gasMotionNote').textContent=motion.galacticSupported
+        ? 'Motion: approximate Milky Way orbit + local gravity'
+        : 'Motion: free center + local gravity; no galactic background';
+    if(motion.guidingApproximationValid===false)document.getElementById('gasMotionNote').textContent+=' · Strong kick: this background cannot resolve Galactic escape';
+    if(G.predict)document.getElementById('gasMotionNote').textContent+=' · Preview freezes source mass and coasts partners; close encounters are uncertain';
+    document.getElementById('gasStellarFacts').textContent=track
+        ? `${track.massSolar.toFixed(2)} M☉ star · ${(track.radiusKm/R_SUN).toPrecision(3)} R☉ · ${Math.round(track.temperatureK).toLocaleString()} K · ${track.luminositySolar.toPrecision(3)} L☉${track.ejectedMassSolar>0?' · '+track.ejectedMassSolar.toFixed(2)+' M☉ ejected':''}`:'';
+    document.getElementById('gasLifeTrack').textContent=track
+        ? `${s.assembled?'Age '+fmtMET(track.ageSec):'Still accreting'} · protostar → main sequence → giant → ${s.totalMassSolar<8?'white dwarf':s.totalMassSolar<22?'neutron star':'black hole'}. Estimated MS life ${fmtMET(track.mainSequenceSec)}.`:'';
+    document.getElementById("gasWatch").textContent = s.born ? (NEBULAE[i].inspectStar ? "View gas cloud" : "Inspect star") : "Run physics · 1k yr/s";
     document.getElementById("gasRemove").textContent = s.born ? "Remove system" : "Remove cloud";
 }
 function watchGasFormation() {
     const i = gasFocusIndex(); if (i < 0) return;
     const n = NEBULAE[i], s = gasStateAt(n,G.t);
-    if (s.born) { cancelBHPlacementMode(); cam.dist = s.sinkRadiusKm * K * 4; cam.distTarget = null; return; }
+    if (s.born) { cancelBHPlacementMode(); n.inspectStar=!n.inspectStar; cam.dist = Math.max((n.inspectStar?s.stellar.radiusKm*6:s.radiusKm*4) * K, .00001); cam.distTarget = null; return; }
     const warp=gasWatchWarp(0,maxFeasibleWarp());
     if(!warp){H.toast("Gas physics needs free time warp; use the Time controls for this scene");return;}
     cancelBHPlacementMode();setWarp(warp,"gas");setPaused(false,"gas");

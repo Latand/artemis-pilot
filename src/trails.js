@@ -1,3 +1,5 @@
+import { NEBULAE } from "./universe/nebulaeData.js";
+import { beginPredictionGas, endPredictionGas, gasWorldState } from "./universe/gasDynamics.js";
 import * as THREE from "three";
 import { R_EARTH, R_MOON, R_SUN, PL, K, SOI_M, STARS, LY_KM, MU_E, MU_M, MU_S } from "./constants.js";
 import {
@@ -7,7 +9,7 @@ import {
     beginPredictionBH, endPredictionBH, predBHX, predBHY, predBHZ,
     beginPredictionStars, endPredictionStars,
 } from "./ephemeris.js";
-import { G, BH, WORLD } from "./state.js";
+import { G, BH, WORLD, EPHT } from "./state.js";
 import { speedColor } from "./format.js";
 import { rk4Step, stepSize } from "./physics.js";
 import { dotTexture, ringTexture } from "./textures.js";
@@ -166,6 +168,17 @@ const predictionLiveEphem = snapshotEphem();
 const predictionEphem = snapshotEphem();
 const bodyPredictionEphem = snapshotEphem();
 const PRED_STAR_LIMIT = 48;
+const predGasNow={},predGasFuture={};
+function predictionStarPosition(star,t,out) {
+    out.x=star.x;out.y=star.y;out.z=star.z||0;
+    const n=star.formedStar?NEBULAE[star.nebulaIndex]:null;
+    if(n){
+        gasWorldState(n,G.t,predGasNow);gasWorldState(n,t,predGasFuture);
+        out.x+=predGasFuture.x-predGasNow.x;out.y+=predGasFuture.y-predGasNow.y;out.z+=predGasFuture.z-predGasNow.z;
+    }
+    return out;
+}
+const predStarWorld={};
 const PRED_STELLAR_GRAVITY_MIN_R = LY_KM * .02; // keep Solar System predictions local.
 const EMPTY_PRED_STARS = [];
 const predStarRefs = [];
@@ -251,6 +264,7 @@ export function computePrediction() {
     try {
         loadEphemSnapshot(predEphem);
         beginPredictionBH(); // holes coast linearly from their snapshot state
+        beginPredictionGas(EPHT.t);
         beginPredictionStars(predStars);
         const far = Math.hypot(G.x, G.y, G.z) > 2e6;
         const tMax = G.t + 86400 * (far ? 160 : 8);
@@ -299,7 +313,8 @@ export function computePrediction() {
                 const wx = predEphem.earthX + _ps[0], wy = predEphem.earthY + _ps[1], wz = _ps[2];
                 for (let si = 0; si < predStars.length; si++) {
                     const st = predStars[si];
-                    const dx = wx - st.x, dy = wy - st.y, dz = wz - (st.z || 0);
+                    predictionStarPosition(st,pt,predStarWorld);
+                    const dx = wx - predStarWorld.x, dy = wy - predStarWorld.y, dz = wz - predStarWorld.z;
                     if (stellarSurfaceHit(st, dx * dx + dy * dy + dz * dz)) { impact = 6; break; }
                 }
             }
@@ -332,6 +347,7 @@ export function computePrediction() {
     } finally {
         endPredictionStars();
         endPredictionBH();
+        endPredictionGas();
         loadEphemSnapshot(liveEphem);
     }
     if (PERF.enabled) {
@@ -492,6 +508,7 @@ export function computeBodyPrediction(target, locked = false) {
         const step = bodyPredStep(target);
         try {
             beginPredictionBH(); // holes coast linearly from their snapshot state
+        beginPredictionGas(EPHT.t);
             while (n < BPN) {
                 bodyStateForTarget(target, _bs, predEphem);
                 bpPos[n * 3] = _bs.x * K;
@@ -502,6 +519,7 @@ export function computeBodyPrediction(target, locked = false) {
             }
         } finally {
             endPredictionBH();
+        endPredictionGas();
         }
     }
     const col = locked ? 0x5f7f98 : target === -2 ? 0xb7d8ff : target === -1 ? 0xffdc8a : 0xf1d36b;

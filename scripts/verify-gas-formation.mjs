@@ -12,7 +12,7 @@ const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:
   const marker='const firstFrameT0 = perfStart();';assert.equal(source.split(marker).length,2);
   return source.replace(marker,'G.t=0; G.paused=true; resetEphem();\n'+marker)+'\nwindow.__gasFrame=frame;window.__gasRestart=restart;';}
 }]});await server.listen();
-const browser=await chromium.launch({args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try{
  for(const mobile of [false,true]){
   const name=mobile?'mobile':'desktop',viewport=mobile?{width:390,height:844}:{width:1280,height:800};
@@ -65,7 +65,7 @@ try{
    await evolve(2.2);await frames();await capture('core');await click('#gasWatch');await capture('core-close');
    // Exercise the real preview loop inside the numerical control radius.
    // The ordinary-star control catches a missing/empty prediction source list.
-   const prediction=await page.evaluate(async()=>{
+   const probePrediction=()=>page.evaluate(async()=>{
     const {formedStarForNebula}=await import('/src/universe/nebulaeData.js');
     const {eph}=await import('/src/ephemeris.js');
     const {computePrediction,impactSpr}=await import('/src/trails.js');
@@ -76,14 +76,14 @@ try{
     try{
      Object.assign(__G,{x:star.x-eph.earthX+.5*star.R,y:star.y-eph.earthY,z:star.z||0,vx:0,vy:0,vz:0,predict:true,dead:false,landed:null});
      PERF.enabled=true;computePrediction();
-     const sink={...PERF.last.prediction,marker:impactSpr.visible};
-     star.gasSink=false;computePrediction();
-     return {sink,ordinary:{...PERF.last.prediction,marker:impactSpr.visible}};
-    }finally{star.gasSink=true;Object.assign(__G,saved);PERF.enabled=wasPerf;computePrediction();}
+     return {...PERF.last.prediction,marker:impactSpr.visible,gasSink:star.gasSink};
+    }finally{Object.assign(__G,saved);PERF.enabled=wasPerf;computePrediction();}
    });
-   entry.prediction=prediction;
-   check(prediction.sink.gravityStars>0&&prediction.sink.steps>1&&prediction.sink.impact===0&&!prediction.sink.marker,'Trajectory preview crosses the sink control region without a false impact');
-   check(prediction.ordinary.impact===6&&prediction.ordinary.marker,'Ordinary stellar photosphere still ends the trajectory with an impact marker');
+   await evolve(1.7);await frames();const sinkPrediction=await probePrediction();
+   check(sinkPrediction.gasSink&&sinkPrediction.steps>1&&sinkPrediction.impact===0&&!sinkPrediction.marker,'Accreting unresolved core does not invent a lethal control surface');
+   await evolve(3);await frames();const starPrediction=await probePrediction();
+   check(!starPrediction.gasSink&&starPrediction.impact===6&&starPrediction.marker,'Assembled physical stellar photosphere ends the trajectory');
+   entry.prediction={sink:sinkPrediction,star:starPrediction};
    const reverse=await evolve(1.1);await frames();const replay=await state();
    check(reverse.ready&&replay.core===0,'Reverse restores and replays gas history instead of reversing cooling');
    check(JSON.stringify(replay.positions)===JSON.stringify(saved.positions),'Replayed canonical parcel state is exact');

@@ -130,7 +130,11 @@ function disposeStarVisual(entry) {
 
 export function addStarVisual(star) {
     const id = starVisualId(star);
-    const existing = entryById.get(id);
+    let existing = entryById.get(id);
+    if (existing && existing.isHole !== !!star.bh) {
+        existing.g.removeFromParent(); disposeStarVisual(existing);
+        entries.splice(entries.indexOf(existing),1); entryById.delete(id); existing=null;
+    }
     if (existing) {
         existing.star = star;
         if (star.tempK > 0 && existing.photosphere) {
@@ -149,7 +153,7 @@ export function addStarVisual(star) {
     let optics = null;
     const photometry = CURATED_PHOTOMETRY[star.name];
     const tempK = stellarSurfaceTemperature(star, photometry) || (Number.isFinite(star.bv) ? bvToTeff(star.bv) : null);
-    const active = !!(star.procedural || star.activeCatalog);
+    const active = !!(star.procedural || star.activeCatalog || star.formedStar);
     const absMag = active ? activeAbsMagV(star, tempK) : curatedAbsMagV(star);
     if (star.bh) {
         optics = makeHoleOptics();
@@ -169,13 +173,13 @@ export function addStarVisual(star) {
         }))
         : null;
     if (glow) g.add(glow);
-    const point = !star.bh && star.activeCatalog ? activeStarPoint(absMag, tempK, star.R) : null;
+    const point = !star.bh && (star.activeCatalog || star.formedStar) ? activeStarPoint(absMag, tempK, star.R) : null;
     if (point) g.add(point);
     if (star.activeCatalog) holdCatalogRow(star.hygIndex, true);
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
     // a hole's own light sits at the lens: drawn unbent after it (lensing.js)
     (star.bh ? holeRoot : scene).add(g);
-    const entry = { g, glow, point, disk, optics, photosphere, tempK, absMag, star, id, active, alpha: 0 };
+    const entry = { g, glow, point, disk, optics, photosphere, tempK, absMag, star, id, active, isHole:!!star.bh, initialRadiusKm:star.R, alpha: 0 };
     entries.push(entry);
     entryById.set(id, entry);
     return entry;
@@ -204,10 +208,10 @@ function syncActiveStarVisuals(camera, dtR = 0) {
     activeVisualKeep.clear();
     activeVisualCands.length = 0;
     for (const star of ACTIVE_STARS) {
-        if (!star.procedural && !star.activeCatalog) continue;
+        if (!star.procedural && !star.activeCatalog && !star.formedStar) continue;
         _procPos.set(star.x * K, (star.z || 0) * K, -star.y * K);
         const d = camera.position.distanceTo(_procPos);
-        if (d < ACTIVE_VISUAL_RADIUS) activeVisualCands.push({ star, d, id: starVisualId(star) });
+        if (d < ACTIVE_VISUAL_RADIUS || (star.formedStar && G.focus === 'neb:'+star.nebulaIndex)) activeVisualCands.push({ star, d, id: starVisualId(star) });
     }
     activeVisualCands.sort((a, b) => a.d - b.d);
     for (let i = 0; i < activeVisualCands.length && i < ACTIVE_VISUAL_MAX; i++) {
@@ -216,8 +220,8 @@ function syncActiveStarVisuals(camera, dtR = 0) {
     }
     for (let i = entries.length - 1; i >= 0; i--) {
         const e = entries[i];
-        if ((!e.star.procedural && !e.star.activeCatalog) || activeVisualKeep.has(e.id)) continue;
-        scene.remove(e.g);
+        if ((!e.star.procedural && !e.star.activeCatalog && !e.star.formedStar) || activeVisualKeep.has(e.id)) continue;
+        e.g.removeFromParent();
         disposeStarVisual(e);
         entryById.delete(e.id);
         entries.splice(i, 1);
@@ -345,6 +349,7 @@ export function updateStars(camera, dtR) {
             // The point (catalogStars.js curated layer, or e.point for an
             // active star) fades 0.75 -> 3 px as the photosphere resolves.
             const rScene = e.star.R * K;
+            e.photosphere.scale.setScalar(e.star.R / e.initialRadiusKm);
             const radiusPx = rScene * pxScale / Math.max(rScene, d);
             const disk = THREE.MathUtils.smoothstep(radiusPx, .75, 3);
             e.photosphere.visible = radiusPx > .3;

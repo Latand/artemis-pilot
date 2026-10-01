@@ -61,10 +61,10 @@ const gravity = () => active.GRAVITY_STARS.filter(s => s.formedStar);
 
 console.log('\nNumerical gas runtime');
 test('v2 physical options survive normalization; timed v1 sources migrate as initial gas', () => {
-    assert.equal(model.GAS_MODEL_VERSION, 2);
+    assert.equal(model.GAS_MODEL_VERSION, 3);
     for (const massSolar of [.3, 1, 3]) for (const temperatureK of [10, 30, 200]) for (const radialVelocity of [0, 3]) {
         const f = model.normalizeFormation({ v: 2, bornAtSec: -100, massSolar, temperatureK, radialVelocity });
-        assert.deepEqual([f.v, f.massSolar, f.temperatureK, f.radialVelocity, f.particleCount], [2, massSolar, temperatureK, radialVelocity, 96]);
+        assert.deepEqual([f.v, f.massSolar, f.temperatureK, f.radialVelocity, f.particleCount], [3, massSolar, temperatureK, radialVelocity, 96]);
     }
     const old = record({ v: 1, checkpoint: { current: { sink: { mass: 1 } } } });
     assert.equal(old.formation.checkpoint, undefined);
@@ -264,7 +264,8 @@ test('only a numerically created sink joins active gravity and receives no autom
     assert.equal(sinks().length, 1); assert.equal(gravity().length, 1);
     const star = sinks()[0]; assert.equal(star.gasSink, true); assert.equal(star.kind, 'protostar');
     close(star.mu, MU_S * s.coreMassSolar, 'sink gravity'); close(star.mass + s.gasMassSolar, 1, 'no doubled gas mass');
-    assert.equal(star.R, s.sinkRadiusKm); assert.equal(active.activeStarFocusValue(star), 'neb:0');
+    assert.equal(star.R, s.stellar.radiusKm);
+    assert.equal(star.sinkRadiusKm, s.sinkRadiusKm); assert.equal(active.activeStarFocusValue(star), 'neb:0');
     assert.equal(active.activeStarForFocus('neb:0'), star);
     assert.equal(generateSystem(star).planets.length, 0); assert.equal(active.getFocusedSystem(star, t), null);
 });
@@ -344,7 +345,10 @@ function shipAt(star, offset) {
 }
 test('ephemeris and ship derivative use finite Plummer sink forces and ordinary inverse-square gravity', () => {
     isolatePhysics();
-    const sink = sinkForPhysics(), ordinary = { ...sink, gasSink: false, softeningKm: 0, R: R_SUN };
+    // A standalone softened-star compatibility control. Real formed stars
+    // now get their sole gravity from the explicit gas+core aggregate.
+    const sink = { ...sinkForPhysics(), formedStar: false }, ordinary = { ...sink, gasSink: false, softeningKm: 0, R: R_SUN };
+    neb.clearNebulaRecords();
     for (const source of [sink, ordinary]) {
         ephem.beginPredictionStars([source]); // isolates the same shared field used by live ship/body integration
         try {

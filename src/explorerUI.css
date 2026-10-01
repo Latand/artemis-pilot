@@ -149,3 +149,13 @@ body.gas-view.mode-direct #timeDock:has(#tdMore[aria-expanded="false"]) #tdOptio
 #gasActions label { display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;font:11px var(--font-ui);color:#cbd4df; }
 #gasActions select { min-height:36px;max-width:170px;background:#222831;border:1px solid #596777;border-radius:4px;color:#e6eef6;padding:4px;font:12px var(--font-ui); }
 body.compact-explorer #gasActions select { min-height:44px; }
+
+/* Gas mass is an explicit physical input, separate from compact-object size. */
+#gasActions .gasMassLabel { font-size:13px;color:#f5e7cc; }
+#gasMass { box-sizing:border-box;width:82px;min-height:44px;padding:8px;background:#222831;color:#f5e7cc;border:1px solid #a58b64;border-radius:4px;font:16px var(--font-ui); }
+#gasMass[aria-invalid=true] { border-color:#ef977d; }
+#gasStellarFacts { color:#efca93!important; }
+#gasLifeTrack { border-left:2px solid #84725a;padding-left:8px; }
+#gasRelease:disabled { opacity:.4;cursor:not-allowed; }
+
+#bhSizeRail[hidden] { display:none!important; }

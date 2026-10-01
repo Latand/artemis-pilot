@@ -1,3 +1,4 @@
+import { gasWorldState, invalidateGasDynamics } from "./gasDynamics.js";
 import { K, MU_S, LY_KM } from "../constants.js";
 import { normalizeFormation, gasStateAt, formationDuration, prepareGas, serializeGasFormation, gasKnownBirth, GAS_STEPS_PER_FRAME } from "./gasFormation.js";
 
@@ -86,9 +87,17 @@ export function formedStarForNebula(i, simT, includeBoundary = true) {
     let star=formedCache.get(n);
     if(!star){star={id:formationId(n),name:"PROTOSTAR "+(i+1),formedStar:true,gasSink:true,nebulaIndex:i,
         catalog:"numerical-sph-sink",estimated:true,kind:"protostar",color:0xffcc88};formedCache.set(n,star);}
-    const x=n.xKm+s.sinkPosition[0]*n.radiusKm,y=n.yKm+s.sinkPosition[1]*n.radiusKm,z=n.zKm+s.sinkPosition[2]*n.radiusKm;
-    Object.assign(star,{nebulaIndex:i,x,y,z,dLy:Math.hypot(x,y,z)/LY_KM,mass:s.coreMassSolar,mu:MU_S*s.coreMassSolar,
-        R:s.sinkRadiusKm,softeningKm:s.softeningKm,flowC:.001*Math.sqrt(2*MU_S*s.coreMassSolar/1000),flowSink:s.sinkRadiusKm*K});
+    const origin=gasWorldState(n,simT);
+    const x=origin.x+s.sinkPosition[0]*n.radiusKm,y=origin.y+s.sinkPosition[1]*n.radiusKm,z=origin.z+s.sinkPosition[2]*n.radiusKm;
+    const track=s.stellar, mass=track.massSolar;
+    Object.assign(star,{nebulaIndex:i,x,y,z,vx:origin.vx+s.sinkVelocity[0]*s.unitVelocityKmS,vy:origin.vy+s.sinkVelocity[1]*s.unitVelocityKmS,vz:origin.vz+s.sinkVelocity[2]*s.unitVelocityKmS,dLy:Math.hypot(x,y,z)/LY_KM,mass,mu:MU_S*mass,
+        name:track.phase.toUpperCase()+" "+(i+1),kind:track.kind,gasSink:!s.assembled,
+        R:track.radiusKm,softeningKm:s.assembled?0:s.softeningKm,
+        sinkRadiusKm:s.sinkRadiusKm,lumSolar:track.luminositySolar,tempK:track.temperatureK,
+        color:track.color,cls:track.cls,phase:track.phase,stellarAgeSec:track.ageSec,
+        bh:track.kind==='BH',rs:track.kind==='BH'?track.radiusKm:0,
+        pulsar:track.kind==='NS',ejectedMassSolar:track.ejectedMassSolar,
+        flowC:.001*Math.sqrt(2*MU_S*mass/1000),flowSink:track.radiusKm*K});
     return star;
 }
 export function formedStarsAt(simT, includeBoundary = true) {
@@ -132,6 +141,7 @@ export function prepareGasAdvance(t,requested) {
             else advance=Math.min(advance,Math.max(0,r.coveredSec-t));
         }
     }
+    invalidateGasDynamics();
     return{advance,limited,steps,reason:replay?"replaying gas checkpoints":limited?"gas gravity and pressure step budget":""};
 }
 export function preparePausedGas(t) {return prepareGasAdvance(t,0);}

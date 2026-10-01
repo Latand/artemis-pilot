@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - run: node scripts/smoke-gas-sph.mjs && node scripts/smoke-gas-formation.mjs && npm test && npm run smoke:exotic && npm run build
+      - run: node scripts/smoke-gas-sph.mjs && node scripts/smoke-gas-formation.mjs && node scripts/smoke-gas-stellar-evolution.mjs && node scripts/smoke-gas-dynamics.mjs && node scripts/smoke-gas-world.mjs && npm test && npm run smoke:exotic && npm run build
       - run: npx playwright install --with-deps chromium
       - name: Desktop and touch interaction, lifecycle, persistence and WebGL screenshots
         run: node scripts/verify-gas-formation.mjs evidence/gas-formation

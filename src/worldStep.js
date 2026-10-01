@@ -1,3 +1,4 @@
+import { invalidateGasDynamics } from "./universe/gasDynamics.js";
 import { nextFormationBoundary, NEB_MAX, NEBULAE, prepareGasAdvance } from "./universe/nebulaeData.js";
 import { refreshActiveStars } from "./universe/activeStars.js";
 import { eph } from "./ephemeris.js";
@@ -94,13 +95,19 @@ export function stepWorld(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast 
     if (!NEBULAE.some(n => n.formation)) return stepWorldSlice(requested,atx,aty,atz,aMag,toast);
     const originalRequested=requested;
     const gas=prepareGasAdvance(G.t,requested);
+    invalidateGasDynamics();
     requested=gas.advance;
     let remaining = requested, delivered = 0, steps = 0, analytic = 0;
     let limited = gas.limited, reason = gas.reason;
     const frame = beginEphemFrame(Math.abs(G.warp));
     try {
         for (let slice = 0; slice <= NEB_MAX; slice++) {
-            const dt = nextFormationBoundary(G.t, remaining);
+            let dt = nextFormationBoundary(G.t, remaining);
+            // Gas gravity starts at release, before the first sink forms.
+            for (const n of NEBULAE) if (n.formation) {
+                const gap = n.formation.bornAtSec - G.t;
+                if ((dt > 0 && gap > 0 && gap < dt) || (dt < 0 && gap < 0 && gap > dt)) dt = gap;
+            }
             refreshActiveStars(eph.earthX+G.x,eph.earthY+G.y,G.z,G.focus,G.t,dt);
             const advanced = stepWorldSlice(dt,atx,aty,atz,aMag,toast,frame);
             delivered += advanced; steps += WORLD_STEP.bodySteps; analytic += WORLD_STEP.analyticCalls;

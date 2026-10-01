@@ -1,3 +1,4 @@
+import { invalidateGasDynamics } from "./universe/gasDynamics.js";
 // Quicksave / quickload: one browser-storage slot holding the full simulation
 // state — ship, world flags, the live n-body ephemeris, and every black hole.
 import { C_LIGHT, INITIAL_STAR_COUNT, STARS } from "./constants.js";
@@ -185,6 +186,7 @@ export async function loadState() {
     }
     clearBlackHoles();
     restoreNebulae(data.neb || []);
+    invalidateGasDynamics();
     data.bh.forEach(([x, y, vx, vy, rs, kind, period, z, vz], i) => {
         const raw = data.bhEv && data.bhEv[i];
         const ev = raw && raw.length ? raw.map(row => row.length >= 5

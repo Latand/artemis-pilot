@@ -47,7 +47,7 @@ export function targetState(t) {
     }
     const proc = activeStarForFocus(t);
     if (proc) {
-        return { x: proc.x - eph.earthX, y: proc.y - eph.earthY, z: proc.z || 0, vx: -eph.earthVx, vy: -eph.earthVy, vz: 0, R: proc.R, mu: proc.mu, name: proc.name, star: true, ref: proc, id: proc.id || "", bh: !!proc.bh, procedural: true, activeCatalog: !!proc.activeCatalog };
+        return { x: proc.x - eph.earthX, y: proc.y - eph.earthY, z: proc.z || 0, vx: (proc.formedStar?proc.vx||0:0)-eph.earthVx, vy: (proc.formedStar?proc.vy||0:0)-eph.earthVy, vz: proc.formedStar?proc.vz||0:0, R: proc.R, mu: proc.mu, name: proc.name, star: true, ref: proc, id: proc.id || "", bh: !!proc.bh, procedural: true, activeCatalog: !!proc.activeCatalog };
     }
     return null;
 }

@@ -4,7 +4,7 @@
 prescribed collapse animation has been replaced; neither age nor a progress
 curve creates a star or shrinks the cloud.
 
-Choose 0.3, 1 or 3 M☉, a gas temperature (10, 30 or 200 K), and nearly-at-rest
+Enter 0.1–30 M☉ in the visible gas-mass field, a gas temperature (10, 30 or 200 K), and nearly-at-rest
 or outward-moving initial conditions. Release a cloud with the button or a
 mouse/touch tap. **Run physics** selects 1,000 simulated years per second on the
 shared Time controls. It does not promise formation or jump to a scheduled
@@ -50,8 +50,10 @@ Mass, linear momentum, center of mass and angular momentum are carried into the
 sink. Unresolved binding energy is booked separately. The sink uses softened
 gravity in the existing local stellar field, without treating its control
 radius as a lethal photosphere or instantly inventing a planetary system.
-**Inspect core** frames this numerical control region. Its bright marker is a
-visual cue, not a calculated stellar surface, luminosity or fusion state.
+**Inspect star** now frames a separate physical photosphere estimate. The numerical
+control radius is still not a stellar surface. After assembly, a reduced,
+mass-dependent track supplies luminosity, temperature, radius and a remnant; see
+[stellar integration](gas-stellar-integration.md). It is not a fusion solver.
 
 The sink criteria are adapted from
 [Bate, Bonnell & Price](https://arxiv.org/abs/astro-ph/9510149) and the checks
@@ -66,11 +68,10 @@ and birth times are not converged astrophysical predictions. See
 [Bate & Burkert's resolution study](https://www.astro.ex.ac.uk/people/mbate/Preprints/SPHresolution/SPHresolution.html).
 
 The patch omits magnetic fields, opacity-dependent cooling, radiation feedback,
-external tides, interactions between separate gas clouds, nuclear fusion and
-stellar interiors. The gas patch evolves under its own gravity; the produced
-sink is exposed to the app's local gravity consumers, but the universe does not
-feed external forces back into the gas patch. The four initial clouds are
-independent experiments, not one domain that exchanges gas.
+external tidal deformation of individual parcels, nuclear fusion and stellar
+interiors. Internal gas patches do not exchange parcels. Their centers of mass
+are finite-sized gravitating systems with mutual local interactions and smooth
+galactic transport; see [the scope and validation](gas-stellar-integration.md).
 
 The initial radius is 0.045 ly. At 10 K, initial uniform-sphere free-fall
 estimates are about 49,000 / 26,838 / 15,495 years for 0.3 / 1 / 3 M☉. These are
