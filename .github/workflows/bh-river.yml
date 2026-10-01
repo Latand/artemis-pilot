@@ -3,11 +3,15 @@ on:
   pull_request:
     paths:
       - 'scripts/*bh-river*'
+      - 'scripts/smoke-hole-emission.mjs'
       - 'src/river.js'
       - 'src/holeOptics.js'
       - '.github/workflows/bh-river.yml'
 permissions:
   contents: read
+concurrency:
+  group: bh-river-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 jobs:
   capture:
     runs-on: ubuntu-latest
@@ -25,6 +29,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
+      - run: node scripts/smoke-hole-emission.mjs && node scripts/smoke-hole-appearance.mjs && node scripts/smoke-hole-precision.mjs && npm test && npm run build
       - run: npx playwright install --with-deps chromium
       - run: node scripts/probe-bh-river.mjs evidence/bh-river
         env:
