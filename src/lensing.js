@@ -7,6 +7,7 @@ import { eph } from "./ephemeris.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { composer, renderer, renderQuality, renderSceneTiered, TIER_SPLIT_UNITS } from "./scene.js";
 import { holeRoot } from "./holeOptics.js";
+import { preciseViewPosition } from "./render/preciseViewPosition.js";
 
 // Gravitational lensing as a screen-space post pass, applied to the world
 // render (before bloom when bloom is on). Up to four strongest lenses per
@@ -157,7 +158,7 @@ export function renderLensed(rendererArg, sceneArg, camera) {
 const _v = new THREE.Vector3();
 const _cand = [];
 function consider(cands, wx, wy, wz, rsU, camera, f) {
-    _v.set(wx, wy, wz).applyMatrix4(camera.matrixWorldInverse);
+    preciseViewPosition(_v.set(wx, wy, wz), camera);
     if (_v.z > -1e-9) return;
     const d = _v.length();
     if (d < rsU * 1.5) return;

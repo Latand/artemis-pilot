@@ -30,3 +30,5 @@ Sources:
 ## Verification
 
 See `scripts/smoke-hole-appearance.mjs` for numerical branch/limit checks and `scripts/capture-celestial-detail.mjs` for production-app screenshots at multiple distances, orientations, and viewport sizes. The gallery differentiates production captures from neutral-background silhouette diagnostics. Screenshot GPU timings collected under SwiftShader are software-renderer measurements, not physical-phone FPS claims.
+
+The screenshot review also prompted separate analytic shadow/disk/ring/jet layers so each emission component tests its own hit depth against foreground bodies. Equal render order preserves back-to-front whole-hole ordering. The background lens uses the same exact orbital residual as the shadow. Inverse projection supports asymmetric view frusta; per-eye world matrices are read without mutating XR rig transforms, and depth is converted through the inverse-view scale before explicit near/far tier fences. The GPU diagnostic harness checks a foreground magenta occluder, cross-tier parity, overlapping holes, and silhouette circularity.

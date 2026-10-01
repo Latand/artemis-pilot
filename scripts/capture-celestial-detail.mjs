@@ -110,6 +110,18 @@ try {
         }
         await save();
     }
+    if (!baseline && device === 'desktop' && (suite === 'holes' || suite === 'all')) {
+        report.currentCase = 'hole-integration';
+        const integration = await page.evaluate(() => celestialQA.holeIntegrationChecks());
+        for (const shot of integration.frames) {
+            await writeFile(resolve(out, `${shot.name}.png`), Buffer.from(shot.png.split(',')[1], 'base64'));
+            delete shot.png;
+        }
+        report.integration = integration;
+        report.failedChecks.push(...Object.entries(integration.checks).filter(([, pass]) => !pass).map(([check]) => ({ case: 'hole-integration', check })));
+        for (const [name, pass] of Object.entries(integration.checks)) console.log(`INTEGRATION ${pass ? 'PASS' : 'FAIL'} ${name}`);
+        await save();
+    }
     delete report.currentCase;
     report.complete = report.frames.length === tests.length;
     report.passed = report.complete && !report.errors.length && !report.failedChecks.length;

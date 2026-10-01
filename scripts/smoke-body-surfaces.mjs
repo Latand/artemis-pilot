@@ -58,6 +58,16 @@ setBodyColorMap(lunarFallback, lunarPhoto);
 assert.equal(lunarFallback.userData.appearanceProvenance, 'Verified image source');
 lunarFallback.dispose();
 assert(BODY_APPEARANCES.NEPTUNE.mapSaturation < 1, 'historically over-blue map is display-corrected');
+const neptuneProfile = getBodyAppearance('NEPTUNE');
+const neptuneMaterial = createBodySurfaceMaterial(neptuneProfile, { map: new THREE.Texture() });
+const nu = neptuneMaterial.userData.surfaceUniforms;
+assert.equal(nu.uSurfacePhotoMean.value, .1228906993, 'source-map normalization is explicit');
+assert.equal(hash(readFileSync(new URL('../public/textures/2k_neptune.jpg', import.meta.url))), 'cb42ea82709741d2', 'recalibrate normalization if source Neptune asset changes');
+const paletteLuma = nu.uSurfacePhotoPalette.value.r * .2126 + nu.uSurfacePhotoPalette.value.g * .7152 + nu.uSurfacePhotoPalette.value.b * .0722;
+assert(paletteLuma > .45 && paletteLuma < .60, 'reference Neptune luminance remains comparable to the Uranus mosaic');
+assert(nu.uSurfacePhotoPalette.value.b / nu.uSurfacePhotoPalette.value.g < 1.2, 'reference palette is restrained blue-green rather than cobalt');
+assert.equal(nu.uSurfacePhotoMean.value, neptuneProfile.photoMeanLuminance);
+neptuneMaterial.dispose();
 assert.notEqual(bodyAppearanceSeed('host-a:b'), bodyAppearanceSeed('host-b:b'));
 for (const type of ['rocky', 'ice', 'ocean', 'desert', 'gas', 'hot-jupiter', 'sub-neptune']) {
     const p = getBodyAppearance({ name: 'Catalog b', type, color: 0x9d997a }, 'hip-123:Catalog b');

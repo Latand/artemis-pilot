@@ -14,5 +14,11 @@ assert(!shader.includes('new THREE.CylinderGeometry'));assert(!shader.includes('
 assert(shader.includes('copy(eye).sub(center).divideScalar(o.rsUnits)'));
 assert(shader.includes('gl_Position=vec4(position.xy,0.0,1.0)'));
 assert(shader.includes('fwidth('));
-assert(shader.includes('if (z < uNear || z > uFar) discard;')); 
+assert(shader.includes('if (clipW <= 0.0 || depth < 0.0 || depth > 1.0) discard;'));
+assert(shader.includes('if (z < uNear || z > uFar) discard;'));
+assert(shader.includes('uInverseProjection * vec4(vScreen,0.0,1.0)'));
+assert(shader.includes('eye.setFromMatrixPosition(camera.matrixWorld)'));
+assert(shader.includes('depthRs = hit;'));
+assert(shader.includes('HOLE_LAYER == 3'));
+assert(!shader.includes('depthRs = min(depthRs,hit)'));
 console.log('Hole appearance: finite-distance shadow branches, continuous limit, named accretion profiles, normalized analytic geometry passed');

@@ -15,7 +15,7 @@ The former 30 km minimum for the Phobos and Deimos meshes is removed. Generated-
 
 ## What is sourced and what is inferred
 
-The existing image files in `public/textures/` are **Solar System Scope artistic mosaics**, based on varied imagery and reconstruction. They are not raw NASA products or elevation models. Their vendor explicitly describes saturation changes and fictional gap filling. Attribution: [Solar System Scope textures](https://www.solarsystemscope.com/textures/), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). This implementation changes their display shading; the Neptune map additionally receives a restrained saturation/tint correction. No new third-party image files were added.
+The existing image files in `public/textures/` are **Solar System Scope artistic mosaics**, based on varied imagery and reconstruction. They are not raw NASA products or elevation models. Their vendor explicitly describes saturation changes and fictional gap filling. Attribution: [Solar System Scope textures](https://www.solarsystemscope.com/textures/), licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). This implementation changes their display shading; the Neptune map additionally receives reference-palette luminance normalization. No new third-party image files were added.
 
 All newly generated color fields are deterministic illustrations informed by observed terrain classes. The location, distribution, number and shape of procedural craters, fractures, basins, volcanoes, weather cells and continents are **not measured cartography**. All new normal maps are synthetic relief, generated separately from albedo. Bright salt, dark maria and sulfur patches are never treated as measured elevation. Mesh silhouettes and collision surfaces remain spherical at their existing mean radii. Phobos/Deimos/Proteus irregular shapes are therefore still an explicit limitation.
 
@@ -51,6 +51,14 @@ The material's `userData.appearanceProvenance`, `reliefProvenance`, profile ID a
 | Nereid | Restrained generic dark icy cratered illustration | Its surface is not globally resolved |
 | Ceres | Neutral/dark cratered surface with a few reflective salt-like albedo spots | Inferred normal/albedo field; existing orbital propagation unchanged |
 | Exoplanets/exomoons | Stable-ID rocky, desert, ice, ocean, haze or banded recipes | All are appearance hypotheses, even when orbit/radius are measured |
+
+## Neptune color correction
+
+The first production GPU captures showed that merely reducing saturation did not fix the dark Neptune mosaic. Its area-weighted, decoded-linear Rec.709 mean luminance is 0.1228906993, versus 0.5639871162 for the bundled Uranus map. Tint multiplication further reduced Neptune's brightness. The revised shared-material grading uses the source map's **relative** luminance structure with exponent 0.42, bounded to 0.65–1.35, around a restrained blue-green sRGB reference palette `#9ec3ce`. This preserves subdued band/storm geography without carrying over the artistic asset's strongly stretched blue color and low brightness. It affects albedo only; illumination, phase and night-side darkness are unchanged.
+
+The palette is a qualitative display calibration consistent with [Oxford's 2024 result and reconstructed images](https://www.ox.ac.uk/news/2024-01-05-new-images-reveal-what-neptune-and-uranus-really-look-0), not a spectroradiometric reconstruction or absolute albedo measurement. The smoke test locks the source image hash so changing the asset cannot silently reuse stale normalization. Procedural fallback uses the same reference palette directly.
+
+Europa's procedural ridges now use texture-footprint-aware line widths, paired shallow normal ridges and a finer disruption network in limited chaotic terrain. Io's volcanic pits/deposits use deterministic noncircular lobes and incomplete anisotropic halos rather than repeated perfect circles. Both remain clearly labeled geographic illustrations.
 
 ## Lighting and scale
 

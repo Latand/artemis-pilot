@@ -54,6 +54,13 @@ export function generateBodySurfaceMaps(profile, width = 512) {
             } else if (kind === 'volcanic') {
                 const sulfur = smooth(.42, .67, broad);
                 r += sulfur * 13; g -= sulfur * 37; b -= sulfur * 42;
+                // Interleaved pale deposits break up the broad sulfur field;
+                // low-amplitude fine grains remain independent of volcanic pits.
+                const pale = smooth(.51, .72, medium + broad * .14) * .55;
+                r = r * (1 - pale) + 239 * pale;
+                g = g * (1 - pale) + 228 * pale;
+                b = b * (1 - pale) + 179 * pale;
+                tone += (fine - .5) * .08;
                 h *= .3;
             } else if (kind === 'dichotomy') {
                 const dark = smooth(-.15, .12, sx + .22 * (medium - .5));
@@ -73,7 +80,16 @@ export function generateBodySurfaceMaps(profile, width = 512) {
                 // Warped great-circle families form fractures without UV seams.
                 const a = Math.abs(Math.sin(sx * 16 + sy * 11 + sz * 13 + (broad - .5) * 8 + phase));
                 const c = Math.abs(Math.sin(sx * 9 - sy * 17 + sz * 14 + (medium - .5) * 1.5));
-                let crack = Math.max(1 - smooth(.015, .075, a), (1 - smooth(.01, .045, c)) * .65);
+                // Width includes the texture footprint, so a thin line does
+                // not become disconnected dots at the 512-pixel mobile tier.
+                const aa = 30 / width;
+                let crack = Math.max(1 - smooth(.045, .105 + aa, a), (1 - smooth(.025, .075 + aa, c)) * .65);
+                const ridge = Math.exp(-Math.pow((a - .19) / (.045 + aa), 2));
+                const chaos = smooth(.55, .69, broad);
+                const splinter = Math.abs(Math.sin(sx * 53 + sy * 47 - sz * 61 + medium * 3));
+                crack = Math.max(crack, (1 - smooth(.03, .09 + aa, splinter)) * chaos * .30);
+                h += ridge * .035;
+                tone -= chaos * (medium - .35) * .10;
                 if (profile.southStripes) {
                     crack *= .08;
                     crack = Math.max(crack, (1 - smooth(.02, .12, Math.abs(Math.sin(sx * 28 + sz * 12)))) * smooth(.64, .88, -sy));
@@ -111,14 +127,21 @@ export function generateBodySurfaceMaps(profile, width = 512) {
     function stamp(cx, cy, radius, major = false, volcano = false) {
         const stretch = 1 / Math.max(.14, Math.cos((cy / (height - 1) - .5) * Math.PI));
         const ry = radius, rx = radius * stretch;
-        for (let y = Math.max(1, Math.floor(cy - ry * 1.5)); y <= Math.min(height - 2, Math.ceil(cy + ry * 1.5)); y++) {
-            for (let dx = -Math.ceil(rx * 1.5); dx <= Math.ceil(rx * 1.5); dx++) {
+        const ventPhase = volcano ? rng() * TAU : 0;
+        const ventStretch = volcano ? .65 + rng() * .7 : 1;
+        const extent = volcano ? 2.4 : 1.5;
+        for (let y = Math.max(1, Math.floor(cy - ry * extent)); y <= Math.min(height - 2, Math.ceil(cy + ry * extent)); y++) {
+            for (let dx = -Math.ceil(rx * extent); dx <= Math.ceil(rx * extent); dx++) {
                 const x = ((Math.floor(cx + dx) % width) + width) % width;
-                const q = Math.hypot(dx / rx, (y - cy) / ry);
+                const vx = dx / rx, vy = (y - cy) / ry;
+                const angle = Math.atan2(vy, vx);
+                const irregular = volcano ? 1 + .16 * Math.sin(angle * 3 + ventPhase) + .09 * Math.sin(angle * 7 - ventPhase) : 1;
+                const q = Math.hypot(vx / ventStretch, vy) / irregular;
                 if (q > 1.45) continue;
                 const i = y * width + x, k = i * 4;
                 if (volcano) {
-                    const caldera = 1 - smooth(.35, .60, q), sulfur = Math.exp(-Math.pow((q - .9) / .25, 2));
+                    const caldera = 1 - smooth(.24, .55, q);
+                    const sulfur = Math.exp(-Math.pow((q - .88) / .27, 2)) * (.65 + .35 * Math.sin(angle * 2 + ventPhase));
                     color[k] = clamp(color[k] * (1 - .78 * caldera) + sulfur * 13, 0, 255);
                     color[k + 1] *= 1 - .80 * caldera - .26 * sulfur;
                     color[k + 2] *= 1 - .65 * caldera - .15 * sulfur;
@@ -134,7 +157,7 @@ export function generateBodySurfaceMaps(profile, width = 512) {
         }
     }
     const volcano = profile.kind === 'volcanic';
-    for (let j = 0; j < (volcano ? 105 : profile.craters || 0); j++) {
+    for (let j = 0; j < (volcano ? 145 : profile.craters || 0); j++) {
         const x = rng() * width, cy = (Math.acos(rng() * 1.8 - .9) / Math.PI) * (height - 1);
         const rad = height * (.003 + Math.pow(rng(), 3) * (volcano ? .023 : .034));
         stamp(x, cy, rad, false, volcano);

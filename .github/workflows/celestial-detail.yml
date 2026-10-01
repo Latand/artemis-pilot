@@ -38,7 +38,9 @@ jobs:
           node scripts/smoke-stellar-surfaces.mjs
           node scripts/smoke-body-surfaces.mjs
           node scripts/smoke-hole-appearance.mjs
+          node scripts/smoke-hole-precision.mjs
           node scripts/smoke-hole-appearance.mjs
+          node scripts/smoke-hole-precision.mjs
           node scripts/smoke-body-surfaces.mjs
           npm test
           npm run build

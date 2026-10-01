@@ -8,6 +8,10 @@ export function celestialCases({ suite = 'all', baseline = false } = {}) {
         ...['MERCURY', 'VENUS', 'MARS', 'JUPITER', 'SATURN', 'URANUS', 'NEPTUNE'].map(body =>
             ({ name: body.toLowerCase(), body, radii: body === 'SATURN' ? 7 : 4.3 })),
         ...['IO', 'EUROPA', 'TITAN', 'IAPETUS'].map(body => ({ name: body.toLowerCase(), body, radii: 4.3 })),
+        { name: 'iapetus-boundary', body: 'IAPETUS', radii: 4.3, yaw: -2.6707963268, pitch: .12 },
+        { name: 'iapetus-close-boundary', body: 'IAPETUS', radii: 1.85, yaw: -2.6707963268, pitch: .06 },
+        { name: 'io-close', body: 'IO', radii: 1.85 },
+        { name: 'europa-close', body: 'EUROPA', radii: 1.85 },
         { name: 'unknown-system-planet', body: 'unknown-planet', radii: 4.3 },
         { name: 'unknown-system-moon', body: 'unknown-moon', radii: 4.3 },
     ].map(s => ({ ...s, suite: 'bodies' }));
@@ -27,6 +31,7 @@ export function celestialCases({ suite = 'all', baseline = false } = {}) {
     if (!baseline) holes.push({ name: 'gaia-bh1-1.06rs-dormant', body: 'GAIA BH1', radii: 1.06, pitch: .48, suite: 'holes' },
         ...['SGR A*', 'placed-quasar'].map(body => ({ name: `${body.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-1.06rs-rim-diagnostic`,
             body, radii: 1.06, pitch: .48, lookAway: 2.52, diagnosticSky: true, suite: 'holes' })));
+    if (!baseline) holes.push({ name: 'sgr-a-1.06rs-rim-production-sky', body: 'SGR A*', radii: 1.06, pitch: .48, lookAway: 2.52, fov: 70, suite: 'holes' });
     if (!['all', 'bodies', 'stars', 'holes'].includes(suite)) throw new Error(`Unknown SUITE: ${suite}`);
     const baselineMechanisms = new Set(['sgr-a-45rs-tilted', 'sgr-a-8rs-tilted', 'sgr-a-2.7rs-tilted', 'sgr-a-2.7rs-edge', 'quasar-8rs-tilted', 'quasar-45rs-edge']);
     return [...bodies, ...stars, ...holes].filter(s => (suite === 'all' || s.suite === suite) &&

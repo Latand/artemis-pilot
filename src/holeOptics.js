@@ -82,8 +82,10 @@ export const GLSL_SHADOW_OCCLUSION = /* glsl */`
 // transfer, lensing and jets remain bounded visual approximations, not GR
 // ray tracing and not a Kerr / moving-observer solution.
 const analyticFragment = /* glsl */`
-    uniform vec3 uOrigin, uAxisX, uAxisY, uNormal;
+    uniform vec3 uOrigin, uAxisX, uAxisY, uNormal, uViewDepth;
+    uniform vec4 uDepthProjection;
     uniform mat3 uCameraRotation;
+    uniform mat4 uInverseProjection;
     uniform float uAspect, uTanFov, uShadowCos, uDistance, uNear, uFar, uRsUnits;
     uniform float uDiskOn, uRout, uTmax, uGain, uPhaseA, uPhaseB, uWA, uFrameOrbits;
     uniform float uJetLength, uJetI;
@@ -92,18 +94,25 @@ const analyticFragment = /* glsl */`
     ${GLSL_NOISE}
     vec3 local(vec3 p) { return vec3(dot(p,uAxisX), dot(p,uAxisY), dot(p,uNormal)); }
     void main() {
-        vec3 viewRay = normalize(vec3(vScreen.x*uAspect*uTanFov, vScreen.y*uTanFov, -1.0));
-        vec3 ray = uCameraRotation * viewRay;
+        // Inverse projection also supports asymmetric per-eye XR frusta.
+        // NDC z=0 avoids the ill-conditioned infinite far plane.
+        vec4 projected = uInverseProjection * vec4(vScreen,0.0,1.0);
+        vec3 viewRay = normalize(projected.xyz / projected.w);
+        vec3 ray = normalize(uCameraRotation * viewRay);
         vec3 toHole = -uOrigin / max(uDistance, 1e-12);
         float cosAngle = dot(ray,toHole);
         float aa = max(fwidth(cosAngle), 1e-7);
         float shadow = smoothstep(uShadowCos-aa, uShadowCos+aa, cosAngle);
         vec3 col = vec3(0.0);
-        float alpha = shadow;
+        float alpha = 0.0;
+        #if HOLE_LAYER == 0
+        alpha = shadow;
+        #endif
         float depthRs = max(1e-5, uDistance);
         vec3 ro = local(uOrigin), rd = local(ray);
         // Plane hit is analytical, so even a camera inside the disk's bounding
         // box cannot expose triangle edges or its rectangular support plane.
+        #if HOLE_LAYER == 1
         if (uDiskOn > 0.5 && abs(rd.z) > 1e-7) {
             float hit = -ro.z/rd.z;
             if (hit > 0.0) {
@@ -131,10 +140,12 @@ const analyticFragment = /* glsl */`
                     float I = uGain*pow(shift*f,4.0)*texture;
                     col += blackbody(uTmax*f*shift)*I*mask;
                     alpha = max(alpha,mask);
-                    depthRs = min(depthRs,hit);
+                    depthRs = hit;
                 }
             }
         }
+        #endif
+        #if HOLE_LAYER == 2
         // Filtered critical-curve halo. An illustrative light-transfer cue,
         // not a resolved sequence of n-th order photon rings.
         float angle = acos(clamp(cosAngle,-1.0,1.0));
@@ -146,6 +157,8 @@ const analyticFragment = /* glsl */`
         float ringI = (uDiskOn>.5 ? .16+uGain*.6 : .015)*asymmetry;
         col += blackbody(uDiskOn>.5 ? uTmax : 6500.0)*(ring+.18*halo)*ringI*(1.0-shadow);
         alpha = max(alpha, clamp((ring+.12*halo)*ringI,0.0,.95)*(1.0-shadow));
+        #endif
+        #if HOLE_LAYER == 3
         // Optional, analytically smooth pair of jets; no tessellated cones or
         // camera-facing stretched sprites. Dormant named holes have none.
         if (uJetLength > 0.0 && uJetI > 0.0) {
@@ -158,16 +171,24 @@ const analyticFragment = /* glsl */`
             jet *= 1.0-shadow*step(uDistance*cosAngle,t);
             col += vec3(.35,.6,1.0)*jet;
             alpha = max(alpha,min(.9,jet));
+            depthRs = max(1e-5,t);
         }
+        #endif
         if (alpha < .0005 && max(col.r,max(col.g,col.b)) < .0005) discard;
         // Straight-alpha composition retains emitted HDR light and a fully
         // opaque shadow. Blackness is a boundary of escaping rays, not a ball.
         gl_FragColor = vec4(col/max(alpha,.001),alpha);
-        float z = max(1e-12,depthRs*uRsUnits*(-viewRay.z));
-        // Fullscreen support is not clipped by projection: enforce the active
-        // tier per fragment, otherwise both depth passes paint the same light.
+        float z = max(1e-12,depthRs*uRsUnits*dot(uViewDepth,ray));
+        // Match the actual projection, including scaled XR rigs and its active
+        // depth tier. Fullscreen support is never projection-clipped for us.
+        // Far fragments can round to exactly depth=1 in float32. Fence the
+        // tier in view units as well, before the rounded projection test.
         if (z < uNear || z > uFar) discard;
-        gl_FragDepthEXT = clamp(uFar/(uFar-uNear) - uFar*uNear/((uFar-uNear)*z),0.0,1.0);
+        float clipZ = -uDepthProjection.x*z+uDepthProjection.y;
+        float clipW = -uDepthProjection.z*z+uDepthProjection.w;
+        float depth = .5*(clipZ/clipW+1.0);
+        if (clipW <= 0.0 || depth < 0.0 || depth > 1.0) discard;
+        gl_FragDepthEXT = depth;
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
     }
@@ -175,23 +196,34 @@ const analyticFragment = /* glsl */`
 
 export function makeHoleOptics() {
     const uniforms = {
-        uOrigin:{value:new THREE.Vector3()}, uAxisX:{value:new THREE.Vector3(1,0,0)},
+        uOrigin:{value:new THREE.Vector3()}, uViewDepth:{value:new THREE.Vector3(0,0,-1)}, uDepthProjection:{value:new THREE.Vector4()}, uAxisX:{value:new THREE.Vector3(1,0,0)},
         uAxisY:{value:new THREE.Vector3(0,0,-1)}, uNormal:{value:new THREE.Vector3(0,1,0)},
-        uCameraRotation:{value:new THREE.Matrix3()}, uAspect:{value:1}, uTanFov:{value:1},
+        uCameraRotation:{value:new THREE.Matrix3()}, uInverseProjection:{value:new THREE.Matrix4()}, uAspect:{value:1}, uTanFov:{value:1},
         uShadowCos:{value:1}, uDistance:{value:100}, uNear:{value:.02}, uFar:{value:1e20}, uRsUnits:{value:1},
         uDiskOn:{value:0}, uRout:{value:20}, uTmax:{value:6500}, uGain:{value:0},
         uPhaseA:{value:0}, uPhaseB:{value:0}, uWA:{value:1}, uFrameOrbits:{value:0},
         uJetLength:{value:0}, uJetI:{value:0},
     };
-    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMaterial({
-        uniforms, vertexShader:'varying vec2 vScreen; void main(){ vScreen=position.xy; gl_Position=vec4(position.xy,0.0,1.0); }',
-        fragmentShader:analyticFragment, transparent:true, depthWrite:false, depthTest:true,
-    }));
-    shadow.name='analytic black-hole optics'; shadow.frustumCulled=false; shadow.renderOrder=8;
-    const center=new THREE.Vector3(), eye=new THREE.Vector3(), forward=new THREE.Vector3();
-    const o={shadow,ring:new THREE.Group(),disk:new THREE.Group(),jet:new THREE.Group(),rsUnits:1,parameters:null};
-    shadow.onBeforeRender=(_r,_s,camera)=>{
-        shadow.parent.getWorldPosition(center); camera.getWorldPosition(eye);
+    const makeLayer = layer => {
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMaterial({
+            uniforms, defines:{HOLE_LAYER:layer},
+            vertexShader:'varying vec2 vScreen; void main(){ vScreen=position.xy; gl_Position=vec4(position.xy,0.0,1.0); }',
+            fragmentShader:analyticFragment, transparent:true, depthWrite:false, depthTest:true,
+            blending:layer>=2 ? THREE.AdditiveBlending : THREE.NormalBlending,
+        }));
+        mesh.name=['analytic black-hole shadow','analytic accretion disk','analytic critical-curve glow','analytic polar jets'][layer];
+        mesh.frustumCulled=false; mesh.renderOrder=8;
+        // Keep an entire distant hole behind a nearer one. Equal renderOrder
+        // permits Three's back-to-front centre sort; equal-centre creation IDs
+        // preserve shadow -> disk -> ring -> jet within each hole.
+        mesh.userData.holeLayer=layer;
+        return mesh;
+    };
+    const shadow=makeLayer(0), disk=makeLayer(1), ring=makeLayer(2), jet=makeLayer(3);
+    const center=new THREE.Vector3(), eye=new THREE.Vector3(), forward=new THREE.Vector3(), rotation=new THREE.Matrix4();
+    const o={shadow,ring,disk,jet,rsUnits:1};
+    const prepare=(mesh,camera)=>{
+        mesh.parent.getWorldPosition(center); eye.setFromMatrixPosition(camera.matrixWorld);
         const orbit=camera.userData.preciseOrbit;
         if (orbit && orbit.worldPosition.equals(eye)) {
             // Keep target-centre subtraction separate from the small orbit
@@ -201,17 +233,25 @@ export function makeHoleOptics() {
         const d=uniforms.uOrigin.value.length();
         uniforms.uDistance.value=d;
         uniforms.uShadowCos.value=Math.cos(shadowAngularRadius(d));
-        uniforms.uCameraRotation.value.setFromMatrix4(camera.matrixWorld);
+        rotation.extractRotation(camera.matrixWorld);
+        uniforms.uCameraRotation.value.setFromMatrix4(rotation);
+        uniforms.uInverseProjection.value.copy(camera.projectionMatrixInverse);
+        const view=camera.matrixWorldInverse.elements, projection=camera.projectionMatrix.elements;
+        uniforms.uViewDepth.value.set(-view[2],-view[6],-view[10]);
+        uniforms.uDepthProjection.value.set(projection[10],projection[14],projection[11],projection[15]);
         uniforms.uAspect.value=camera.aspect;
-        uniforms.uTanFov.value=Math.tan(camera.fov*Math.PI/360);
+        uniforms.uTanFov.value=1/Math.abs(camera.projectionMatrix.elements[5]);
         uniforms.uNear.value=camera.near; uniforms.uFar.value=camera.far;
-        // Cull subpixel/off-screen optics in double precision. Distant search
-        // beacons are separate UI guides and never inflate the physical hole.
-        const extent=Math.max(SHADOW_RS,uniforms.uDiskOn.value > .5 ? 3*uniforms.uRout.value : 0,uniforms.uJetLength.value);
-        forward.set(0,0,-1).applyQuaternion(camera.quaternion);
+        // Each component has its own depth test and active-tier fence. A rear
+        // disk cannot cover a foreground planet using the hole centre's depth.
+        const layer=mesh.userData.holeLayer;
+        const enabled=layer===1 ? uniforms.uDiskOn.value>.5 : layer===3 ? uniforms.uJetLength.value>0 && uniforms.uJetI.value>0 : true;
+        const extent=layer===1 ? 3*uniforms.uRout.value : layer===3 ? uniforms.uJetLength.value : SHADOW_RS*1.5;
+        forward.set(0,0,-1).transformDirection(rotation);
         const z=-uniforms.uOrigin.value.dot(forward);
-        shadow.geometry.setDrawRange(0,d<extent*2 || (z>0 && extent/d/uniforms.uTanFov.value>1e-5) ? 6 : 0);
+        mesh.geometry.setDrawRange(0,enabled && (d<extent*2 || (z>0 && extent/d/uniforms.uTanFov.value>1e-5)) ? 6 : 0);
     };
+    for (const mesh of [shadow,disk,ring,jet]) mesh.onBeforeRender=(_r,_s,camera)=>prepare(mesh,camera);
     return o;
 }
 

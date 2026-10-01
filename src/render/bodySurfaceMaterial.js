@@ -122,7 +122,8 @@ export function requestBodySurfaceDetail(material, profile = material?.userData.
 const microDetail = /* glsl */`
     varying vec3 vBodySurface;
     uniform float uSurfacePhoto, uSurfaceTime, uSurfaceGas;
-    uniform float uSurfaceMapSaturation;
+    uniform float uSurfaceMapSaturation, uSurfacePhotoMean, uSurfacePhotoContrast;
+    uniform vec3 uSurfacePhotoPalette;
     uniform vec3 uSurfacePhotoTint;
     float bodyHash(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
     float bodyNoise(vec3 p) {
@@ -143,6 +144,9 @@ export function createBodySurfaceMaterial(bodyOrProfile, { map = null, hostLit =
         uSurfaceGas: { value: profile.relief === 0 ? 1 : 0 },
         uSurfaceMapSaturation: { value: profile.mapSaturation ?? 1 },
         uSurfacePhotoTint: { value: new THREE.Color(profile.photoTint ?? 0xffffff) },
+        uSurfacePhotoMean: { value: profile.photoMeanLuminance || 0 },
+        uSurfacePhotoContrast: { value: profile.photoContrast || 1 },
+        uSurfacePhotoPalette: { value: new THREE.Color(profile.photoPalette ?? 0xffffff) },
         uBodyHostDirection: { value: new THREE.Vector3(1, 0, 0) },
         uBodyHostColor: { value: new THREE.Color(1, 1, 1) },
     };
@@ -174,7 +178,17 @@ export function createBodySurfaceMaterial(bodyOrProfile, { map = null, hostLit =
             diffuseColor.rgb *= 1.0 + grain;
             if (uSurfacePhoto > 0.5) {
                 float luma = dot(diffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722));
-                diffuseColor.rgb = mix(vec3(luma), diffuseColor.rgb, uSurfaceMapSaturation) * uSurfacePhotoTint;
+                if (uSurfacePhotoMean > 0.0) {
+                    // The Neptune asset's mean luminance is 4.6x lower than
+                    // Uranus's artistic mosaic. Desaturation alone preserves
+                    // that false dark-blue appearance. Retain its spatial
+                    // structure as bounded relative contrast in a source-
+                    // informed blue-green reference palette instead.
+                    float relativeDetail = clamp(pow(max(luma, 0.0001) / uSurfacePhotoMean, uSurfacePhotoContrast), 0.65, 1.35);
+                    diffuseColor.rgb = uSurfacePhotoPalette * relativeDetail;
+                } else {
+                    diffuseColor.rgb = mix(vec3(luma), diffuseColor.rgb, uSurfaceMapSaturation) * uSurfacePhotoTint;
+                }
             }
         `);
         if (hostLit) {
@@ -196,7 +210,7 @@ export function createBodySurfaceMaterial(bodyOrProfile, { map = null, hostLit =
             `);
         }
     };
-    material.customProgramCacheKey = () => 'body-surface-v1-' + (hostLit ? 'host' : 'solar');
+    material.customProgramCacheKey = () => 'body-surface-v2-' + (hostLit ? 'host' : 'solar');
     return stabilizeBodyMaterial(material);
 }
 

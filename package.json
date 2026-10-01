@@ -68,7 +68,8 @@
     "smoke:hole-appearance": "node scripts/smoke-hole-appearance.mjs",
     "smoke:stellar-surfaces": "node scripts/smoke-stellar-surfaces.mjs",
     "verify:stellar-surfaces": "node scripts/verify-stellar-surfaces.mjs",
-    "smoke:body-surfaces": "node scripts/smoke-body-surfaces.mjs"
+    "smoke:body-surfaces": "node scripts/smoke-body-surfaces.mjs",
+    "smoke:hole-precision": "node scripts/smoke-hole-precision.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

@@ -116,10 +116,10 @@ export async function prepare(test) {
     if (test.suite === 'bodies') {
         const light = test.body.startsWith('unknown-') ? new THREE.Vector3(state.generated.hostStar.x * c.K, 0, 0) : b.sunPos;
         const outward = vec().subVectors(light, position).normalize().applyAxisAngle(new THREE.Vector3(0, 1, 0), .65);
-        s.cam.yaw = Math.atan2(outward.z, outward.x); s.cam.pitch = test.body === 'SATURN' ? .4 : .22;
+        s.cam.yaw = test.yaw ?? Math.atan2(outward.z, outward.x); s.cam.pitch = test.pitch ?? (test.body === 'SATURN' ? .4 : .22);
     } else { s.cam.yaw = .7; s.cam.pitch = test.pitch ?? .22; }
     s.cam.dist = radius * test.radii; s.cam.distTarget = null;
-    s.camera.fov = 48; s.camera.updateProjectionMatrix();
+    s.camera.fov = test.fov ?? 48; s.camera.updateProjectionMatrix();
     if (test.lookAway) {
         // Free camera preserves the same observer position, but looks toward
         // the escape-cone rim instead of directly into the hole.
@@ -187,4 +187,130 @@ export function capture() {
         pixels: { meanLuma: sum / (w * h), lumaStdDev: Math.sqrt(Math.max(0, sum2 / (w * h) - (sum / (w * h)) ** 2)),
             centerMeanLuma: centerSum / centerN, brightFraction: bright / (w * h), nonblackFraction: nonblack / (w * h), clippedFraction: clipped / (w * h) },
         glErrors: errors, shaderErrors: state.shaderErrors };
+}
+
+// Focused integration diagnostics use the same renderer and production optics,
+// with an otherwise empty scene so a pixel's expected occlusion is unambiguous.
+export async function holeIntegrationChecks() {
+    const { makeHoleOptics, updateHoleOptics } = await import('/src/holeOptics.js');
+    const renderer = s.renderer, gl = renderer.getContext();
+    const width = gl.drawingBufferWidth, height = gl.drawingBufferHeight;
+    const savedColor = renderer.getClearColor(new THREE.Color()), savedAlpha = renderer.getClearAlpha();
+    const savedAuto = renderer.autoClear, savedTarget = renderer.getRenderTarget();
+    const frames = [], checks = {}, samples = [];
+    const objects = [];
+    function hole(parent, rsUnits, position = new THREE.Vector3(), emitting = true) {
+        const group = new THREE.Group(); group.position.copy(position); parent.add(group);
+        const optics = makeHoleOptics(); group.add(optics.shadow, optics.disk, optics.ring, optics.jet);
+        const rsKm = rsUnits / c.K;
+        updateHoleOptics(optics, { rsKm, muKm3: rsKm * c.C_LIGHT * c.C_LIGHT / 2, t: 0, frameDt: 0,
+            camRelX: 0, camRelY: 8 * rsUnits, camRelZ: 8 * rsUnits, pxScale: height / (2 * Math.tan(48 * Math.PI / 360)),
+            axisX: 0, axisY: 1, axisZ: 0, diskOn: emitting, TmaxK: 6500, gain: 1.1, routOverRin: 20,
+            jetOn: false, jetLenKm: 0, jetI: 0 });
+        objects.push(group); return { group, optics };
+    }
+    function draw(scene, camera, tiered, name = null) {
+        renderer.setRenderTarget(null); renderer.autoClear = true;
+        scene.updateMatrixWorld(true); camera.updateMatrixWorld(true);
+        if (tiered) s.renderSceneTiered(renderer, scene, camera); else renderer.render(scene, camera);
+        gl.finish();
+        const bytes = new Uint8Array(width * height * 4); gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+        if (name) frames.push({ name, png: renderer.domElement.toDataURL('image/png') });
+        return bytes;
+    }
+    function center(bytes) {
+        const rgb = [0, 0, 0]; let n = 0;
+        for (let y = height / 2 - 2; y < height / 2 + 2; y++) for (let x = width / 2 - 2; x < width / 2 + 2; x++) {
+            const i = (y * width + x) * 4; for (let k = 0; k < 3; k++) rgb[k] += bytes[i + k]; n++;
+        }
+        return rgb.map(v => v / n);
+    }
+    function compare(a, b) {
+        let sum = 0, max = 0, changed = 0;
+        for (let i = 0; i < a.length; i++) if (i % 4 !== 3) { const e = Math.abs(a[i] - b[i]); sum += e; max = Math.max(max, e); if (e > 3) changed++; }
+        return { meanAbsolute: sum / (width * height * 3), max, overThreeFraction: changed / (width * height * 3) };
+    }
+    try {
+        renderer.setClearColor(0x111722, 1);
+        for (const [label, scale] of [['local', 1], ['cross-tier', s.TIER_SPLIT_UNITS / 13]]) {
+            const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(48, width / height, scale * .01, Math.max(scale * 100, s.TIER_SPLIT_UNITS * 2));
+            camera.position.set(0, 8 * scale, 8 * scale);
+            const diskPoint = new THREE.Vector3(0, 0, -6 * scale), ray = diskPoint.clone().sub(camera.position).normalize();
+            camera.lookAt(diskPoint);
+            const disk = hole(scene, scale);
+            const marker = new THREE.Mesh(new THREE.SphereGeometry(.35 * scale, 48, 32), new THREE.MeshBasicMaterial({ color: 0xff00ff }));
+            marker.position.copy(camera.position).addScaledVector(ray, 14 * scale); scene.add(marker); objects.push(marker);
+            disk.group.visible = false;
+            const markerOnly = draw(scene, camera, false), expected = center(markerOnly);
+            disk.group.visible = true; marker.visible = false;
+            const unoccluded = draw(scene, camera, false, `hole-depth-${label}-unoccluded`), diskPixel = center(unoccluded);
+            marker.visible = true;
+            const direct = draw(scene, camera, false, `hole-depth-${label}-occluded`), directPixel = center(direct);
+            const tiered = draw(scene, camera, true, `hole-depth-${label}-tiered`), tieredPixel = center(tiered);
+            const unoccludedDifference = Math.max(...expected.map((v, i) => Math.abs(v - diskPixel[i])));
+            const directError = Math.max(...expected.map((v, i) => Math.abs(v - directPixel[i])));
+            const tieredError = Math.max(...expected.map((v, i) => Math.abs(v - tieredPixel[i])));
+            const parity = compare(direct, tiered);
+            checks[`${label}: unoccluded disk actually contributes`] = unoccludedDifference > 30 && diskPixel.some(v => v > 10);
+            checks[`${label}: nearer magenta object survives rear disk`] = directError <= 3;
+            checks[`${label}: tiered rendering preserves foreground object`] = tieredError <= 3;
+            checks[`${label}: no double-painted layer across depth tiers`] = parity.meanAbsolute < 1 && parity.overThreeFraction < .01;
+            samples.push({ label, rsUnits: scale, eyeRs: [0, 8, 8], diskPointRs: [0, 0, -6], centerDistanceRs: Math.sqrt(128),
+                diskRayDistanceRs: Math.sqrt(260), occluderRayDistanceRs: 14, tierSplitRs: s.TIER_SPLIT_UNITS / scale,
+                expected, diskPixel, directPixel, tieredPixel, directError, tieredError, parity });
+            // The near hole's shadow must cover a farther hole's disk even
+            // though all shadows and all emitting disks are separate meshes.
+            marker.visible = false;
+            const nearHole = hole(scene, scale * .3, camera.position.clone().addScaledVector(ray, 6 * scale), false);
+            const overlapping = draw(scene, camera, true, `hole-depth-${label}-two-holes`), overlapPixel = center(overlapping);
+            checks[`${label}: near hole shadow occludes farther hole emission`] = Math.max(...overlapPixel) <= 3;
+            samples[samples.length - 1].overlapPixel = overlapPixel;
+            nearHole.group.visible = false;
+        }
+
+        // Quantify actual rasterized edge continuity, not mesh vertex counts.
+        // The equivalent 48x32 sphere is the former named-hole support geometry
+        // at the same projected shadow size, not a claimed physical baseline.
+        const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(48, width / height, .01, 100);
+        camera.position.set(0, 0, 8); camera.lookAt(0, 0, 0);
+        const analytic = hole(scene, 1, new THREE.Vector3(), false);
+        analytic.optics.disk.visible = analytic.optics.ring.visible = analytic.optics.jet.visible = false;
+        renderer.setClearColor(0xffffff, 1);
+        const angle = Math.asin(Math.sqrt(27) / 2 / 8 * Math.sqrt(1 - 1 / 8));
+        const expectedRadius = Math.tan(angle) * height / (2 * Math.tan(48 * Math.PI / 360));
+        const analyticBytes = draw(scene, camera, false, 'hole-edge-analytic');
+        analytic.group.visible = false;
+        const coarse = new THREE.Mesh(new THREE.SphereGeometry(8 * Math.sin(angle), 48, 32), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+        scene.add(coarse); objects.push(coarse);
+        const coarseBytes = draw(scene, camera, false, 'hole-edge-legacy-geometry');
+        function edgeStats(bytes) {
+            function sample(x, y) {
+                x -= .5; y -= .5;
+                const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+                const at = (xx, yy) => bytes[(yy * width + xx) * 4];
+                return (at(ix, iy) * (1 - fx) + at(ix + 1, iy) * fx) * (1 - fy) + (at(ix, iy + 1) * (1 - fx) + at(ix + 1, iy + 1) * fx) * fy;
+            }
+            const errors = [];
+            for (let i = 0; i < 720; i++) {
+                const a = i / 720 * Math.PI * 2, dx = Math.cos(a), dy = Math.sin(a);
+                let lo = expectedRadius - 4, hi = expectedRadius + 4;
+                for (let k = 0; k < 18; k++) { const r = (lo + hi) / 2; if (sample(width / 2 + dx * r, height / 2 + dy * r) < 127.5) lo = r; else hi = r; }
+                errors.push((lo + hi) / 2 - expectedRadius);
+            }
+            const mean = errors.reduce((s, e) => s + e, 0) / errors.length;
+            return { rmsPixels: Math.sqrt(errors.reduce((s, e) => s + e * e, 0) / errors.length),
+                centeredRmsPixels: Math.sqrt(errors.reduce((s, e) => s + (e - mean) ** 2, 0) / errors.length),
+                meanPixels: mean, maxPixels: Math.max(...errors.map(Math.abs)), errors };
+        }
+        const analyticEdge = edgeStats(analyticBytes), coarseEdge = edgeStats(coarseBytes);
+        checks['analytic silhouette stays within subpixel circular error'] = analyticEdge.rmsPixels < .5 && analyticEdge.maxPixels < 1;
+        checks['analytic edge removes former tessellation error'] = analyticEdge.rmsPixels < coarseEdge.rmsPixels * .8;
+        samples.push({ label: 'projected-edge-continuity', expectedRadiusPixels: expectedRadius, analytic: analyticEdge, legacyGeometry: coarseEdge });
+        const error = gl.getError(); checks['integration diagnostics have no WebGL error'] = error === gl.NO_ERROR;
+        checks['integration diagnostics have no shader errors'] = state.shaderErrors.length === 0;
+        return { frames, checks, samples, glError: error, shaderErrors: state.shaderErrors };
+    } finally {
+        for (const root of objects) root.traverse(o => { o.geometry?.dispose(); o.material?.dispose(); });
+        renderer.setRenderTarget(savedTarget); renderer.setClearColor(savedColor, savedAlpha); renderer.autoClear = savedAuto;
+    }
 }

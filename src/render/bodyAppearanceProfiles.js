@@ -17,10 +17,14 @@ export const BODY_APPEARANCES = Object.freeze({
     JUPITER: profile('bands', 0xcbb28e, { craters: 0, relief: 0, contrast: .22, bandCount: 22, storm: true, provenance: observedMap }),
     SATURN: profile('bands', 0xdaca9f, { craters: 0, relief: 0, contrast: .10, bandCount: 30, provenance: observedMap }),
     URANUS: profile('bands', 0xa5cace, { craters: 0, relief: 0, contrast: .035, bandCount: 14, mapSaturation: .7, provenance: observedMap }),
-    NEPTUNE: profile('bands', 0x86b7c3, { craters: 0, relief: 0, contrast: .085, bandCount: 18, mapSaturation: .3, photoTint: 0xbde6e5, provenance: observedMap }),
+    // Normalize the historically contrast-stretched mosaic to a restrained
+    // reference palette. Mean is area-weighted linear Rec.709 luminance of the
+    // bundled 2k image; this is display calibration, not spectral photometry.
+    NEPTUNE: profile('bands', 0x9ec3ce, { craters: 0, relief: 0, contrast: .085, bandCount: 18,
+        mapSaturation: .3, photoPalette: 0x9ec3ce, photoMeanLuminance: .1228906993, photoContrast: .42, provenance: observedMap }),
     PHOBOS: profile('grooved', 0x837b70, { craters: 90, relief: .016, grooves: .4, basin: .24, contrast: .14 }),
     DEIMOS: profile('cratered', 0x9d9383, { craters: 35, relief: .005, contrast: .08 }),
-    IO: profile('volcanic', 0xe0cf79, { craters: 0, relief: .0012, contrast: .23 }),
+    IO: profile('volcanic', 0xe0cf79, { craters: 0, relief: .0012, contrast: .17 }),
     EUROPA: profile('fractured', 0xd9d1b6, { craters: 7, relief: .0007, fractureColor: 0x92684c, contrast: .10 }),
     GANYMEDE: profile('grooved', 0xa89e8b, { craters: 95, relief: .002, grooves: .85, terrainMix: true, contrast: .30 }),
     CALLISTO: profile('cratered', 0x786f60, { craters: 360, relief: .003, brightEjecta: true, contrast: .26 }),
