@@ -1,0 +1,82 @@
+name: Mobile navigation and graphics lifecycle
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'vite.config.js'
+      - '.github/workflows/mobile-stability.yml'
+permissions:
+  contents: read
+concurrency:
+  group: mobile-stability-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: node scripts/smoke-mobile-navigation.mjs
+      - run: npm run build
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - browser: chromium
+            variant: before
+          - browser: chromium
+            variant: after
+          - browser: webkit
+            variant: after
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Preserve the exact comparison inputs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          printf '%s\n' "$BASE_SHA" > evidence/sources/base-sha.txt
+          cp package-lock.json evidence/sources/
+          if [ "$VARIANT" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/mobile-base" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/mobile-base/node_modules"
+          fi
+      - name: Touch controls, zoom stress and actual WebGL restoration
+        env:
+          BROWSER: ${{ matrix.browser }}
+          VARIANT: ${{ matrix.variant }}
+          ARTEMIS_BUILD_ID: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ROOT="$GITHUB_WORKSPACE"
+          export BASELINE=0
+          if [ "$VARIANT" = before ]; then ROOT="$RUNNER_TEMP/mobile-base"; export BASELINE=1; fi
+          node scripts/verify-mobile-stability.mjs "$ROOT" evidence/mobile
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-${{ matrix.browser }}-${{ matrix.variant }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

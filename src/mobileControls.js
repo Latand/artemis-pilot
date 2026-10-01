@@ -1,3 +1,4 @@
+import { onInputCancel } from "./mobile/renderSession.js";
 import { PL, warpLabel, WARP_MAX } from "./constants.js";
 import { MOONS } from "./moons.js";
 import { G, keys } from "./state.js";
@@ -47,21 +48,22 @@ const holdButtons = [
 function bindHold(id, code) {
     const el = $(id);
     if (!el) return;
-    const down = e => {
-        e.preventDefault(); e.stopPropagation();
-        try { el.setPointerCapture(e.pointerId); } catch (err) { }
-        keys.add(code);
-        el.classList.add("active");
-    };
+    let owner = null;
     const up = e => {
-        e.preventDefault();
-        keys.delete(code);
-        el.classList.remove("active");
+        if (e?.pointerId !== undefined && e.pointerId !== owner) return;
+        const old = owner; owner = null;
+        keys.delete(code); el.classList.remove("active");
+        if (old !== null) try { el.releasePointerCapture(old); } catch { /* released */ }
     };
-    el.addEventListener("pointerdown", down);
-    el.addEventListener("pointerup", up);
-    el.addEventListener("pointercancel", up);
-    el.addEventListener("lostpointercapture", () => { keys.delete(code); el.classList.remove("active"); });
+    el.addEventListener("pointerdown", e => {
+        e.preventDefault(); e.stopPropagation();
+        if (owner !== null) return;
+        owner = e.pointerId;
+        try { el.setPointerCapture(owner); } catch { /* cancelled */ }
+        keys.add(code); el.classList.add("active");
+    });
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) el.addEventListener(type, up);
+    onInputCancel(() => up());
 }
 
 function bindTap(id, fn) {
@@ -75,7 +77,7 @@ function bindTap(id, fn) {
 function initThrottle() {
     const track = $("mThrTrack"), knob = $("mThrKnob"), fill = $("mThrFill"), cap = $("mThrCap");
     if (!track || !knob) return;
-    let dragging = false, half = 1;
+    let dragging = false, pointerId = null, half = 1;
     const reset = () => {
         keys.delete("KeyW"); keys.delete("KeyS");
         knob.style.top = "50%";              // CSS transform keeps it horizontally centered
@@ -114,18 +116,25 @@ function initThrottle() {
     };
     knob.addEventListener("pointerdown", e => {
         e.preventDefault(); e.stopPropagation();
-        dragging = true;
+        if (dragging) return;
+        dragging = true; pointerId = e.pointerId;
         try { knob.setPointerCapture(e.pointerId); } catch (err) { }
         apply(e.clientY);
     });
     track.addEventListener("pointerdown", e => {
         e.preventDefault(); e.stopPropagation();
-        dragging = true;
+        if (dragging) return;
+        dragging = true; pointerId = e.pointerId;
         try { knob.setPointerCapture(e.pointerId); } catch (err) { }
         apply(e.clientY);
     });
-    const move = e => { if (dragging) { e.preventDefault(); apply(e.clientY); } };
-    const end = e => { if (!dragging) return; dragging = false; reset(); };
+    const move = e => { if (dragging && e.pointerId === pointerId) { e.preventDefault(); apply(e.clientY); } };
+    const end = e => {
+        if (!dragging || (e?.pointerId !== undefined && e.pointerId !== pointerId)) return;
+        const old = pointerId; dragging = false; pointerId = null; reset();
+        try { knob.releasePointerCapture(old); } catch { /* already ended */ }
+    };
+    onInputCancel(() => end());
     knob.addEventListener("pointermove", move);
     knob.addEventListener("pointerup", end);
     knob.addEventListener("pointercancel", end);

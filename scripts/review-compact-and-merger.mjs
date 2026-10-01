@@ -20,7 +20,7 @@ try{
  const context=await browser.newContext({viewport:{width:suite==='mobile'?390:800,height:suite==='mobile'?844:500},deviceScaleFactor:1,hasTouch:suite==='mobile',isMobile:suite==='mobile'});
  await context.addInitScript(()=>{Date.now=()=>Date.UTC(2026,8,13,12);localStorage.setItem('ap_introSeen','1');localStorage.setItem('ap_intro_seen','1');});
  const page=await context.newPage();page.setDefaultTimeout(180000);
- page.on('pageerror',e=>report.errors.push(e.message));
+ page.on('pageerror',e=>{const text=e.stack||e.message;report.errors.push(text);console.error(text);});
  page.on('console',m=>{if(m.type()==='error'&&/Shader|WebGL|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&tier1=0&galadapt=0&focus=earth&dist=25&river=0&lens=0`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__reviewFrame);
@@ -51,19 +51,19 @@ try{
   }
   await page.setViewportSize({width:390,height:844});await page.waitForTimeout(100);await frames();
   if(!baseline){
-   await page.locator('#explorePanelToggle').click();await page.locator('#exploreInfo>summary').click();await capture('compact-details');
+   await page.locator('#explorePanelToggle').click();if(!(await page.locator('#exploreInfo').evaluate(e=>e.open)))await page.locator('#exploreInfo>summary').click();await capture('compact-details');
    check(await page.locator('#exploreFacts').isVisible(),'Object facts remain accessible');
    await page.keyboard.press('Escape');check(await page.locator('#explorePanelToggle').evaluate(e=>e===document.activeElement),'Escape restores details trigger focus');
    await page.locator('#tdMore').click();await capture('compact-time-settings');
    await page.locator('#tdSpeed').selectOption('3600');check(await page.evaluate(()=>Math.abs(__G.warp)===3600),'Time selector controls existing simulation clock');
    await page.locator('#tdMore').click();
    const paused=await page.evaluate(()=>__G.paused);await page.locator('#tdPause').click();check(await page.evaluate(()=>__G.paused)!==paused,'Pause remains directly usable');await page.locator('#tdPause').click();
-   await page.locator('#exploreMoveToggle').click();await capture('compact-camera-controls');
+   const touchV2=await page.locator('#touchBar').count();if(touchV2)await page.locator('#touchMenuToggle').click();await page.locator('#exploreMoveToggle').click();await capture('compact-camera-controls');
    const before=await page.evaluate(()=>({tgt:__cam.tgt.toArray(),ship:[__G.x,__G.y,__G.z]}));
-   const move=page.locator('[data-camera-move=left]'),r=await move.boundingBox();await page.mouse.move(r.x+r.width/2,r.y+r.height/2);await page.mouse.down();await frames(2);await page.mouse.up();
+   const move=page.locator(touchV2?'#touchStick':'[data-camera-move=left]'),r=await move.boundingBox();await page.mouse.move(r.x+r.width*(touchV2?.15:.5),r.y+r.height/2);await page.mouse.down();await page.waitForTimeout(50);await frames(2);await page.mouse.up();
    const after=await page.evaluate(()=>({tgt:__cam.tgt.toArray(),ship:[__G.x,__G.y,__G.z]}));
    check(JSON.stringify(before.tgt)!==JSON.stringify(after.tgt),'Compact movement changes camera target');check(JSON.stringify(before.ship)===JSON.stringify(after.ship),'Compact movement does not move the ship');
-   await page.locator('#exploreMoveToggle').click();
+   if(touchV2)await page.locator('#touchMenuToggle').click();await page.locator('#exploreMoveToggle').click();
    // A real canvas pinch, not events accidentally delivered to a label or
    // an open overlay. Record native pointer delivery for reproducibility.
    const gesture=await page.evaluate(()=>{
@@ -96,8 +96,8 @@ try{
     report.gesture={...gesture,end:await page.evaluate(()=>__cam.dist),events:await page.evaluate(()=>__pinchTrace)};
     await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
    }
-   await page.locator('#exploreSearch').click();await capture('compact-search');await page.locator('#navClose').click();
-   await page.locator('#exploreEvents').click();await capture('compact-events');await page.locator('#evClose').click();
+   await page.locator(touchV2?'#touchSearch':'#exploreSearch').click();await capture('compact-search');await page.locator('#navClose').click();
+   if(touchV2)await page.locator('#touchMenuToggle').click();await page.locator(touchV2?'#touchEvents':'#exploreEvents').click();await capture('compact-events');await page.locator('#evClose').click();
   }
  }else{
   await page.evaluate(async()=>{

@@ -22,9 +22,10 @@ const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',
             return code.replace('DRAFT_INSIDE_SCALE = 0.5','DRAFT_INSIDE_SCALE = 1.0');
         }
         if(['integration','step035','step045'].includes(mode)){
-            assert(code.includes('draft ? 0.055 : 0.03'),'Integration ablation seam changed');
+            const seam='const DRAFT_STEP_K = 0.04, SETTLED_STEP_K = 0.03;';
+            assert(code.includes(seam),'Integration ablation seam changed');
             const step=mode==='step035'? '0.035':mode==='step045'?'0.045':'0.03';
-            return code.replace('draft ? 0.055 : 0.03',`draft ? ${step} : 0.03`);
+            return code.replace(seam,`const DRAFT_STEP_K = ${step}, SETTLED_STEP_K = 0.03;`);
         }
     }
 }]});
@@ -32,6 +33,16 @@ await server.listen();
 const browser=await chromium.launch({executablePath:process.env.PLAYWRIGHT_CHROMIUM||undefined,args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try {
     const page=await browser.newPage({viewport:{width:480,height:300},deviceScaleFactor:1});page.setDefaultTimeout(120000);
+    // This probe is about galaxy integration, not mobile quality policy.
+    // Apply the same desktop policy to baseline and PR worktrees.
+    await page.addInitScript(() => {
+        const real=window.matchMedia.bind(window);
+        window.matchMedia=query=>{
+            const m=real(query);
+            if(!/(max-width\s*:\s*760px|pointer\s*:\s*coarse|hover\s*:\s*none)/.test(query)) return m;
+            return new Proxy(m,{get(t,k){if(k==='matches')return false;const v=t[k];return typeof v==='function'?v.bind(t):v;}});
+        };
+    });
     page.on('pageerror',e=>report.errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&!m.text().includes('favicon'))report.errors.push(m.text())});
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__motion_probe__?dpr=1&galadapt=0&galexposure=.15${mode==='reference'?'&galres=1':''}`);
     await page.evaluate(async()=>{

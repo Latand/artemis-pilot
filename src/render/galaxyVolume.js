@@ -5,6 +5,9 @@
 // translated views are integrated afresh, never reprojected at a fake depth.
 
 import * as THREE from "three";
+import { AsyncPixelRead } from "./asyncPixelRead.js";
+import { boundedTargetSize } from "../mobile/renderPolicy.js";
+import { currentMobileProfile, interactionSettled, onGraphicsReset } from "../mobile/renderSession.js";
 import { K } from "../constants.js";
 import { W2G, worldKmToGalInto, getSunGalAnchor } from "../universe/coords.js";
 import { GALAXY_MODEL_GLSL, galaxyModelUniformValues, patternAngles, MW, EXTINCTION_RGB, mwSample } from "../universe/galaxyModel.js";
@@ -192,13 +195,14 @@ function linearRgbHii() {
 // The median target changes smoothly with altitude, never camera distance
 // to a foreground body. main.js applies this cap to the shared exposure.
 const METER_TARGET = 1.0, METER_PCT = 0.99, METER_MID = 0.05, METER_MID_IN = 0.12, METER_ALT_PC = [300, 800], METER_TAU = 0.5;
+const asyncMeter = new AsyncPixelRead();
 const meter = { rt: null, mat: null, scene: null, buf: null, lum: null, pending: false, target: 1, cap: 1, t: 0, fresh: true };
 const DRAFT_BUDGET_PX = 0.33e6, DRAFT_INSIDE_SCALE = 0.5, REFINE_ROWS_PX = 0.3e6, REFINE_FADE_MS = 300;
 const FRAME_SLOW_MS = 30, FRAME_FAST_MS = 18;
 const ADAPT = q.get("galadapt") !== "0";
 const budget = { draft: 1, refine: 1, t: 0 };
 function adaptBudget(key, now, lo, hi) {
-    if (!ADAPT) return;
+    if (!ADAPT || renderQuality.mobile) return;
     const dt = budget.t ? now - budget.t : 16;
     if (dt > FRAME_SLOW_MS) budget[key] = Math.max(lo, budget[key] * Math.min(0.75, Math.max(0.1, FRAME_SLOW_MS / dt)));
     else if (dt < FRAME_FAST_MS) budget[key] = Math.min(hi, budget[key] * 1.1);
@@ -402,13 +406,18 @@ function ensureTargets(renderer) {
         renderer.capabilities.maxTextureSize / Math.max(size.x, size.y, 1));
     const full = Math.min(cap, RES_FORCED || (renderQuality.mobile ? 0.5 : 1));
     const sc = Math.min(full, RES_FORCED || state.scale);
-    const w = Math.max(64, Math.round(size.x * full)), h = Math.max(40, Math.round(size.y * full));
-    const wd = Math.max(64, Math.round(size.x * sc)), hd = Math.max(40, Math.round(size.y * sc));
+    let w = Math.max(64, Math.round(size.x * full)), h = Math.max(40, Math.round(size.y * full));
+    let wd = Math.max(64, Math.round(size.x * sc)), hd = Math.max(40, Math.round(size.y * sc));
+    if (renderQuality.mobile) {
+        const profile = currentMobileProfile();
+        [w, h] = boundedTargetSize(size.x, size.y, profile.fullPixels, full);
+        [wd, hd] = boundedTargetSize(size.x, size.y, profile.draftPixels, full);
+    }
     const next = [size.x, size.y, w, h, wd, hd];
     if (targetSizeChanged(state.targetSize, next)) {
         state.targetSize = next; state.dirty = true; state.lastDrawn = null;
         state.refineRow = 0; state.mix = 0; state.history = null; state.historySaved = false;
-        meter.pending = false; state.invalidations++;
+        asyncMeter.dispose(); meter.pending = false; state.invalidations++;
     }
     state.rtFull = sizeTarget(state.rtFull, w, h, 'galaxyVolume');
     state.rtDraft = sizeTarget(state.rtDraft, wd, hd, 'galaxyVolumeDraft');
@@ -574,8 +583,10 @@ export function galaxyVolumeMeter() {
     return { peak: anchor.peak * state.opacity, corePx: anchor.corePx, cover: anchor.cover, fresh, live, opacity: live ? state.opacity : 0 };
 }
 function meterRead(renderer) {
+    if (renderQuality.mobile) {
+        if (!asyncMeter.poll(meter.buf)) { meter.pending = !!asyncMeter.sync; return; }
+    } else renderer.readRenderTargetPixels(meter.rt, 0, 0, METER_W, METER_H, meter.buf);
     meter.pending = false;
-    renderer.readRenderTargetPixels(meter.rt, 0, 0, METER_W, METER_H, meter.buf);
     const n = METER_W * METER_H, b = meter.buf, lum = meter.lum;
     for (let i = 0; i < n; i++) lum[i] = Math.pow(2, (b[i * 4] + b[i * 4 + 1] / 255) * 40 / 255 - 24);
     lum.sort();
@@ -589,11 +600,12 @@ function meterRead(renderer) {
     meter.target = target; meter.peak = peak; meter.mid = mid;
 }
 function meterPool(renderer, rt) {
+    if (renderQuality.mobile && asyncMeter.sync) return;
     meter.mat.uniforms.uSrc.value = rt.texture;
     renderer.setRenderTarget(meter.rt);
     renderer.autoClear = true;
     renderer.render(meter.scene, state.orthoCam);
-    meter.pending = true;
+    meter.pending = renderQuality.mobile ? asyncMeter.enqueue(renderer.getContext(), METER_W, METER_H) : true;
 }
 export function galaxyVolumeExposureCap() {
     return state.enabled && state.ready && state.maps && state.opacity > 0.001 ? meter.cap : 1;
@@ -652,13 +664,14 @@ export function renderGalaxyVolume(renderer, camera = state.camera) {
             meterPool(renderer, RES_FORCED ? full : state.rtDraft);
             state.dirty = false; state.historySaved = false;
             state.lastDrawn = state.rtDraft;
-        } else if (state.refineRow < full.height) {
+        } else if (state.refineRow < full.height && (!renderQuality.mobile || interactionSettled())) {
             if (state.refineRow > 0) adaptBudget("refine", now, 0.02, 4);
-            const n = Math.max(2, Math.floor(REFINE_ROWS_PX * budget.refine * (state.inside ? 0.5 : 1) / full.width));
+            const pixels = renderQuality.mobile ? currentMobileProfile().refinePixels : REFINE_ROWS_PX * budget.refine * (state.inside ? 0.5 : 1);
+            const n = Math.max(1, Math.floor(pixels / full.width));
             rayRender(renderer, full, [state.refineRow, Math.min(n, full.height - state.refineRow)]);
             state.refineRow += n;
             if (state.refineRow >= full.height) state.refineT = now;
-        } else if (state.mix < 1) {
+        } else if (state.refineRow >= full.height && state.mix < 1) {
             const t = Math.min(1, (now - state.refineT) / REFINE_FADE_MS);
             state.mix = t * t * (3 - 2 * t);
         }
@@ -696,6 +709,7 @@ export function galaxyVolumeStats() {
             (state.rtFull ? state.rtFull.width * state.rtFull.height * 8 : 0) +
             (state.rtHistory ? Math.ceil(state.rtHistory.width * state.rtHistory.height * 8 * 4 / 3) : 0),
         anchor: { peak: anchor.peak, cover: anchor.cover, fresh: anchor.fresh },
+        asyncMeter: { reads: asyncMeter.reads, polls: asyncMeter.polls, pending: !!asyncMeter.sync, bytes: asyncMeter.bytes },
         budget: { draft: budget.draft, refine: budget.refine }, exposureCap: meter.cap, meterPeak: meter.peak, meterMid: meter.mid,
     };
 }
@@ -707,3 +721,15 @@ export function setGalaxyVolumeEnabled(on) {
 export function galaxyVolumeEnabled() {
     return state.enabled;
 }
+
+// Three.js restores GPU objects, not the radiance that used to be in render
+// targets. Keep CPU-side model/maps, but discard every cached image and PBO.
+onGraphicsReset(() => {
+    asyncMeter.dispose();
+    for (const key of ['rtFull', 'rtDraft', 'rtHistory']) { state[key]?.dispose(); state[key] = null; }
+    state.targetSize = []; state.lastKey = []; state.lastDrawn = null;
+    state.history = null; state.historySaved = state.historyUsed = false;
+    state.refineRow = 0; state.mix = 0; state.dirty = true;
+    meter.pending = false; meter.fresh = true; meter.t = 0;
+    budget.t = 0; state.invalidations++;
+});
