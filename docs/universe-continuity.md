@@ -152,6 +152,21 @@ the band with its dust lanes from the Earth, the barred spiral from outside.
   differently bright one. The procedural resolved stars are placed in the
   same complexes and clusters, so what is seen from outside is where the
   stars are drawn from inside.
+- **Structure through time** (`universe/galaxyDynamics.js`, details and
+  evidence in [`galaxy-dynamics.md`](galaxy-dynamics.md)). The disk is not
+  a drawing turned at one rate. Gas, dust clouds, star-forming complexes and
+  the procedural stars orbit at the rotation curve's Omega(R) and shear; the
+  spiral arms are patterns they stream through. Arms come in transient,
+  recurrent generations (each peaks for ~250 Myr, opens while it grows,
+  winds up by about half the material shear as it fades, and hands over to
+  the next, which re-forms at the bar ends), so the arms change shape and
+  position without winding into strips or dissolving; generation 0 is the
+  measured present-day spiral at t = 0. Structure below the maps' texels is
+  re-seeded every 30 Myr material epoch, so no structure is sheared for more
+  than ~20 Myr (bounded phase mixing). The procedural stars belong to the
+  same epochs, move on their orbits and are shown only where the current
+  arms put them, so stars and diffuse light agree at every epoch. All of it
+  is a pure function of sim time: reverse time retraces it exactly.
 - **Resolution and cost.** While the view moves the integral is drawn as a
   draft: ~0.33 Mpx over the Galaxy's part of the screen from outside, a
   quarter of the screen's pixels from inside the disk, without the finest
@@ -275,12 +290,16 @@ with the smooth models.
   correspondingly compact. It is kept because the procedural stars and the
   diffuse light share that population.
 - The Milky Way's knots, clusters, HII bubbles, feathers and dust clouds
-  are statistical; only the arms (Reid et al. 2019), the bar, the Central
-  Molecular Zone's size and the smooth components are measured. The
-  structure maps co-rotate with the spiral pattern; the stars' own orbits
-  do not shear them. The dust clouds below the maps' texel dim the diffuse
-  light only: a resolved star behind one is extinguished by the smooth
-  model.
+  are statistical; only the present-day arms (Reid et al. 2019), the bar,
+  the Central Molecular Zone's size and the smooth components are measured.
+  Arms of other epochs are rotated, re-wound copies of the present-day
+  structure maps (galaxy-dynamics.md), not independent spirals: the knots
+  along them recur, at other places. Stars move on circular orbits (no
+  epicycles in the procedural field) and their arm crowding is represented
+  statistically (thinning), not by the orbits themselves. The bar is a
+  rigid, eternal pattern. The dust clouds below the maps' texel dim the
+  diffuse light only: a resolved star behind one is extinguished by the
+  smooth model.
 - Within a few thousand light-years of the disk (camera about 1-3 kpc
   from the structure it looks at) the volume is softer than photographs:
   the finest dust octave and the clusters are statistical fields a few
@@ -308,6 +327,13 @@ with the smooth models.
 - `smoke:merger`, `smoke:merger-tides` - orbit timeline, disk orientations,
   equilibrium before the encounter, outside-in stripping, bound remnant,
   light bookkeeping, determinism.
+- `smoke:galaxy-dynamics` - time-dependent structure: exact present day,
+  continuous hand-overs, determinism and reverse time, the same luminosity
+  and azimuthal profile at every epoch, arms at every epoch that never wind
+  into strips, bounded shear, and the procedural stars' arm thinning.
+- `node scripts/capture-galaxy-epochs.mjs <root> <dir>` - the isolated
+  volume at a list of epochs, inertial and co-rotating, plus a dense face-on
+  time series (before/after evidence of a structural change).
 - `smoke:galaxy-model`, `smoke:brightness`, `smoke:cosmic-era`,
   `smoke:deep-time` - the Milky Way model (its M_V, local dust columns, the
   arms' and lanes' geometry in the structure maps), photometry and deep
