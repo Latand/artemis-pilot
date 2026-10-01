@@ -4,7 +4,7 @@
 // Also owns the first-run title overlay (dismissal persisted in storage).
 import { SEC_YEAR, AU_KM, PC_KM, R_EARTH, MU_E, PL, STARS, K, COSMIC_ZOOMS } from "./constants.js";
 import { G } from "./state.js";
-import { cam } from "./scene.js";
+import { cam, renderQuality } from "./scene.js";
 import { eph } from "./ephemeris.js";
 import { addBlackHole, clearBlackHoles } from "./blackholes.js";
 import { clearTrail, pushTrail, computePrediction } from "./trails.js";
@@ -203,10 +203,13 @@ function syncModalClass() {
 }
 
 function requestAppFullscreen() {
+    // Phone browsers own the viewport; entry should not trigger a fullscreen
+    // resize or depend on partial Safari support for this API.
+    if (renderQuality.mobile) return;
     if (document.fullscreenElement) return;
     const root = $("root") || document.documentElement;
     if (!root.requestFullscreen) return;
-    root.requestFullscreen({ navigationUI: "hide" }).catch(() => { });
+    try { Promise.resolve(root.requestFullscreen({ navigationUI: "hide" })).catch(() => { }); } catch { }
 }
 
 function dismissIntro() {

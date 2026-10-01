@@ -505,9 +505,6 @@ async function warmRendererStartup() {
             fastBloom: !!bloomPass.isFastBloomPass,
             lensing: !!lensingPass.enabled,
         });
-        const finishT0 = PERF.enabled ? performance.now() : 0;
-        renderer.getContext?.().finish?.();
-        if (PERF.enabled) markPerf("startup.gpuFinish", performance.now() - finishT0);
     } catch (err) {
         console.warn("renderer warmup skipped", err);
     }
@@ -518,7 +515,9 @@ async function warmRendererStartup() {
         compile: !skipSceneCompile,
     });
 }
-await warmRendererStartup();
+// Mobile shader compilation happens on demand. Warming the entire universe
+// before entry competes with touch handling and can stall Safari's GPU queue.
+if (!renderQuality.mobile) await warmRendererStartup();
 
 let cockpitWarmupStarted = false;
 let cockpitWarmed = false;
@@ -1638,7 +1637,18 @@ function noteLandedDiscovery(oi) {
     noteBody(G.landed.body, G.landed.i ?? 0, oi.body || String(G.landed.body).toUpperCase());
 }
 
+let lastMobileFrame = -Infinity;
 function frame() {
+    // Keep the welcome screen and background tabs responsive without advancing
+    // physics or submitting GPU work. Drain the clock so resuming cannot jump.
+    if (document.hidden || document.getElementById("intro").style.display !== "none") {
+        clock.getDelta();
+        lastMobileFrame = -Infinity;
+        return;
+    }
+    const now = performance.now();
+    if (renderQuality.mobile && !VR.active && now - lastMobileFrame < 1000 / 30 - 1) return;
+    lastMobileFrame = now;
     const frameT0 = perfStart();
     const rawDtR = clock.getDelta();
     tickXrPerf(renderer, rawDtR * 1000);
@@ -2584,9 +2594,6 @@ function frame() {
 const firstFrameT0 = perfStart();
 frame();
 perfEnd("startup.firstFrame", firstFrameT0);
-const firstFrameFinishT0 = perfStart();
-renderer.getContext?.().finish?.();
-perfEnd("startup.firstFrameGpuFinish", firstFrameFinishT0);
 clock.start();
 window.__AP_READY = true;
 requestEarthNightTexture(renderQuality.mobile ? 3600 : 2400);
