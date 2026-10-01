@@ -175,8 +175,10 @@ const analyticFragment = /* glsl */`
         }
         #endif
         if (alpha < .0005 && max(col.r,max(col.g,col.b)) < .0005) discard;
-        // Straight-alpha composition retains emitted HDR light and a fully
-        // opaque shadow. Blackness is a boundary of escaping rays, not a ball.
+        // The shadow is opaque; the other layers represent emitted light.
+        // Disk extent is not an optical-depth model: a wide, cold TDE disk
+        // must not turn its nearly zero emission into an opaque black sheet.
+        // Straight alpha cancels the additive source-alpha factor for HDR.
         gl_FragColor = vec4(col/max(alpha,.001),alpha);
         float z = max(1e-12,depthRs*uRsUnits*dot(uViewDepth,ray));
         // Match the actual projection, including scaled XR rigs and its active
@@ -209,7 +211,7 @@ export function makeHoleOptics() {
             uniforms, defines:{HOLE_LAYER:layer},
             vertexShader:'varying vec2 vScreen; void main(){ vScreen=position.xy; gl_Position=vec4(position.xy,0.0,1.0); }',
             fragmentShader:analyticFragment, transparent:true, depthWrite:false, depthTest:true,
-            blending:layer>=2 ? THREE.AdditiveBlending : THREE.NormalBlending,
+            blending:layer>=1 ? THREE.AdditiveBlending : THREE.NormalBlending,
         }));
         mesh.name=['analytic black-hole shadow','analytic accretion disk','analytic critical-curve glow','analytic polar jets'][layer];
         mesh.frustumCulled=false; mesh.renderOrder=8;
