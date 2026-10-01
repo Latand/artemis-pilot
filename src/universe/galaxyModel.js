@@ -566,10 +566,11 @@ vec3 gdYoungField(vec3 q, vec3 dir, float wT, float wL, float f1, float f2, vec2
 // clusters: (young, HII shells).
 // A level fades out where the pixel no longer resolves it or where the ray
 // step outgrows its cells.
-vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL, vec2 cs) {
+// fineK scales the finest level (the clusters) of a fading epoch.
+vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL, vec2 cs, float fineK) {
     if (wT > 120.0 || wL > 110.0 || abs(q.z) > 5.0 * ${MW.hzYoung.toFixed(1)} || uMatLod <= 0.0) return vec2(1.0);
     float f1 = uMatLod * (1.0 - gmSmooth(70.0, 120.0, wT)) * (1.0 - gmSmooth(70.0, 110.0, wL));
-    float f2 = uMatLod * uFine * (1.0 - gmSmooth(25.0, 40.0, wT)) * (1.0 - gmSmooth(20.0, 35.0, wL));
+    float f2 = fineK * uMatLod * uFine * (1.0 - gmSmooth(25.0, 40.0, wT)) * (1.0 - gmSmooth(20.0, 35.0, wL));
     vec3 cf = gdYoungField(q, dir, wT, wL, f1, f2, cs);
     return vec2(0.3 + 0.35 * cf.x + 0.35 * cf.y, cf.z);
 }
@@ -594,7 +595,7 @@ vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL, vec2 cs) {
 // dense, clumpy molecular clouds lie in the arms and lanes, the interarm
 // medium is smoother (gmSample sets it from the maps' dust).
 float gdKg(float t) { return t * (-0.001050 + t * (0.500426 + t * (-0.005287 - 0.005212 * t))); }
-float gdDust(vec3 q, float wide, float amp, vec3 ns) {
+float gdDust(vec3 q, float wide, float amp, vec3 ns, float fineK) {
     float sa = 0.35 * log(max(length(q.xy), 200.0) / ${MW.R0.toFixed(1)});
     q.xy = vec2(cos(sa) * q.x - sin(sa) * q.y, sin(sa) * q.x + cos(sa) * q.y);
     float n = 0.0, dense = 1.0;
@@ -602,7 +603,7 @@ float gdDust(vec3 q, float wide, float amp, vec3 ns) {
         float lam = 90.0 * pow(0.4, float(o));
         // on while a wavelength spans >= ~3 pixels (wide = half a pixel),
         // gone below ~1.5: finer octaves would only speckle
-        float lod = (o < 2 ? 1.0 : uFine) * (1.0 - gmSmooth(0.15 * lam, 0.3 * lam, wide));
+        float lod = (o < 2 ? 1.0 : uFine * fineK) * (1.0 - gmSmooth(0.15 * lam, 0.3 * lam, wide));
         if (lod <= 0.0) break;
         float ang = 2.39996 * float(o + 1);
         float c = cos(ang), sn = sin(ang);
@@ -624,18 +625,18 @@ float gdDust(vec3 q, float wide, float amp, vec3 ns) {
 // avoids a sample-count boundary when FOV, DPR or integration scale changes.
 // No new light, cloud seeds, frame noise or screen-space sharpening is added.
 uniform float uDustQuadrature;
-float gdDustSegment(vec3 q, vec3 dir, float wT, float wL, float amp, vec3 ns) {
+float gdDustSegment(vec3 q, vec3 dir, float wT, float wL, float amp, vec3 ns, float fineK) {
     float longitudinal = max(2.0 * uWideK, 0.35 * length(dir.xy)) * wL;
     float wide = max(wT, longitudinal);
-    float blend = uDustQuadrature * gmSmooth(0.8, 1.6, wide)
+    float blend = fineK * uDustQuadrature * gmSmooth(0.8, 1.6, wide)
         * (1.0 - gmSmooth(0.6, 1.0, wT / max(wide, 1e-6)));
-    if (blend <= 0.0) return gdDust(q, wide, amp, ns);
+    if (blend <= 0.0) return gdDust(q, wide, amp, ns, fineK);
     float subWide = max(wT, longitudinal / 3.0);
     vec3 offset = dir * (2.0 * wL / 3.0);
-    float fine = (gdDust(q - offset, subWide, amp, ns)
-        + gdDust(q, subWide, amp, ns) + gdDust(q + offset, subWide, amp, ns)) / 3.0;
+    float fine = (gdDust(q - offset, subWide, amp, ns, fineK)
+        + gdDust(q, subWide, amp, ns, fineK) + gdDust(q + offset, subWide, amp, ns, fineK)) / 3.0;
     if (blend >= 1.0) return fine;
-    return mix(gdDust(q, wide, amp, ns), fine, blend);
+    return mix(gdDust(q, wide, amp, ns, fineK), fine, blend);
 }
 // Structure maps at pattern-frame q (pc), filtered to the footprint (pc) the
 // sample stands for: (young, old, dust, hii), each normalized like
@@ -662,16 +663,20 @@ vec4 gmMap(vec2 q, float R, float footPc) {
     }
     return max(m, vec4(0.0)) / uMapNorm;
 }
-// The structure maps at galactocentric pxy: the weighted sum over the two
-// spiral generations alive (galaxyDynamics.js), each in its own winding
-// frame (old stars: w, the gas and young channels: wGas); om = dynOmega(R).
+// The structure maps at galactocentric pxy: the weighted sum over the
+// spiral generations alive (galaxyDynamics.js; uGenN of them), each in its
+// own winding frame (old stars: w, the gas and young channels: wGas); om =
+// dynOmega(R). A loop with a run-time bound, so the shader holds one copy
+// of the sampling code.
 vec4 gmMapGen(vec2 pxy, float R, float om, float footPc) {
     float wind = dynWind(om);
-    vec4 m = gmMap(dynRot(pxy, -(uGenA.x + wind * uGenA.y)), R, footPc);
-    if (uGenW.y <= 0.0) return m;
-    vec4 m1 = gmMap(dynRot(pxy, -(uGenA.z + wind * uGenA.w)), R, footPc);
-    vec4 w0 = vec4(uGenW.z, uGenW.x, uGenW.z, uGenW.z), w1 = vec4(uGenW.w, uGenW.y, uGenW.w, uGenW.w);
-    return w0 * m + w1 * m1;
+    vec4 m = vec4(0.0);
+    for (int k = 0; k < uGenN; k++) {
+        float a = k == 0 ? uGenA.x + wind * uGenA.y : uGenA.z + wind * uGenA.w;
+        vec4 w = k == 0 ? uGenW.zxzz : uGenW.wyww;
+        m += w * gmMap(dynRot(pxy, -a), R, footPc);
+    }
+    return m;
 }
 // Luminosity densities: x = young, y = old (thin+thick+halo), z = bar;
 // w = dust opacity (V, per pc); hii: HII line emission. footPc: the pixel
@@ -697,15 +702,22 @@ vec4 gmSample(vec3 p, vec3 dir, float footPc, float wT, float wL, out float hii,
         // the dust's clumpiness follows its density in the maps (arms and
         // lanes 2-5x the local mean, the interarm a fraction of it)
         float amp = uMatLod * (0.4 + 0.6 * gmSmooth(0.4, 2.5, mp.z));
-        float a0 = uEpA.x + om * uEpA.y;
-        vec3 q = vec3(dynRot(p.xy, -a0), p.z), dq = vec3(dynRot(dir.xy, -a0), dir.z);
-        vec2 yc = gdYoungClusters(q, dq, wT, wL, uEpCell.xy);
-        dustC = gdDustSegment(q, dq, wT, wL, amp, uEpNoise0);
-        if (uEpW.y > 0.0) {
-            float a1 = uEpA.z + om * uEpA.w;
-            q = vec3(dynRot(p.xy, -a1), p.z); dq = vec3(dynRot(dir.xy, -a1), dir.z);
-            yc = uEpW.x * yc + uEpW.y * gdYoungClusters(q, dq, wT, wL, uEpCell.zw);
-            dustC = uEpW.x * dustC + uEpW.y * gdDustSegment(q, dq, wT, wL, amp, uEpNoise1);
+        // the epochs alive (uEpN): one copy of the detail code, run-time
+        // loop. A fading epoch's finest levels (dust octaves below ~15 pc,
+        // clusters, the segment quadrature) follow its weight (each level
+        // keeps unit mean at any amplitude), so only the middle of a
+        // hand-over evaluates two full cascades.
+        vec2 yc = vec2(0.0);
+        dustC = 0.0;
+        for (int k = 0; k < uEpN; k++) {
+            float w = k == 0 ? uEpW.x : uEpW.y;
+            float fineK = gmSmooth(0.2, 0.5, w);
+            float a = k == 0 ? uEpA.x + om * uEpA.y : uEpA.z + om * uEpA.w;
+            float ca = cos(a), sa = sin(a);
+            mat2 back = mat2(ca, -sa, sa, ca);   // turns by -a
+            vec3 q = vec3(back * p.xy, p.z), dq = vec3(back * dir.xy, dir.z);
+            yc += w * gdYoungClusters(q, dq, wT, wL, k == 0 ? uEpCell.xy : uEpCell.zw, fineK);
+            dustC += w * gdDustSegment(q, dq, wT, wL, amp, k == 0 ? uEpNoise0 : uEpNoise1, fineK);
         }
         youngC = yc.x; hiiC = yc.y;
     }

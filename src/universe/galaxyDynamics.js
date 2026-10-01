@@ -141,7 +141,11 @@ export function generationState(tSec, out = { gens: [{}, {}] }) {
     const tMyr = (Number.isFinite(tSec) ? tSec : 0) / MYR_S;
     const P = SPIRAL.periodMyr;
     const u = tMyr / P, k0 = Math.floor(u), s = u - k0;
-    const sn = Math.sin(0.5 * Math.PI * s), w1 = sn * sn;
+    const sn = Math.sin(0.5 * Math.PI * s);
+    // a generation within ~1.6 Myr of its partner's peak (weight < 1e-4)
+    // is dropped: one generation to sample instead of two
+    let w1 = sn * sn;
+    if (w1 < GEN_W_MIN) w1 = 0; else if (w1 > 1 - GEN_W_MIN) w1 = 1;
     const pat = OMEGA_P * tMyr;
     for (let i = 0; i < 2; i++) {
         const k = k0 + i, g = out.gens[i] || (out.gens[i] = {});
@@ -156,6 +160,7 @@ export function generationState(tSec, out = { gens: [{}, {}] }) {
 export function gasWeight(w) {
     return smoothstep(0.5 - SPIRAL.gasHandover, 0.5 + SPIRAL.gasHandover, w);
 }
+const GEN_W_MIN = 1e-4;
 export function generationAngle(g, Rpc) {
     return g.base + windRadMyr(Rpc) * g.tau;
 }
@@ -237,8 +242,9 @@ export function materialDetailLod(dtMyrPerFrame) {
 
 // --- GLSL ---------------------------------------------------------------------
 // Uniforms (filled by dynamicsUniformValues):
-//   uGenA = (base0, tau0, base1, tau1), uGenW = (w0, w1, wGas0, wGas1)
-//   uEpA = (phi0, tau0, phi1, tau1), uEpW = (w0, w1)
+//   uGenA = (base0, tau0, base1, tau1), uGenW = (w0, w1, wGas0, wGas1),
+//   uGenN = generations with weight (slot 0 first)
+//   uEpA = (phi0, tau0, phi1, tau1), uEpW = (w0, w1), uEpN = epochs with weight
 //   uEpCell = (cellX0, cellY0, cellX1, cellY1), uEpNoise0 / uEpNoise1
 const V5 = vCirc(5), V25 = vCirc(25);
 // Functions only (no uniforms): circular rate, arms' winding rate, rotation.
@@ -255,13 +261,18 @@ vec2 dynRot(vec2 p, float a) { float c = cos(a), s = sin(a); return vec2(c * p.x
 export const DYNAMICS_GLSL = /* glsl */`
 uniform vec4 uGenA, uGenW, uEpA, uEpCell;
 uniform vec2 uEpW;
+uniform int uGenN, uEpN;
 uniform vec3 uEpNoise0, uEpNoise1;
 ${DYNAMICS_FN_GLSL}`;
 // GLSL constants are generated from vCirc assuming it is linear on 5-25 kpc.
 export const VCIRC_GLSL_KNOTS = Object.freeze({ v5: V5, v25: V25 });
 
 export function dynamicsUniformValues(tSec, gs = generationState(tSec), es = epochState(tSec), out = {}) {
-    const g0 = gs.gens[0], g1 = gs.gens[1], e0 = es.epochs[0], e1 = es.epochs[1];
+    let g0 = gs.gens[0], g1 = gs.gens[1];
+    if (!(g0.w > 0) && !(g0.wGas > 0)) { const g = g0; g0 = g1; g1 = g; }   // the generation alive first
+    const e0 = es.epochs[0], e1 = es.epochs[1];
+    out.uGenN = g1.w > 0 || g1.wGas > 0 ? 2 : 1;
+    out.uEpN = e1.w > 0 && e1.e !== e0.e ? 2 : 1;
     out.uGenA = [g0.base, g0.tau, g1.base, g1.tau];
     out.uGenW = [g0.w, g1.w, g0.wGas, g1.wGas];
     out.uEpA = [e0.phi, e0.tau, e1.phi, e1.tau];

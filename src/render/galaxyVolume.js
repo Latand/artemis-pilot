@@ -229,7 +229,7 @@ function dynamicsValues(u, out = []) {
         const v = u[k].value, tau = k === "uGenA" || k === "uEpA";
         for (let i = 0; i < v.length; i++) out.push(tau && i % 2 ? v[i] * TAU_KEY_RAD_PER_MYR : v[i]);
     }
-    out.push(u.uMatLod.value);
+    out.push(u.uMatLod.value, u.uGenN.value, u.uEpN.value);
     return out;
 }
 
@@ -488,6 +488,7 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
         const dst = u[k].value, src = _dyn[k];
         for (let i = 0; i < src.length; i++) dst[i] = src[i];
     }
+    u.uGenN.value = _dyn.uGenN; u.uEpN.value = _dyn.uEpN;
     u.uMatLod.value = materialDetailLod(Math.abs(frameSimSec) / MYR_S);
     u.uSfr.value = era ? era.blueFrac : 1;
     const kr = u.uKeepR.value;
