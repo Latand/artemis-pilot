@@ -31,7 +31,12 @@ try{
  check((await page.locator('.gravityContributors').innerText()).includes('Sun'),'Sun is identified as an Earth contributor');
  const force=await page.evaluate(async()=>{const {getLocalGravityInspection}=await import('/src/gravityInspection.js');const s=getLocalGravityInspection(__G.focus);const net=[0,0,0];for(const r of s.contributions)r.acceleration.forEach((v,i)=>net[i]+=v);return{sum:net,net:s.net};});
  check(force.sum.every((v,i)=>Math.abs(v-force.net[i])<1e-15),'Displayed source ledger sums to the actual model acceleration');
+ check(await page.evaluate(()=>document.querySelector('#gravityNetVector').parentElement===document.querySelector('#root')),'Scene arrow shares the UI stacking context and stays beneath panels');
+ check(await page.locator('.gravityDirection').isVisible(),'Net row retains a visible screen-projected direction cue');
  await capture('earth-local');
+ // At 25k km the world-XY Earth path is mostly off-screen. Capture it
+ // at a useful scene scale without changing the selected body or physics.
+ await page.evaluate(async()=>{const {cam}=await import('/src/scene.js');cam.dist=3000;cam.distTarget=null;});await frames(3);
  const prediction=await page.evaluate(async()=>{
   const {snapshotEphem}=await import('/src/ephemeris.js'),before=snapshotEphem();document.querySelector('.gravityPrediction').click();
   const {bodyCoastStatus}=await import('/src/trails.js');return{before,after:snapshotEphem(),status:{...bodyCoastStatus},predict:__G.predict};

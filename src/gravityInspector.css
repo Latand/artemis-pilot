@@ -8,6 +8,9 @@
 .gravityContributors { list-style:none;padding:0;margin:0; }
 .gravityContributors li { display:flex;justify-content:space-between;gap:8px;font-size:11px;line-height:1.5;padding:5px 0;border-bottom:1px solid #30343b; }
 .gravityValue { color:var(--explore-accent);white-space:nowrap; }
+.gravityNetRow { display:flex;align-items:center;justify-content:space-between;gap:8px; }
+.gravityDirection { flex:none;display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;font:24px var(--font-ui);color:#b8e7df; }
+.gravityDirection[hidden] { display:none; }
 .gravityNet { font-size:12px;line-height:1.4;color:#b8e7df;margin:10px 0; }
 .gravityModel,.gravityPathNote { color:var(--explore-muted);font-size:10px;line-height:1.5; }
 #explorePanel .gravityPrediction { min-height:44px;width:100%;padding:8px;border:1px solid var(--explore-line);border-radius:4px;background:#252a30;color:var(--explore-text);font-size:12px; }

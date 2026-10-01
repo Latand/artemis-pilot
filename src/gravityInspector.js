@@ -9,7 +9,8 @@ import './gravityInspector.css';
 
 let panel,summary,scope,leading,title,rows,net,note,modelDetail,pathButton,pathNote,hooks;
 let context='local',previous=[],identity='',lastRead=-Infinity,snapshot=null;
-let vectorSvg,vectorPath,vectorText;
+let vectorSvg,vectorPath,vectorText,netDirection;
+const projectedDirection=new THREE.Vector3();
 const origin=new THREE.Vector3(),end=new THREE.Vector3();
 const setText=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
 function element(tag,cls,text=''){const n=document.createElement(tag);n.className=cls;n.textContent=text;return n;}
@@ -21,10 +22,12 @@ export function initGravityInspector(options={}) {
     scope=element('span','gravityScope','Local');leading=element('span','gravityLeading','Inspect attraction');summary.append(scope,leading);
     title=element('p','gravityTarget');rows=element('ol','gravityContributors');
     net=element('p','gravityNet');note=element('p','gravityModel');
+    netDirection=element('span','gravityDirection','↑');netDirection.setAttribute('role','img');netDirection.hidden=true;
+    const netRow=element('div','gravityNetRow');netRow.append(net,netDirection);
     modelDetail=element('details','gravityModelDetail');modelDetail.append(element('summary','','Model limits'),element('p','gravityModel'));
     pathButton=element('button','gravityPrediction','Show short coast path');pathButton.type='button';pathButton.setAttribute('aria-pressed','false');
     pathNote=element('p','gravityPathNote');
-    panel.append(summary,title,rows,net,note,pathButton,pathNote,modelDetail);
+    panel.append(summary,title,rows,netRow,note,pathButton,pathNote,modelDetail);
     const host=document.getElementById('explorePanel');
     (host.querySelector('.compactObjectHeader')||host.firstElementChild).after(panel);
     panel.addEventListener('toggle',()=>{
@@ -38,7 +41,7 @@ export function initGravityInspector(options={}) {
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&panel.open&&panel.contains(document.activeElement)){panel.open=false;summary.focus();}});
     const ns='http://www.w3.org/2000/svg';
     vectorSvg=document.createElementNS(ns,'svg');vectorSvg.id='gravityNetVector';vectorSvg.setAttribute('aria-hidden','true');
-    vectorPath=document.createElementNS(ns,'path');vectorText=document.createElementNS(ns,'text');vectorSvg.append(vectorPath,vectorText);document.body.append(vectorSvg);
+    vectorPath=document.createElementNS(ns,'path');vectorText=document.createElementNS(ns,'text');vectorSvg.append(vectorPath,vectorText);(document.getElementById('root')||document.body).append(vectorSvg);
     updateGravityInspector(true);
 }
 function updateRows(result) {
@@ -51,9 +54,18 @@ function updateRows(result) {
     list.forEach((row,i)=>{setText(rows.children[i].children[0],row.label);setText(rows.children[i].children[1],row.value);});
 }
 function drawVector() {
-    vectorSvg.style.display='none';
+    vectorSvg.style.display='none';netDirection.hidden=true;
     if(!panel.open||!snapshot?.supported||!snapshot.position||!snapshot.net||G.uiMode!=='observe'||G.cabin)return;
     const a=snapshot.net,m=Math.hypot(...a);if(!(m>0))return;
+    // Keep the screen-projected cue reachable even when the selected object
+    // sits behind the mobile sheet; the scene arrow stays below UI chrome.
+    projectedDirection.set(a[0],a[2],-a[1]).normalize().transformDirection(camera.matrixWorldInverse);
+    const plane=Math.hypot(projectedDirection.x,projectedDirection.y);
+    netDirection.hidden=false;
+    netDirection.textContent=plane<.05?(projectedDirection.z<0?'⊗':'⊙'):'↑';
+    netDirection.style.transform=plane<.05?'none':`rotate(${Math.atan2(projectedDirection.x,projectedDirection.y)*180/Math.PI}deg)`;
+    const directionLabel=plane<.05?(projectedDirection.z<0?'Net points into the screen':'Net points out of the screen'):'Net direction projected onto the screen';
+    netDirection.setAttribute('aria-label',directionLabel);netDirection.title=directionLabel;
     const p=snapshot.position;
     origin.set(p[0]*K,p[2]*K,-p[1]*K);
     // The arrow encodes direction only. It is never a travelled distance or
