@@ -595,11 +595,16 @@ vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL, vec2 cs, float fineK)
 // shear of strain C, so the clouds keep their statistics and lean along
 // the spiral (C = 0.35: stretched ~1.4:1); on top of it q is in an epoch's
 // material frame, which keeps shearing at Omega(R) through the epoch, and
-// ns is the epoch's noise salt (new clouds each epoch). amp scales every octave: the
+// gdEpNs is the epoch's noise salt (new clouds each epoch), gdEpFine the
+// share of its finest octaves (both set by gmSample for the epoch it is
+// sampling; globals so gdDust/gdDustSegment keep the signatures the analytic
+// shader fixtures compile). amp scales every octave: the
 // dense, clumpy molecular clouds lie in the arms and lanes, the interarm
 // medium is smoother (gmSample sets it from the maps' dust).
+vec3 gdEpNs = vec3(0.0);
+float gdEpFine = 1.0;
 float gdKg(float t) { return t * (-0.001050 + t * (0.500426 + t * (-0.005287 - 0.005212 * t))); }
-float gdDust(vec3 q, float wide, float amp, vec3 ns, float fineK) {
+float gdDust(vec3 q, float wide, float amp) {
     float sa = 0.35 * log(max(length(q.xy), 200.0) / ${MW.R0.toFixed(1)});
     q.xy = vec2(cos(sa) * q.x - sin(sa) * q.y, sin(sa) * q.x + cos(sa) * q.y);
     float n = 0.0, dense = 1.0;
@@ -607,11 +612,11 @@ float gdDust(vec3 q, float wide, float amp, vec3 ns, float fineK) {
         float lam = 90.0 * pow(0.4, float(o));
         // on while a wavelength spans >= ~3 pixels (wide = half a pixel),
         // gone below ~1.5: finer octaves would only speckle
-        float lod = (o < 2 ? 1.0 : uFine * fineK) * (1.0 - gmSmooth(0.15 * lam, 0.3 * lam, wide));
+        float lod = (o < 2 ? 1.0 : uFine * gdEpFine) * (1.0 - gmSmooth(0.15 * lam, 0.3 * lam, wide));
         if (lod <= 0.0) break;
         float ang = 2.39996 * float(o + 1);
         float c = cos(ang), sn = sin(ang);
-        float v = 5.2247 * gmNoise(vec3(c * q.x - sn * q.y, sn * q.x + c * q.y, 1.8 * q.z) / lam + float(o) * 17.13 + ns);
+        float v = 5.2247 * gmNoise(vec3(c * q.x - sn * q.y, sn * q.x + c * q.y, 1.8 * q.z) / lam + float(o) * 17.13 + gdEpNs);
         float t = uClumpDust * amp * lod * dense * (o == 0 ? 1.4 : o == 1 ? 1.0 : o == 2 ? 0.75 : 0.55);
         n += t * v - gdKg(t);
         // the cloud this sample sits in (in standard deviations of the
@@ -629,18 +634,18 @@ float gdDust(vec3 q, float wide, float amp, vec3 ns, float fineK) {
 // avoids a sample-count boundary when FOV, DPR or integration scale changes.
 // No new light, cloud seeds, frame noise or screen-space sharpening is added.
 uniform float uDustQuadrature;
-float gdDustSegment(vec3 q, vec3 dir, float wT, float wL, float amp, vec3 ns, float fineK) {
+float gdDustSegment(vec3 q, vec3 dir, float wT, float wL, float amp) {
     float longitudinal = max(2.0 * uWideK, 0.35 * length(dir.xy)) * wL;
     float wide = max(wT, longitudinal);
-    float blend = fineK * uDustQuadrature * gmSmooth(0.8, 1.6, wide)
+    float blend = uDustQuadrature * gmSmooth(0.8, 1.6, wide)
         * (1.0 - gmSmooth(0.6, 1.0, wT / max(wide, 1e-6)));
-    if (blend <= 0.0) return gdDust(q, wide, amp, ns, fineK);
+    if (blend <= 0.0) return gdDust(q, wide, amp);
     float subWide = max(wT, longitudinal / 3.0);
     vec3 offset = dir * (2.0 * wL / 3.0);
-    float fine = (gdDust(q - offset, subWide, amp, ns, fineK)
-        + gdDust(q, subWide, amp, ns, fineK) + gdDust(q + offset, subWide, amp, ns, fineK)) / 3.0;
+    float fine = (gdDust(q - offset, subWide, amp)
+        + gdDust(q, subWide, amp) + gdDust(q + offset, subWide, amp)) / 3.0;
     if (blend >= 1.0) return fine;
-    return mix(gdDust(q, wide, amp, ns, fineK), fine, blend);
+    return mix(gdDust(q, wide, amp), fine, blend);
 }
 // Structure maps at pattern-frame q (pc), filtered to the footprint (pc) the
 // sample stands for: (young, old, dust, hii), each normalized like
@@ -723,7 +728,8 @@ vec4 gmSample(vec3 p, vec3 dir, float footPc, float wT, float wL, out float hii,
             mat2 back = mat2(ca, -sa, sa, ca);   // turns by -a
             vec3 q = vec3(back * p.xy, p.z), dq = vec3(back * dir.xy, dir.z);
             vec2 y = gdYoungClusters(q, dq, wT, wL, k == 0 ? uEpCell.xy : uEpCell.zw, fineK);
-            float d = gdDustSegment(q, dq, wT, wL, amp, k == 0 ? uEpNoise0 : uEpNoise1, fineK);
+            gdEpNs = k == 0 ? uEpNoise0 : uEpNoise1; gdEpFine = fineK;
+            float d = gdDustSegment(q, dq, wT, wL, amp);
             yc += w * (fineK >= 1.0 ? y : mix(vec2(1.0), y, fineK));
             dustC += w * (fineK >= 1.0 ? d : mix(1.0, d, fineK));
         }
