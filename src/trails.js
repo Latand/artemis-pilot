@@ -17,6 +17,7 @@ import { PERF, markPerf } from "./perf.js";
 import { RecentPath } from "./render/recentPath.js";
 import { getEpochMs } from "./epoch.js";
 import { ACTIVE_STARS, activeStarForFocus } from "./universe/activeStars.js";
+import { stellarSurfaceHit } from "./universe/stellarContact.js";
 
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 // Shared curvature gate for every sampled polyline in this file: a segment is
@@ -299,7 +300,7 @@ export function computePrediction() {
                 for (let si = 0; si < predStars.length; si++) {
                     const st = predStars[si];
                     const dx = wx - st.x, dy = wy - st.y, dz = wz - (st.z || 0);
-                    if (dx * dx + dy * dy + dz * dz <= st.R * st.R) { impact = 6; break; }
+                    if (stellarSurfaceHit(st, dx * dx + dy * dy + dz * dz)) { impact = 6; break; }
                 }
             }
             if (!impact) {
