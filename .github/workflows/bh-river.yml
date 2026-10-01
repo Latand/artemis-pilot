@@ -4,8 +4,10 @@ on:
     paths:
       - 'scripts/*bh-river*'
       - 'scripts/smoke-hole-emission.mjs'
-      - 'src/river.js'
-      - 'src/holeOptics.js'
+      - 'src/**'
+      - 'scripts/*celestial*'
+      - 'package.json'
+      - 'bun.lock'
       - '.github/workflows/bh-river.yml'
 permissions:
   contents: read

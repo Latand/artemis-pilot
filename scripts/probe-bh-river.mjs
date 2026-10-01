@@ -36,11 +36,12 @@ try {
     page.on('console', m => { if (m.type() === 'error' && /THREE|Shader|GL_INVALID/.test(m.text())) report.errors.push(m.text()); });
     await page.addInitScript(() => { Date.now = () => Date.UTC(2026, 8, 13, 12); localStorage.clear(); });
     await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ contentType: 'text/css', body: '' }));
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=earth&dist=25&tier1=0&realsky=0&field=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&bloom=0&np=124&dpr=1`);
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=earth&dist=25&tier1=0&realsky=0&field=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&bloom=0&dpr=1`);
     await page.waitForFunction(() => window.__AP_READY && window.__celestialFrame);
     await page.evaluate(async () => {
         window.qa = { s: await import('/src/scene.js'), st: await import('/src/state.js'), bh: await import('/src/blackholes.js'),
             c: await import('/src/constants.js'), enc: await import('/src/bhEncounters.js'), tde: await import('/src/tde.js'),
+            river: await import('/src/river.js'), bodies: await import('/src/bodies.js'),
             lens: await import('/src/lensing.js'), THREE: await import('/node_modules/three/build/three.module.js') };
         const { st, bh, c, enc, tde } = qa;
         document.getElementById('intro').style.display = 'none';
@@ -59,10 +60,17 @@ try {
     for (const test of [{ name: 'wide-tilted', pitch: .25 }, { name: 'wide-face-on', pitch: 1.42 },
         { name: 'wide-edge-on', pitch: .04 }, { name: 'resolved-inner', pitch: .48, dist: .08 }]) {
         const result = await page.evaluate(test => {
-            const { s, st, bh, lens, THREE } = qa;
+            const { s, st, bh, lens, THREE, river, bodies } = qa;
             st.G.focus = 'bh:0'; s.cam.dist = test.dist ?? qa.dist; s.cam.distTarget = null; s.cam.pitch = test.pitch; s.cam.yaw = .7;
             window.__celestialFrame(); s.cam.tgt.copy(bh.BH_META[0].g.position);
             for (let i = 0; i < 16; i++) window.__celestialFrame();
+            // Keep the physical TDE and camera frozen, but advance the real
+            // overlay compute at the user's high-rate display scale. This
+            // makes the missing streaks legible without boosting pixel data.
+            const flowOn = test.name !== 'resolved-inner';
+            const flowArgs = [bodies.earthG.position, bodies.moon.position, bodies.sunPos, bodies.plGroups.map(p => p.position)];
+            for (let i = 0; i < 24; i++) river.updateRiver(flowOn ? 1440 : 0, flowOn ? 1 : 0, ...flowArgs, 1 / 60);
+            river.updateShells(0, 0);
             const disk = bh.BH_META[0].optics.disk, material = disk.material, actualBlend = material.blending;
             const gl = s.renderer.getContext(), w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
             const draw = () => {
@@ -84,7 +92,7 @@ try {
             }
             const u = material.uniforms;
             return { images: { before: before.png, after: after.png, 'disk-disabled': noDisk.png },
-                state: { cameraDistance: s.cam.dist, pitch: s.cam.pitch, rsKm: st.BH.rs[0], diskOn: u.uDiskOn.value,
+                state: { flowSimSecondsPerFrame: flowOn ? 1440 : 0, flowDisplayRate: flowOn ? 86400 : 0, flowParticles: river.river.count, cameraDistance: s.cam.dist, pitch: s.cam.pitch, rsKm: st.BH.rs[0], diskOn: u.uDiskOn.value,
                     outerToInnerRadius: u.uRout.value, TmaxK: u.uTmax.value, gain: u.uGain.value,
                     blend: actualBlend, expectedBlend: THREE.AdditiveBlending, near: s.camera.near, far: s.camera.far,
                     physicalObserverRs: u.uDistance.value, lensing: lens.lensingPass.enabled },
