@@ -50,10 +50,12 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
         move.setAttribute('aria-expanded', String(moveOpen));
         measure();
     };
-    details.addEventListener('click', () => { detailOpen = !detailOpen; timeOpen = false; moveOpen = false; stopMovement(); render(); });
-    more.addEventListener('click', () => { timeOpen = !timeOpen; detailOpen = false; moveOpen = false; stopMovement(); render(); });
-    move.addEventListener('click', () => { moveOpen = !moveOpen; detailOpen = false; timeOpen = false; stopMovement(); render(); });
-    const collapse = () => { detailOpen = timeOpen = moveOpen = false; stopMovement(); render(); };
+    const closeInspector=()=>{const el=$('gravityInspector');if(el)el.open=false;};
+    document.addEventListener('gravity-inspector-toggle',()=>{detailOpen=timeOpen=moveOpen=false;stopMovement();render();});
+    details.addEventListener('click', () => { closeInspector(); detailOpen = !detailOpen; timeOpen = false; moveOpen = false; stopMovement(); render(); });
+    more.addEventListener('click', () => { closeInspector(); timeOpen = !timeOpen; detailOpen = false; moveOpen = false; stopMovement(); render(); });
+    move.addEventListener('click', () => { closeInspector(); moveOpen = !moveOpen; detailOpen = false; timeOpen = false; stopMovement(); render(); });
+    const collapse = () => { closeInspector(); detailOpen = timeOpen = moveOpen = false; stopMovement(); render(); };
     for (const id of ['exploreSearch', 'exploreEvents', 'exploreHelp']) $(id)?.addEventListener('click', collapse);
     document.querySelectorAll('[data-ui-mode], [data-destination]').forEach(b => b.addEventListener('click', collapse));
     document.addEventListener('keydown', e => {

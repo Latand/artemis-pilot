@@ -1,0 +1,22 @@
+.gravityInspector { border-block:1px solid var(--explore-line);margin:12px 0;padding:0; }
+#explorePanel .gravitySummary { display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-height:48px;padding:8px 0;list-style:none; }
+.gravitySummary::-webkit-details-marker { display:none; }
+.gravityHeading { font-size:13px; }.gravityHeading::before { content:'▸ ';color:var(--explore-accent); }.gravityInspector[open] .gravityHeading::before { content:'▾ '; }
+.gravityScope { margin-left:auto;color:var(--explore-accent);font-size:10px;border:1px solid #675b49;border-radius:3px;padding:2px 5px; }
+.gravityLeading { flex-basis:100%;font-size:11px;color:var(--explore-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.gravityTarget { font-size:12px;line-height:1.4;margin:6px 0 12px; }
+.gravityContributors { list-style:none;padding:0;margin:0; }
+.gravityContributors li { display:flex;justify-content:space-between;gap:8px;font-size:11px;line-height:1.5;padding:5px 0;border-bottom:1px solid #30343b; }
+.gravityValue { color:var(--explore-accent);white-space:nowrap; }
+.gravityNet { font-size:12px;line-height:1.4;color:#b8e7df;margin:10px 0; }
+.gravityModel,.gravityPathNote { color:var(--explore-muted);font-size:10px;line-height:1.5; }
+#explorePanel .gravityPrediction { min-height:44px;width:100%;padding:8px;border:1px solid var(--explore-line);border-radius:4px;background:#252a30;color:var(--explore-text);font-size:12px; }
+.gravityPrediction[hidden] { display:none!important; }
+#gravityNetVector { position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:5;overflow:hidden; }
+#gravityNetVector path { fill:none;stroke:#b8e7df;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 1px 2px #000); }
+#gravityNetVector text { fill:#c5ece5;font:11px var(--font-ui);paint-order:stroke;stroke:#111;stroke-width:3px; }
+body.compact-explorer .gravityInspector { flex:none;margin:8px 0 0;max-height:calc(var(--explore-visible-height,100dvh) - var(--explore-toolbar-bottom,108px) - var(--time-dock-height,130px) - 130px);overflow:auto;overscroll-behavior:contain; }
+body.compact-explorer #explorePanel .gravitySummary { min-height:44px;padding:4px 0; }
+body.compact-explorer .gravityLeading { flex:1;flex-basis:auto;text-align:right;max-width:60%; }
+body.compact-explorer .gravityContributors li { font-size:12px; }
+@media(prefers-reduced-motion:no-preference){.gravityInspector[open]>.gravityTarget{animation:gravityReveal .18s ease-out;}@keyframes gravityReveal{from{opacity:.3}to{opacity:1}}}

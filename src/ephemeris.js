@@ -14,7 +14,7 @@ import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
 import { moonGeocentricCartesian, sunGeometricLongitudeJ2000 } from "./universe/lunarElp.js";
 import { meanElementsAt, tableKeyForPlanet, STANDISH_TABLE1, SEC_PER_JULIAN_CENTURY } from "./universe/planetElements.js";
 
-import { gasFieldAt, kickGasDynamics, driftGasDynamics,
+import { gasFieldAt, gasLocalAcceleration, kickGasDynamics, driftGasDynamics,
     resetGasDynamics, gasEncounterStep, gasNeedsIntegrated, hasGasDynamics, beginGasDynamicsStep, endGasDynamicsStep } from "./universe/gasDynamics.js";
 
 export const IDX_MOON = 0;
@@ -342,21 +342,24 @@ const PRED_BH = {
 };
 
 let PRED_STARS = null;
+let PRED_STARS_RESPECT_GATE = false;
 export const STELLAR_GRAVITY_MIN_R = LY_KM * .02;
 const DARK_ENERGY_GRAVITY_MIN_R2 = DARK_ENERGY.VISIBLE_START_KM * DARK_ENERGY.VISIBLE_START_KM;
 const DARK_MATTER_GRAVITY_MIN_R2 = Math.pow(DARK_MATTER.VISIBLE_START_PC * PC_KM, 2);
-export function beginPredictionStars(stars) {
+export function beginPredictionStars(stars, respectLocalGate = false) {
     PRED_STARS = Array.isArray(stars) ? stars : null;
+    PRED_STARS_RESPECT_GATE = respectLocalGate;
 }
 export function endPredictionStars() {
     PRED_STARS = null;
+    PRED_STARS_RESPECT_GATE = false;
 }
 export function currentGravityStars() {
     return PRED_STARS || GRAVITY_STARS;
 }
 export function gravityStarsFor(wx, wy, wz) {
-    if (PRED_STARS) return PRED_STARS;
-    return Math.hypot(wx, wy, wz) < STELLAR_GRAVITY_MIN_R ? [] : GRAVITY_STARS;
+    if (PRED_STARS && !PRED_STARS_RESPECT_GATE) return PRED_STARS;
+    return Math.hypot(wx, wy, wz) < STELLAR_GRAVITY_MIN_R ? [] : (PRED_STARS || GRAVITY_STARS);
 }
 export function beginPredictionBH() {
     PRED_BH.t0 = EPHT.t;
@@ -373,6 +376,19 @@ export function predBHX(i, t) { return PRED_BH.active ? PRED_BH.x[i] + PRED_BH.v
 export function predBHY(i, t) { return PRED_BH.active ? PRED_BH.y[i] + PRED_BH.vy[i] * (t - PRED_BH.t0) : BH.y[i]; }
 export function predBHZ(i, t) { return PRED_BH.active ? PRED_BH.z[i] + PRED_BH.vz[i] * (t - PRED_BH.t0) : BH.z[i]; }
 
+// Optional diagnostics are populated by the same force evaluations used by the
+// integrators. A null collector adds no allocations to the live force path.
+export function recordGravityContribution(rows, id, label, ax, ay, az, position = null, kind = "gravity") {
+    if (rows) rows.push({ id, label, acceleration: [ax, ay, az], position, kind });
+}
+function bodyGravityId(i) { return i === IDX_MOON ? "moon" : i === IDX_SUN ? "sun" : "planet:" + (i - IDX_PLANETS); }
+function holeGravityLabel(i) { return (BH.kind[i] === 2 ? "Pulsar " : BH.kind[i] === 1 ? "Quasar " : "Black hole ") + (i + 1); }
+function bodyGravityLabel(i) { return i === IDX_MOON ? "Moon" : i === IDX_SUN ? "Sun" : PL[i - IDX_PLANETS].name; }
+function starGravityRow(rows, star, ax, ay, az) {
+    if (rows) recordGravityContribution(rows, "star:" + star.id, star.name || star.id || "Active stellar source", ax, ay, az,
+        [star.x, star.y, star.z || 0], star.gasSink ? "sink" : "star");
+}
+
 // Indirect (frame) acceleration: every body and hole pulls the Earth-centered
 // origin. Identical for all field points, so callers evaluating many points
 // against one state compute it once and pass it as `ind`.
@@ -380,13 +396,14 @@ const _gasPull = [0, 0, 0];
 const _gp = [0, 0, 0];
 const _de = [0, 0, 0];
 const _dm = [0, 0, 0];
-export function indirectAccel(st, out, tau = 0) {
+export function indirectAccel(st, out, tau = 0, contributions = null) {
     // with Earth gone the origin coasts inertially: no frame correction at all
     if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; if (out.length > 2) out[2] = 0; return out; }
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY, Z = st ? st.z : bodyZ;
     const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy, VZ = st ? st.vz : bodyVz;
     const tEval = (st && st.t !== undefined ? st.t : EPHT.t) + tau;
     let ax = 0, ay = 0, az = 0;
+    const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
     for (let i = 0; i < NB; i++) {
         const mu = activeBodyMu(i);
         if (mu <= 0) continue;
@@ -397,6 +414,7 @@ export function indirectAccel(st, out, tau = 0) {
             ax -= w * bx;
             ay -= w * by;
             az -= w * bz;
+            if (contributions) recordGravityContribution(contributions, bodyGravityId(i), bodyGravityLabel(i), -w * bx, -w * by, -w * bz, [ex + bx, ey + by, bz]);
         }
     }
     const bhDt = PRED_BH.active ? tEval - PRED_BH.t0 : tau;
@@ -415,9 +433,9 @@ export function indirectAccel(st, out, tau = 0) {
             ax -= bx * am0;
             ay -= by * am0;
             az -= bz * am0;
+            if (contributions) recordGravityContribution(contributions, "bh:" + i, holeGravityLabel(i), -bx * am0, -by * am0, -bz * am0, [ex + bx, ey + by, bz], "black-hole");
         }
     }
-    const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
     for (const star of gravityStarsFor(ex, ey, 0)) {
         if (star.formedStar) continue;
         const bx = star.x - ex, by = star.y - ey, bz = star.z || 0;
@@ -427,14 +445,16 @@ export function indirectAccel(st, out, tau = 0) {
             ax -= w0 * bx;
             ay -= w0 * by;
             az -= w0 * bz;
+            starGravityRow(contributions, star, -w0 * bx, -w0 * by, -w0 * bz);
         }
     }
-    gasFieldAt(ex, ey, 0, tEval, _gasPull);
+    gasFieldAt(ex, ey, 0, tEval, _gasPull, -1, 0, 0, contributions, -1);
     ax -= _gasPull[0]; ay -= _gasPull[1]; az -= _gasPull[2];
     if (GS.length) {
         _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
         gsPull(0, 0, 0, tEval, _gp);
         ax -= _gp[0]; ay -= _gp[1]; az -= _gp[2];
+        if (contributions) recordGravityContribution(contributions, "transient-gravity", "Retarded phantom / ghost gravity", -_gp[0], -_gp[1], -_gp[2], null, "transient");
     }
     out[0] = ax; out[1] = ay;
     if (out.length > 2) out[2] = az;
@@ -446,16 +466,18 @@ export function indirectAccel(st, out, tau = 0) {
 export function relGravityAt(x, y, out, skipBody = -1, st = null, tau = 0, ind = null) {
     return relGravityAtOpt(x, y, 0, out, skipBody, st, tau, ind, true);
 }
-export function relGravityAt3(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = null) {
-    return relGravityAtOpt(x, y, z, out, skipBody, st, tau, ind, true);
+export function relGravityAt3(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = null, contributions = null) {
+    return relGravityAtOpt(x, y, z, out, skipBody, st, tau, ind, true, contributions);
 }
-function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = null, includeDarkEnergy = true) {
+function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = null, includeDarkEnergy = true, contributions = null) {
     const X = st ? st.x : bodyX, Y = st ? st.y : bodyY, Z = st ? st.z : bodyZ;
     const VX = st ? st.vx : bodyVx, VY = st ? st.vy : bodyVy, VZ = st ? st.vz : bodyVz;
     const tEval = (st && st.t !== undefined ? st.t : EPHT.t) + tau;
     // inline indirect terms only while Earth anchors an accelerating frame
     const indir = ind === null && !WORLD.earthDestroyed;
     let ax = 0, ay = 0, az = 0;
+    const frame = contributions ? [0, 0, 0] : null;
+    const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
     const muE = activeEarthMu();
     if (muE > 0) {
         const r2 = x * x + y * y + z * z;
@@ -464,6 +486,7 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
             ax -= w * x;
             ay -= w * y;
             az -= w * z;
+            if (contributions) recordGravityContribution(contributions, "earth", "Earth", -w * x, -w * y, -w * z, [ex, ey, 0]);
         }
     }
     for (let i = 0; i < NB; i++) {
@@ -478,6 +501,7 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
                 ax -= w * dx;
                 ay -= w * dy;
                 az -= w * dz;
+                if (contributions) recordGravityContribution(contributions, bodyGravityId(i), bodyGravityLabel(i), -w * dx, -w * dy, -w * dz, [ex + bx, ey + by, bz]);
             }
         }
         if (indir) {
@@ -487,6 +511,7 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
                 ax -= w0 * bx;
                 ay -= w0 * by;
                 az -= w0 * bz;
+                if (frame) { frame[0] -= w0 * bx; frame[1] -= w0 * by; frame[2] -= w0 * bz; }
             }
         }
     }
@@ -512,6 +537,7 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
                 ax -= dx * am;
                 ay -= dy * am;
                 az -= dz * am;
+                if (contributions) recordGravityContribution(contributions, "bh:" + i, holeGravityLabel(i), -dx * am, -dy * am, -dz * am, [ex + bx, ey + by, bz], "black-hole");
             }
         }
         if (indir) {
@@ -523,11 +549,11 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
                     ax -= bx * am0;
                     ay -= by * am0;
                     az -= bz * am0;
+                    if (frame) { frame[0] -= bx * am0; frame[1] -= by * am0; frame[2] -= bz * am0; }
                 }
             }
         }
     }
-    const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
     const gravityStars = gravityStarsFor(ex + x, ey + y, z);
     for (const star of gravityStars) {
         if (star.formedStar) continue;
@@ -539,6 +565,7 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
             ax -= w * dx;
             ay -= w * dy;
             az -= w * dz;
+            starGravityRow(contributions, star, -w * dx, -w * dy, -w * dz);
         }
         if (indir) {
             const r02 = bx * bx + by * by + bz * bz + (star.softeningKm || 0) ** 2;
@@ -547,23 +574,27 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
                 ax -= w0 * bx;
                 ay -= w0 * by;
                 az -= w0 * bz;
+                if (frame) { frame[0] -= w0 * bx; frame[1] -= w0 * by; frame[2] -= w0 * bz; }
             }
         }
     }
-    gasFieldAt(ex + x, ey + y, z, tEval, _gasPull);
+    gasFieldAt(ex + x, ey + y, z, tEval, _gasPull, -1, 0, 0, contributions);
     ax += _gasPull[0]; ay += _gasPull[1]; az += _gasPull[2];
     if (indir) {
         gasFieldAt(ex, ey, 0, tEval, _gasPull);
         ax -= _gasPull[0]; ay -= _gasPull[1]; az -= _gasPull[2];
+        if (frame) { frame[0] -= _gasPull[0]; frame[1] -= _gasPull[1]; frame[2] -= _gasPull[2]; }
     }
     if (GS.length) {
         _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
         gsPull(x, y, z, tEval, _gp);
         ax += _gp[0]; ay += _gp[1]; az += _gp[2];
+        if (contributions) recordGravityContribution(contributions, "transient-gravity", "Retarded phantom / ghost gravity", _gp[0], _gp[1], _gp[2], null, "transient");
         if (indir) {
             _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
             gsPull(0, 0, 0, tEval, _gp);
             ax -= _gp[0]; ay -= _gp[1]; az -= _gp[2];
+            if (frame) { frame[0] -= _gp[0]; frame[1] -= _gp[1]; frame[2] -= _gp[2]; }
         }
     }
     const rRel2 = x * x + y * y + z * z;
@@ -571,12 +602,18 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
         darkEnergyAccel(x, y, _de, undefined, z);
         ax += _de[0]; ay += _de[1];
         az += _de[2] || 0;
+        if (contributions) recordGravityContribution(contributions, "dark-energy", "Modeled dark-energy field", _de[0], _de[1], _de[2] || 0, null, "field");
     }
     if (G.darkMatter && rRel2 >= DARK_MATTER_GRAVITY_MIN_R2) {
         darkMatterRelativeAccel(x, y, z, st ? st.earthX : earthX, st ? st.earthY : earthY, 0, _dm);
         ax += _dm[0]; ay += _dm[1]; az += _dm[2];
+        if (contributions) recordGravityContribution(contributions, "dark-matter", "Modeled differential dark-matter field", _dm[0], _dm[1], _dm[2], null, "field");
     }
     if (ind !== null) { ax += ind[0]; ay += ind[1]; if (ind.length > 2) az += ind[2]; }
+    if (contributions) {
+        const f = ind || frame;
+        if (contributions) recordGravityContribution(contributions, "frame:earth", "Earth-frame correction", f[0], f[1], f[2] || 0, null, "frame");
+    }
     out[0] = ax; out[1] = ay;
     if (out.length > 2) out[2] = az;
     return out;
@@ -651,34 +688,52 @@ let _lfEarthAx = 0, _lfEarthAy = 0;
 const _a3 = [0, 0, 0];
 const _ind3 = [0, 0, 0];
 // the indirect frame term is identical for every body: compute it once
+// Public read-only evaluators also drive KDK; diagnostics never advance state.
+export function bodyGravityAcceleration(st, i, out, contributions = null, ind = null, pnEarth = null) {
+    if (!isBodyActive(i)) { out[0] = 0; out[1] = 0; out[2] = 0; return out; }
+    ind ||= indirectAccel(st, [0, 0, 0]);
+    pnEarth ||= sun1PN(-st.x[IDX_SUN], -st.y[IDX_SUN], -st.z[IDX_SUN], -st.vx[IDX_SUN], -st.vy[IDX_SUN], -st.vz[IDX_SUN], [0, 0, 0]);
+    relGravityAtOpt(st.x[i], st.y[i], st.z[i], out, i, st, 0, ind, false, contributions);
+    if (!WORLD.sunDestroyed) {
+        if (i === IDX_SUN) { out[0] -= pnEarth[0]; out[1] -= pnEarth[1]; out[2] -= pnEarth[2]; }
+        else {
+            sun1PN(st.x[i] - st.x[IDX_SUN], st.y[i] - st.y[IDX_SUN], st.z[i] - st.z[IDX_SUN],
+                st.vx[i] - st.vx[IDX_SUN], st.vy[i] - st.vy[IDX_SUN], st.vz[i] - st.vz[IDX_SUN], _pnBody3);
+            out[0] += _pnBody3[0] - pnEarth[0];
+            out[1] += _pnBody3[1] - pnEarth[1];
+            out[2] += _pnBody3[2] - pnEarth[2];
+            if (contributions) recordGravityContribution(contributions, "sun:1pn", "Sun 1PN correction", ..._pnBody3, null, "correction");
+        }
+        if (contributions) recordGravityContribution(contributions, "frame:1pn", "Earth-frame Sun 1PN correction", -pnEarth[0], -pnEarth[1], -pnEarth[2], null, "frame");
+    }
+    return out;
+}
+export function earthGravityAcceleration(st, out, contributions = null, ind = null, pnEarth = null) {
+    if (WORLD.earthDestroyed) { out[0] = 0; out[1] = 0; out[2] = 0; return out; }
+    if (contributions) {
+        const first = contributions.length;
+        ind = indirectAccel(st, [0, 0, 0], 0, contributions);
+        for (let i = first; i < contributions.length; i++) contributions[i].acceleration = contributions[i].acceleration.map(v => -v);
+    } else ind ||= indirectAccel(st, [0, 0, 0]);
+    pnEarth ||= sun1PN(-st.x[IDX_SUN], -st.y[IDX_SUN], -st.z[IDX_SUN], -st.vx[IDX_SUN], -st.vy[IDX_SUN], -st.vz[IDX_SUN], [0, 0, 0]);
+    out[0] = -ind[0] + pnEarth[0]; out[1] = -ind[1] + pnEarth[1]; out[2] = 0;
+    if (contributions) recordGravityContribution(contributions, "sun:1pn", "Sun 1PN correction", ...pnEarth, null, "correction");
+    if (contributions) recordGravityContribution(contributions, "frame:pinned-z", "Earth world-z constraint", 0, 0, ind[2] - pnEarth[2], null, "correction");
+    return out;
+}
 function computeAccel(st) {
     indirectAccel(st, _ind3);
     sun1PN(-st.x[IDX_SUN], -st.y[IDX_SUN], -st.z[IDX_SUN], -st.vx[IDX_SUN], -st.vy[IDX_SUN], -st.vz[IDX_SUN], _pnEarth3);
     for (let i = 0; i < NB; i++) {
-        if (!isBodyActive(i)) { _lfAx[i] = 0; _lfAy[i] = 0; _lfAz[i] = 0; continue; }
-        relGravityAtOpt(st.x[i], st.y[i], st.z[i], _a3, i, st, 0, _ind3, false);
-        if (!WORLD.sunDestroyed) {
-            if (i === IDX_SUN) { _a3[0] -= _pnEarth3[0]; _a3[1] -= _pnEarth3[1]; _a3[2] -= _pnEarth3[2]; }
-            else {
-                sun1PN(st.x[i] - st.x[IDX_SUN], st.y[i] - st.y[IDX_SUN], st.z[i] - st.z[IDX_SUN],
-                    st.vx[i] - st.vx[IDX_SUN], st.vy[i] - st.vy[IDX_SUN], st.vz[i] - st.vz[IDX_SUN], _pnBody3);
-                _a3[0] += _pnBody3[0] - _pnEarth3[0];
-                _a3[1] += _pnBody3[1] - _pnEarth3[1];
-                _a3[2] += _pnBody3[2] - _pnEarth3[2];
-            }
-        }
+        bodyGravityAcceleration(st, i, _a3, null, _ind3, _pnEarth3);
         _lfAx[i] = _a3[0]; _lfAy[i] = _a3[1]; _lfAz[i] = _a3[2];
     }
-    // Earth's own world acceleration is X,Y only — see the `earthZ` note:
-    // its z is pinned to 0 for the whole run, so no z-acceleration is ever
-    // integrated into it even though _ind3[2]/_pnEarth3[2] may be nonzero
-    // (that nonzero z DOES correctly reach every other body via `_ind3`
-    // above, which is what lets the Sun/Moon/planets feel the real 3-D
-    // frame term; only Earth's own absolute trajectory stays flat).
-    if (WORLD.earthDestroyed) { _lfEarthAx = 0; _lfEarthAy = 0; }
-    else { _lfEarthAx = -_ind3[0] + _pnEarth3[0]; _lfEarthAy = -_ind3[1] + _pnEarth3[1]; }
+    // Earth world z/vz remain pinned; the 3-D frame term still reaches bodies.
+    earthGravityAcceleration(st, _a3, null, _ind3, _pnEarth3);
+    _lfEarthAx = _a3[0]; _lfEarthAy = _a3[1];
 }
-const _gasSolarSources = Array.from({ length: NB + 1 }, () => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, mu: 0 }));
+const _gasSolarSources = Array.from({ length: NB + 1 }, (_, i) => ({ id: i === 0 ? "earth" : bodyGravityId(i - 1),
+    label: i === 0 ? "Earth" : bodyGravityLabel(i - 1), x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, mu: 0 }));
 function gasSolarSources(st) {
     Object.assign(_gasSolarSources[0], { x: st.earthX, y: st.earthY, z: 0, vx: st.earthVx, vy: st.earthVy, vz: 0, mu: activeEarthMu() });
     for (let i = 0; i < NB; i++) Object.assign(_gasSolarSources[i + 1], {
@@ -686,6 +741,9 @@ function gasSolarSources(st) {
         vx: st.earthVx + st.vx[i], vy: st.earthVy + st.vy[i], vz: st.vz[i], mu: activeBodyMu(i),
     });
     return _gasSolarSources;
+}
+export function gasSystemGravityAcceleration(st, record, out, contributions = null) {
+    return gasLocalAcceleration(record, st, gasSolarSources(st), out, contributions);
 }
 export function localGasStepLimit(st = null) {
     if (!hasGasDynamics()) return Infinity;
@@ -701,67 +759,80 @@ export function localGasStepLimit(st = null) {
 // depend on warp and frame rate.)
 const _hAx = new Float64Array(BH_MAX), _hAy = new Float64Array(BH_MAX), _hAz = new Float64Array(BH_MAX);
 const _gpH = [0, 0, 0], _dmH = [0, 0, 0];
-function computeHoleAccel(st) {
+export function holeGravityAcceleration(st, i, out, contributions = null, ind = null) {
+    ind ||= indirectAccel(st, [0, 0, 0]);
     const tEval = st.t;
     const muE = activeEarthMu(), rEarth = liveEarthRadius();
     const ex = st.earthX, ey = st.earthY;
+    const x = BH.x[i], y = BH.y[i], z = BH.z[i], rsI = BH.rs[i];
+    const rE = pairRadius(muE, rEarth, BH.mu[i]);
+    let ax = 0, ay = 0, az = 0;
+    if (muE > 0) {
+        const d = Math.sqrt(x * x + y * y + z * z);
+        if (d > 1e-12) {
+            const w = muE * pairG(d, rsI, rE) / d;
+            ax -= w * x; ay -= w * y; az -= w * z;
+            if (contributions) recordGravityContribution(contributions, "earth", "Earth", -w * x, -w * y, -w * z, [ex, ey, 0]);
+        }
+    }
+    for (let b = 0; b < NB; b++) {
+        const mu = activeBodyMu(b);
+        if (mu <= 0) continue;
+        const dx = x - st.x[b], dy = y - st.y[b], dz = z - st.z[b];
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (d > 1e-12) {
+            const w = mu * pairG(d, rsI, pairRadius(mu, liveBodyRadius(b), BH.mu[i])) / d;
+            ax -= w * dx; ay -= w * dy; az -= w * dz;
+            if (contributions) recordGravityContribution(contributions, bodyGravityId(b), bodyGravityLabel(b), -w * dx, -w * dy, -w * dz, [ex + st.x[b], ey + st.y[b], st.z[b]]);
+        }
+    }
+    for (let j = 0; j < BH.n; j++) {
+        if (j === i) continue;
+        const dx = x - BH.x[j], dy = y - BH.y[j], dz = z - BH.z[j];
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        const mu = bhMuAt(j, x, y, z, tEval);
+        if (mu > 0 && d > 1e-12) {
+            // shared pair softening so unequal holes obey action-reaction
+            const rsP = rsI + BH.rs[j];
+            const eff = Math.max(d - rsP, rsP * .02);
+            const w = mu / (eff * eff * d);
+            ax -= w * dx; ay -= w * dy; az -= w * dz;
+            if (contributions) recordGravityContribution(contributions, "bh:" + j, holeGravityLabel(j), -w * dx, -w * dy, -w * dz, [ex + BH.x[j], ey + BH.y[j], BH.z[j]], "black-hole");
+        }
+    }
+    const stars = gravityStarsFor(ex + x, ey + y, z);
+    for (let k = 0; k < stars.length; k++) {
+        const star = stars[k];
+        if (star.formedStar) continue;
+        const dx = x - (star.x - ex), dy = y - (star.y - ey), dz = z - (star.z || 0);
+        const r2 = dx * dx + dy * dy + dz * dz + (star.softeningKm || 0) ** 2;
+        if (r2 > 1e-18) {
+            const w = star.mu / (r2 * Math.sqrt(r2));
+            ax -= w * dx; ay -= w * dy; az -= w * dz;
+            starGravityRow(contributions, star, -w * dx, -w * dy, -w * dz);
+        }
+    }
+    gasFieldAt(ex + x, ey + y, z, tEval, _gasPull, i, ex, ey, contributions);
+    ax += _gasPull[0]; ay += _gasPull[1]; az += _gasPull[2];
+    if (GS.length) {
+        _gpH[0] = 0; _gpH[1] = 0; _gpH[2] = 0;
+        gsPull(x, y, z, tEval, _gpH);
+        ax += _gpH[0]; ay += _gpH[1]; az += _gpH[2];
+        if (contributions) recordGravityContribution(contributions, "transient-gravity", "Retarded phantom / ghost gravity", ..._gpH, null, "transient");
+    }
+    if (G.darkMatter && x * x + y * y + z * z >= DARK_MATTER_GRAVITY_MIN_R2) {
+        darkMatterRelativeAccel(x, y, z, ex, ey, 0, _dmH);
+        ax += _dmH[0]; ay += _dmH[1]; az += _dmH[2];
+        if (contributions) recordGravityContribution(contributions, "dark-matter", "Modeled differential dark-matter field", ..._dmH, null, "field");
+    }
+    out[0] = ax + ind[0]; out[1] = ay + ind[1]; out[2] = az + ind[2];
+    if (contributions) recordGravityContribution(contributions, "frame:earth", "Earth-frame correction", ...ind, null, "frame");
+    return out;
+}
+function computeHoleAccel(st) {
     for (let i = 0; i < BH.n; i++) {
-        const x = BH.x[i], y = BH.y[i], z = BH.z[i], rsI = BH.rs[i];
-        const rE = pairRadius(muE, rEarth, BH.mu[i]);
-        let ax = 0, ay = 0, az = 0;
-        if (muE > 0) {
-            const d = Math.sqrt(x * x + y * y + z * z);
-            if (d > 1e-12) {
-                const w = muE * pairG(d, rsI, rE) / d;
-                ax -= w * x; ay -= w * y; az -= w * z;
-            }
-        }
-        for (let b = 0; b < NB; b++) {
-            const mu = activeBodyMu(b);
-            if (mu <= 0) continue;
-            const dx = x - st.x[b], dy = y - st.y[b], dz = z - st.z[b];
-            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            if (d > 1e-12) {
-                const w = mu * pairG(d, rsI, pairRadius(mu, liveBodyRadius(b), BH.mu[i])) / d;
-                ax -= w * dx; ay -= w * dy; az -= w * dz;
-            }
-        }
-        for (let j = 0; j < BH.n; j++) {
-            if (j === i) continue;
-            const dx = x - BH.x[j], dy = y - BH.y[j], dz = z - BH.z[j];
-            const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-            const mu = bhMuAt(j, x, y, z, tEval);
-            if (mu > 0 && d > 1e-12) {
-                // shared pair softening so unequal holes obey action-reaction
-                const rsP = rsI + BH.rs[j];
-                const eff = Math.max(d - rsP, rsP * .02);
-                const w = mu / (eff * eff * d);
-                ax -= w * dx; ay -= w * dy; az -= w * dz;
-            }
-        }
-        const stars = gravityStarsFor(ex + x, ey + y, z);
-        for (let k = 0; k < stars.length; k++) {
-            const star = stars[k];
-            if (star.formedStar) continue;
-            const dx = x - (star.x - ex), dy = y - (star.y - ey), dz = z - (star.z || 0);
-            const r2 = dx * dx + dy * dy + dz * dz + (star.softeningKm || 0) ** 2;
-            if (r2 > 1e-18) {
-                const w = star.mu / (r2 * Math.sqrt(r2));
-                ax -= w * dx; ay -= w * dy; az -= w * dz;
-            }
-        }
-        gasFieldAt(ex + x, ey + y, z, tEval, _gasPull, i, ex, ey);
-        ax += _gasPull[0]; ay += _gasPull[1]; az += _gasPull[2];
-        if (GS.length) {
-            _gpH[0] = 0; _gpH[1] = 0; _gpH[2] = 0;
-            gsPull(x, y, z, tEval, _gpH);
-            ax += _gpH[0]; ay += _gpH[1]; az += _gpH[2];
-        }
-        if (G.darkMatter && x * x + y * y + z * z >= DARK_MATTER_GRAVITY_MIN_R2) {
-            darkMatterRelativeAccel(x, y, z, ex, ey, 0, _dmH);
-            ax += _dmH[0]; ay += _dmH[1]; az += _dmH[2];
-        }
-        _hAx[i] = ax + _ind3[0]; _hAy[i] = ay + _ind3[1]; _hAz[i] = az + _ind3[2];
+        holeGravityAcceleration(st, i, _a3, null, _ind3);
+        _hAx[i] = _a3[0]; _hAy[i] = _a3[1]; _hAz[i] = _a3[2];
     }
 }
 // Pre-drift positions of the step just taken, for the capture hook's
@@ -849,7 +920,7 @@ function pairTau(d, rs, rb, mu) {
     const eff = Math.max(d - rs, rs * .02);
     return Math.sqrt(eff * eff * Math.max(d, rs * .02) / mu);
 }
-function bodyStepSize(st, rem, maxStep = 3600, live = false) {
+function bodyStepSize(st, rem, maxStep = 3600, live = false, noFloor = false, predicting = false) {
     let dt = Math.min(rem, maxStep, LEAP_DT_MAX);
     const muE = activeEarthMu();
     for (let i = 0; i < NB; i++) {
@@ -866,18 +937,24 @@ function bodyStepSize(st, rem, maxStep = 3600, live = false) {
         }
         const rBody = liveBodyRadius(i);
         for (let b = 0; b < BH.n; b++) {
-            const dx = st.x[i] - BH.x[b], dy = st.y[i] - BH.y[b], dz = st.z[i] - BH.z[b];
+            const dx = st.x[i] - (predicting ? predBHX(b, st.t) : BH.x[b]);
+            const dy = st.y[i] - (predicting ? predBHY(b, st.t) : BH.y[b]);
+            const dz = st.z[i] - (predicting ? predBHZ(b, st.t) : BH.z[b]);
             const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
             dt = Math.min(dt, pairTau(d, BH.rs[b], pairRadius(mui, rBody, BH.mu[b]), mui + BH.mu[b]) / (45 * BH.stepFine[b]));
         }
     }
-    if (live) {
+    // The Earth is integrated by previews too, even though placed holes only
+    // coast there. Keep its encounter bound separate from live hole evolution.
+    if (live || predicting) {
         const rEarth = liveEarthRadius();
         for (let i = 0; i < BH.n; i++) {
             if (muE > 0) {
-                const d = Math.hypot(BH.x[i], BH.y[i], BH.z[i]);
+                const d = predicting ? Math.hypot(predBHX(i, st.t), predBHY(i, st.t), predBHZ(i, st.t))
+                    : Math.hypot(BH.x[i], BH.y[i], BH.z[i]);
                 dt = Math.min(dt, pairTau(d, BH.rs[i], pairRadius(muE, rEarth, BH.mu[i]), muE + BH.mu[i]) / (45 * BH.stepFine[i]));
             }
+            if (!live) continue; // preview holes are prescribed coasting partners
             for (let j = i + 1; j < BH.n; j++) {
                 const d = Math.hypot(BH.x[i] - BH.x[j], BH.y[i] - BH.y[j], BH.z[i] - BH.z[j]);
                 const rsP = BH.rs[i] + BH.rs[j];
@@ -889,7 +966,7 @@ function bodyStepSize(st, rem, maxStep = 3600, live = false) {
     // captures and disruptions are resolved by scheduled events and the
     // segment-vs-sphere test, not by a step floor; the live floor only keeps
     // the loop finite
-    return Math.min(Math.max(live && BH.n ? 1e-6 : 1e-3, dt), (hasGasDynamics() ? gasEncounterStep(st, gasSolarSources(st)) : Infinity));
+    return Math.min(noFloor ? dt : Math.max(live && BH.n ? 1e-6 : 1e-3, dt), (hasGasDynamics() ? gasEncounterStep(st, gasSolarSources(st)) : Infinity));
 }
 // ---- deep-time propagation ----
 // Exact planar two-body propagation over any dt: osculating elements from
@@ -1394,6 +1471,24 @@ export function loadEphemSnapshot(st) { copyStateToLive(st); }
 export function advanceEphemSnapshot(st, dtTotal, maxStep = 3600) {
     if (dtTotal > 0) advanceState(st, dtTotal, maxStep);
     copyStateToLive(st);
+}
+// A bounded prediction never stretches a close-encounter step to finish its
+// requested horizon. The caller must restore its live snapshot in finally.
+export function ephemPredictionStepSize(st,maxStep=3600) { return bodyStepSize(st,maxStep,maxStep,false,true,true); }
+export function advanceEphemSnapshotBounded(st, dtTotal, maxSteps = 1, maxStep = 3600) {
+    let elapsed = 0;
+    const tStart = st.t;
+    const count = Number.isFinite(maxSteps) ? Math.max(0, Math.floor(maxSteps)) : 0;
+    if (Number.isFinite(dtTotal) && dtTotal > 0 && Number.isFinite(maxStep) && maxStep > 0) {
+        for (let step = 0; step < count && elapsed < dtTotal; step++) {
+            const dt = Math.min(dtTotal - elapsed, bodyStepSize(st, dtTotal - elapsed, maxStep, false, true, true));
+            if (!(dt > 0) || !Number.isFinite(dt) || elapsed + dt === elapsed) break;
+            elapsed += dt;
+            leapfrogBodies(st, dt, false, tStart + elapsed);
+        }
+    }
+    copyStateToLive(st);
+    return elapsed;
 }
 export function advanceEphemSnapshotKepler(st, dtTotal, syncLive = true) {
     if (dtTotal > 0 && BH.n === 0 && GS.length === 0) {

@@ -1,0 +1,43 @@
+name: Scale-aware gravity inspector
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/*gravity*'
+      - '.github/workflows/gravity-inspector.yml'
+permissions:
+  contents: read
+concurrency:
+  group: gravity-inspector-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  inspector:
+    name: Inspector ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-gravity-inspector.mjs && node scripts/smoke-gravity-display.mjs && npm run smoke:gas-dynamics && npm test && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Verify and capture actual inspector and bounded coast paths
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: node scripts/verify-gravity-inspector.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gravity-inspector-${{ matrix.device }}
+          path: evidence/gravity-inspector/
+          if-no-files-found: error
+          retention-days: 14
