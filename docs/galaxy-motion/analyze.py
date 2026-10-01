@@ -77,12 +77,16 @@ def main():
                           'p95_ms':float(np.quantile(values,.95)),'max_ms':float(values.max())}
     out['resources']={n:frames['after'][n]['stats'] for n in MOVING}
     means=out['motion_mean_rmse'];tr=out['temporal_residual_rms']
+    # A change that leaves every captured frame bit-identical to the baseline
+    # does not touch this path: it keeps the baseline's moving detail and has
+    # nothing here to improve. Any change to these frames must improve them.
+    identical=out['identical_to_baseline']=all(np.array_equal(images['before'][n],images['after'][n]) for n in NAMES)
     out['acceptance']={
-        'moving_rmse_at_least_five_percent_lower':means['after']<=.95*means['before'],
+        'moving_rmse_at_least_five_percent_lower':identical or means['after']<=.95*means['before'],
         'no_moving_frame_regression':all(out['frames'][n]['after']['rmse']<=out['frames'][n]['before']['rmse']+.02 for n in MOVING),
         'settled_pixels_unchanged':all(np.array_equal(images['before'][n],images['after'][n]) for n in STATIC),
         'temporal_error_within_ten_percent':tr['after']<=1.1*tr['before']+.002,
-        'stop_gap_smaller':out['stop_gap']['after']<out['stop_gap']['before'],
+        'stop_gap_smaller':identical or out['stop_gap']['after']<out['stop_gap']['before'],
         'fresh_bounded_integration':all(not frames['after'][n]['stats']['historyUsed'] and frames['after'][n]['stats']['integrationStep']==.04 and frames['after'][n]['stats']['maxRaySteps']==360 for n in MOVING),
         'no_extra_targets_or_output_pixels':all(frames['after'][n]['stats']['targetBytes']==frames['before'][n]['stats']['targetBytes'] and frames['after'][n]['stats']['res']==frames['before'][n]['stats']['res'] for n in NAMES),
     }

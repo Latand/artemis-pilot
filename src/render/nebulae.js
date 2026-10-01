@@ -1,7 +1,5 @@
 import { G } from "../state.js";
 import { gasStateAt } from "../universe/gasFormation.js";
-import { formedStarForNebula } from "../universe/nebulaeData.js";
-import { addStarVisual, removeStarVisual } from "../stars.js";
 import { makeGasCloudVisual, updateGasCloudVisual, disposeGasCloudVisual } from "../gasCloudVisuals.js";
 import * as THREE from "three";
 import { K } from "../constants.js";
@@ -110,7 +108,6 @@ export function removeNebula(i) {
     if (vis) {
         scene.remove(vis.group);
         if (vis.volume) disposeGasCloudVisual(vis);
-        if (vis.formedVisual) removeStarVisual(vis.formedVisual.star);
         for (const layer of vis.layers) layer.material.map?.dispose?.();
         for (const layer of vis.layers) layer.material.dispose();
     }
@@ -123,7 +120,6 @@ export function clearNebulae() {
         const vis = VIS.pop();
         scene.remove(vis.group);
         if (vis.volume) disposeGasCloudVisual(vis);
-        if (vis.formedVisual) removeStarVisual(vis.formedVisual.star);
         for (const layer of vis.layers) layer.material.map?.dispose?.();
         for (const layer of vis.layers) layer.material.dispose();
     }
@@ -152,9 +148,6 @@ export function updateNebulae(camera, dtReal = 0) {
         if (record.formation) {
             const state = gasStateAt(record, G.t);
             updateGasCloudVisual(vis, record, state, camera);
-            const star = formedStarForNebula(i, G.t);
-            if (star && !vis.formedVisual) vis.formedVisual = addStarVisual(star);
-            else if (!star && vis.formedVisual) { removeStarVisual(vis.formedVisual.star); vis.formedVisual = null; }
             continue;
         }
         const radiusScene = record.radiusKm * K;
@@ -175,7 +168,7 @@ export function updateNebulae(camera, dtReal = 0) {
 export function nebulaHudSummary(i) {
     const n = NEBULAE[i];
     if (!n) return "";
-    if (n.formation) { const s = gasStateAt(n, G.t); return s.phase.toUpperCase() + " · " + Math.round(s.progress * 100) + "% · " + s.totalMassSolar + " M☉ · illustrative collapse"; }
+    if (n.formation) { const s = gasStateAt(n, G.t); return s.phase.toUpperCase() + " · " + Math.round(s.progress * 100) + "% in sink · " + s.totalMassSolar + " M☉ · numerical SPH"; }
     const ly = n.radiusKm / 9.4607e12;
     return NEBULA_ARCHETYPES[nebulaArchetypeIndex(n.archetype)] + " NEBULA · radius " + ly.toFixed(ly >= 10 ? 0 : 1) +
         " ly · visual impostor · real cloud mass ~10^2-10^4 M☉ spread over light-years - locally negligible";

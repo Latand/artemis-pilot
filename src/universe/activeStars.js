@@ -1,4 +1,4 @@
-import { formedStarsAt, formedStarForNebula } from "./nebulaeData.js";
+import { formedStarsAt, formedStarForNebula, nebulaRevision } from "./nebulaeData.js";
 import { K, LY_KM, MU_S, R_SUN, STARS } from "../constants.js";
 import { SUN_GAL, PC_KM, galToWorldKmFromInto, worldKmToGalFromInto } from "./coords.js";
 import { getSeed, localStarById, sampleLocalStarsNow, starPositionNow } from "./galaxy.js";
@@ -582,7 +582,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
     FORMATION_TIME = simT;
     // A reverse slice starting exactly at birth belongs to the pre-birth side.
     const formed = formedStarsAt(simT, frameAdvanceSec >= 0);
-    const formationSignature = formed.map(s => s.id).join("|");
+    const formationSignature = nebulaRevision() + ":" + formed.map(s => s.id).join("|");
     if (formationSignature !== FORMATION_SIGNATURE) {
         FORMATION_SIGNATURE = formationSignature;
         ACTIVE_REFRESH_KEY = "";

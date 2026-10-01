@@ -71,7 +71,7 @@ function rebuild() {
         const n = NEBULAE[i];
         if (n.formation) {
             const s = gasStateAt(n, G.t);
-            if (has("GAS") || has("STAR") || has(s.phase)) add(s.phase.toUpperCase() + " " + (i+1), n.formation.massSolar + " M☉ · illustrative formation", "neb:"+i, 0, "#edbd79");
+            if (has("GAS") || has("STAR") || has(s.phase)) add(s.phase.toUpperCase() + " " + (i+1), n.formation.massSolar + " M☉ · numerical SPH", "neb:"+i, 0, "#edbd79");
             continue;
         }
         const archetype = NEBULA_ARCHETYPES[nebulaArchetypeIndex(n.archetype)];

@@ -65,7 +65,14 @@
     "smoke:deep-time": "node scripts/smoke-deep-time.mjs",
     "smoke:deep-stars": "node scripts/smoke-deep-stars.mjs",
     "smoke:galaxy-population": "node scripts/smoke-galaxy-population.mjs",
-    "smoke:gas-formation": "node scripts/smoke-gas-formation.mjs"
+    "smoke:galaxy-dynamics": "node scripts/smoke-galaxy-dynamics.mjs",
+    "smoke:hole-appearance": "node scripts/smoke-hole-appearance.mjs",
+    "smoke:stellar-surfaces": "node scripts/smoke-stellar-surfaces.mjs",
+    "verify:stellar-surfaces": "node scripts/verify-stellar-surfaces.mjs",
+    "smoke:body-surfaces": "node scripts/smoke-body-surfaces.mjs",
+    "smoke:hole-precision": "node scripts/smoke-hole-precision.mjs",
+    "smoke:gas-formation": "node scripts/smoke-gas-formation.mjs",
+    "smoke:gas-sph": "node scripts/smoke-gas-sph.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

@@ -3,7 +3,7 @@ on:
   pull_request:
     paths:
       - 'src/**'
-      - 'scripts/*gas-formation*'
+      - 'scripts/*gas-*'
       - '.github/workflows/gas-formation.yml'
 permissions:
   contents: read
@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install
-      - run: node scripts/smoke-gas-formation.mjs && npm test && npm run smoke:exotic && npm run build
+      - run: node scripts/smoke-gas-sph.mjs && node scripts/smoke-gas-formation.mjs && npm test && npm run smoke:exotic && npm run build
       - run: npx playwright install --with-deps chromium
       - name: Desktop and touch interaction, lifecycle, persistence and WebGL screenshots
         run: node scripts/verify-gas-formation.mjs evidence/gas-formation

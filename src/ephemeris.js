@@ -415,7 +415,7 @@ export function indirectAccel(st, out, tau = 0) {
     const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
     for (const star of gravityStarsFor(ex, ey, 0)) {
         const bx = star.x - ex, by = star.y - ey, bz = star.z || 0;
-        const r0 = Math.sqrt(bx * bx + by * by + bz * bz);
+        const r0 = Math.sqrt(bx * bx + by * by + bz * bz + (star.softeningKm || 0) ** 2);
         if (r0 > 1e-9) {
             const w0 = star.mu / (r0 * r0 * r0);
             ax -= w0 * bx;
@@ -524,7 +524,7 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
     for (const star of gravityStars) {
         const bx = star.x - ex, by = star.y - ey, bz = star.z || 0;
         const dx = x - bx, dy = y - by, dz = z - bz;
-        const r2 = dx * dx + dy * dy + dz * dz;
+        const r2 = dx * dx + dy * dy + dz * dz + (star.softeningKm || 0) ** 2;
         if (r2 > 1e-18) {
             const w = star.mu / (r2 * Math.sqrt(r2));
             ax -= w * dx;
@@ -532,7 +532,7 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
             az -= w * dz;
         }
         if (indir) {
-            const r02 = bx * bx + by * by + bz * bz;
+            const r02 = bx * bx + by * by + bz * bz + (star.softeningKm || 0) ** 2;
             if (r02 > 1e-18) {
                 const w0 = star.mu / (r02 * Math.sqrt(r02));
                 ax -= w0 * bx;
@@ -714,7 +714,7 @@ function computeHoleAccel(st) {
         for (let k = 0; k < stars.length; k++) {
             const star = stars[k];
             const dx = x - (star.x - ex), dy = y - (star.y - ey), dz = z - (star.z || 0);
-            const r2 = dx * dx + dy * dy + dz * dz;
+            const r2 = dx * dx + dy * dy + dz * dz + (star.softeningKm || 0) ** 2;
             if (r2 > 1e-18) {
                 const w = star.mu / (r2 * Math.sqrt(r2));
                 ax -= w * dx; ay -= w * dy; az -= w * dz;

@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import {relUniforms} from '../relView.js';
 import {RELATIVISTIC_VIEW_GLSL} from './viewBrightness.js';
+import {updatePhotosphereAppearance} from './stellarAppearance.js';
+import {stabilizeBodyMaterial} from './relativeBodyFrame.js';
 
 export const EARTH_CLOUD_HEIGHT_KM = 6;
 export const EARTH_ATMOSPHERE_HEIGHT_KM = 100;
@@ -147,35 +149,88 @@ export function atmosphereMaterial(radiusKm = 6371) {
     });
 }
 
-export function photosphereMaterial(color, map = null) {
+export function photosphereMaterial(color, map = null, appearance = {}) {
     const material = new THREE.MeshBasicMaterial({ color, map });
+    // Shared uniforms, not shader-string variants: catalog rows can keep their
+    // identity without compiling one program (or creating a texture) per star.
+    const uniforms = {
+        uSurfaceOffset: { value: new THREE.Vector3() },
+        uGranulation: { value: new THREE.Vector4() },
+        uSurfaceLimb: { value: 0.62 }, uSurfaceGain: { value: 1 },
+        uSpots: { value: new THREE.Vector2() },
+        uSpotCenters: { value: [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()] },
+    };
+    material.userData.photosphere = { uniforms, profile: null, key: null };
+    updatePhotosphereAppearance(material, appearance);
     material.onBeforeCompile = shader => {
+        Object.assign(shader.uniforms, uniforms);
         shader.vertexShader = 'varying vec3 vSurface; varying vec3 vNormalView; varying vec3 vPositionView;\n' + shader.vertexShader;
         shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvSurface = normalize(position); vNormalView = normalize(normalMatrix * normal); vPositionView = (modelViewMatrix * vec4(position, 1.0)).xyz;');
         shader.fragmentShader = /* glsl */`
             varying vec3 vSurface, vNormalView, vPositionView;
-            float grain(vec3 p) {
-                return sin(p.x) * sin(p.y * 1.13) * sin(p.z * 0.91);
+            uniform vec3 uSurfaceOffset, uSpotCenters[3];
+            uniform vec4 uGranulation;
+            uniform vec2 uSpots;
+            uniform float uSurfaceLimb, uSurfaceGain;
+            float surfaceHash(vec3 p) {
+                p = fract(p * 0.1031);
+                p += dot(p, p.yzx + 33.33);
+                return fract((p.x + p.y) * p.z);
+            }
+            float surfaceNoise(vec3 p) {
+                vec3 i = floor(p), f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+                return mix(mix(mix(surfaceHash(i), surfaceHash(i + vec3(1,0,0)), f.x),
+                               mix(surfaceHash(i + vec3(0,1,0)), surfaceHash(i + vec3(1,1,0)), f.x), f.y),
+                           mix(mix(surfaceHash(i + vec3(0,0,1)), surfaceHash(i + vec3(1,0,1)), f.x),
+                               mix(surfaceHash(i + vec3(0,1,1)), surfaceHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+            }
+            float surfaceBand(vec3 p, float scale) {
+                float footprint = max(length(dFdx(p)), length(dFdy(p))) * scale;
+                float resolved = 1.0 - smoothstep(0.45, 1.60, footprint);
+                // Smooth noise gives diffuse bright upflows and darker lanes,
+                // without geometric tiles, emissive cracks, UV seams or poles.
+                return (surfaceNoise(p * scale + uSurfaceOffset) - 0.5) * 2.0 * resolved;
             }
         ` + shader.fragmentShader;
         shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', /* glsl */`
             #include <color_fragment>
+            vec3 surface = normalize(vSurface);
             float mu = clamp(dot(normalize(vNormalView), normalize(-vPositionView)), 0.0, 1.0);
-            float limb = 0.4 + 0.6 * mu;
-            vec3 p = normalize(vSurface) * 1800.0;
-            float resolved = 1.0 - smoothstep(0.7, 2.0, length(fwidth(p)));
-            float granulation = 1.0 + 0.12 * grain(p) * resolved;
-            diffuseColor.rgb *= limb * granulation * 1.4;
+            float limb = 1.0 - uSurfaceLimb * (1.0 - mu);
+            float granules = surfaceBand(surface, uGranulation.x);
+            float meso = surfaceBand(surface, uGranulation.z);
+            float middle = surfaceBand(surface, sqrt(uGranulation.x * uGranulation.z));
+            float contrast = 1.0 + uGranulation.y * granules + uGranulation.w * meso
+                + uGranulation.w * 0.55 * middle;
+            float footprint = max(length(dFdx(surface)), length(dFdy(surface)));
+            float spotResolved = 1.0 - smoothstep(uSpots.x * 0.35, max(0.00001, uSpots.x), footprint);
+            float spot = 0.0, facula = 0.0;
+            for (int i = 0; i < 3; i++) {
+                float d = length(surface - uSpotCenters[i]);
+                float radius = max(0.00001, uSpots.x * (0.8 + 0.17 * float(i)));
+                float penumbra = 1.0 - smoothstep(radius * 0.40, radius, d);
+                float umbra = 1.0 - smoothstep(radius * 0.16, radius * 0.45, d);
+                spot += 0.45 * penumbra + 0.55 * umbra;
+                facula += (1.0 - smoothstep(radius, radius * 1.8, d)) * (1.0 - penumbra);
+            }
+            contrast *= 1.0 - min(0.85, spot * uSpots.y * spotResolved);
+            contrast += facula * (1.0 - mu) * 0.04 * uSpots.y * spotResolved;
+            // Camera-exposed visible-light surface; bounded gain leaves headroom
+            // for convection and temperature colour in ACES instead of whiteout.
+            diffuseColor.rgb *= limb * max(0.10, contrast) * 0.88 * uSurfaceGain;
         `);
+        // Legacy solar imagery is only a very weak luminance prior. Its colour
+        // (often false-colour/EUV) must never tint the shared blackbody palette.
         if (map) shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', /* glsl */`
             #ifdef USE_MAP
                 float detail = dot(texture2D(map, vMapUv).rgb, vec3(0.2126, 0.7152, 0.0722));
-                diffuseColor.rgb *= mix(0.85, 1.05, detail);
+                diffuseColor.rgb *= mix(0.97, 1.03, detail);
             #endif
         `);
     };
-    material.customProgramCacheKey = () => 'photosphere-visible-v1';
-    return material;
+    material.customProgramCacheKey = () => 'photosphere-visible-v2';
+    return stabilizeBodyMaterial(material);
 }
 
 export function ringMaterial(map, radius) {

@@ -93,7 +93,7 @@ function selectedBody() {
     const ni = /^neb:(\d+)$/.exec(String(G.focus));
     if (ni && NEBULAE[+ni[1]]?.formation) {
         const n = NEBULAE[+ni[1]], s = gasStateAt(n,G.t);
-        return {name:s.phase+" "+(+ni[1]+1),kind:s.totalMassSolar+" M☉ · "+Math.round(s.progress*100)+"% formed",R:s.radiusKm,basis:"metaphor"};
+        return {name:s.phase+" "+(+ni[1]+1),kind:s.gasMassSolar.toFixed(2)+" M☉ gas · "+s.coreMassSolar.toFixed(2)+" M☉ sink · numerical SPH",basis:"modeled"};
     }
     if(G.focus==='sun'&&cam.dist>=LY_SCENE*20000)return {name:cam.dist>LY_SCENE*800000?'Local Group':'Milky Way',kind:'Galaxy-scale view',basis:'modeled'};
     const bi=/^bh:(\d+)$/.exec(String(G.focus));

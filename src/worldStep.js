@@ -1,4 +1,4 @@
-import { nextFormationBoundary, NEB_MAX, NEBULAE } from "./universe/nebulaeData.js";
+import { nextFormationBoundary, NEB_MAX, NEBULAE, prepareGasAdvance } from "./universe/nebulaeData.js";
 import { refreshActiveStars } from "./universe/activeStars.js";
 import { eph } from "./ephemeris.js";
 // ONE per-frame world step, shared by every way the ship can be (flying,
@@ -92,8 +92,11 @@ function stepWorldSlice(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast = 
 // newborn's gravity to the pre-birth segment or skip its post-birth segment.
 export function stepWorld(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast = null) {
     if (!NEBULAE.some(n => n.formation)) return stepWorldSlice(requested,atx,aty,atz,aMag,toast);
+    const originalRequested=requested;
+    const gas=prepareGasAdvance(G.t,requested);
+    requested=gas.advance;
     let remaining = requested, delivered = 0, steps = 0, analytic = 0;
-    let limited = false, reason = "";
+    let limited = gas.limited, reason = gas.reason;
     const frame = beginEphemFrame(Math.abs(G.warp));
     try {
         for (let slice = 0; slice <= NEB_MAX; slice++) {
@@ -108,7 +111,7 @@ export function stepWorld(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast 
     } finally { endEphemFrame(); }
     // Actual delivered clock is authoritative, including reverse and budgets.
     refreshActiveStars(eph.earthX+G.x,eph.earthY+G.y,G.z,G.focus,G.t,Math.abs(delivered));
-    Object.assign(WORLD_STEP,{requested,delivered,bodySteps:steps,analyticCalls:analytic,limited,reason,activeStarsFresh:true});
-    noteFrameDelivery(limited ? requested : delivered,delivered,reason);
+    Object.assign(WORLD_STEP,{requested:originalRequested,delivered,gasSteps:gas.steps,bodySteps:steps,analyticCalls:analytic,limited,reason,activeStarsFresh:true});
+    noteFrameDelivery(limited ? originalRequested : delivered,delivered,reason);
     return delivered;
 }

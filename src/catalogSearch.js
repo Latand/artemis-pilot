@@ -207,7 +207,7 @@ function describeActiveStar(star, dKm, source, focus) {
 }
 
 function activeSource(star) {
-    if (star.formedStar) return { label: "FORMED STAR · ILLUSTRATIVE", key: "formed" };
+    if (star.formedStar) return { label: "PROTOSTELLAR SINK", key: "formed" };
     if (star.activeCatalog) return { label: "HYG V4.1", key: "hyg" };
     if (star.procedural) return { label: "MILKY WAY MODEL", key: "procedural" };
     return { label: "CURATED", key: "known" };
@@ -222,7 +222,7 @@ export function activeNeighborhoodRows(limit = 10) {
     // the neighbourhood as it is now (the time of the frame's refresh), not at the epoch
     refreshActiveStars(wx, wy, wz, focus, activeStarsExactTime());
     return ACTIVE_STARS
-        .filter(star => (star.procedural || star.activeCatalog || star.formedStar) && activeStarFocusValue(star))
+        .filter(star => (star.procedural || star.activeCatalog) && activeStarFocusValue(star))
         .map(star => {
             const dx = wx - star.x, dy = wy - star.y, dz = wz - (star.z || 0);
             const source = activeSource(star);

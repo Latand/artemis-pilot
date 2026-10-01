@@ -1,63 +1,115 @@
-# Release gas and form a star
+# Numerical gas collapse and protostellar sinks
 
-In **Create → Gas → Star**, choose 0.3, 1 or 3 solar masses. Tap/click open
-space or choose **Release gas ahead**. The view follows the new cloud. Placement
-is one-shot, preserves the current clock/paused state, and stays at least 0.12
-light-years from Sol (the existing stellar solver excludes the inner 0.02 ly).
+**Create → Gas → Star** now runs a numerical gas experiment. The earlier
+prescribed collapse animation has been replaced; neither age nor a progress
+curve creates a star or shrinks the cloud.
 
-**Watch star form** advances the same universe clock through contraction and
-heating. It uses the existing time-jump controller, restores the earlier warp
-at arrival, and cancels on manual time controls. It does not run a private
-animation clock. Black holes/landed/dead states can limit or prevent the shortcut;
-the normal Time controls remain available. A newborn remains a navigable source
-under its original cloud entry, with an ordinary point/photosphere, stellar mass,
-radius, gravity and contact surface. **View newborn star** moves in for a close
-look. It does not instantly acquire planets.
+Choose 0.3, 1 or 3 M☉, a gas temperature (10, 30 or 200 K), and nearly-at-rest
+or outward-moving initial conditions. Release a cloud with the button or a
+mouse/touch tap. **Run physics** selects 1,000 simulated years per second on the
+shared Time controls. It does not promise formation or jump to a scheduled
+birth. Cold, sufficiently bound gas can collapse; hot or unbound gas can expand.
+The same clock can be paused. Reverse restores/replays checkpoints, rather than
+integrating dissipative gas equations backwards. Quicksave stores the numerical
+state, including gas parcels and any sink.
 
-## Model scope
+## Numerical model
 
-This is a deliberately **illustrative, single-core birth sequence**, not SPH,
-MHD, radiative transfer, a Jeans-instability test, or a stellar structure solver.
-The initial radius is 0.045 ly. A uniform pressureless sphere's free-fall time,
-`t_ff = pi/sqrt(8) sqrt(R^3/GM)`, sets the sequence's approximate duration.
-The staged contraction, heating colours and ignition threshold are art-directed.
-They do not predict a real cloud's collapse or main-sequence arrival time.
+- 96 equal-mass parcels per cloud, at most four clouds/nebulae. A seeded,
+  separated 3D sphere has no imposed inward velocity. Small seeded perturbations
+  and rotation avoid a perfectly symmetric initial condition
+- Cubic-spline SPH density and pressure gradients; pressure forces are symmetric
+  pair interactions. There is no outward radial-force substitute
+- Pairwise Newtonian self-gravity with a fixed Plummer softening radius; the
+  same softened potential is used in binding-energy tests
+- Isothermal molecular gas, `P = rho k_B T / (2.33 m_H)`. The selected temperature
+  is a heat bath representing rapid cooling. Compressional/shock work removed
+  to the bath and energy supplied during expansion are tracked separately.
+  This does not solve radiative transfer or temperature-dependent chemistry
+- Monaghan-style viscosity acts on approaching pairs. There is no global
+  velocity damping, forced radius contraction or prescribed gas-to-core transfer
+- Kick-drift-kick integration with state-dependent Courant/acceleration bounds,
+  quantized to a power-of-two timestep ladder. Render-frame boundaries never
+  shorten the canonical numerical step. The density kernels shown on screen
+  follow the computed particle positions; substep drawing is interpolated
 
-Gravity compresses a star-forming cloud and heats its protostar; eventual hydrogen
-fusion powers the star. This qualitative sequence is described by
-[NASA's star overview](https://science.nasa.gov/universe/stars/) and
-[NASA's star-birth explainer](https://science.nasa.gov/exoplanets/resources/life-and-death/chapter-1/).
-The shaders are procedural false-colour illustrations, not telescope data.
+The numerical equations follow [Price's SPH review](https://arxiv.org/abs/1012.1885).
+The limitations of an isothermal cloud approximation are discussed by
+[Whitehouse & Bate](https://arxiv.org/abs/astro-ph/0511671).
 
-- Each source preserves its initial gas mass: gas + core = initial mass. At
-  ignition all of it becomes one star. There is no fragmentation, outflow,
-  evaporation, feedback, collisions or gas exchange between clouds
-- Diffuse-gas/core gravity is omitted during the illustrative collapse. At
-  ignition the completed star enters the existing capped stellar gravity and
-  contact system. This is an explicit idealized transition, not a continuous
-  dynamical mass-accretion model. The star stays fixed in the Sun-centred frame
-- Final radius and luminosity use simple `M^0.8` and `M^3.5` scalings; the surface
-  temperature follows Stefan–Boltzmann scaling. These are illustrative main-
-  sequence estimates, not a precision evolution track. No later stellar aging
-- All lifecycle state is derived from exact simulation time and the immutable
-  release record. Forward, reverse, pause and arbitrarily large jumps give the
-  same phase at the same instant. World stepping splits at birth boundaries
-- One cloud uses one volume quad (24 mobile / 40 desktop ray samples) and one
-  core sprite. After birth it uses the existing star point/photosphere path.
-  The existing shared four-nebula limit also bounds the number of newborn stars.
-  No per-frame particle spawning or unbounded buffer growth
-- Quicksave preserves formation metadata as an optional seventh nebula tuple
-  field. Six-field legacy nebula saves still load. Restart removes created
-  clouds/newborns; cosmetic nebulae retain their prior behavior
+## What the bright core means
 
-## Verification
+The solver creates a **protostellar sink**, representing unresolved collapsing
+material. Creation requires a sufficiently dense neighborhood at a potential
+minimum, at least 16 parcels, negative COM-frame total energy, inadequate
+thermal support, and converging motion. Additional parcels accrete only when
+nearby, inward-moving, bound, and with sufficiently low angular momentum.
+Thresholds are numerical resolution choices; elapsed time is not a criterion.
 
-- `node scripts/smoke-gas-formation.mjs`: deterministic stages, mass budget,
-  deep-time boundaries, reverse, legacy/malformed saves, stable IDs, cache
-  replacement, active/gravity capacity, no auto-planets, unchanged catalogue
-- `node scripts/verify-gas-formation.mjs evidence/gas-formation`: actual desktop
-  and mobile Create controls, paused placement, all four WebGL stages, quicksave/
-  quickload, forward/reverse world steps, cancel/reset and viewport bounds
-- Browser screenshot fixture disables the expensive galaxy/catalog background,
-  gravity river and lensing to isolate cloud rendering; it retains the real
-  application, camera, WebGL, clock and UI. Screenshots are not benchmarks
+Mass, linear momentum, center of mass and angular momentum are carried into the
+sink. Unresolved binding energy is booked separately. The sink uses softened
+gravity in the existing local stellar field, without treating its control
+radius as a lethal photosphere or instantly inventing a planetary system.
+**Inspect core** frames this numerical control region. Its bright marker is a
+visual cue, not a calculated stellar surface, luminosity or fusion state.
+
+The sink criteria are adapted from
+[Bate, Bonnell & Price](https://arxiv.org/abs/astro-ph/9510149) and the checks
+reviewed by [Federrath et al.](https://arxiv.org/abs/1001.4456).
+
+## Resolution and scope
+
+This is real, coarse numerical gas dynamics. It is not a predictive
+star-formation calculation. With 96 parcels, the usual Jeans-resolution
+requirements are not met during collapse; fragmentation, final stellar masses
+and birth times are not converged astrophysical predictions. See
+[Bate & Burkert's resolution study](https://www.astro.ex.ac.uk/people/mbate/Preprints/SPHresolution/SPHresolution.html).
+
+The patch omits magnetic fields, opacity-dependent cooling, radiation feedback,
+external tides, interactions between separate gas clouds, nuclear fusion and
+stellar interiors. The gas patch evolves under its own gravity; the produced
+sink is exposed to the app's local gravity consumers, but the universe does not
+feed external forces back into the gas patch. The four initial clouds are
+independent experiments, not one domain that exchanges gas.
+
+The initial radius is 0.045 ly. At 10 K, initial uniform-sphere free-fall
+estimates are about 49,000 / 26,838 / 15,495 years for 0.3 / 1 / 3 M☉. These are
+characteristic scales, **not scheduled birth times**. In particular, the 0.3 M☉
+cloud can remain pressure-supported instead of forming a core.
+
+## Clock, replay and performance bounds
+
+- At most four SPH steps total per world frame, shared fairly among active
+  clouds. The ephemeris retains one shared frame budget across birth boundaries
+- If the requested warp exceeds numerical work capacity, the entire universe's
+  delivered time is limited. The Time Dock reports the limitation. Gas never
+  silently fast-forwards or substitutes an inferred completed state
+- Canonical state snapshots plus a bounded rolling checkpoint history support
+  replay. A long reverse seek can hold the clock while earlier gas history is
+  reconstructed. Cooling is not physically reversed
+- Once every parcel belongs to a force-free sink, its free motion can be
+  advanced analytically. Remaining supported or dispersing gas is not skipped
+- Four fixed particle buffers, no per-frame particle emission. Each cloud uses
+  one instanced density-kernel draw and one core marker. No hydrodynamic field
+  or particle buffer grows without a cap
+- Six-field cosmetic-nebula saves remain supported. Timed-prototype metadata
+  becomes a seeded numerical source; its formerly inferred star is not imported
+
+These bounds are not a hardware frame-rate guarantee. CI uses software WebGL;
+mobile hardware performance remains unmeasured.
+
+## Reproduction and tests
+
+- `npm run smoke:gas-sph`: cold collapse versus same-seed hot/outward controls,
+  marginally supported 0.3 M☉, binding/convergence criteria, mass/momentum/COM and
+  angular momentum, bath/sink energy accounting, timestep sensitivity,
+  deterministic partition/replay, work caps and malformed checkpoints
+- `npm run smoke:gas-formation`: runtime source/state integration, bounded
+  shared-clock delivery, multiple clouds, checkpoint persistence and replay
+- `node scripts/verify-gas-formation.mjs evidence/gas-formation`: real desktop
+  and mobile release controls, actual numerical world stepping, cold contraction
+  and sink formation, hot dispersal, pause, rewind, quicksave/load and reset
+
+Screenshots are raw frames from the running app. The dedicated fixture disables
+expensive galaxy/catalog background layers, river and lensing to isolate gas
+rendering and interaction. It is not a performance benchmark.

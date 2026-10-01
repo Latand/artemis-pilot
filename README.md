@@ -16,6 +16,7 @@ There are no scene switches and no loading screens between scales. One camera, o
 - **Physically consistent light.** Resolved stars, the unresolved glow of the Milky Way and distant galaxies carry the same flux they would as stars: fly toward a star and it brightens by inverse square; leave the Galaxy and the photographic exposure hands over smoothly.
 - **Light takes time.** Every galaxy is drawn on the camera's past light cone (redshift, (1+z)^-4 dimming, expansion of unbound structure only); Andromeda, the merger debris, the Sun and black-hole flares are seen at their retarded time. A fast camera sees relativistic aberration and Doppler shifts, and black holes bend the light of what lies behind them.
 - **Deep time.** Warp to a billion years per second and watch the Milky Way and Andromeda merge, the Sun become a white dwarf, and the galaxies fade and redden toward the degenerate era.
+- **A disk that evolves.** Speed up time and the Milky Way changes shape: gas, dust clouds, star-forming complexes and stars orbit at their own rates and shear, while the spiral arms grow, wind up and give way to new arms that re-form at the bar ends. The stars stream through the arms: old stars slow down and crowd in them, a young star lights up where an arm reaches it. Every epoch is a pure function of time, so reversing time retraces it exactly ([`docs/galaxy-dynamics.md`](docs/galaxy-dynamics.md)).
 - **Honest about its limits.** Provenance, approximations and tests for every layer are in [`docs/universe-continuity.md`](docs/universe-continuity.md).
 
 ### Tours
@@ -39,7 +40,7 @@ Every frame of these tours is an unedited render of the running simulation (`nod
 
 ## Highlights
 
-- **Gas-cloud sandbox**: Create → Gas → Star releases a seeded cloud that contracts and heats into one newborn star. Pause, rewind, quicksave, and watch it with the shared universe clock. The single-core collapse is illustrative, with conserved gas/core mass and a four-object cap; see [model limits and tests](docs/gas-star-formation.md).
+- **Numerical gas collapse**: Create → Gas → Star releases a 96-parcel SPH cloud with self-gravity, pressure and an isothermal cooling approximation. Cold bound gas can form a protostellar sink; hot or outward-moving gas can disperse. Pause, checkpoint replay and quicksave share the universe clock. See [resolution limits and tests](docs/gas-star-formation.md).
 
 - **First-person 3D cockpit** (J): real interior geometry composited over the world render, three live canvas MFDs (attitude tape with prograde/retrograde, osculating-orbit nav map with apo/peri, drive/systems panel), head-look on drag, sun-tracking interior light, thrust flicker, and warning annunciators.
 - **WebXR / PSVR2 support**: sit inside the cockpit with full head tracking and fly on the Sense sticks, or switch to god mode and grab the solar system with your hands — one grip drags space, both grips zoom and twist it from tabletop Earth–Moon scale out to the Local Group. Controller haptics carry engine rumble and aero buffeting.
