@@ -40,6 +40,8 @@ Every frame of these tours is an unedited render of the running simulation (`nod
 
 ## Highlights
 
+- **Gas to a living stellar system**: Choose 0.1–30 M☉ explicitly. Numerical assembly produces a normal stellar photosphere, a mass-dependent lifecycle and an accounted-for remnant. A moving, finite-sized cloud/core shares local gravity with nearby massive bodies and follows a prescribed galactic background. See [model scope](docs/gas-stellar-integration.md).
+
 - **Numerical gas collapse**: Create → Gas → Star releases a 96-parcel SPH cloud with self-gravity, pressure and an isothermal cooling approximation. Cold bound gas can form a protostellar sink; hot or outward-moving gas can disperse. Pause, checkpoint replay and quicksave share the universe clock. See [resolution limits and tests](docs/gas-star-formation.md).
 
 - **First-person 3D cockpit** (J): real interior geometry composited over the world render, three live canvas MFDs (attitude tape with prograde/retrograde, osculating-orbit nav map with apo/peri, drive/systems panel), head-look on drag, sun-tracking interior light, thrust flicker, and warning annunciators.

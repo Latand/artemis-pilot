@@ -1,0 +1,43 @@
+name: Gas stellar integration QA
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/*gas-*'
+      - '.github/workflows/gas-stellar.yml'
+permissions:
+  contents: read
+concurrency:
+  group: gas-stellar-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  stellar:
+    name: Gas stellar ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npm run smoke:gas-sph && npm run smoke:gas-formation && npm run smoke:gas-stellar && npm run smoke:gas-dynamics && npm run smoke:gas-world && npm test && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Inspect actual release and stellar-stage frames
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: node scripts/verify-gas-stellar-evolution.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gas-stellar-${{ matrix.device }}
+          path: evidence/gas-stellar/
+          if-no-files-found: error
+          retention-days: 14

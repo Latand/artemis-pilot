@@ -72,7 +72,7 @@ export function createGasSph(options = {}) {
         positions: new Float64Array(count * 3), velocities: new Float64Array(count * 3),
         accelerations: new Float64Array(count * 3), hydroAccelerations: new Float64Array(count * 3),
         gravitationalPotential: new Float64Array(count), density: new Float64Array(count), temperatureK: new Float64Array(count).fill(config.temperatureK),
-        sink: { mass: 0, position: vec(), velocity: vec(), acceleration: vec(), angularMomentum: vec(), formedAtSec: null, accretedCount: 0 },
+        sink: { mass: 0, position: vec(), velocity: vec(), acceleration: vec(), angularMomentum: vec(), formedAtSec: null, assembledAtSec:null, accretedCount: 0 },
         radiatedEnergy: 0, backgroundHeatingEnergy: 0, unresolvedEnergy: 0,
         initialEnergy: 0, initialMomentum: vec(), initialCenterOfMass: vec(),
         lastDt: 0, initialPeakDensity: 0, maxSignalSpeed: 0,
@@ -214,6 +214,7 @@ function mergeIntoSink(s, ids) {
     sink.mass = newMass; sink.position.set(center); sink.velocity.set(velocity); sink.angularMomentum.set(spin);
     if (oldMass === 0) sink.formedAtSec = s.ageSec;
     sink.accretedCount += ids.length;
+    if (sink.accretedCount === s.count && sink.assembledAtSec == null) sink.assembledAtSec = s.ageSec;
     // Signed energy transferred to unresolved degrees of freedom, including
     // changed gravitational self-energy. It is not all radiated luminosity.
     s.unresolvedEnergy += before - gasSphDiagnostics(s).totalEnergy;
@@ -387,6 +388,7 @@ export function restoreGasSph(snapshot) {
         !close(snapshot.soundSpeedSquared, KB_OVER_MU_MH_KM2_S2_K * config.temperatureK / snapshot.unitVelocityKmS ** 2)) invalid();
     if (!sink || !nonnegative(sink.mass) || sink.mass > 1 + 1e-12 || !Number.isInteger(sink.accretedCount) || sink.accretedCount < 0 || sink.accretedCount > count ||
         !close(sink.mass, sink.accretedCount / count) || !(sink.mass > 0 ? nonnegative(sink.formedAtSec) && sink.formedAtSec <= snapshot.ageSec : sink.formedAtSec === null)) invalid();
+    if (sink.assembledAtSec != null && (!nonnegative(sink.assembledAtSec) || sink.assembledAtSec > snapshot.ageSec || sink.accretedCount !== count)) invalid();
     for (const key of ['initialMomentum', 'initialCenterOfMass']) if (!vector(snapshot[key])) invalid();
     for (const key of ['position', 'velocity', 'acceleration', 'angularMomentum']) if (!vector(sink[key])) invalid();
     const s = { ...snapshot, config: { ...config }, sink: { ...sink } };

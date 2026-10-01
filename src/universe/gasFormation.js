@@ -1,24 +1,27 @@
 // Numerical gas histories: SPH states, bounded delivery, and checkpoint replay.
 // No radius/mass/stage is prescribed as a function of elapsed time.
+import { normalizeGasDynamics, serializeGasDynamics } from "./gasDynamics.js";
+import { formedStarEvolution, validGasMass } from "./formedStarEvolution.js";
 import { SEC_YEAR, WARPS } from "../constants.js";
 import { createGasSph, stepGasSph, gasSphNextDt, snapshotGasSph, restoreGasSph, gasSphDiagnostics } from "./gasSph.js";
 
 export const GAS_RADIUS_KM = .045 * 9.4607e12;
-export const GAS_MASSES = [.3, 1, 3];
+export const GAS_MASSES = [.3, 1, 3, 10, 30];
 export const GAS_TEMPERATURES = [10, 30, 200];
-export const GAS_MODEL_VERSION = 2;
+export const GAS_MODEL_VERSION = 3;
 export const GAS_STEPS_PER_FRAME = 4;
 const CHECKPOINT_LIMIT = 32, CHECKPOINT_STRIDE = 12, HISTORY_LIMIT = 24;
 const runtimes = new WeakMap(), diagnostics = new WeakMap();
 
 export function normalizeFormation(value) {
-    if (!value || ![1, GAS_MODEL_VERSION].includes(value.v) || !Number.isFinite(value.bornAtSec) || !GAS_MASSES.includes(value.massSolar)) return null;
+    if (!value || ![1, 2, GAS_MODEL_VERSION].includes(value.v) || !Number.isFinite(value.bornAtSec) || !validGasMass(value.massSolar)) return null;
     const f = { v:GAS_MODEL_VERSION, bornAtSec:value.bornAtSec, massSolar:value.massSolar,
         temperatureK:GAS_TEMPERATURES.includes(value.temperatureK) ? value.temperatureK : 10,
         radialVelocity:value.radialVelocity === 3 ? 3 : 0, particleCount:96 };
     // The previous draft's timed sources migrate to initial numerical sources;
     // its inferred star or collapse progress is deliberately never imported.
-    if (value.v === GAS_MODEL_VERSION && value.checkpoint) f.checkpoint = value.checkpoint;
+    if (value.v >= 2 && value.checkpoint) f.checkpoint = value.checkpoint;
+    f.dynamics=normalizeGasDynamics(value.dynamics,f.bornAtSec);
     return f;
 }
 function initialState(record) {
@@ -135,10 +138,14 @@ export function gasStateAt(record,simT,out={}) {
     const present=Number.isFinite(simT)&&simT>=record.formation.bornAtSec;
     const born=present&&d.sinkMass>0;
     const contracting=d.rmsRadius<init.rmsRadius*.9;
+    const assembled=born&&d.activeCount===0;
+    const assembledAge=s.sink.assembledAtSec??s.sink.formedAtSec;
+    const stellar=born?formedStarEvolution(d.sinkMassSolar,Math.max(0,view.ageSec-(assembledAge??view.ageSec)),record.seed,assembled):null;
     const phase=!present?'Before release':!view.ready?(view.replaying?'Replaying checkpoints':'Computing gas state'):s.status==='resolution-limit'?'Resolution limit':
-        born?'Protostellar core':d.rmsRadius>init.rmsRadius*1.15?'Dispersing gas':contracting?'Collapsing gas':'Gas cloud';
+        born?stellar.phase:d.rmsRadius>init.rmsRadius*1.15?'Dispersing gas':contracting?'Collapsing gas':'Gas cloud';
     return Object.assign(out,{present,born,phase,ready:view.ready,replaying:view.replaying,limited:view.limited,
-        progress:present?d.sinkMass:0,ageSec:view.ageSec,computedAgeSec:s.ageSec,
+        progress:present?d.sinkMass:0,ageSec:view.ageSec,computedAgeSec:s.ageSec,stellar,assembled,
+        stellarMassSolar:stellar?.massSolar||0,ejectedMassSolar:stellar?.ejectedMassSolar||0,
         radiusKm:Math.max(s.sinkRadius,d.maxRadius)*record.radiusKm,
         sinkRadiusKm:s.sinkRadius*record.radiusKm,softeningKm:s.softening*record.radiusKm,
         sinkPosition:s.sink.position,sinkVelocity:s.sink.velocity,unitVelocityKmS:s.unitVelocityKmS,
@@ -156,7 +163,7 @@ export function gasWatchWarp(_span,feasible=Infinity){return WARPS.includes(1000
 export function serializeGasFormation(record,simT) {
     const f=record.formation,view=gasNumericalView(record,simT);
     return{v:GAS_MODEL_VERSION,bornAtSec:f.bornAtSec,massSolar:f.massSolar,temperatureK:f.temperatureK,
-        radialVelocity:f.radialVelocity,particleCount:96,checkpoint:{previous:view.a,current:view.b}};
+        radialVelocity:f.radialVelocity,particleCount:96,dynamics:serializeGasDynamics(record,simT),checkpoint:{previous:view.a,current:view.b}};
 }
 export function gasKnownBirth(record) { return runtime(record).knownBirth; }
 export function gasRuntimeStats(record){const r=runtime(record);return{history:r.history.length,checkpoints:r.checkpoints.length,steps:r.lastSteps,replaying:r.replaying,limited:r.limited};}

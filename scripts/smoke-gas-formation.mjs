@@ -4,11 +4,16 @@
 import assert from 'node:assert/strict';
 
 globalThis.window ??= {};
-const { STARS, MU_S, LY_KM } = await import('../src/constants.js');
+const { STARS, MU_S, LY_KM, R_SUN } = await import('../src/constants.js');
 const model = await import('../src/universe/gasFormation.js');
 const neb = await import('../src/universe/nebulaeData.js');
 const active = await import('../src/universe/activeStars.js');
 const { generateSystem } = await import('../src/universe/planetarySystem.js');
+const state = await import('../src/state.js');
+const ephem = await import('../src/ephemeris.js');
+const physics = await import('../src/physics.js');
+const { strongestActiveStarWell } = await import('../src/universe/starDominance.js');
+const { stellarSurfaceHit } = await import('../src/universe/stellarContact.js');
 const originalStars = STARS.slice(), originalCatalog = JSON.stringify(STARS);
 const clone = value => JSON.parse(JSON.stringify(value));
 let passed = 0, failed = 0;
@@ -56,10 +61,10 @@ const gravity = () => active.GRAVITY_STARS.filter(s => s.formedStar);
 
 console.log('\nNumerical gas runtime');
 test('v2 physical options survive normalization; timed v1 sources migrate as initial gas', () => {
-    assert.equal(model.GAS_MODEL_VERSION, 2);
+    assert.equal(model.GAS_MODEL_VERSION, 3);
     for (const massSolar of [.3, 1, 3]) for (const temperatureK of [10, 30, 200]) for (const radialVelocity of [0, 3]) {
         const f = model.normalizeFormation({ v: 2, bornAtSec: -100, massSolar, temperatureK, radialVelocity });
-        assert.deepEqual([f.v, f.massSolar, f.temperatureK, f.radialVelocity, f.particleCount], [2, massSolar, temperatureK, radialVelocity, 96]);
+        assert.deepEqual([f.v, f.massSolar, f.temperatureK, f.radialVelocity, f.particleCount], [3, massSolar, temperatureK, radialVelocity, 96]);
     }
     const old = record({ v: 1, checkpoint: { current: { sink: { mass: 1 } } } });
     assert.equal(old.formation.checkpoint, undefined);
@@ -259,7 +264,8 @@ test('only a numerically created sink joins active gravity and receives no autom
     assert.equal(sinks().length, 1); assert.equal(gravity().length, 1);
     const star = sinks()[0]; assert.equal(star.gasSink, true); assert.equal(star.kind, 'protostar');
     close(star.mu, MU_S * s.coreMassSolar, 'sink gravity'); close(star.mass + s.gasMassSolar, 1, 'no doubled gas mass');
-    assert.equal(star.R, s.sinkRadiusKm); assert.equal(active.activeStarFocusValue(star), 'neb:0');
+    assert.equal(star.R, s.stellar.radiusKm);
+    assert.equal(star.sinkRadiusKm, s.sinkRadiusKm); assert.equal(active.activeStarFocusValue(star), 'neb:0');
     assert.equal(active.activeStarForFocus('neb:0'), star);
     assert.equal(generateSystem(star).planets.length, 0); assert.equal(active.getFocusedSystem(star, t), null);
 });
@@ -303,6 +309,113 @@ test('reset removes numerical sources, retains cosmetic nebulae, and leaves STAR
     assert.equal(neb.NEBULAE.length, 1); assert.equal(neb.NEBULAE[0].formation, undefined);
     assert.equal(STARS.length, originalStars.length); assert.ok(STARS.every((s, i) => s === originalStars[i]));
     assert.equal(JSON.stringify(STARS), originalCatalog);
+});
+
+console.log('\nNumerical sink force and contact integration');
+let integratedSink;
+function sinkForPhysics() {
+    if (!integratedSink) {
+        const initial = record(), r = install(record({ bornAtSec: -1.65 * unit(initial) }));
+        prepare(r, 0); refresh(r, 0);
+        integratedSink = sinks()[0];
+        assert.ok(integratedSink?.gasSink && gravity().includes(integratedSink));
+    }
+    return integratedSink;
+}
+function isolatePhysics() {
+    state.resetWorld(); ephem.resetEphem(); state.resetShip();
+    Object.assign(state.G, { focus: 'ship', gr: false, darkEnergy: false, darkMatter: false, warp: 60 });
+    state.BH.n = 0; state.GS.length = 0;
+    state.WORLD.earthDestroyed = state.WORLD.moonDestroyed = state.WORLD.sunDestroyed = true;
+    state.WORLD.plDestroyed.fill(1);
+    physics.initPhysicsHooks({
+        die(reason) { state.G.dead = true; state.G.deadReason = reason; },
+        award() {}, banner() {}, hideBanner() {},
+    });
+}
+function relativeForce(actual, expected, label) {
+    assert.ok(Number.isFinite(actual) && Math.abs(actual - expected) <= Math.max(1e-25, Math.abs(expected) * 1e-9),
+        `${label}: ${actual} != ${expected}`);
+}
+function shipAt(star, offset) {
+    Object.assign(state.G, {
+        x: star.x - ephem.eph.earthX + offset, y: star.y - ephem.eph.earthY, z: star.z,
+        vx: 0, vy: 0, vz: 0, dead: false, landed: null,
+    });
+}
+test('ephemeris and ship derivative use finite Plummer sink forces and ordinary inverse-square gravity', () => {
+    isolatePhysics();
+    // A standalone softened-star compatibility control. Real formed stars
+    // now get their sole gravity from the explicit gas+core aggregate.
+    const sink = { ...sinkForPhysics(), formedStar: false }, ordinary = { ...sink, gasSink: false, softeningKm: 0, R: R_SUN };
+    neb.clearNebulaRecords();
+    for (const source of [sink, ordinary]) {
+        ephem.beginPredictionStars([source]); // isolates the same shared field used by live ship/body integration
+        try {
+            for (const multiplier of (source.gasSink ? [0, .1, 1, 10] : [.1, 1, 10])) {
+                shipAt(source, sink.softeningKm * multiplier);
+                const { x, y, z } = state.G;
+                const dx = x - (source.x - ephem.eph.earthX), dy = y - (source.y - ephem.eph.earthY), dz = z - source.z;
+                const r2 = dx * dx + dy * dy + dz * dz + source.softeningKm ** 2;
+                const w = r2 > 0 ? source.mu / r2 ** 1.5 : 0;
+                const expected = [-w * dx, -w * dy, -w * dz], field = [0, 0, 0], derivative = new Float64Array(6);
+                ephem.relGravityAt3(x, y, z, field);
+                physics.deriv(x, y, z, 0, 0, 0, 0, 0, 0, 0, derivative);
+                for (let axis = 0; axis < 3; axis++) {
+                    relativeForce(field[axis], expected[axis], 'ephemeris force');
+                    relativeForce(derivative[axis + 3], expected[axis], 'ship derivative force');
+                }
+            }
+        } finally { ephem.endPredictionStars(); }
+    }
+});
+test('softened cores disable inner Kepler dominance while ordinary stars retain it', () => {
+    const sink = sinkForPhysics(), ordinary = { ...sink, gasSink: false, softeningKm: 0, R: R_SUN };
+    const distance = 2 * sink.softeningKm;
+    const well = strongestActiveStarWell([sink], sink.x + distance, sink.y, sink.z);
+    relativeForce(well.acc, sink.mu * distance / (distance * distance + sink.softeningKm ** 2) ** 1.5, 'softened dominance estimate');
+    assert.equal(well.dominant, false, 'point-mass conics are invalid inside the softened core');
+    assert.equal(strongestActiveStarWell([ordinary], ordinary.x + distance, ordinary.y, ordinary.z).dominant, true);
+    assert.equal(strongestActiveStarWell([sink], sink.x + 20 * sink.softeningKm, sink.y, sink.z).dominant, true);
+});
+test('the shared live/prediction contact rule excludes numerical sinks and preserves ordinary star/BH surfaces', () => {
+    const sink = sinkForPhysics();
+    for (const distance of [0, sink.R * .5, sink.R, sink.R * 2]) {
+        assert.equal(stellarSurfaceHit(sink, distance * distance), false, 'prediction must not stop at the sink control radius');
+    }
+    for (const star of [{ R: R_SUN }, { bh: true, R: 3e5, rs: 1e5 }]) {
+        assert.equal(stellarSurfaceHit(star, 0), true);
+        assert.equal(stellarSurfaceHit(star, (.5 * star.R) ** 2), true);
+        assert.equal(stellarSurfaceHit(star, star.R ** 2), true);
+        assert.equal(stellarSurfaceHit(star, (1.001 * star.R) ** 2), false);
+    }
+    assert.equal(stellarSurfaceHit(null, 0), false);
+    assert.equal(stellarSurfaceHit({ R: 0 }, 0), false);
+});
+test('live ship integration survives the numerical control radius and exact sink center', () => {
+    const sink = sinkForPhysics();
+    for (const offset of [sink.R * .5, 0]) {
+        isolatePhysics(); shipAt(sink, offset);
+        ephem.beginPredictionStars([sink]);
+        try {
+            const delivered = physics.advance(.1, 0, 0, 0, 0);
+            assert.equal(delivered, .1);
+            assert.equal(state.G.dead, false, 'numerical accretion radius is not a lethal stellar surface');
+            assert.ok([state.G.x, state.G.y, state.G.z, state.G.vx, state.G.vy, state.G.vz].every(Number.isFinite));
+            assert.equal(physics.orbitInfo().domStar, false, 'core entry must stay on the softened integration path');
+        } finally { ephem.endPredictionStars(); }
+    }
+});
+test('ordinary stellar photosphere contact remains lethal in the live ship integrator', () => {
+    isolatePhysics();
+    const ordinary = { ...sinkForPhysics(), name: 'CONTROL STAR', gasSink: false, softeningKm: 0, R: R_SUN };
+    shipAt(ordinary, ordinary.R * .5);
+    ephem.beginPredictionStars([ordinary]);
+    try {
+        physics.advance(.1, 0, 0, 0, 0);
+        assert.equal(state.G.dead, true);
+        assert.match(state.G.deadReason, /CONTROL STAR.*photosphere/);
+    } finally { ephem.endPredictionStars(); }
 });
 neb.clearNebulaRecords();
 console.log(`\n${passed} passed, ${failed} failed`);

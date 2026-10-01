@@ -14,6 +14,9 @@ import { epochOffsetSeconds, meanAnomalyAdvance } from "./epoch.js";
 import { moonGeocentricCartesian, sunGeometricLongitudeJ2000 } from "./universe/lunarElp.js";
 import { meanElementsAt, tableKeyForPlanet, STANDISH_TABLE1, SEC_PER_JULIAN_CENTURY } from "./universe/planetElements.js";
 
+import { gasFieldAt, kickGasDynamics, driftGasDynamics,
+    resetGasDynamics, gasEncounterStep, gasNeedsIntegrated, hasGasDynamics, beginGasDynamicsStep, endGasDynamicsStep } from "./universe/gasDynamics.js";
+
 export const IDX_MOON = 0;
 export const IDX_SUN = 1;
 export const IDX_PLANETS = 2;
@@ -177,6 +180,7 @@ const _kp = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
 const _emb = {}, _pel = {};
 const _moon = { x: 0, y: 0, z: 0 }, _moon2 = { x: 0, y: 0, z: 0 };
 export function resetEphem() {
+    resetGasDynamics();
     EPHT.t = 0;
     const epochOffsetSec = safeEpochOffsetSeconds();
 
@@ -372,6 +376,7 @@ export function predBHZ(i, t) { return PRED_BH.active ? PRED_BH.z[i] + PRED_BH.v
 // Indirect (frame) acceleration: every body and hole pulls the Earth-centered
 // origin. Identical for all field points, so callers evaluating many points
 // against one state compute it once and pass it as `ind`.
+const _gasPull = [0, 0, 0];
 const _gp = [0, 0, 0];
 const _de = [0, 0, 0];
 const _dm = [0, 0, 0];
@@ -414,6 +419,7 @@ export function indirectAccel(st, out, tau = 0) {
     }
     const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
     for (const star of gravityStarsFor(ex, ey, 0)) {
+        if (star.formedStar) continue;
         const bx = star.x - ex, by = star.y - ey, bz = star.z || 0;
         const r0 = Math.sqrt(bx * bx + by * by + bz * bz + (star.softeningKm || 0) ** 2);
         if (r0 > 1e-9) {
@@ -423,6 +429,8 @@ export function indirectAccel(st, out, tau = 0) {
             az -= w0 * bz;
         }
     }
+    gasFieldAt(ex, ey, 0, tEval, _gasPull);
+    ax -= _gasPull[0]; ay -= _gasPull[1]; az -= _gasPull[2];
     if (GS.length) {
         _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
         gsPull(0, 0, 0, tEval, _gp);
@@ -522,6 +530,7 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
     const ex = st ? st.earthX : earthX, ey = st ? st.earthY : earthY;
     const gravityStars = gravityStarsFor(ex + x, ey + y, z);
     for (const star of gravityStars) {
+        if (star.formedStar) continue;
         const bx = star.x - ex, by = star.y - ey, bz = star.z || 0;
         const dx = x - bx, dy = y - by, dz = z - bz;
         const r2 = dx * dx + dy * dy + dz * dz + (star.softeningKm || 0) ** 2;
@@ -540,6 +549,12 @@ function relGravityAtOpt(x, y, z, out, skipBody = -1, st = null, tau = 0, ind = 
                 az -= w0 * bz;
             }
         }
+    }
+    gasFieldAt(ex + x, ey + y, z, tEval, _gasPull);
+    ax += _gasPull[0]; ay += _gasPull[1]; az += _gasPull[2];
+    if (indir) {
+        gasFieldAt(ex, ey, 0, tEval, _gasPull);
+        ax -= _gasPull[0]; ay -= _gasPull[1]; az -= _gasPull[2];
     }
     if (GS.length) {
         _gp[0] = 0; _gp[1] = 0; _gp[2] = 0;
@@ -663,6 +678,20 @@ function computeAccel(st) {
     if (WORLD.earthDestroyed) { _lfEarthAx = 0; _lfEarthAy = 0; }
     else { _lfEarthAx = -_ind3[0] + _pnEarth3[0]; _lfEarthAy = -_ind3[1] + _pnEarth3[1]; }
 }
+const _gasSolarSources = Array.from({ length: NB + 1 }, () => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, mu: 0 }));
+function gasSolarSources(st) {
+    Object.assign(_gasSolarSources[0], { x: st.earthX, y: st.earthY, z: 0, vx: st.earthVx, vy: st.earthVy, vz: 0, mu: activeEarthMu() });
+    for (let i = 0; i < NB; i++) Object.assign(_gasSolarSources[i + 1], {
+        x: st.earthX + st.x[i], y: st.earthY + st.y[i], z: st.z[i],
+        vx: st.earthVx + st.vx[i], vy: st.earthVy + st.vy[i], vz: st.vz[i], mu: activeBodyMu(i),
+    });
+    return _gasSolarSources;
+}
+export function localGasStepLimit(st = null) {
+    if (!hasGasDynamics()) return Infinity;
+    st ||= snapshotEphem();
+    return gasEncounterStep(st, gasSolarSources(st));
+}
 // ---- live black holes ride the same KDK ----
 // Holes are integrated in the same leapfrog steps as the bodies with the SAME
 // pair laws (pairG), so every hole-body kick is exactly equal and opposite
@@ -713,6 +742,7 @@ function computeHoleAccel(st) {
         const stars = gravityStarsFor(ex + x, ey + y, z);
         for (let k = 0; k < stars.length; k++) {
             const star = stars[k];
+            if (star.formedStar) continue;
             const dx = x - (star.x - ex), dy = y - (star.y - ey), dz = z - (star.z || 0);
             const r2 = dx * dx + dy * dy + dz * dz + (star.softeningKm || 0) ** 2;
             if (r2 > 1e-18) {
@@ -720,6 +750,8 @@ function computeHoleAccel(st) {
                 ax -= w * dx; ay -= w * dy; az -= w * dz;
             }
         }
+        gasFieldAt(ex + x, ey + y, z, tEval, _gasPull, i, ex, ey);
+        ax += _gasPull[0]; ay += _gasPull[1]; az += _gasPull[2];
         if (GS.length) {
             _gpH[0] = 0; _gpH[1] = 0; _gpH[2] = 0;
             gsPull(x, y, z, tEval, _gpH);
@@ -745,54 +777,60 @@ export const LF_SEG = {
 // (32 s ulp at 6 Gyr) used to walk the gravity-front clock off G.t.
 // `live`: the step also carries the placed holes and runs the encounter hook.
 function leapfrogBodies(st, dt, live = false, tEnd = st.t + dt) {
-    const h = dt / 2;
-    let holes = live && BH.n > 0;
-    computeAccel(st);
-    if (holes) computeHoleAccel(st);
-    for (let i = 0; i < NB; i++) {
-        if (!isBodyActive(i)) continue; // frozen: matches the old zero-derivative behavior
-        st.vx[i] += h * _lfAx[i]; st.vy[i] += h * _lfAy[i]; st.vz[i] += h * _lfAz[i];
-    }
-    st.earthVx += h * _lfEarthAx; st.earthVy += h * _lfEarthAy;
-    if (holes) {
-        for (let i = 0; i < BH.n; i++) {
-            BH.vx[i] += h * _hAx[i]; BH.vy[i] += h * _hAy[i]; BH.vz[i] += h * _hAz[i];
-            LF_SEG.hx[i] = BH.x[i]; LF_SEG.hy[i] = BH.y[i]; LF_SEG.hz[i] = BH.z[i];
+    if (live) beginGasDynamicsStep(st.t, dt);
+    try {
+        const h = dt / 2;
+        let holes = live && BH.n > 0;
+        computeAccel(st);
+        if (holes) computeHoleAccel(st);
+        if (live && hasGasDynamics()) kickGasDynamics(st, h, gasSolarSources(st));
+        for (let i = 0; i < NB; i++) {
+            if (!isBodyActive(i)) continue; // frozen: matches the old zero-derivative behavior
+            st.vx[i] += h * _lfAx[i]; st.vy[i] += h * _lfAy[i]; st.vz[i] += h * _lfAz[i];
         }
-        LF_SEG.n = BH.n;
-        for (let i = 0; i < NB; i++) { LF_SEG.bx[i] = st.x[i]; LF_SEG.by[i] = st.y[i]; LF_SEG.bz[i] = st.z[i]; }
-    }
-    for (let i = 0; i < NB; i++) {
-        if (!isBodyActive(i)) continue;
-        st.x[i] += dt * st.vx[i]; st.y[i] += dt * st.vy[i]; st.z[i] += dt * st.vz[i];
-    }
-    st.earthX += dt * st.earthVx; st.earthY += dt * st.earthVy; // earthZ stays 0
-    if (holes) {
-        for (let i = 0; i < BH.n; i++) {
-            BH.x[i] += dt * BH.vx[i]; BH.y[i] += dt * BH.vy[i]; BH.z[i] += dt * BH.vz[i];
+        st.earthVx += h * _lfEarthAx; st.earthVy += h * _lfEarthAy;
+        if (holes) {
+            for (let i = 0; i < BH.n; i++) {
+                BH.vx[i] += h * _hAx[i]; BH.vy[i] += h * _hAy[i]; BH.vz[i] += h * _hAz[i];
+                LF_SEG.hx[i] = BH.x[i]; LF_SEG.hy[i] = BH.y[i]; LF_SEG.hz[i] = BH.z[i];
+            }
+            LF_SEG.n = BH.n;
+            for (let i = 0; i < NB; i++) { LF_SEG.bx[i] = st.x[i]; LF_SEG.by[i] = st.y[i]; LF_SEG.bz[i] = st.z[i]; }
         }
-    }
-    st.t = tEnd;
-    // encounters resolve here, at the drift end and BEFORE the closing kick:
-    // a body captured or disrupted at this instant never receives a kick from
-    // inside the capture sphere
-    if (holes && livePreKick) {
-        syncFromState(st);
-        livePreKick(st.t, dt);
-    }
-    computeAccel(st);
-    holes = live && BH.n > 0;
-    if (holes) computeHoleAccel(st);
-    for (let i = 0; i < NB; i++) {
-        if (!isBodyActive(i)) continue;
-        st.vx[i] += h * _lfAx[i]; st.vy[i] += h * _lfAy[i]; st.vz[i] += h * _lfAz[i];
-    }
-    st.earthVx += h * _lfEarthAx; st.earthVy += h * _lfEarthAy;
-    if (holes) {
-        for (let i = 0; i < BH.n; i++) {
-            BH.vx[i] += h * _hAx[i]; BH.vy[i] += h * _hAy[i]; BH.vz[i] += h * _hAz[i];
+        for (let i = 0; i < NB; i++) {
+            if (!isBodyActive(i)) continue;
+            st.x[i] += dt * st.vx[i]; st.y[i] += dt * st.vy[i]; st.z[i] += dt * st.vz[i];
         }
-    }
+        st.earthX += dt * st.earthVx; st.earthY += dt * st.earthVy; // earthZ stays 0
+        if (holes) {
+            for (let i = 0; i < BH.n; i++) {
+                BH.x[i] += dt * BH.vx[i]; BH.y[i] += dt * BH.vy[i]; BH.z[i] += dt * BH.vz[i];
+            }
+        }
+        if (live) driftGasDynamics(tEnd);
+        st.t = tEnd;
+        // encounters resolve here, at the drift end and BEFORE the closing kick:
+        // a body captured or disrupted at this instant never receives a kick from
+        // inside the capture sphere
+        if (holes && livePreKick) {
+            syncFromState(st);
+            livePreKick(st.t, dt);
+        }
+        computeAccel(st);
+        holes = live && BH.n > 0;
+        if (holes) computeHoleAccel(st);
+        if (live && hasGasDynamics()) kickGasDynamics(st, h, gasSolarSources(st));
+        for (let i = 0; i < NB; i++) {
+            if (!isBodyActive(i)) continue;
+            st.vx[i] += h * _lfAx[i]; st.vy[i] += h * _lfAy[i]; st.vz[i] += h * _lfAz[i];
+        }
+        st.earthVx += h * _lfEarthAx; st.earthVy += h * _lfEarthAy;
+        if (holes) {
+            for (let i = 0; i < BH.n; i++) {
+                BH.vx[i] += h * _hAx[i]; BH.vy[i] += h * _hAy[i]; BH.vz[i] += h * _hAz[i];
+            }
+        }
+    } finally { if (live) endGasDynamicsStep(); }
 }
 // Nominal nominal step ceiling: never step past 1/200 of the shortest
 // orbital period actually modeled (the Moon's, ~27.3 days) — small enough
@@ -851,7 +889,7 @@ function bodyStepSize(st, rem, maxStep = 3600, live = false) {
     // captures and disruptions are resolved by scheduled events and the
     // segment-vs-sphere test, not by a step floor; the live floor only keeps
     // the loop finite
-    return Math.max(live && BH.n ? 1e-6 : 1e-3, dt);
+    return Math.min(Math.max(live && BH.n ? 1e-6 : 1e-3, dt), (hasGasDynamics() ? gasEncounterStep(st, gasSolarSources(st)) : Infinity));
 }
 // ---- deep-time propagation ----
 // Exact planar two-body propagation over any dt: osculating elements from
@@ -1268,19 +1306,21 @@ function clipToLiveEvent(st, rem, mag, live) {
 // Returns the simulated time actually integrated (== dtTotal unless a live
 // bulk advance ran out of this frame's step budget).
 function advanceState(st, dtTotal, maxStep = 3600, live = false) {
+    const gasCoupled = live && hasGasDynamics() && gasNeedsIntegrated(st, gasSolarSources(st));
     // deep-time gate (live path only — predictions keep full leapfrog fidelity):
     // holes and gravity ghosts break the two-body decomposition, so those fall
     // through to the integrator; destroyed bodies no longer do (see
     // analyticJumpState) — that gate used to hand a post-engulfment system to
     // 2000 forced steps of ~2.6e11 s each and fling Mars to 1e12 AU.
-    if (live && BH.n === 0 && GS.length === 0 && Math.abs(dtTotal) > EPHEM_EXACT_MAX_SEC &&
+    if (live && !gasCoupled && BH.n === 0 && GS.length === 0 && Math.abs(dtTotal) > EPHEM_EXACT_MAX_SEC &&
         analyticRegimeFor(dtTotal)) {
         analyticJumpState(st, dtTotal);
         st.t += dtTotal;
+        driftGasDynamics(st.t);
         if (EPHEM_FRAME.active) EPHEM_FRAME.analyticCalls++;
         return dtTotal;
     }
-    if (live && Math.abs(dtTotal) > EPHEM_EXACT_MAX_SEC) return budgetedLeapfrog(st, dtTotal, maxStep);
+    if (live && (gasCoupled || Math.abs(dtTotal) > EPHEM_EXACT_MAX_SEC)) return budgetedLeapfrog(st, dtTotal, maxStep);
     let rem = dtTotal, guard = 0, elapsed = 0;
     const tStart = st.t;
     while (Math.abs(rem) > 1e-9 && guard++ < 2000) {

@@ -47,7 +47,9 @@ export function updateGasCloudVisual(vis,record,state,_camera) {
         vis.offset.array[j+2]=-a.positions[j+1]-(b.positions[j+1]-a.positions[j+1])*blend;
     }
     vis.offset.needsUpdate=vis.density.needsUpdate=vis.active.needsUpdate=true;
-    vis.core.visible=state.born;
+    // The formed object now has the normal photosphere/point/compact-object
+    // renderer. Never leave a second oversized sink glow on top of it.
+    vis.core.visible=false;
     if(state.born){
         vis.core.position.set(state.sinkPosition[0]*record.radiusKm*K,state.sinkPosition[2]*record.radiusKm*K,-state.sinkPosition[1]*record.radiusKm*K);
         vis.core.scale.setScalar(state.sinkRadiusKm*K*.65);

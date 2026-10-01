@@ -359,7 +359,7 @@ const COLOR_ANCHORS = [
     [2600, 0xff9966], // late M / cool
 ];
 
-function tempToColor(T) {
+export function tempToColor(T) {
     const A = COLOR_ANCHORS;
     if (T >= A[0][0]) return A[0][1];
     if (T <= A[A.length - 1][0]) return A[A.length - 1][1];

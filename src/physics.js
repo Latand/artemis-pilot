@@ -1,3 +1,4 @@
+import { formedStarForNebula } from "./universe/nebulaeData.js";
 import {
     MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, C_LIGHT, J2_E, OMEGA_EARTH,
     A_MOON, AU_KM,
@@ -6,7 +7,7 @@ import {
 import {
     eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance3,
     gravityStarsFor, currentGravityStars, STELLAR_GRAVITY_MIN_R, pairG, pairRadius, liveEarthRadius, liveEarthMu,
-    beginEphemFrame, endEphemFrame, ephemFrameStats, ephemBudgetLeft,
+    beginEphemFrame, endEphemFrame, ephemFrameStats, ephemBudgetLeft, localGasStepLimit,
 } from "./ephemeris.js";
 import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody, advanceSimTime, syncEphemClock } from "./state.js";
 // the encounter pipeline is headless (bhEncounters.js); blackholes.js only
@@ -16,6 +17,7 @@ import { NS_SURFACE_KM } from "./tde.js";
 import { fmtMET, fmtKm } from "./format.js";
 import { ACTIVE_STARS, GRAVITY_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
 import { strongestActiveStarWell } from "./universe/starDominance.js";
+import { stellarSurfaceHit } from "./universe/stellarContact.js";
 import { syncGalacticFrame } from "./universe/galacticClock.js";
 import { dominantSystemBody, moonWorldState, planetWorldState } from "./universe/planetarySystem.js";
 import { darkEnergyAccel, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc } from "./cosmology.js";
@@ -220,7 +222,7 @@ export function rk4Step(s, tau0, dt, atx, aty, atz = 0) {
 export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 0) {
     const tE = Math.sqrt(rE * rE * rE / MU_E), tM = Math.sqrt(rM * rM * rM / MU_M);
     const tS = Math.sqrt(rS * rS * rS / MU_S);
-    let dt = Math.min(tE, tM, tS) / 90;
+    let dt = Math.min(Math.min(tE, tM, tS) / 90, localGasStepLimit());
     if (!WORLD.earthDestroyed) {
         // approaching the atmosphere fast: never let one step jump across the shell
         if (h < 1200) dt = Math.min(dt, Math.max(.4, .22 * Math.max(40, h - 90) / Math.max(.01, vTot)));
@@ -330,9 +332,9 @@ export function orbitInfo() {
         star = starWell.star;
         mu = starWell.star.mu;
         rx = starWell.rx; ry = starWell.ry; rz = starWell.rz;
-        rvx = G.vx + eph.earthVx;
-        rvy = G.vy + eph.earthVy;
-        rvz = G.vz;
+        rvx = G.vx + eph.earthVx - (star.formedStar ? star.vx || 0 : 0);
+        rvy = G.vy + eph.earthVy - (star.formedStar ? star.vy || 0 : 0);
+        rvz = G.vz - (star.formedStar ? star.vz || 0 : 0);
         R = starWell.star.R;
         body = starWell.star.name;
         bh = !!starWell.star.bh;
@@ -679,7 +681,9 @@ function cosmologyJumpStarClear(x1, y1, z1) {
     const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
     const well = stellarGravityActiveAt(wx, wy, wz) ? strongestActiveStarWell(currentGravityStars(), wx, wy, wz, 0, 2) : null;
     if (well?.star && well.star !== oi.star) {
-        const rvx = G.vx + eph.earthVx, rvy = G.vy + eph.earthVy, rvz = G.vz;
+        const rvx = G.vx + eph.earthVx - (well.star.formedStar ? well.star.vx || 0 : 0),
+            rvy = G.vy + eph.earthVy - (well.star.formedStar ? well.star.vy || 0 : 0),
+            rvz = G.vz - (well.star.formedStar ? well.star.vz || 0 : 0);
         const rp = osculatingPeriapsis(well.rx, well.ry, well.rz, rvx, rvy, rvz, well.star.mu);
         const sx = well.star.x - eph.earthX, sy = well.star.y - eph.earthY, sz = well.star.z || 0;
         if (!stellarJumpClear(well.star, well.rx, well.ry, well.rz, x1 - sx, y1 - sy, z1 - sz, rp)) return false;
@@ -690,6 +694,7 @@ function cosmologyJumpStarClear(x1, y1, z1) {
 // (per-frame step budget), and the ship then kicks and drifts for exactly
 // what the bodies did.
 function shipCosmologyJump(dt) {
+    if (Number.isFinite(localGasStepLimit())) return 0;
     if (!(Math.abs(dt) > 1e-9) || cosmologyVisibilityAt(G.x, G.y, G.z) <= .01) return 0;
     smoothCosmologyAccelAt(G.x, G.y, G.z, _cosA0);
     let hvx = G.vx + _cosA0[0] * dt * .5;
@@ -995,7 +1000,8 @@ function advanceFlight(simAdv, atx, aty, atz, aMag) {
                 const sx = star.x - (eph.earthX + eph.earthVx * lag);
                 const sy = star.y - (eph.earthY + eph.earthVy * lag);
                 const sz = star.z || 0;
-                if (Math.hypot(s[0] - sx, s[1] - sy, s[2] - sz) <= star.R) { hitStar = star; break; }
+                const dx = s[0] - sx, dy = s[1] - sy, dz = s[2] - sz;
+                if (stellarSurfaceHit(star, dx * dx + dy * dy + dz * dz)) { hitStar = star; break; }
             }
             if (hitStar) {
                 G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
@@ -1190,6 +1196,7 @@ const _dj = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, ok: false };
 // atmospheres, periapsis above the surface, no contested three-body zone,
 // and never against a hole's Paczyński–Wiita field.
 export function shipDeepJump(dt) {
+    if (Number.isFinite(localGasStepLimit())) return 0;
     const oi = orbitInfo();
     const wx = eph.earthX + G.x, wy = eph.earthY + G.y, wz = G.z;
     const domAcc = oi.mu / (oi.r * oi.r);
@@ -1197,6 +1204,7 @@ export function shipDeepJump(dt) {
     const starAcc = starWell?.acc || 0;
     if (oi.domStar) {
         const st = oi.star;
+        if (st?.formedStar && st.gasSink) return 0;
         if (!st || starWell?.star !== st || !starWell.dominant) return 0;
         const d = oi.r;
         if (st.bh && d < st.rs * 200) return 0;
@@ -1208,8 +1216,11 @@ export function shipDeepJump(dt) {
         const got = advanceEphem(dt);
         if (!(Math.abs(got) > 1e-9)) return 0;
         if (got !== dt) keplerAdvance3(oi.rx, oi.ry, oi.rz || 0, oi.rvx, oi.rvy, oi.rvz || 0, st.mu, got, _dj);
+        if (st.formedStar) formedStarForNebula(st.nebulaIndex, G.t + got);
         G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
-        G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy; G.vz = _dj.vz;
+        G.vx = _dj.vx - eph.earthVx + (st.formedStar ? st.vx || 0 : 0);
+        G.vy = _dj.vy - eph.earthVy + (st.formedStar ? st.vy || 0 : 0);
+        G.vz = _dj.vz + (st.formedStar ? st.vz || 0 : 0);
         advanceSimTime(got);
         return got;
     }
@@ -1217,10 +1228,13 @@ export function shipDeepJump(dt) {
         // a named star owns the well; they are static, so recomposition only
         // has to undo the Earth-frame offset
         const st = starWell.star;
+        if (st.formedStar && st.gasSink) return 0;
         const d = starWell.d;
         if (st.bh && d < st.rs * 200) return 0;
         if (d <= st.R * 1.1) return 0;
-        const rvx = G.vx + eph.earthVx, rvy = G.vy + eph.earthVy, rvz = G.vz;
+        const rvx = G.vx + eph.earthVx - (st.formedStar ? st.vx || 0 : 0),
+            rvy = G.vy + eph.earthVy - (st.formedStar ? st.vy || 0 : 0),
+            rvz = G.vz - (st.formedStar ? st.vz || 0 : 0);
         const rp = osculatingPeriapsis(starWell.rx, starWell.ry, starWell.rz, rvx, rvy, rvz, st.mu);
         if (rp <= stellarContactRadius(st) * 1.1) return 0;
         keplerAdvance3(starWell.rx, starWell.ry, starWell.rz, rvx, rvy, rvz, st.mu, dt, _dj);
@@ -1229,8 +1243,11 @@ export function shipDeepJump(dt) {
         const got = advanceEphem(dt);
         if (!(Math.abs(got) > 1e-9)) return 0;
         if (got !== dt) keplerAdvance3(starWell.rx, starWell.ry, starWell.rz, rvx, rvy, rvz, st.mu, got, _dj);
+        if (st.formedStar) formedStarForNebula(st.nebulaIndex, G.t + got);
         G.x = st.x + _dj.x - eph.earthX; G.y = st.y + _dj.y - eph.earthY; G.z = (st.z || 0) + _dj.z;
-        G.vx = _dj.vx - eph.earthVx; G.vy = _dj.vy - eph.earthVy; G.vz = _dj.vz;
+        G.vx = _dj.vx - eph.earthVx + (st.formedStar ? st.vx || 0 : 0);
+        G.vy = _dj.vy - eph.earthVy + (st.formedStar ? st.vy || 0 : 0);
+        G.vz = _dj.vz + (st.formedStar ? st.vz || 0 : 0);
         advanceSimTime(got);
         return got;
     }

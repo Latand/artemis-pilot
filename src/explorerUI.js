@@ -4,7 +4,7 @@ import { gasStateAt } from "./universe/gasFormation.js";
 import { initCompactExplorer } from "./compactExplorer.js";
 import * as THREE from "three";
 import { G, keys, WORLD, BH } from "./state.js";
-import { K, MU_E, MU_M, R_EARTH, R_MOON, R_SUN, PL, STARS, LY_SCENE } from "./constants.js";
+import { K, MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, STARS, LY_SCENE } from "./constants.js";
 import { MOONS, moonFocusIndex } from "./moons.js";
 import { cam, camera } from "./scene.js";
 import { onModeChange, setUiMode, isXrPresenting } from "./uiMode.js";
@@ -94,7 +94,8 @@ function selectedBody() {
     const ni = /^neb:(\d+)$/.exec(String(G.focus));
     if (ni && NEBULAE[+ni[1]]?.formation) {
         const n = NEBULAE[+ni[1]], s = gasStateAt(n,G.t);
-        return {name:s.phase+" "+(+ni[1]+1),kind:s.gasMassSolar.toFixed(2)+" M☉ gas · "+s.coreMassSolar.toFixed(2)+" M☉ sink · numerical SPH",basis:"modeled"};
+        if(s.born){const tr=s.stellar;return {name:tr.phase+" "+(+ni[1]+1),kind:tr.massSolar.toFixed(2)+" M☉ · reduced stellar track",R:tr.radiusKm,mu:tr.massSolar*MU_S,star:{tempK:tr.temperatureK,lumSolar:tr.luminositySolar},basis:"modeled"};}
+        return {name:s.phase+" "+(+ni[1]+1),kind:s.gasMassSolar.toFixed(2)+" M☉ gas · numerical SPH",basis:"modeled"};
     }
     if(G.focus==='sun'&&cam.dist>=LY_SCENE*20000)return {name:cam.dist>LY_SCENE*800000?'Local Group':'Milky Way',kind:'Galaxy-scale view',basis:'modeled'};
     const bi=/^bh:(\d+)$/.exec(String(G.focus));

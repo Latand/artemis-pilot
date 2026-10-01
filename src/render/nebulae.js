@@ -1,4 +1,5 @@
 import { G } from "../state.js";
+import { gasWorldState } from "../universe/gasDynamics.js";
 import { gasStateAt } from "../universe/gasFormation.js";
 import { makeGasCloudVisual, updateGasCloudVisual, disposeGasCloudVisual } from "../gasCloudVisuals.js";
 import * as THREE from "three";
@@ -136,7 +137,12 @@ export function restoreNebulae(rows = []) {
 export function nebulaScenePos(i, out = tmpPos) {
     const n = NEBULAE[i];
     if (!n) return null;
-    return worldToResidual(n.xKm, n.yKm, n.zKm, out, K);
+    const origin=gasWorldState(n,G.t);
+    if(n.formation&&n.inspectStar){
+        const s=gasStateAt(n,G.t);
+        if(s.born)return worldToResidual(origin.x+s.sinkPosition[0]*n.radiusKm,origin.y+s.sinkPosition[1]*n.radiusKm,origin.z+s.sinkPosition[2]*n.radiusKm,out,K);
+    }
+    return worldToResidual(origin.x, origin.y, origin.z, out, K);
 }
 
 export function updateNebulae(camera, dtReal = 0) {
@@ -144,7 +150,9 @@ export function updateNebulae(camera, dtReal = 0) {
         const record = NEBULAE[i];
         const vis = VIS[i];
         if (!record || !vis) continue;
-        const base = nebulaScenePos(i, vis.group.position);
+        // Focus may follow the photosphere; the gas buffer stays at its patch origin.
+        const origin=gasWorldState(record,G.t);
+        const base = worldToResidual(origin.x,origin.y,origin.z,vis.group.position,K);
         if (record.formation) {
             const state = gasStateAt(record, G.t);
             updateGasCloudVisual(vis, record, state, camera);
@@ -176,7 +184,8 @@ export function nebulaHudSummary(i) {
 
 export function nebulaViewRadius(i) {
     const n = NEBULAE[i];
-    return n?.formation ? gasStateAt(n, G.t).radiusKm : n?.radiusKm || 1;
+    if(n?.formation){const s=gasStateAt(n,G.t);return n.inspectStar&&s.born?s.stellar.radiusKm:s.radiusKm;}
+    return n?.radiusKm || 1;
 }
 export function clearFormingNebulae() {
     for (let i = NEBULAE.length - 1; i >= 0; i--) if (NEBULAE[i].formation) removeNebula(i);

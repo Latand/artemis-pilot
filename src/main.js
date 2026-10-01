@@ -701,8 +701,9 @@ function velocityForTarget(target, out) {
         out.vx = eph.earthVx + BH.vx[bi];
         out.vy = eph.earthVy + BH.vy[bi];
     } else if (stellarTarget(target)) {
-        out.vx = 0;
-        out.vy = 0;
+        const star=stellarTarget(target);
+        out.vx = star.formedStar ? star.vx || 0 : 0;
+        out.vy = star.formedStar ? star.vy || 0 : 0;
     } else hoverVelocity(target, out);
     return out;
 }
