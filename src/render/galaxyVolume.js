@@ -328,14 +328,24 @@ function installPreview() {
 }
 function buildMaps() {
     const fail = err => {
-        clearTimeout(state.mapTimer); state.mapsWorker?.terminate(); state.mapsWorker = null;
+        clearInterval(state.mapTimer); state.mapsWorker?.terminate(); state.mapsWorker = null;
         state.mapError = String(err?.message || err || 'Galaxy map worker failed');
         console.warn('Galaxy detail unavailable; retaining shared-model preview:', state.mapError);
     };
     try {
         const w = new Worker(new URL('../workers/galaxyMapsWorker.js', import.meta.url), { type: 'module' });
         state.mapsWorker = w;
-        state.mapTimer = setTimeout(() => fail('Galaxy map generation timed out'), 30000);
+        // The worker answers in a few seconds, but while the main thread is
+        // busy (compiling shaders at startup, ~15-40 s under SwiftShader) its
+        // answer waits in the queue, and a plain 30 s timer could fire first
+        // and discard it. Only time the main thread was free to hear it
+        // counts: a stall adds at most one tick.
+        let waited = 0, last = performance.now();
+        state.mapTimer = setInterval(() => {
+            const now = performance.now();
+            waited += Math.min(now - last, 1500); last = now;
+            if (waited >= 30000) fail('Galaxy map generation timed out');
+        }, 1000);
         w.onmessage = e => {
             try {
                 const packed = e.data;
@@ -360,7 +370,7 @@ function buildMaps() {
                 }
                 state.maps = { ms: packed.ms ?? null, size: packed.size, full: true };
                 state.mapT = performance.now(); state.mapRevision++; state.history = null; state.dirty = true;
-                clearTimeout(state.mapTimer); w.terminate(); state.mapsWorker = null;
+                clearInterval(state.mapTimer); w.terminate(); state.mapsWorker = null;
             } catch (err) { fail(err); }
         };
         w.onerror = fail; w.onmessageerror = fail;
