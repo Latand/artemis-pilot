@@ -164,8 +164,10 @@ the band with its dust lanes from the Earth, the barred spiral from outside.
   measured present-day spiral at t = 0. Structure below the maps' texels is
   re-seeded every 30 Myr material epoch, so no structure is sheared for more
   than ~20 Myr (bounded phase mixing). The procedural stars belong to the
-  same epochs, move on their orbits and are shown only where the current
-  arms put them, so stars and diffuse light agree at every epoch. All of it
+  same epochs and move on their orbits: old stars crowd in the arms (they
+  slow down there, a kinematic density wave), young stars appear in the gas
+  arms and fade behind them, so stars and diffuse light agree at every
+  moment. All of it
   is a pure function of sim time: reverse time retraces it exactly.
 - **Resolution and cost.** While the view moves the integral is drawn as a
   draft: ~0.33 Mpx over the Galaxy's part of the screen from outside, a
@@ -295,8 +297,9 @@ with the smooth models.
   Arms of other epochs are rotated, re-wound copies of the present-day
   structure maps (galaxy-dynamics.md), not independent spirals: the knots
   along them recur, at other places. Stars move on circular orbits (no
-  epicycles in the procedural field) and their arm crowding is represented
-  statistically (thinning), not by the orbits themselves. The bar is a
+  epicycles in the procedural field); old stars crowd in the arms
+  azimuthally only (exact density, no radial streaming), young stars are
+  thinned (born in the arms, fading behind). The bar is a
   rigid, eternal pattern. The dust clouds below the maps' texel dim the
   diffuse light only: a resolved star behind one is extinguished by the
   smooth model.
@@ -330,7 +333,8 @@ with the smooth models.
 - `smoke:galaxy-dynamics` - time-dependent structure: exact present day,
   continuous hand-overs, determinism and reverse time, the same luminosity
   and azimuthal profile at every epoch, arms at every epoch that never wind
-  into strips, bounded shear, and the procedural stars' arm thinning.
+  into strips, bounded shear, young stars' arm thinning and old stars'
+  crowding (exact density at every moment, streaming speeds, selection).
 - `node scripts/capture-galaxy-epochs.mjs <root> <dir>` - the isolated
   volume at a list of epochs, inertial and co-rotating, plus a dense face-on
   time series (before/after evidence of a structural change).

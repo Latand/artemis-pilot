@@ -120,9 +120,13 @@ export function omegaRadMyr(Rpc) {
     const Rk = Math.max(Rpc, 1) / 1000;
     return vCirc(Rk) / Rk * KMS_KPC_RAD_MYR;
 }
-// Angular rate of a generation's arms relative to the pattern speed.
+// Angular rate of a generation's arms relative to the pattern speed (at
+// radius R, or where the material turns at om = Omega(R)).
 export function windRadMyr(Rpc) {
-    return SPIRAL.windFrac * (omegaRadMyr(Rpc) - OMEGA_P);
+    return windOfOmega(omegaRadMyr(Rpc));
+}
+export function windOfOmega(om) {
+    return SPIRAL.windFrac * (om - OMEGA_P);
 }
 
 // --- Spiral generations ---------------------------------------------------

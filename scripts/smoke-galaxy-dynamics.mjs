@@ -188,12 +188,13 @@ const EPOCHS = [-2000, -500, -125, -60, 0, 33, 90, 125, 160, 250, 333, 610, 1000
     check(sunOrbit > 200 && sunOrbit < 250, `material at the solar circle orbits in ${sunOrbit.toFixed(0)} Myr`);
 }
 
-// 7. Procedural stars move through the arms and follow them: the pool bound
-// holds wherever a star of an epoch goes during the epoch, so thinning by
-// m / B leaves the model's density at every time.
+// 7. Young procedural stars move through the arms and follow them: the
+// pool bound holds wherever a young star of an epoch goes during the epoch,
+// so thinning by m / B leaves the model's density at every time. (Old
+// thin-disk stars are not thinned: they crowd, section 9.)
 {
     rf.poolBounds();
-    let n = 0, viol = 0, visY = 0, nY = 0, visO = 0, nO = 0;
+    let n = 0, viol = 0, visY = 0, nY = 0, nO = 0;
     const s = {};
     for (const e of [0, 1, 7, -3, 40]) {
         const ctx = rf.epochContext(e);
@@ -202,23 +203,24 @@ const EPOCHS = [-2000, -500, -125, -60, 0, 33, 90, 125, 160, 250, 333, 610, 1000
             const box = rf.generateBox(3, rf.FAMILY_DISK, 21, bi, bj, bk, null, null, e);
             for (let st = 0; st < box.n; st++) {
                 const o = st * rf.REC, thr = box.rec[o + 9];
-                if (thr === 0) continue;
+                if (thr < 0) nO++;
+                if (!(thr > 0)) continue;
                 const qx = box.ox + box.rec[o], qy = box.oy + box.rec[o + 1], R = Math.hypot(qx, qy);
                 for (const f of [-1, -0.5, 0, 0.5, 1]) {
                     const tMyr = e * L + f * dyn.EPOCH_REACH_MYR;
                     const a = ctx.phi + dyn.omegaRadMyr(R) * (tMyr - e * L);
                     m.structureAt(Math.cos(a) * qx - Math.sin(a) * qy, Math.sin(a) * qx + Math.cos(a) * qy, m.patternAngles(tMyr * MYR, {}), s);
-                    const bound = rf.poolModBound(ctx, qx, qy, [0, 0]);
-                    const mod = thr > 0 ? s.young : s.old, B = thr > 0 ? bound[0] : bound[1];
+                    const mod = s.young, B = rf.poolModBound(ctx, qx, qy, [0, 0])[0];
                     n++;
                     if (mod > B * 1.0001) viol++;
-                    if (f === 0) { if (thr > 0) { nY++; if (mod > thr) visY++; } else { nO++; if (mod > -thr) visO++; } }
+                    if (f === 0) { nY++; if (mod > thr) visY++; }
                 }
             }
         }
     }
-    check(n > 2000 && viol / n < 0.01, `pool bound holds along the stars' orbits through each epoch (${viol} of ${n} samples exceed it)`);
-    check(nY > 50 && visY / nY > 0.3 && visO / nO > 0.6, `the pools are economical: ${(100 * visY / nY).toFixed(0)} % of young and ${(100 * visO / nO).toFixed(0)} % of thin-disk candidates show`);
+    check(n > 1000 && viol / n < 0.01, `pool bound holds along the young stars' orbits through each epoch (${viol} of ${n} samples exceed it)`);
+    check(nY > 50 && visY / nY > 0.3, `the young pools are economical: ${(100 * visY / nY).toFixed(0)} % of candidates show`);
+    check(nO > 1000, `old thin-disk stars carry their crowding label (${nO})`);
 }
 
 // 8. The drawn stars follow the arms of THEIR time: a camera 1.5 kpc above
@@ -262,6 +264,123 @@ const EPOCHS = [-2000, -500, -125, -60, 0, 33, 90, 125, 160, 250, 333, 610, 1000
         const mNow = sumNow / n, mOff = sumOff / n, mRigid = sumRigid / n, mPool = poolNow / pool;
         check(n > 2000 && mNow > 1.4 * mOff && mNow > 1.1 * mRigid,
             `${tMyr} Myr: ${n} resolved young stars sit in that epoch's young arms (mean modulation ${mNow.toFixed(2)}; ${mOff.toFixed(2)} in the arms 120 Myr later, ${mRigid.toFixed(2)} in a rigidly rotated disk; ${mPool.toFixed(2)} over the pool before thinning)`);
+    }
+}
+
+// 9. Old stars crowd in the arms (armTransport.js): a kinematic density
+// wave. Stars keep moving on their rings, slower in the arms, so their
+// density follows the old arms' modulation of each moment while no star
+// appears or fades.
+{
+    const at = await import("../src/universe/armTransport.js");
+    const T = at.armTransport(gm);
+    // (a) the table: each ring's mhat has mean 1 and its cumulative excess P
+    // closes around the ring
+    let worstMean = 0, worstWrap = 0;
+    const sa = [0, 0], sb = [0, 0];
+    for (let i = 0; i < T.nr; i += 5) {
+        let sum = 0;
+        for (let j = 0; j < T.nb; j++) sum += T.H[i * T.nb + j];
+        worstMean = Math.max(worstMean, Math.abs(sum / T.nb - 1));
+        const R = T.rmax * (i + 0.5) / T.nr;
+        worstWrap = Math.max(worstWrap, Math.abs(at.armSample(T, R, -1e-7, sa)[0] - at.armSample(T, R, 1e-7, sb)[0]));
+    }
+    check(worstMean < 1e-3 && worstWrap < 1e-5, `transport table: ring means of mhat within ${worstMean.toExponential(1)} of 1, P continuous around each ring (${worstWrap.toExponential(1)})`);
+    // (b) half floats round to nearest, carrying into the exponent
+    let worstHalf = 0;
+    for (const v of [0.0312499, 0.0624999, 0.1249999, 0.2499999, 0.9999999, 1.9999, -0.0312499, 0.0123, 0.3]) worstHalf = Math.max(worstHalf, Math.abs(at.halfValue(at.halfBits(v)) / v - 1));
+    check(worstHalf <= 2 ** -11, `table values round to the nearest half float, also just below powers of two (${worstHalf.toExponential(2)})`);
+    // (c) the solve: no displacement at the epoch's centre; the two Newton
+    // steps CPU and GPU take are within 0.5 pc of the root; the inverse used
+    // to find boxes is within 2 pc
+    let z0 = 0, newton = 0, inv = 0;
+    const { makeRNG } = await import("../src/universe/prng.js");
+    const rnd = makeRNG(17);
+    const speeds = [];
+    for (let q = 0; q < 6000; q++) {
+        const e = Math.floor(rnd() * 400) - 200, ctx = rf.epochContext(e), tau = (rnd() * 2 - 1) * dyn.EPOCH_REACH_MYR;
+        const R = 2500 + rnd() * 20000, bq = rnd() * 2 * Math.PI, om = dyn.omegaRadMyr(R), W = dyn.windRadMyr(R);
+        const gt = t => at.armGens(dyn.generationState((ctx.tE + t) * MYR, { gens: [{}, {}] }), ctx.phi);
+        const GT = gt(tau), dc = at.armLabel(T, R, bq, W, ctx.GE);
+        z0 = Math.max(z0, Math.abs(at.armDelta(T, R, bq, om, W, 0, dc, ctx.GE)) * R);
+        const d2 = at.armDelta(T, R, bq, om, W, tau, dc, GT), d8 = at.armDelta(T, R, bq, om, W, tau, dc, GT, 8);
+        newton = Math.max(newton, Math.abs(d2 - d8) * R);
+        const bNow = bq + om * tau + d2;
+        inv = Math.max(inv, Math.abs(bNow - om * tau - at.armDeltaAt(T, R, bNow, om, W, tau, ctx.GE, GT) - bq) * R);
+        const v = Math.abs(at.armDelta(T, R, bq, om, W, tau + 0.25, dc, gt(tau + 0.25)) - at.armDelta(T, R, bq, om, W, tau - 0.25, dc, gt(tau - 0.25))) / 0.5 * R;
+        speeds.push(v * 0.9778);   // pc/Myr -> km/s
+    }
+    check(z0 < 1e-6 && newton < 0.5 && inv < 2, `crowding solve: ${z0.toExponential(1)} pc at the epoch's centre, two Newton steps within ${newton.toFixed(2)} pc of the root, inverse within ${inv.toFixed(2)} pc`);
+    speeds.sort((a, b) => a - b);
+    const p50 = speeds[speeds.length >> 1], p99 = speeds[Math.floor(speeds.length * 0.99)];
+    check(p50 > 1 && p50 < 15 && p99 < 60, `streaming through the arms: median ${p50.toFixed(1)} km/s, p99 ${p99.toFixed(1)} km/s (observed streaming motions ~10-20 km/s)`);
+
+    // (d) the stars of an epoch in a 1.4 kpc x 1.1 rad sector of the inner
+    // disk, at the epoch's edges: the star-weighted mean of the old arms'
+    // modulation of that moment equals int m^2 / int m (density
+    // proportional to m(t)); stars left on circular orbits drift off it
+    const e = 3, ctx = rf.epochContext(e), b = 21, c = rf.binBoxPc(b), ze = rf.zEdgesFor(c);
+    const R0 = 5800, R1 = 7200, beta0 = 0.4, span = 1.1, st = {};
+    const sw = a => dyn.wrapAngle(a + Math.PI) - Math.PI;
+    const stars = [];
+    for (let i = -Math.ceil(R1 / c) - 1; i <= Math.ceil(R1 / c); i++) for (let j = -Math.ceil(R1 / c) - 1; j <= Math.ceil(R1 / c); j++) {
+        const qx = (i + 0.5) * c, qy = (j + 0.5) * c, Rq = Math.hypot(qx, qy);
+        if (Rq < R0 - c || Rq > R1 + c || Math.abs(sw(Math.atan2(qy, qx) - beta0 - span / 2)) > span / 2 + c / Rq) continue;
+        for (let k = 0; k < ze.length - 1; k++) {
+            if (Math.abs(ze[k]) > 400) continue;
+            const box = rf.generateBox(9, rf.FAMILY_DISK, b, i, j, k, null, null, e);
+            for (let q = 0; q < box.n; q++) {
+                const o = q * rf.REC;
+                if (!at.isArmLabel(box.rec[o + 9])) continue;
+                const x = box.ox + box.rec[o], y = box.oy + box.rec[o + 1], R = Math.hypot(x, y);
+                if (R >= R0 && R <= R1) stars.push(R, Math.atan2(y, x), at.armLabelOf(box.rec[o + 9]));
+            }
+        }
+    }
+    for (const tau of [-19.5, 19.5]) {
+        const t = (ctx.tE + tau) * MYR, ang = m.patternAngles(t, {});
+        const GT = at.armGens(dyn.generationState(t, { gens: [{}, {}] }), ctx.phi);
+        const inWin = (R, bNow) => Math.abs(sw(bNow - dyn.omegaRadMyr(R) * tau - beta0 - span / 2)) < span / 2 - 0.12;
+        let nC = 0, sC = 0, sC2 = 0, nO = 0, sO = 0;
+        for (let q = 0; q < stars.length; q += 3) {
+            const R = stars[q], bq = stars[q + 1], om = dyn.omegaRadMyr(R);
+            const bC = bq + om * tau + at.armDelta(T, R, bq, om, dyn.windRadMyr(R), tau, stars[q + 2], GT), bO = bq + om * tau;
+            if (inWin(R, bC)) { const v = m.structureAt(R * Math.cos(ctx.phi + bC), R * Math.sin(ctx.phi + bC), ang, st).old; nC++; sC += v; sC2 += v * v; }
+            if (inWin(R, bO)) { nO++; sO += m.structureAt(R * Math.cos(ctx.phi + bO), R * Math.sin(ctx.phi + bO), ang, st).old; }
+        }
+        let w1 = 0, w2 = 0;
+        for (let q = 0; q < 400000; q++) {
+            const R = R0 + (R1 - R0) * rnd(), bNow = beta0 + span / 2 + (rnd() - 0.5) * (span - 0.24) + dyn.omegaRadMyr(R) * tau;
+            const wgt = R * Math.exp(-R / m.MW.hrThin), v = m.structureAt(R * Math.cos(ctx.phi + bNow), R * Math.sin(ctx.phi + bNow), ang, st).old;
+            w1 += wgt * v; w2 += wgt * v * v;
+        }
+        const crowd = sC / nC, circ = sO / nO, expect = w2 / w1;
+        const sigma = Math.sqrt(Math.max(sC2 / nC - crowd * crowd, 0) / nC) * 1.5;   // stars and the area sum
+        check(nC > 100000 && Math.abs(crowd - expect) < 4 * sigma && Math.abs(circ - expect) > 2 * Math.abs(crowd - expect),
+            `${tau > 0 ? "+" : ""}${tau} Myr into an epoch, ${nC} old stars follow that moment's arms: mean modulation ${crowd.toFixed(4)} vs ${expect.toFixed(4)} for density prop. to m(t) (sigma ${sigma.toFixed(4)}); on circular orbits alone ${circ.toFixed(4)}`);
+    }
+
+    // (e) selection: buildBin finds every old star a brute-force scan of a
+    // much larger area selects, wherever its crowding has taken it
+    {
+        const b2 = 26, cam = [4200, -3900, 0], e2 = -2, tauB = -18, ctx2 = rf.epochContext(e2);
+        const p = { cam, sun: [1e7, 1e7, 0], ref: [0, 0, 0], active: null, activeR: 0, magLimit: 11, catalogMagLimit: 11, epoch: e2, tauB, wMax: 1 };
+        const sel = rf.buildBin(rf.createFieldCache(2e7), 4, rf.FAMILY_DISK, b2, p);
+        const key = (o, i) => o.pos[3 * i].toFixed(3) + "," + o.pos[3 * i + 1].toFixed(3) + "," + o.pos[3 * i + 2].toFixed(3);
+        const got = new Set();
+        for (let i = 0; i < sel.n; i++) if (at.isArmLabel(sel.evo[2 * i])) got.add(key(sel, i));
+        const c2 = rf.binBoxPc(b2), ze2 = rf.zEdgesFor(c2), r = rf.binRadiusPc(b2, 11), M = r + 1500;
+        const a = -(ctx2.phi + dyn.omegaRadMyr(Math.hypot(cam[0], cam[1])) * tauB);
+        const px = Math.cos(a) * cam[0] - Math.sin(a) * cam[1], py = Math.sin(a) * cam[0] + Math.cos(a) * cam[1];
+        const all = rf.makeSelectionOut(), pf = { ...p, ctx: ctx2, arm: rf.armAtBuild(ctx2, tauB) };
+        for (let i = Math.floor((px - M) / c2); i <= Math.floor((px + M) / c2); i++) for (let j = Math.floor((py - M) / c2); j <= Math.floor((py + M) / c2); j++)
+            for (let k = 0; k < ze2.length - 1; k++) {
+                if (Math.max(ze2[k] - cam[2], 0, cam[2] - ze2[k + 1]) > r) continue;
+                rf.selectBox(rf.generateBox(4, rf.FAMILY_DISK, b2, i, j, k, null, 11, e2), pf, all);
+            }
+        let old = 0, missing = 0;
+        for (let i = 0; i < all.n; i++) if (at.isArmLabel(all.evo[2 * i])) { old++; if (!got.has(key(all, i))) missing++; }
+        check(old > 20000 && missing === 0 && got.size === old, `selection: every one of ${old} old stars a brute-force scan finds is selected (${missing} missing); the renderer rebuilds before they drift (${sel.drift.toFixed(1)} pc/Myr here)`);
     }
 }
 

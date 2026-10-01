@@ -24,6 +24,7 @@ import { relUniforms } from "../relView.js";
 import { tierDepthRange } from "./tierDepth.js";
 import { BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, RELATIVISTIC_VIEW_GLSL } from "./viewBrightness.js";
 import { DYNAMICS_FN_GLSL } from "../universe/galaxyDynamics.js";
+import { ARM_TRANSPORT_GLSL, ARM_LABEL_BIAS } from "../universe/armTransport.js";
 import { MAP_EXTENT_PC } from "../universe/galaxyMaps.js";
 
 // Pixels per radian of the current view (h / (2 tan(fov/2))), shared by every
@@ -50,13 +51,18 @@ uniform float uResolveLimit;
 // Disk stars of one material epoch (galaxyDynamics.js). position: the
 // star's epoch-frame position (pc) at the epoch's centre minus uRefE; the
 // mesh's matrix turns the frame by the orbital angle at |uRefE|, so each
-// star adds its own differential rotation (Omega(R) - uOmRef) uTau.
+// star adds its own differential rotation (Omega(R) - uOmRef) uTau, and an
+// old thin-disk star (evo.x < -1: its label offset, ARM_LABEL_BIAS - dc) its
+// crowding in the arms (armTransport.js). Young stars (evo.x > 0: their arm threshold) show
+// while the arms where they are now are bright enough: born in the arms,
+// gone as they leave them.
 attribute vec2 evo;
 uniform vec3 uRefE;
-uniform float uOmRef, uTau, uEpW, uMapReady;
+uniform float uOmRef, uTau, uEpW, uMapReady, uArmReady;
 uniform vec4 uGenC, uGenWv, uMapNorm;
 uniform sampler2D uGalMap;
 ${DYNAMICS_FN_GLSL}
+${ARM_TRANSPORT_GLSL}
 // structure maps at base-map position b: (young, old) modulation
 vec2 smMap(vec2 b) {
     vec2 uv = b / ${(2 * MAP_EXTENT_PC).toFixed(1)} + 0.5;
@@ -67,23 +73,19 @@ vec2 smMap(vec2 b) {
 vec3 starMotion(vec3 d, out float vis) {
     vec3 q = uRefE + d;
     float R = length(q.xy), om = dynOmega(R);
+    // the epoch hands its stars over one by one
+    vis = smoothstep(evo.y * 0.92, evo.y * 0.92 + 0.08, uEpW);
     float delta = (om - uOmRef) * uTau;
+    if (evo.x < -1.0 && uArmReady > 0.5 && vis > 0.0) delta += armDelta(q.xy, R, om, ${ARM_LABEL_BIAS.toFixed(1)} - evo.x);
     float sd = sin(delta), h = sin(0.5 * delta), cm1 = -2.0 * h * h;
     vec2 rd = d.xy + vec2(cm1 * d.x - sd * d.y, sd * d.x + cm1 * d.y);
     vec2 rr = vec2(cm1 * uRefE.x - sd * uRefE.y, sd * uRefE.x + cm1 * uRefE.y);
-    // the epoch hands its stars over one by one
-    vis = smoothstep(evo.y * 0.92, evo.y * 0.92 + 0.08, uEpW);
-    float thr = abs(evo.x);
-    if (thr > 0.0 && uMapReady > 0.5 && vis > 0.0) {
-        // the arms' modulation where the star is now (both generations)
+    if (evo.x > 0.0 && uMapReady > 0.5 && vis > 0.0) {
+        // the gas arms' modulation where the star is now (both generations)
         float wind = dynWind(om);
-        vec2 m0 = smMap(dynRot(q.xy, uGenC.x + om * uTau - wind * uGenC.y));
-        float y = uGenWv.z * m0.x, o = uGenWv.x * m0.y;
-        if (uGenWv.y > 0.0) {
-            vec2 m1 = smMap(dynRot(q.xy, uGenC.z + om * uTau - wind * uGenC.w));
-            y += uGenWv.w * m1.x; o += uGenWv.y * m1.y;
-        }
-        vis *= smoothstep(thr * 0.96, thr * 1.04, evo.x > 0.0 ? y : o);
+        float y = uGenWv.z * smMap(dynRot(q.xy, uGenC.x + om * uTau - wind * uGenC.y)).x;
+        if (uGenWv.w > 0.0) y += uGenWv.w * smMap(dynRot(q.xy, uGenC.z + om * uTau - wind * uGenC.w)).x;
+        vis *= smoothstep(evo.x * 0.96, evo.x * 1.04, y);
     }
     return vec3(rd + rr, d.z);
 }

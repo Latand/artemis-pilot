@@ -20,7 +20,7 @@ and the procedural star field (`resolvedField.js`, `resolvedFieldStars.js`).
 | Bar, its dust lanes, the Central Molecular Zone | the bar, 39 km/s/kpc | always (rigid) |
 | Spiral arms: old-star arms, dust lanes, young-star arms, HII | a spiral generation's frame: pattern speed plus half the local shear | a generation, ~250 Myr above half weight |
 | Dust clouds, star-forming complexes, clusters, HII shells (below the maps' texels) | the material, Omega(R) | a 30 Myr material epoch |
-| Procedural disk stars | their circular orbit, Omega(R) | a material epoch; shown where the current arms put them |
+| Procedural disk stars | their circular orbit, Omega(R); old thin-disk stars also crowd in the arms | a material epoch; young stars shown where the current gas arms put them |
 | Procedural bar stars | the bar | always |
 
 Omega(R) = v_c(R)/R from the rotation curve the procedural stars' epicycles
@@ -86,27 +86,69 @@ star adds its own differential rotation, exact in float32 near the camera).
 Stars hand over to the next epoch's one by one (a uniform per star against
 the epoch weight).
 
-To follow arms that move at a different rate, each epoch's young and thin
-disk stars are drawn from a POOL: the model density with the arms'
-modulation m(x, t) replaced by its upper bound B(x) over everything the
-star's orbit meets during the epoch. B comes from polar tables of the young
-and old map modulation (1024 x 2048 cells of ~24 pc, max-pooled over each
-cell, dilated by the arc a star sweeps relative to the arms during an epoch,
+The arms move at other rates than the stars, and the two populations meet
+them as they physically do.
+
+**Old stars crowd in the arms** (`src/universe/armTransport.js`): a
+kinematic density wave (Lin & Shu 1964; Kalnajs 1973). Along each ring the
+old arms' modulation divided by its ring mean, mhat, has a cumulative
+excess P(R, psi) = integral of (mhat - 1) dpsi (psi the angle in a
+generation's map frame). A star whose circular orbit would put it at angle
+Lambda(t) is at the angle phi that solves
+
+    phi + sum_g w_g(t) P(R, phi - A_g(R, t)) = Lambda(t)
+
+The left side increases with phi (its derivative is sum_g w_g mhat_g > 0),
+so each ring maps onto itself one to one and continuously in time, and
+stars uniform in Lambda have a density proportional to sum_g w_g mhat_g:
+the old arms' modulation of that moment, whatever the generations'
+weights. A star's speed relative to the arms is (Omega - Omega_arm) / mhat:
+it slows down in an arm and hurries between arms, like cars through a
+traffic jam, and no star appears or fades. An epoch's old stars are drawn
+at their density at the epoch's centre (the pool below, kept with
+probability m(t_e) / B, one bound B per third of a box so that the kept
+density is exactly m) and carry their label offset Lambda - phi; at time t
+the vertex shader, and identically the worker's selection, take two Newton
+steps from zero, which land within 0.3 pc of the root. P and mhat are a
+2048 x 512 polar half-float texture (24 pc in radius), built from the
+structure maps in the maps worker and, identically, in the field worker.
+
+Measured on the model (`smoke:galaxy-dynamics`): the azimuthal streaming
+this adds to the circular orbits has a median of 7 km/s and a 99th
+percentile of 40 km/s (the strongest inner arms, and generation
+hand-overs); stellar streaming motions measured in the Milky Way are
+~10-20 km/s. In a 1.4 kpc x 1.1 rad sector of the inner disk, 19.5 Myr
+before and after an epoch's centre, ~590 k old stars have a star-weighted
+mean modulation of 0.9583 and 0.9686, against 0.9583 and 0.9687 for a
+density proportional to that moment's arms; on circular orbits alone they
+would have 0.9567 and 0.9692. Under the previous thinning 7.5 % of the old
+stars shown during an epoch switched on or off within it; now none does.
+
+**Young stars are born in the gas arms and fade as they leave them.** Each
+epoch's young stars are drawn from a POOL: the model density with the young
+arms' modulation m(x, t) replaced by its upper bound B(x) over everything
+the star's orbit meets during the epoch. B comes from polar tables of the
+map modulation (1024 x 2048 cells of ~24 pc, max-pooled over each cell,
+dilated by the arc a star sweeps relative to the arms during an epoch,
 weighted by each generation's largest weight in the epoch, 5 % headroom).
-Each star carries a threshold u B (u uniform) and is shown while m where it
-is now exceeds it; the shader reads m from the same map texture the volume
-samples, for both generations. Thinning a Poisson pool by m / B leaves
-exactly the model density, so the drawn stars and the diffuse light agree
-at every time, while each star keeps its own orbit: a young star appears as
-a young-star arm reaches it and fades behind it (the observable signature
-of stars streaming through a density pattern). Central Molecular Zone,
-thick-disk and halo stars are not thinned; bar stars turn with the bar.
+Each young star carries a threshold u B (u uniform) and is shown while m
+where it is now exceeds it; the shader reads m from the same map texture
+the volume samples, for both generations. Thinning a Poisson pool by m / B
+leaves exactly the model density, while each star keeps its own orbit: a
+young star appears as a young-star arm reaches it and fades behind it.
+Central Molecular Zone, thick-disk and halo stars do not depend on the
+arms; bar stars turn with the bar.
 
 Selections are rebuilt in a worker as the camera moves through an epoch's
 frame, as the disk shears past the camera (every 0.06 / |d Omega / d ln R|,
-about 2 Myr at the Sun; never inside 5 kpc), at least every 5 Myr, and when
-a new epoch's hand-over approaches (it is built 3 Myr ahead, in either time
-direction).
+about 2 Myr at the Sun; never inside 5 kpc), as old stars stream past it
+(the worker reports the fastest drift around the camera; a selection is
+rebuilt once its stars may have moved 6 % of the bin's radius), at least
+every 5 Myr, and when a new epoch's hand-over approaches (it is built 3 Myr
+ahead, in either time direction). The worker finds an old star's box
+through the inverse transport: turning a point back along its circular
+orbit and its crowding keeps every ring and is continuous, so the image of
+the camera's sphere is bounded by the image of its rim.
 
 ## Determinism, reverse time, LOD
 
@@ -152,16 +194,29 @@ is a weighted sum of unit-mean fields).
   refinement rows per frame, so frame time stays bounded; hardware and
   mobile-browser profiling remain to be done.
 - Procedural field: the pool tables take ~0.4 s once in the field worker
-  (16 MB). A new epoch regenerates the disk boxes (a few seconds of worker
-  time near the Sun, about what one cold start cost before); the pools hold
-  ~10 % more stars than are shown near the Sun (young ~50-70 %, thin disk
-  ~80-90 % shown). Selections near the Sun are rebuilt about every 2 Myr of
-  sim time. At warps beyond a few Myr per second the worker cannot follow
+  (16 MB); the old stars' transport table takes ~0.4 s once in the maps
+  worker (a 4 MB half-float texture) and once in the field worker. A new
+  epoch regenerates the disk boxes (a few seconds of worker time near the
+  Sun); only young stars are drawn as a pool (~50-70 % of them shown at a
+  time), so a selection carries 15-25 % fewer stars than when old stars
+  were thinned too. Placing each old star through the transport makes the
+  worker slower: re-selecting a bin from cached boxes takes 1.4-1.7x as
+  long (126-211 ms against 80-156 ms for the heaviest bins measured in
+  the inner disk), generating its boxes about 2x. Selections near the Sun
+  are rebuilt about every 2 Myr of sim time, sooner where old stars stream
+  fast. At warps beyond a few Myr per second the worker cannot follow
   every epoch and selection, so the drawn stars lag (stars missing at the
   edge of the resolving sphere, a new epoch's stars arriving late); the
-  diffuse light is always current. The vertex shader adds two texture
-  fetches per moving star; the star budget (350 k desktop, 60 k mobile)
-  counts candidates, so the drawn count stays bounded.
+  diffuse light is always current. In the vertex shader a young star reads
+  the map texture once per generation alive, as before; an old star takes
+  an atan and two Newton steps, one transport-texture read per generation
+  each (2-4 reads). Under SwiftShader, which emulates texture reads and
+  runs both sides of a branch, the field alone renders 16-56 % slower at
+  the same views (`ZOOM_FIELD_TIMING`, below) despite its fewer stars; on
+  a hardware GPU that is at most ~1.4 M bilinear vertex reads per frame at
+  the desktop budget (350 k stars) and ~0.24 M on mobile (60 k), not yet
+  profiled. The star budget counts candidates, so the drawn count stays
+  bounded.
 - The field's budget controller assumed the star count grows by 0.35 dex
   per magnitude of resolve limit. Looking down onto the inner disk from a
   few kpc it grows twice as fast, and the controller hunted between two
@@ -184,6 +239,7 @@ is a weighted sum of unit-mean fields).
 | Generation jitter | +-50 deg about the bar ends | model |
 | Gas hand-over | middle 40 % of the cross-fade | model |
 | Material epoch L | 30 Myr, 15 % hand-over each side | model (cloud/complex lifetimes) |
+| Old stars' response to the arms | azimuthal transport of the old maps' modulation (exact density; ~7 km/s median streaming) | model (kinematic density wave, Kalnajs 1973) |
 
 ## Known approximations
 
@@ -192,8 +248,13 @@ is a weighted sum of unit-mean fields).
   and arm breaks recur at other places. Their contrast, widths and number
   are today's.
 - Procedural stars move on circular orbits (no epicycles or vertical
-  oscillation in the field); crowding in the arms is represented by
-  statistical thinning, not by the orbits. The active neighbourhood
+  oscillation in the field). Old stars crowd in the arms azimuthally only:
+  the transport reproduces their density in the arms exactly, but a real
+  density wave also moves stars radially. Young stars appear in the gas
+  arms and fade behind them by thinning, which stands for their birth there
+  and their ageing. Every 30 Myr each disk star hands over to one of the
+  next epoch's, star by star (a statistically identical field, but not the
+  same stars). The active neighbourhood
   (`galaxy.js` local tier, the 8 pc around the ship) keeps its own
   epicycles and its present-day arm densities; over 8 pc the arms'
   modulation is uniform, so this is at most the 30 % old-arm contrast of
@@ -250,6 +311,13 @@ arms and complexes the volume shows at that epoch at every distance:
 ![Region from 600 pc](galaxy-dynamics/zoom-z600.jpg)
 ![Inside the disk](galaxy-dynamics/zoom-inside.jpg)
 
+These were captured while old stars were still thinned. With old stars
+crowding, the same views from 600 pc and from inside the disk at -120 and
++50 Myr have the same mean luminance as with thinning (52.3, 125.3 and
+49.6 of 255 in both; the fourth view settled at another resolve limit) and
+carry 15-20 % fewer stars, no longer counting pool members that are not
+shown.
+
 Face-on, co-rotating, 0 to 600 Myr every 10 Myr (before | after):
 
 ![Co-rotating series](galaxy-dynamics/series-corotating.gif)
@@ -281,15 +349,22 @@ stays >= 0.55 before and falls to 0.09-0.37 after.
   every epoch; young arms keep their contrast through 10 Gyr; dust-lane
   crossings per radial line (a measure of winding) stay within 1.6x of
   today's at every epoch and do not grow over Gyr; shear is bounded; the
-  pool bound holds along the stars' orbits (0 violations in 265 k samples);
-  and at +-50 Myr the resolved young stars sit in that epoch's young arms
-  (mean modulation 4.6 / 4.1, against 2.4 / 1.5 in the arms 120 Myr later).
+  young pool bound holds along the stars' orbits (0 violations in 66 k
+  samples); at +-50 Myr the resolved young stars sit in that epoch's young
+  arms (mean modulation 4.6 / 4.1, against 2.4 / 1.5 in the arms 120 Myr
+  later); and old stars crowd: the transport table closes around each ring,
+  the solve is exact at an epoch's centre and two Newton steps are within
+  0.3 pc of the root, streaming is 7 km/s median and 40 km/s at the 99th
+  percentile, old stars follow each moment's arms (the sector test above),
+  and the worker selects every old star a brute-force scan finds (81 k of
+  81 k).
 - `node scripts/capture-galaxy-epochs.mjs <root> <dir>`: the isolated
   volume at -500 Myr ... +3 Gyr in five views plus a 10 Myr face-on series;
   `node scripts/analyze-galaxy-epochs.mjs <before> <after>` tabulates the
   correlations above.
 - `node scripts/capture-galaxy-zoom.mjs <root> <dir>`: volume and
-  procedural stars at four zooms and four epochs.
+  procedural stars at four zooms and four epochs (`ZOOM_FIELD_TIMING=N`
+  also times N renders of the procedural field alone per frame).
 - `node scripts/benchmark-galaxy-dynamics.mjs <root> <out.json>`
   (`BENCH_MOBILE=1` for the mobile settings): the cost table above.
 - Also run on this change: `smoke:galaxy-model`, `smoke:galaxy-population`,

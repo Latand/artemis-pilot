@@ -8,6 +8,8 @@
 // ZOOM_SIZE=WxH, ZOOM_LIST=-50,0,50 (Myr), ZOOM_VIEWS=z600,inside narrow the
 // matrix; ZOOM_EXPOSURE sets the fixed display exposure (default 0.09: the
 // disk seen from within a few kpc is far brighter than the whole Galaxy).
+// ZOOM_FIELD_TIMING=N also times N renders of the procedural field alone
+// per frame (median ms, gl.finish; relative shader work under SwiftShader).
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -90,6 +92,17 @@ try {
             }
             return f.resolvedFieldStatus();
         };
+        window.fieldTiming = n => {
+            const r = s.renderer, gl = r.getContext(), px = new Uint8Array(4), ms = [];
+            for (let i = 0; i < n; i++) {
+                r.setRenderTarget(null); r.autoClear = true; r.clear();
+                const t0 = performance.now();
+                r.render(probe.field, s.camera); gl.finish(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+                ms.push(performance.now() - t0);
+            }
+            ms.sort((a, b) => a - b);
+            return ms[ms.length >> 1];
+        };
         window.draw = (capture = false) => {
             const r = s.renderer, gl = r.getContext(), cam = s.camera;
             updateField();
@@ -132,11 +145,12 @@ try {
                 if (st.volume.mapsReady && !st.volume.draft && st.volume.mapBlend === 1 && st.field.idle && !st.field.staging) { settled = true; break; }
                 await page.waitForTimeout(30);
             }
+            const fieldMs = process.env.ZOOM_FIELD_TIMING ? await page.evaluate(n => fieldTiming(n), Number(process.env.ZOOM_FIELD_TIMING)) : null;
             const f = await page.evaluate(() => draw(true));
             const name = `${z.name}_${tMyr < 0 ? 'm' : 'p'}${String(Math.abs(tMyr)).padStart(4, '0')}`;
             await writeFile(`${out}/${name}.png`, Buffer.from(f.png.split(',')[1], 'base64'));
             delete f.png;
-            report.frames.push({ name, tMyr, zoom: z.name, settled, settleMs: Date.now() - t0, mean: f.mean,
+            report.frames.push({ name, tMyr, zoom: z.name, settled, settleMs: Date.now() - t0, mean: f.mean, fieldMs,
                 stars: f.field.stars, mLim: f.field.mLim, epochs: f.field.epochs, fieldBuilds: f.field.builds, fieldMs: f.field.ms });
             await writeFile(`${out}/report.json`, JSON.stringify(report, null, 2));
             console.log('FRAME', name, f.mean.toFixed(2), 'stars', f.field.stars, 'mLim', f.field.mLim);

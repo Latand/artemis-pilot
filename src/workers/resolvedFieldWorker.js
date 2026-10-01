@@ -27,7 +27,7 @@ export function handleBuild(m) {
     }
     return {
         id: m.id, gen: m.gen, family: m.family, bin: m.bin, n, pos, absMag, teff, color, evo, epoch: m.params.epoch ?? null,
-        ref: m.params.ref, cam: m.params.cam, overflow: n > (m.params.maxStars ?? Infinity),
+        ref: m.params.ref, cam: m.params.cam, overflow: n > (m.params.maxStars ?? Infinity), drift: out.drift ?? 0,
         ms: performance.now() - t0, cached: cache.stars,
     };
 }

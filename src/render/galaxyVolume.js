@@ -349,6 +349,15 @@ function buildMaps() {
                 u.uMapNorm.value.set(packed.norm.young, packed.norm.old, packed.norm.dust, packed.norm.young);
                 u.uMapTexelPc.value = 2 * packed.extentPc / packed.size;
                 u.uMapLanes.value = 1; u.uMapBlend.value = 0;
+                // the old stars' arm transport (universe/armTransport.js),
+                // for the procedural field's star shader
+                if (packed.arm?.data?.length === packed.arm.nr * packed.arm.nb * 2) {
+                    const arm = new THREE.DataTexture(packed.arm.data, packed.arm.nb, packed.arm.nr, THREE.RGFormat, THREE.HalfFloatType);
+                    arm.minFilter = arm.magFilter = THREE.LinearFilter; arm.generateMipmaps = false;
+                    arm.wrapS = THREE.RepeatWrapping; arm.wrapT = THREE.ClampToEdgeWrapping;
+                    arm.needsUpdate = true; arm.name = 'galaxyArmTransport';
+                    state.armTexture = arm;
+                }
                 state.maps = { ms: packed.ms ?? null, size: packed.size, full: true };
                 state.mapT = performance.now(); state.mapRevision++; state.history = null; state.dirty = true;
                 clearTimeout(state.mapTimer); w.terminate(); state.mapsWorker = null;
@@ -740,12 +749,13 @@ export function galaxyVolumeStats() {
 // The structure-map texture the volume samples, for layers that must read
 // the same arms (the procedural field's moving stars). full: the worker's
 // 1024^2 maps are in (before that only the coarse preview).
-const _mapTex = { texture: null, norm: null, full: false };
+const _mapTex = { texture: null, norm: null, full: false, arm: null };
 export function galaxyMapTexture() {
     const u = state.rayMat?.uniforms;
     _mapTex.texture = u ? u.uGalMap.value : null;
     _mapTex.norm = u ? u.uMapNorm.value : null;
     _mapTex.full = !!(state.maps?.full && _mapTex.texture);
+    _mapTex.arm = state.armTexture || null;
     return _mapTex;
 }
 export function setGalaxyVolumeEnabled(on) {

@@ -8,15 +8,17 @@
 // (galaxyDynamics.js): a mesh holds the stars of one epoch, in that epoch's
 // frame; its matrix turns the frame by the orbital angle at the mesh's
 // reference point, and the vertex shader adds each star's own differential
-// rotation and shows it while its epoch and the arms where it is now allow
-// (starPointMaterial.js STAR_MOTION). Each mesh carries an exact float64
+// rotation, an old star's crowding in the arms (universe/armTransport.js),
+// and shows it while its epoch -- and, for a young star, the arms where it
+// is now -- allow (starPointMaterial.js STAR_MOTION). Each mesh carries an exact float64
 // frame->scene matrix rebuilt every frame (rotation with sim time, the Sun
 // anchor, the render origin); its vertices are float32 offsets from a
 // reference point near the camera, so precision is set by the distance to
 // the camera, not to the Sun or the Galactic centre.
 //
 // Selection is rebuilt as the camera moves through an epoch's frame, as the
-// disk shears past it, and at least every SELECTION_MAX_MYR; the next epoch
+// disk shears or its old stars stream past it (the worker measures that
+// drift), and at least every SELECTION_MAX_MYR; the next epoch
 // is built a little before its hand-over begins (in either time direction).
 //
 // Resolve limit: the field draws stars brighter than apparent magnitude
@@ -61,7 +63,8 @@ const state = {
     handleBuild: null, fallbackBusy: false,
     stats: { builds: 0, ms: 0, cached: 0 },
 };
-const mapU = { uGalMap: { value: null }, uMapNorm: { value: new THREE.Vector4(1, 1, 1, 1) }, uMapReady: { value: 0 } };
+const mapU = { uGalMap: { value: null }, uMapNorm: { value: new THREE.Vector4(1, 1, 1, 1) }, uMapReady: { value: 0 },
+    uArmP: { value: null }, uArmReady: { value: 0 } };
 const _g = [0, 0, 0];
 const _ang = {};
 const _gs = { gens: [{}, {}] }, _es = { epochs: [{}, {}] };
@@ -258,7 +261,7 @@ function onResult(res) {
     if (PERF.enabled) markPerf("resolvedField.build", res.ms, { bin: res.bin, family: res.family, epoch: res.epoch, n: res.n });
     if (res.gen !== state.gen) return;
     const key = keyOf(res.family, res.bin, res.epoch);
-    state.built.set(key, { camF: res.camF, tB: res.tB, active: res.active || null, sfr: res.sfr, keep: res.keep, gen: res.gen });
+    state.built.set(key, { camF: res.camF, tB: res.tB, active: res.active || null, sfr: res.sfr, keep: res.keep, gen: res.gen, drift: res.drift || 0 });
     if (res.overflow) { startGen(Math.max(MAG_MIN, state.genMLim - 1)); return; }
     if (state.staging) {
         state.staging.set(key, res);
@@ -366,6 +369,8 @@ export function updateResolvedField({ camWorldKm, tSec, sfr = 1, keep = 1, activ
     mapU.uGalMap.value = mt.texture;
     if (mt.norm) mapU.uMapNorm.value.copy(mt.norm);
     mapU.uMapReady.value = mt.full ? 1 : 0;
+    mapU.uArmP.value = mt.arm;
+    mapU.uArmReady.value = mt.arm ? 1 : 0;
     // epochs handed over: their stars are gone
     for (const [key, mesh] of [...state.meshes]) {
         if (mesh.userData.family === FAMILY_DISK && !needed.includes(mesh.userData.e)) dropMesh(key);
@@ -411,10 +416,11 @@ export function updateResolvedField({ camWorldKm, tSec, sfr = 1, keep = 1, activ
                 const r = binRadiusPc(bin, state.genMLim);
                 score = Math.hypot(camF[0] - prev.camF[0], camF[1] - prev.camF[1], camF[2] - prev.camF[2]) / Math.max(0.06 * r, 0.05);
                 if (disk) {
-                    // the disk shears past the camera; the selection's epoch
-                    // weight bound runs out
+                    // the disk shears past the camera, old stars stream
+                    // through the arms past it; the selection's epoch weight
+                    // bound runs out
                     const dt = Math.abs(tMyr - prev.tB);
-                    score = Math.max(score, dt * shear / 0.06, dt / SELECTION_MAX_MYR);
+                    score = Math.max(score, dt * shear / 0.06, dt * prev.drift / Math.max(0.06 * r, 0.05), dt / SELECTION_MAX_MYR);
                 }
                 if (r < 400 && ((actF === null) !== (prev.active === null) ||
                     (actF && Math.hypot(actF[0] - prev.active[0], actF[1] - prev.active[1], actF[2] - prev.active[2]) > 1))) score = Math.max(score, 1.5);

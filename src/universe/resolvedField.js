@@ -36,15 +36,21 @@
 //
 // Stars moving through the arms. The spiral arms are patterns that move at
 // other rates (galaxyDynamics.js generations), so a material star crosses
-// them. Each epoch's stars are drawn from a POOL whose young and thin-disk
-// density uses, instead of the arms' modulation m(x, t), its upper bound B(x)
-// over every position the star's orbit visits during the epoch (polar
-// arc-max tables of the structure maps, below); each star carries a
-// threshold u B (u uniform) and is shown while the arms' modulation where it
-// is now exceeds it. Thinning a Poisson pool by m / B leaves exactly the
-// density m: the drawn stars agree with the volume's arms at every time
-// while each star keeps moving at its own orbital rate -- a young star
-// appears as a young-star arm reaches it and fades behind it.
+// them, and the two populations do so as they physically do:
+//   - young stars are born in the gas arms and fade as they leave them.
+//     Each epoch's young stars are drawn from a POOL whose density uses,
+//     instead of the young arms' modulation m(x, t), its upper bound B(x)
+//     over every position the star's orbit visits during the epoch (polar
+//     arc-max tables of the structure maps, below); each carries a threshold
+//     u B (u uniform) and shows while the modulation where it is now exceeds
+//     it. Thinning a Poisson pool by m / B leaves exactly the density m.
+//   - old thin-disk stars are never made or unmade by the arms: they crowd
+//     in them (armTransport.js, a kinematic density wave). An epoch's old
+//     stars are drawn at their density at its centre t_e (the pool, kept
+//     with probability m(t_e) / B) and then move along their rings, slower
+//     in the arms and faster between them, so their density follows the old
+//     arms' modulation at every moment while no star appears or fades.
+// Either way the drawn stars agree with the volume's arms at every time.
 //
 // Space is split per magnitude bin into boxes whose size follows that bin's
 // resolving radius R_b; a box's stars are a pure function of (seed, bin,
@@ -56,9 +62,10 @@ import { LF_M_MIN, LF_M_STEP, LF_NBIN, LF_NU, LF_SAMPLES } from "./resolvedLF.js
 import { MW, mwSample, RESOLVED_MAG_LIMIT, BAR_NORM, cmzRing } from "./galaxyModel.js";
 import { galaxyMaps, MAP_EXTENT_PC } from "./galaxyMaps.js";
 import {
-    EPOCH, EPOCH_REACH_MYR, SPIRAL, OMEGA_P, OMEGA_B, omegaRadMyr, windRadMyr, epochPhi, epochSalt,
-    epochWindowMyr, generationsBetween, wrapAngle, gasWeight,
+    EPOCH, EPOCH_REACH_MYR, SPIRAL, OMEGA_P, OMEGA_B, MYR_S, omegaRadMyr, windRadMyr, windOfOmega, epochPhi, epochSalt,
+    epochWindowMyr, generationsBetween, generationState, wrapAngle, gasWeight,
 } from "./galaxyDynamics.js";
+import { armTransport, armGens, armLabel, armDelta, armDeltaAt, armLabelField, armLabelOf, isArmLabel } from "./armTransport.js";
 import { completeness } from "./astroConstants.js";
 import { hashInts, makeRNG, samplePoisson } from "./prng.js";
 
@@ -72,9 +79,11 @@ const LN10_04 = 0.4 * Math.LN10;
 const SALT = 0x52464c44; // "RFLD"
 
 // Box records: stride 11 floats, positions relative to the box origin.
-// R_THR: arm-thinning threshold (0: always shown; > 0: shown while the
-// young-arm modulation exceeds it; < 0: while the old-arm modulation
-// exceeds -R_THR); R_UE: the star's place in its epoch's hand-over.
+// R_THR: the star's relation to the arms (0: none, always shown; > 0: a
+// young star's threshold, shown while the young-arm modulation exceeds it;
+// < -1: an old thin-disk star that crowds in the arms, its label offset
+// encoded by armTransport.js armLabelField); R_UE: the star's place in its
+// epoch's hand-over.
 export const REC = 11;
 const R_X = 0, R_Y = 1, R_Z = 2, R_M = 3, R_TEFF = 4, R_CLS = 5, R_SUB = 6, R_U1 = 7, R_U2 = 8, R_THR = 9, R_UE = 10;
 
@@ -302,6 +311,8 @@ export function epochContext(e) {
         }).filter(g => g.wMax > 0),
         // the bar's angle in the epoch frame at t_e (the Central Molecular Zone)
         bar: wrapAngle(MW.barAngle0 + OMEGA_B * tE - epochPhi(e)),
+        // the generations at t_e as the old stars' transport uses them
+        GE: armGens(generationState(tE * MYR_S, { gens: [{}, {}] }), epochPhi(e)),
     };
     if (_ctxCache.size > 64) _ctxCache.clear();
     _ctxCache.set(e, c);
@@ -327,6 +338,22 @@ export function poolModBound(ctx, x, y, out = _bb) {
     }
     out[0] = by; out[1] = bo;
     return out;
+}
+
+// The old arms' modulation at epoch-frame (x, y) at the epoch's centre t_e
+// (the generations' weights then); 1 without maps, like poolModBound.
+const _yo = [0, 0];
+export function oldModAt(ctx, x, y, R = Math.hypot(x, y), beta = Math.atan2(y, x), W = windRadMyr(R)) {
+    const m = galaxyMaps();
+    if (!m) return 1;
+    const G = ctx.GE;
+    let o = 0;
+    for (let k = 0; k < 6; k += 3) {
+        if (!(G[k] > 0)) continue;
+        const a = beta + G[k + 1] - W * G[k + 2];
+        o += G[k] * bilinearYO(m, R * Math.cos(a), R * Math.sin(a), _yo)[1];
+    }
+    return o;
 }
 
 // --- Component densities in a frame ------------------------------------------
@@ -383,7 +410,7 @@ function familyDensity(family, ctx, x, y, z, out) {
 const GL3 = [[-Math.sqrt(0.6), 5 / 9], [0, 8 / 9], [Math.sqrt(0.6), 5 / 9]];
 const _d = {};
 const NSUB = 3;                           // xy sub-cells per box side
-const _w = new Float64Array(NSUB * NSUB * 6);   // per sub-cell: young, thin, thick, halo, bar, youngMax
+const _w = new Float64Array(NSUB * NSUB * 7);   // per sub-cell: young, thin, thick, halo, bar, youngMax, thin bound
 const SALT_EPOCH = 0x45504f43; // "EPOC"
 const HZ_OF = [MW.hzYoung, MW.hzThin, MW.hzThick];
 
@@ -409,13 +436,16 @@ function sampleExpZ(u, z0, z1, h) {
 // sub-cell -- except young stars, which are rejection-sampled against the
 // pool density so they trace the arms' reach and the epoch's star-forming
 // complexes. Disk densities are the epoch's pool (poolDensity); each young
-// or thin-disk star gets its arm threshold u B at its final position.
+// star gets its arm threshold u B at its final position; thin-disk stars are
+// kept with probability m(t_e) / B (one B per sub-cell) and carry their
+// crowding label offset (armTransport.js).
 export function generateBox(seed, family, b, i, j, k, sun = null, catalogMagLimit = 11, e = 0) {
     const ctx = family === FAMILY_BAR ? null : epochContext(e);
+    const armT = ctx ? armTransport(galaxyMaps()) : null;
     const c = binBoxPc(b);
     const ze = zEdgesFor(c);
     const x0 = i * c, y0 = j * c, z0 = ze[k], z1 = ze[k + 1];
-    const out = { ox: x0, oy: y0, oz: z0, n: 0, rec: null };
+    const out = { ox: x0, oy: y0, oz: z0, c, n: 0, rec: null };
     if (z1 === undefined || Math.hypot(x0 + c / 2, y0 + c / 2) > R_FIELD_MAX + c) return out;
     const nuY = family === FAMILY_BAR ? 0 : LF_NU.young[b], nuO = LF_NU.old[b];
     if (!(nuY > 0 || nuO > 0)) return out;
@@ -423,18 +453,26 @@ export function generateBox(seed, family, b, i, j, k, sun = null, catalogMagLimi
     const subVol = sc * sc * hz / 2;          // x (GL weights sum to 2)
     const tot = [0, 0, 0, 0, 0];
     for (let a = 0; a < NSUB; a++) for (let bb = 0; bb < NSUB; bb++) {
-        const o = (a * NSUB + bb) * 6;
+        const o = (a * NSUB + bb) * 7;
         const xs = x0 + (a + 0.5) * sc, ys = y0 + (bb + 0.5) * sc;
-        let y = 0, th = 0, tk = 0, hl = 0, br = 0, ymax = 0;
-        if (ctx) poolPrep(ctx, xs, ys, _pre);
+        let y = 0, th = 0, tk = 0, hl = 0, br = 0, ymax = 0, bO = 1;
+        if (ctx) {
+            poolPrep(ctx, xs, ys, _pre);
+            // one old-arm bound for the whole sub-cell (its corners, edges
+            // and centre): the thin pool's rate and its stars' acceptance
+            // m / bO use the same value, so the kept density is exactly m
+            bO = 0;
+            for (let u = -0.5; u <= 0.5; u += 0.5) for (let v = -0.5; v <= 0.5; v += 0.5) bO = Math.max(bO, poolModBound(ctx, xs + u * sc, ys + v * sc, _bb)[1]);
+        }
         for (const [g, w] of GL3) {
             const zg = z0 + hz * (0.5 + 0.5 * g);
             if (ctx) poolAtZ(_pre, zg, _d); else barDensity(xs, ys, zg, _d);
             y += _d.young * w; th += _d.thin * w; tk += _d.thick * w; hl += _d.halo * w; br += _d.bar * w;
             if (_d.young > ymax) ymax = _d.young;
         }
+        if (ctx && _pre.bO > 0) th *= bO / _pre.bO;
         _w[o] = y * subVol * nuY; _w[o + 1] = th * subVol * nuO; _w[o + 2] = tk * subVol * nuO;
-        _w[o + 3] = hl * subVol * nuO; _w[o + 4] = br * subVol * nuO; _w[o + 5] = ymax;
+        _w[o + 3] = hl * subVol * nuO; _w[o + 4] = br * subVol * nuO; _w[o + 5] = ymax; _w[o + 6] = bO;
         for (let q = 0; q < 5; q++) tot[q] += _w[o + q];
     }
     const rng = makeRNG(ctx ? hashInts(seed, SALT_EPOCH, b, i, j, k, e) : hashInts(seed, SALT, family, b, i, j, k));
@@ -449,12 +487,12 @@ export function generateBox(seed, family, b, i, j, k, sun = null, catalogMagLimi
         for (let s = 0; s < counts[comp]; s++) {
             // sub-cell by weight
             let u = rng() * tot[comp], cell = 0;
-            for (; cell < NSUB * NSUB - 1; cell++) { u -= _w[cell * 6 + comp]; if (u <= 0) break; }
+            for (; cell < NSUB * NSUB - 1; cell++) { u -= _w[cell * 7 + comp]; if (u <= 0) break; }
             const cx = x0 + Math.floor(cell / NSUB) * sc, cy = y0 + (cell % NSUB) * sc;
             let x = cx + rng() * sc, y = cy + rng() * sc, z;
             let thr = 0;
             if (comp === SUB_YOUNG) {
-                const bound = _w[cell * 6 + 5] * 3 + 1e-30;
+                const bound = _w[cell * 7 + 5] * 3 + 1e-30;
                 for (let tries = 0; tries < 24; tries++) {
                     z = sampleExpZ(rng(), z0, z1, HZ_OF[0]);
                     familyDensity(family, ctx, x, y, z, _d);
@@ -470,7 +508,15 @@ export function generateBox(seed, family, b, i, j, k, sun = null, catalogMagLimi
                 if (inArms) thr = rng() * poolModBound(ctx, x, y, _bb)[0];
             } else if (comp <= SUB_THICK) {
                 z = sampleExpZ(rng(), z0, z1, HZ_OF[comp]);
-                if (comp === SUB_THIN) thr = -rng() * poolModBound(ctx, x, y, _bb)[1];
+                if (comp === SUB_THIN) {
+                    // the epoch's old stars at their density at its centre
+                    // (pool B thinned once, by m(t_e) / B); from there they
+                    // crowd through the arms instead of being thinned, from
+                    // the label offset they carry (none without maps)
+                    const R = Math.hypot(x, y), beta = Math.atan2(y, x), W = windRadMyr(R);
+                    if (rng() * _w[cell * 7 + 6] > oldModAt(ctx, x, y, R, beta, W)) continue;
+                    if (armT) thr = armLabelField(armLabel(armT, R, beta, W, ctx.GE));
+                }
             } else z = z0 + rng() * hz;
             const samples = comp === SUB_YOUNG ? samplesY : samplesO;
             const smp = samples.length ? samples[Math.floor(rng() * samples.length)] : [5800, 4, 0];
@@ -576,8 +622,9 @@ export function catalogCompleteness(clsCode, dSunPc, mSunV, catalogMagLimit) {
 // the bar, galactocentric at the build time for disk epochs -- sun (frame
 // pc: the bar's frame, or the epoch's frame for disk boxes), era factors,
 // catalog reach; for disk epochs also ctx (epochContext), tauB (Myr since
-// the epoch's centre at the build) and wMax (the epoch's largest weight
-// while this selection is in use). Appends selected stars of one box to the
+// the epoch's centre at the build), wMax (the epoch's largest weight while
+// this selection is in use) and arm (the old stars' transport at the build:
+// table T, generations GT; buildBin sets it). Appends selected stars of one box to the
 // output arrays: position relative to `ref` (frame pc), V absolute magnitude
 // INCLUDING extinction to the camera (so the shader's distance modulus gives
 // the observed magnitude), Teff, arm threshold and hand-over random.
@@ -589,8 +636,8 @@ export function selectBox(box, p, out) {
     const actR2 = act ? p.activeR * p.activeR : 0;
     const youngKeep = (p.sfr ?? 1) * (p.keep ?? 1), thinKeep = p.keep ?? 1;
     const dust = (0.25 + 0.75 * (p.sfr ?? 1)) * (p.keep ?? 1);
-    const wMax = ctx ? (p.wMax ?? 1) : 2, tauB = p.tauB ?? 0;
-    let added = 0;
+    const wMax = ctx ? (p.wMax ?? 1) : 2, tauB = p.tauB ?? 0, arm = ctx ? p.arm : null;
+    let added = 0, boxD = NaN, boxSlack = 0;
     for (let s = 0; s < n; s++) {
         const o = s * REC;
         const sub = rec[o + R_SUB];
@@ -599,8 +646,27 @@ export function selectBox(box, p, out) {
         const qx = ox + rec[o + R_X], qy = oy + rec[o + R_Y], z = oz + rec[o + R_Z];
         let x = qx, y = qy;
         if (ctx) {
-            // where the star is at the build time (its circular orbit)
-            const a = ctx.phi + omegaRadMyr(Math.hypot(qx, qy)) * tauB, ca = Math.cos(a), sa = Math.sin(a);
+            // where the star is at the build time: its circular orbit, and
+            // an old star's crowding in the arms
+            const R = Math.hypot(qx, qy), om = omegaRadMyr(R);
+            let a = ctx.phi + om * tauB;
+            if (arm && isArmLabel(rec[o + R_THR])) {
+                // first a cheap test: displaced as the box's centre is, an
+                // old star is within boxSlack of where it really is (the
+                // displacement R Delta varies by < 0.55 x the separation on
+                // the maps; 1 x is assumed); one too faint even there is out
+                if (boxD !== boxD) {
+                    const cx = ox + 0.5 * box.c, cy = oy + 0.5 * box.c, Rc = Math.hypot(cx, cy), bc = Math.atan2(cy, cx), omc = omegaRadMyr(Rc), Wc = windOfOmega(omc);
+                    boxD = armDelta(arm.T, Rc, bc, omc, Wc, tauB, armLabel(arm.T, Rc, bc, Wc, ctx.GE), arm.GT);
+                    boxSlack = (1 + Math.abs(boxD)) * 0.7072 * box.c + 1;
+                }
+                const ab = a + boxD, cb = Math.cos(ab), sb = Math.sin(ab);
+                const ex = cb * qx - sb * qy - cam[0], ey = sb * qx + cb * qy - cam[1], ez = z - cam[2];
+                const dNear = Math.sqrt(ex * ex + ey * ey + ez * ez) - boxSlack;
+                if (dNear > 0 && rec[o + R_M] + 5 * Math.log10(dNear / 10) >= mLim) continue;
+                a += armDelta(arm.T, R, Math.atan2(qy, qx), om, windOfOmega(om), tauB, armLabelOf(rec[o + R_THR]), arm.GT);
+            }
+            const ca = Math.cos(a), sa = Math.sin(a);
             x = ca * qx - sa * qy; y = sa * qx + ca * qy;
         }
         const dx = x - cam[0], dy = y - cam[1], dz = z - cam[2];
@@ -653,9 +719,13 @@ export function shearRadMyr(Rpc) {
 // under the disk of radius r turned back along the stars' orbits. The map
 // p -> Rot(-a(|p|)) p is a homeomorphism of the plane, so the image of the
 // disk is bounded by the image of its rim; each box is then tested at its
-// own orbital angle with a margin for its own shear.
+// own orbital angle with a margin for its own shear. With arm (the old
+// stars' transport, see selectBox) the boxes under the disk turned back
+// along the old stars' paths are added: that map keeps every ring and is
+// continuous, so it too is a homeomorphism and the rim bounds the image.
 const _rim = 96;
-export function boxesAroundMoving(b, ctx, tauB, cam, r, out = []) {
+const _seen = new Set();
+export function boxesAroundMoving(b, ctx, tauB, cam, r, out = [], arm = null) {
     out.length = 0;
     const c = binBoxPc(b);
     const ze = zEdgesFor(c);
@@ -691,7 +761,72 @@ export function boxesAroundMoving(b, ctx, tauB, cam, r, out = []) {
             if (dxy * dxy + dz * dz <= r * r) out.push(i, j, k);
         }
     }
+    if (!arm) return out;
+    // the old stars' preimage: each rim point's star, turned back along its
+    // circular orbit and its crowding
+    xmin = ymin = Infinity; xmax = ymax = -Infinity;
+    for (let q = 0; q <= _rim; q++) {
+        const px = q === _rim ? cam[0] : cam[0] + r * Math.cos(2 * Math.PI * q / _rim);
+        const py = q === _rim ? cam[1] : cam[1] + r * Math.sin(2 * Math.PI * q / _rim);
+        const R = Math.hypot(px, py), om = omegaRadMyr(R);
+        const bNow = Math.atan2(py, px) - ctx.phi;
+        const bq = bNow - om * tauB - armDeltaAt(arm.T, R, bNow, om, windRadMyr(R), tauB, ctx.GE, arm.GT);
+        const x = R * Math.cos(bq), y = R * Math.sin(bq);
+        if (x < xmin) xmin = x; if (x > xmax) xmax = x;
+        if (y < ymin) ymin = y; if (y > ymax) ymax = y;
+    }
+    const ti0 = Math.floor(Math.max(xmin - pad, -XY_FIELD_MAX) / c), ti1 = Math.floor(Math.min(xmax + pad, XY_FIELD_MAX) / c);
+    const tj0 = Math.floor(Math.max(ymin - pad, -XY_FIELD_MAX) / c), tj1 = Math.floor(Math.min(ymax + pad, XY_FIELD_MAX) / c);
+    if (ti0 > ti1 || tj0 > tj1) return out;
+    _seen.clear();
+    for (let q = 0; q < out.length; q += 3) _seen.add(out[q] + "," + out[q + 1] + "," + out[q + 2]);
+    for (let i = ti0; i <= ti1; i++) for (let j = tj0; j <= tj1; j++) {
+        // each box where its old stars are at tauB: its centre's
+        // displacement, with the shear margin and the displacement's
+        // variation across the box (see selectBox)
+        const qx = (i + 0.5) * c, qy = (j + 0.5) * c, Rq = Math.hypot(qx, qy), om = omegaRadMyr(Rq), W = windRadMyr(Rq), bq = Math.atan2(qy, qx);
+        const d = armDelta(arm.T, Rq, bq, om, W, tauB, armLabel(arm.T, Rq, bq, W, ctx.GE), arm.GT);
+        const a = ctx.phi + om * tauB + d, ca = Math.cos(a), sa = Math.sin(a);
+        const gx = ca * qx - sa * qy, gy = sa * qx + ca * qy;
+        const dxy = Math.max(0, Math.hypot(gx - cam[0], gy - cam[1]) - c * (0.7072 * (2 + Math.abs(d)) + shearRadMyr(Rq) * at));
+        if (dxy > r) continue;
+        for (let k = k0; k <= k1; k++) {
+            const dz = Math.max(ze[k] - cam[2], 0, cam[2] - ze[k + 1]);
+            if (dxy * dxy + dz * dz > r * r) continue;
+            const key = i + "," + j + "," + k;
+            if (!_seen.has(key)) { _seen.add(key); out.push(i, j, k); }
+        }
+    }
     return out;
+}
+// Old stars' transport at the build time tauB of epoch ctx (null without
+// maps): what selectBox and boxesAroundMoving need.
+export function armAtBuild(ctx, tauB) {
+    const T = armTransport(galaxyMaps());
+    if (!T) return null;
+    return { T, GT: armGens(generationState((ctx.tE + tauB) * MYR_S, { gens: [{}, {}] }), ctx.phi) };
+}
+// Fastest crowding drift (pc/Myr) of old stars near the galactocentric
+// point cam at tauB, over a disk of radius r: how soon a selection made now
+// misses stars that stream into it (the renderer rebuilds before).
+export function armDriftPcMyr(ctx, tauB, cam, r, arm) {
+    if (!arm) return 0;
+    let v = 0;
+    const dt = 0.5;
+    const GT0 = armGens(generationState((ctx.tE + tauB - dt) * MYR_S, { gens: [{}, {}] }), ctx.phi);
+    const GT1 = armGens(generationState((ctx.tE + tauB + dt) * MYR_S, { gens: [{}, {}] }), ctx.phi);
+    for (let q = 0; q <= 8; q++) {
+        const px = q === 8 ? cam[0] : cam[0] + r * Math.cos(Math.PI * q / 4);
+        const py = q === 8 ? cam[1] : cam[1] + r * Math.sin(Math.PI * q / 4);
+        const R = Math.hypot(px, py), om = omegaRadMyr(R), W = windRadMyr(R);
+        if (!(R < arm.T.rmax)) continue;
+        const bNow = Math.atan2(py, px) - ctx.phi;
+        const bq = bNow - om * tauB - armDeltaAt(arm.T, R, bNow, om, W, tauB, ctx.GE, arm.GT);
+        const dc = armLabel(arm.T, R, bq, W, ctx.GE);
+        const d0 = armDelta(arm.T, R, bq, om, W, tauB - dt, dc, GT0), d1 = armDelta(arm.T, R, bq, om, W, tauB + dt, dc, GT1);
+        v = Math.max(v, Math.abs(d1 - d0) / (2 * dt) * R);
+    }
+    return v;
 }
 
 // --- Box cache + one-call bin builder -------------------------------------------
@@ -776,11 +911,12 @@ const _boxes = [];
 // allows, (b) already in the catalogs, or (c) so improbable that the box is
 // almost surely empty.
 export function buildBin(cache, seed, family, b, p, out = makeSelectionOut(), stats = null) {
-    out.n = 0;
+    out.n = 0; out.drift = 0;
     if (!binHasStars(b, family)) return out;
     const ctx = family === FAMILY_BAR ? null : epochContext(p.epoch ?? 0);
     const tauB = p.tauB ?? 0, at = Math.abs(tauB);
-    if (ctx) p = { ...p, ctx };
+    const arm = ctx && LF_NU.old[b] > 0 ? armAtBuild(ctx, tauB) : null;
+    if (ctx) p = { ...p, ctx, arm };
     const mLim = p.magLimit ?? RESOLVED_MAG_LIMIT, dispLim = p.displayLimit ?? DISPLAY_MAG_LIMIT;
     const catLim = p.catalogMagLimit ?? 11;
     const r = binRadiusPc(b, mLim);
@@ -790,8 +926,10 @@ export function buildBin(cache, seed, family, b, p, out = makeSelectionOut(), st
     const nuY = family === FAMILY_BAR ? 0 : LF_NU.young[b], nuO = LF_NU.old[b];
     const cam = p.cam, sun = p.sun;
     const dust = (0.25 + 0.75 * (p.sfr ?? 1)) * (p.keep ?? 1);
-    if (ctx) boxesAroundMoving(b, ctx, tauB, cam, r, _boxes);
-    else boxesAround(b, cam[0], cam[1], cam[2], r, _boxes);
+    if (ctx) {
+        boxesAroundMoving(b, ctx, tauB, cam, r, _boxes, arm);
+        out.drift = armDriftPcMyr(ctx, tauB, cam, r, arm);
+    } else boxesAround(b, cam[0], cam[1], cam[2], r, _boxes);
     for (let q = 0; q < _boxes.length && out.n <= maxStars; q += 3) {
         const i = _boxes[q], j = _boxes[q + 1], k = _boxes[q + 2];
         const x0 = i * c, y0 = j * c, z0 = ze[k], hz = ze[k + 1] - z0;
@@ -804,10 +942,21 @@ export function buildBin(cache, seed, family, b, p, out = makeSelectionOut(), st
         let nx, ny;
         const nz = Math.min(Math.max(cam[2], z0), z0 + hz);
         if (ctx) {
-            const qx = x0 + c / 2, qy = y0 + c / 2, Rq = Math.hypot(qx, qy);
-            const a = ctx.phi + omegaRadMyr(Rq) * tauB, ca = Math.cos(a), sa = Math.sin(a);
-            const gx = ca * qx - sa * qy, gy = sa * qx + ca * qy;
-            const d = Math.hypot(gx - cam[0], gy - cam[1]), reach = c * (0.7072 + shearRadMyr(Rq) * at);
+            const qx = x0 + c / 2, qy = y0 + c / 2, Rq = Math.hypot(qx, qy), om = omegaRadMyr(Rq), sh = shearRadMyr(Rq) * at;
+            let a = ctx.phi + om * tauB, ca = Math.cos(a), sa = Math.sin(a);
+            let gx = ca * qx - sa * qy, gy = sa * qx + ca * qy;
+            let reach = c * (0.7072 + sh), d = Math.hypot(gx - cam[0], gy - cam[1]);
+            if (arm) {
+                // its old stars, crowded: the nearer of the two places, the
+                // crowded one with the displacement's variation across the
+                // box (see selectBox)
+                const bq = Math.atan2(qy, qx), Wq = windRadMyr(Rq);
+                const dd = armDelta(arm.T, Rq, bq, om, Wq, tauB, armLabel(arm.T, Rq, bq, Wq, ctx.GE), arm.GT);
+                a += dd; ca = Math.cos(a); sa = Math.sin(a);
+                const hx = ca * qx - sa * qy, hy = sa * qx + ca * qy, dh = Math.hypot(hx - cam[0], hy - cam[1]);
+                const reachH = c * (0.7072 * (2 + Math.abs(dd)) + sh);
+                if (dh - reachH < d - reach) { gx = hx; gy = hy; d = dh; reach = reachH; }
+            }
             const f = d > reach ? reach / d : 1;
             nx = gx + (cam[0] - gx) * f; ny = gy + (cam[1] - gy) * f;
         } else {
