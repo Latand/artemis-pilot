@@ -3,17 +3,18 @@ import {chromium} from 'playwright';
 import {createServer} from 'vite';
 import {mkdir,writeFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
-const mobile=process.env.DEVICE==='mobile',out=process.env.ARTEMIS_EVIDENCE||'evidence/gravity-inspector';await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),mobile,errors:[],checks:[],frames:[],omissions:['AT-HYG streaming','procedural resolved field','HYG background']};
+const device=process.env.DEVICE||'desktop',landscape=device==='landscape',mobile=device!=='desktop',out=process.env.ARTEMIS_EVIDENCE||'evidence/gravity-inspector';await mkdir(out,{recursive:true});
+const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),mobile,landscape,errors:[],checks:[],frames:[],omissions:['AT-HYG streaming','procedural resolved field','HYG background']};
 const check=(pass,name)=>{report.checks.push({name,pass:!!pass});assert(pass,name);};
 const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'inspector-qa',enforce:'pre',transform(source,id){
+ if(id.split('?')[0].endsWith('/src/trails.js'))return source+'\nexport function inspectorQAPrediction(){return {shipPoints:prGeom.drawRange.count,bodyPoints:bpGeom.drawRange.count,bounded:boundedInspectionPrediction,focus:inspectionPredictionFocus}};';
  if(!id.split('?')[0].endsWith('/src/main.js'))return;
  const marker='const firstFrameT0 = perfStart();';assert.equal(source.split(marker).length,2);
- return source.replace(marker,'G.t=0;G.paused=true;resetEphem();clock.getDelta=()=>1/60;'+marker).replace('renderer.setAnimationLoop(frame);','')+'\nwindow.__inspectorFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;frame();renderer.getContext().finish();};';
+ return source.replace(marker,'G.t=0;G.paused=true;resetEphem();clock.getDelta=()=>1/60;'+marker).replace('renderer.setAnimationLoop(frame);','')+'\nwindow.__inspectorFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;frame();renderer.getContext().finish();};window.__inspectorBodyLock=()=>lockedBodyTarget;';
 }}]});await server.listen();
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try{
- const page=await browser.newPage({viewport:mobile?{width:430,height:932}:{width:1100,height:760},isMobile:mobile,hasTouch:mobile,deviceScaleFactor:1});page.setDefaultTimeout(120000);
+ const page=await browser.newPage({viewport:landscape?{width:568,height:320}:mobile?{width:430,height:932}:{width:1100,height:760},isMobile:mobile,hasTouch:mobile,deviceScaleFactor:1});page.setDefaultTimeout(120000);
  await page.addInitScript(()=>{localStorage.clear();localStorage.setItem('ap_introSeen','1');Date.now=()=>Date.UTC(2026,9,1,12);});
  page.on('pageerror',e=>report.errors.push(e.stack||e.message));page.on('console',m=>{if(m.type()==='error'&&/THREE|Shader|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
  await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
@@ -21,8 +22,13 @@ try{
  await page.waitForFunction(()=>window.__AP_READY&&window.__inspectorFrame);
  const frames=async(n=2)=>{for(let i=0;i<n;i++)await page.evaluate(()=>__inspectorFrame());};
  const click=async(q)=>{if(mobile)await page.locator(q).tap();else await page.locator(q).click();await frames();};
- const capture=async name=>{await frames(3);await page.screenshot({path:`${out}/${mobile?'mobile':'desktop'}-${name}.png`,timeout:180000});report.frames.push(name);await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));console.log('CAPTURE',name);};
+ const capture=async name=>{await frames(3);await page.screenshot({path:`${out}/${device}-${name}.png`,timeout:180000});report.frames.push(name);await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));console.log('CAPTURE',name);};
  await frames(3);check(await page.locator('#gravityInspector>summary').isVisible(),'Gravity control is reachable without opening object details');
+ if(landscape){
+  const box=await page.locator('#gravityInspector>summary').boundingBox();
+  check(box&&box.height>=44&&box.y>=0&&box.y+box.height<=320,'Landscape collapsed Gravity summary has a reachable 44px target');
+  await capture('landscape-collapsed');
+ }
  const before=await page.evaluate(async()=>({focus:__G.focus,dist:(await import('/src/scene.js')).cam.dist}));
  await click('#gravityInspector>summary');
  check(await page.locator('#gravityInspector').evaluate(e=>e.open),'Inspector opens');
@@ -50,7 +56,23 @@ try{
  await click('.gravityPrediction');
  check(await page.evaluate(async()=> (await import('/src/trails.js')).bodyCoastStatus.target===-2),'Prediction retargets to selected Moon');
  await click('.gravityPrediction');check(await page.evaluate(()=>!__G.predict),'Prediction can be turned off repeatedly');
- await page.evaluate(()=>{__G.focus='star:0';});await frames();
+ // Real input transitions: inspector Earth path must not leak into normal
+ // Ship/Pilot prediction or retain the old Earth lock after P off/on.
+ await page.evaluate(()=>{__G.focus='earth';});await frames();await click('.gravityPrediction');
+ await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.press('0');await frames();
+ await page.keyboard.press('p');await page.keyboard.press('p');await frames();
+ const normalPrediction=await page.evaluate(async()=>({predict:__G.predict,focus:__G.focus,lock:__inspectorBodyLock(),...(await import('/src/trails.js')).inspectorQAPrediction()}));
+ check(normalPrediction.predict&&normalPrediction.shipPoints>1&&!normalPrediction.bounded&&normalPrediction.bodyPoints===0&&normalPrediction.lock===-99,'Ship + P off/on restores normal path without stale inspector mode or body lock');
+ await click('[data-ui-mode="pilot"]');await capture('pilot-prediction-restored');await click('[data-ui-mode="observe"]');
+ await page.evaluate(async()=>{(await import('/src/input.js')).setFocus('earth');__G.predict=false;});await frames();
+ await click('#gravityInspector>summary');await click('.gravityPrediction');
+ check(await page.evaluate(async()=> (await import('/src/saves.js')).saveState()),'Save succeeds with an inspector coast active');
+ await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.press('r');await page.evaluate(()=>{__G.paused=true;});await frames();
+ check(await page.evaluate(async()=>{const s=(await import('/src/trails.js')).inspectorQAPrediction();return !s.bounded&&s.bodyPoints===0&&__inspectorBodyLock()===-99;}),'Ship reset clears the inspection session and stale body lock');
+ await click('.gravityPrediction');
+ check(await page.evaluate(async()=> (await import('/src/saves.js')).loadState()),'Quickload succeeds after another inspector coast');await frames();
+ check(await page.evaluate(async()=>{const s=(await import('/src/trails.js')).inspectorQAPrediction();return !s.bounded&&s.bodyPoints===0&&__inspectorBodyLock()===-99;}),'Quickload clears the transient inspector session even for the same saved target');
+ await page.evaluate(()=>{__G.predict=false;__G.focus='star:0';});await frames();
  check((await page.locator('.gravityNet').innerText()).includes('No complete applied-force'),'Catalog target is not given fabricated acceleration');
  check(await page.locator('.gravityPrediction').isHidden(),'Catalog target is not offered a fabricated forecast');
  await page.evaluate(()=>{__G.focus='earth';});await frames();

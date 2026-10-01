@@ -6,7 +6,7 @@ import { initAudio, thrustGain } from "./audio.js";
 import { initAmbient, resumeAmbient, suspendAmbient } from "./ambientAudio.js";
 import { toast } from "./achievements.js";
 import { cancelBHPlacementMode, isBHPlacementMode, removeLastBH, toggleBHPlacementMode } from "./blackholes.js";
-import { computePrediction } from "./trails.js";
+import { computePrediction, togglePrediction, clearInspectionPrediction } from "./trails.js";
 import { saveState, loadState } from "./saves.js";
 import { help, hideHelp, toggleHelp } from "./hud.js";
 import { cycleCosmicScale } from "./cosmic.js";
@@ -25,6 +25,7 @@ import { isXrPresenting, setUiMode } from "./uiMode.js";
 import { setPaused, setWarp, stepWarp } from "./timeCtl.js";
 
 export function setFocus(f) {
+    if(f!==G.focus)clearInspectionPrediction();
     G.focus = f;
     if (typeof f === "number") requestPlanetTexture(f);
     const bi = blackHoleFocusIndex(f);
@@ -131,8 +132,7 @@ function onKeyDown(e) {
                 } else toggleCine();
                 toast("Director panel");
             } else {
-                G.predict = !G.predict;
-                computePrediction();
+                togglePrediction();
             }
             break;
         case "KeyG":

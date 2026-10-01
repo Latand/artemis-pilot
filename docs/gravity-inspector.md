@@ -20,7 +20,7 @@ At galaxy scale the target is the Milky Way center, excluding self-pull. Neighbo
 
 The existing path renderer can show a bounded numerical coast preview for the ship and integrated Solar-System bodies. It uses the local force laws and timestep limits, restores the live ephemeris, and freezes source inventory while extrapolating massive partners. It is budget-limited, so duration and points are shown; it does not promise a full orbit or a coupled close encounter. Earth is drawn in world XY; other paths retain today's Earth origin to display Earth-relative motion. It predicts forward coasting without thrust, regardless of the time-direction control.
 
-The inspector does not offer a coupled path for placed holes or gas/core systems, or for catalog/galaxy models. Existing prediction tools remain available outside the inspector.
+The inspector does not offer a coupled path for placed holes or gas/core systems, or for catalog/galaxy models. Existing prediction tools remain available outside the inspector. Changing focus or mode, using the ordinary P/touch prediction control, restarting, or loading a save clears the transient inspector path and its body lock. Ordinary prediction controls then use the normal ship path.
 
 ## Verification
 

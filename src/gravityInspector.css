@@ -29,3 +29,12 @@ body.compact-explorer .gravityContributors li { font-size:12px; }
    its existing full-width, vertically separated panels. */
 body:not(.compact-explorer):has(#gravityInspector[open]) #timeDock { left:auto;right:24px;transform:none;width:min(740px,calc(100vw - 350px)); }
 body:not(.compact-explorer) #explorePanel:has(#gravityInspector[open]) { max-height:calc(100dvh - 136px); }
+
+/* Short touch screens use separate left/right columns. The time dock must
+   not consume the inspector's left-column height a second time. */
+@media (max-height:540px) and (orientation:landscape) {
+    body.compact-explorer .gravityInspector {
+        min-height:44px;
+        max-height:max(44px,calc(var(--explore-visible-height,100dvh) - var(--explore-toolbar-bottom,60px) - 104px));
+    }
+}

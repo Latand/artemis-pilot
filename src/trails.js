@@ -124,6 +124,7 @@ export function setJourneyOpacity(o) {
     recent.mesh.material.uniforms.uOpacity.value = 0.48 * (1 - Math.min(1, o / 0.48));
 }
 export function clearTrail() {
+    clearInspectionPrediction();
     for (const p of [recent, journey]) { p.history.clear(); p.mesh.geometry.setDrawRange(0, 0); p.mesh.visible = false; }
 }
 export function flightTrailStatus() {
@@ -135,7 +136,26 @@ export function flightTrailStatus() {
 let boundedInspectionPrediction=false,inspectionPredictionFocus=null;
 export const bodyCoastStatus={target:null,seconds:0,points:0,bounded:false,truncated:false};
 export const shipCoastStatus={seconds:0,points:0,bounded:false,truncated:false};
-export function useBoundedCoastPrediction(focus=null){boundedInspectionPrediction=focus!==null;inspectionPredictionFocus=focus;}
+let clearInspectionBodyLock=()=>{};
+export function initInspectionPredictionHooks({clearBodyLock=()=>{}}={}){clearInspectionBodyLock=clearBodyLock;}
+export function clearInspectionPrediction(){
+    if(!boundedInspectionPrediction)return false;
+    boundedInspectionPrediction=false;inspectionPredictionFocus=null;
+    clearBodyPrediction();clearInspectionBodyLock();
+    Object.assign(bodyCoastStatus,{target:null,seconds:0,points:0,bounded:false,truncated:false});
+    Object.assign(shipCoastStatus,{seconds:0,points:0,bounded:false,truncated:false});
+    return true;
+}
+export function syncInspectionPrediction(){
+    return boundedInspectionPrediction&&(!G.predict||G.focus!==inspectionPredictionFocus||G.uiMode!=='observe')
+        ?clearInspectionPrediction():false;
+}
+export function useBoundedCoastPrediction(focus=null){
+    clearInspectionPrediction();
+    boundedInspectionPrediction=focus!==null;inspectionPredictionFocus=focus;
+}
+// Keyboard and touch Pilot controls always select the normal prediction path.
+export function togglePrediction(){clearInspectionPrediction();G.predict=!G.predict;computePrediction();}
 export function gravityPredictionActive(focus){return G.predict&&boundedInspectionPrediction&&focus===inspectionPredictionFocus;}
 export function gravityPredictionNote(focus){
     const s=focus==='ship'?shipCoastStatus:bodyCoastStatus;
@@ -260,6 +280,7 @@ function predShouldEmit(cx, cy, cz, hasEmitted, lastX, lastY, lastZ, hasDir, dir
     return { emit: cosAng < TURN_COS || len > PRED_MAX_ARC_SCENE, dx, dy, dz, len };
 }
 export function computePrediction() {
+    syncInspectionPrediction();
     if (!G.predict || G.dead || G.landed || (boundedInspectionPrediction && inspectionPredictionFocus!=='ship')) { prGeom.setDrawRange(0, 0); impactSpr.visible = false; ghostMoon.visible = false; caDot.visible = false; return; }
     const liveEphem = snapshotEphem(predictionLiveEphem);
     const predEphem = snapshotEphem(predictionEphem);
@@ -496,6 +517,7 @@ function computeBoundedBodyPrediction(target,locked) {
     markAttrFull(bpPosAttr,n);bpGeom.setDrawRange(0,n);
 }
 export function computeBodyPrediction(target, locked = false) {
+    if(syncInspectionPrediction())return;
     const inspectorTarget=inspectionPredictionFocus==='earth'?-3:inspectionPredictionFocus==='moon'?-2:inspectionPredictionFocus==='sun'?-1:typeof inspectionPredictionFocus==='number'?inspectionPredictionFocus:-99;
     if(boundedInspectionPrediction && target===inspectorTarget && target>=-3 && target<PL.length)return computeBoundedBodyPrediction(target,locked);
     if (target < -3 || target >= PL.length) { clearBodyPrediction(); return; }

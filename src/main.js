@@ -38,7 +38,7 @@ import {
 } from "./ship.js";
 import {
     pushTrail, pushJourney, setJourneyOpacity, clearTrail, computePrediction,
-    computeBodyPrediction, clearBodyPrediction, useBoundedCoastPrediction, gravityPredictionNote, gravityPredictionActive,
+    computeBodyPrediction, clearBodyPrediction, useBoundedCoastPrediction, gravityPredictionNote, gravityPredictionActive, initInspectionPredictionHooks, syncInspectionPrediction,
     arrPos, arrAttr, arrow, flArrPos, flArrAttr, flowArrow, deArrPos, deArrAttr, darkEnergyArrow, tipV, tipF, tipDE,
     haloArrPos, haloArrAttr, haloArrow, tipHalo,
 } from "./trails.js";
@@ -592,6 +592,7 @@ function scheduleCockpitWarmup(delayMs = 0) {
 const BODY_NONE = -99, BODY_EARTH = -3, BODY_MOON = -2, BODY_SUN = -1;
 let hoverBodyTarget = BODY_NONE, lockedBodyTarget = BODY_NONE, labelHoverTarget = BODY_NONE, labelPtr = null;
 let bodyPredHiddenForPredictOff = true;
+initInspectionPredictionHooks({clearBodyLock:unlockBodyPrediction});
 const labelPtrPos = [0, 0];
 function bodyScenePos(target) {
     return target === BODY_EARTH ? earthG.position : target === BODY_MOON ? moon.position : target === BODY_SUN ? sunCore.position : target >= 0 ? plGroups[target].position : null;
@@ -1673,6 +1674,7 @@ function frame() {
     // ---- input → attitude & thrust (keyboard merged with VR controllers) ----
     const vrIn = vrPoll(dtR);
     moveExplorerCamera(Math.min(rawDtR, .06));
+    syncInspectionPrediction();
     const flightKeys = G.uiMode === "pilot" || VR.active;
     let rotIn = !flightKeys ? 0 : ((keys.has("KeyA") || keys.has("ArrowLeft")) ? 1 : 0) - ((keys.has("KeyD") || keys.has("ArrowRight")) ? 1 : 0);
     if (!rotIn) rotIn = vrIn.rot;
