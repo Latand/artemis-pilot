@@ -16,6 +16,7 @@ There are no scene switches and no loading screens between scales. One camera, o
 - **Physically consistent light.** Resolved stars, the unresolved glow of the Milky Way and distant galaxies carry the same flux they would as stars: fly toward a star and it brightens by inverse square; leave the Galaxy and the photographic exposure hands over smoothly.
 - **Light takes time.** Every galaxy is drawn on the camera's past light cone (redshift, (1+z)^-4 dimming, expansion of unbound structure only); Andromeda, the merger debris, the Sun and black-hole flares are seen at their retarded time. A fast camera sees relativistic aberration and Doppler shifts, and black holes bend the light of what lies behind them.
 - **Deep time.** Warp to a billion years per second and watch the Milky Way and Andromeda merge, the Sun become a white dwarf, and the galaxies fade and redden toward the degenerate era.
+- **A disk that evolves.** Speed up time and the Milky Way changes shape: gas, dust clouds, star-forming complexes and stars orbit at their own rates and shear, while the spiral arms grow, wind up and give way to new arms that re-form at the bar ends. The stars stream through the arms: old stars slow down and crowd in them, a young star lights up where an arm reaches it. Every epoch is a pure function of time, so reversing time retraces it exactly ([`docs/galaxy-dynamics.md`](docs/galaxy-dynamics.md)).
 - **Honest about its limits.** Provenance, approximations and tests for every layer are in [`docs/universe-continuity.md`](docs/universe-continuity.md).
 
 ### Tours
