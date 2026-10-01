@@ -1,4 +1,4 @@
-// Physical optics of a placed black hole, all in simulation time:
+// Illustrative optics shared by named and placed black holes, all in simulation time:
 //
 //  * shadow — a black disc of radius sqrt(27)/2 r_s ~ 2.6 r_s (the critical
 //    impact parameter), i.e. angular radius 2.6 r_s / d from afar;
@@ -25,7 +25,8 @@ import * as THREE from "three";
 import { K } from "./constants.js";
 import { scene } from "./scene.js";
 
-export const SHADOW_RS = Math.sqrt(27) / 2; // shadow radius / r_s
+export { SHADOW_RS } from './render/holeAppearance.js';
+import { SHADOW_RS, shadowAngularRadius } from './render/holeAppearance.js';
 export const holeRoot = new THREE.Group();
 holeRoot.name = "hole.optics";
 scene.add(holeRoot);
@@ -74,269 +75,165 @@ export const GLSL_SHADOW_OCCLUSION = /* glsl */`
         return length(perp) * D / (D + s) < uShadowR ? 1.0 : 0.0;
     }`;
 
-// camera-facing quad of half-size uR (scene units) centred on the object
-const BILLBOARD_VS = /* glsl */`
-    uniform float uR;
-    varying vec2 vP;
+// Full-viewport ray primitives avoid near-plane cuts through a disk quad,
+// faceted near-horizon spheres/Fresnel shells, and float32 galaxy-scale
+// translations. CPU subtracts in doubles BEFORE conversion to units of rs.
+// Shadow angle is the finite-distance *static* Schwarzschild result. Disk
+// transfer, lensing and jets remain bounded visual approximations, not GR
+// ray tracing and not a Kerr / moving-observer solution.
+const analyticFragment = /* glsl */`
+    uniform vec3 uOrigin, uAxisX, uAxisY, uNormal;
+    uniform mat3 uCameraRotation;
+    uniform float uAspect, uTanFov, uShadowCos, uDistance, uNear, uFar, uRsUnits;
+    uniform float uDiskOn, uRout, uTmax, uGain, uPhaseA, uPhaseB, uWA, uFrameOrbits;
+    uniform float uJetLength, uJetI;
+    varying vec2 vScreen;
+    ${GLSL_BLACKBODY}
+    ${GLSL_NOISE}
+    vec3 local(vec3 p) { return vec3(dot(p,uAxisX), dot(p,uAxisY), dot(p,uNormal)); }
     void main() {
-        vP = position.xy;
-        vec4 c = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-        gl_Position = projectionMatrix * (c + vec4(position.xy * uR, 0.0, 0.0));
-    }`;
-
-function makeShadow() {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
-        uniforms: { uR: { value: 1 } },
-        vertexShader: BILLBOARD_VS,
-        fragmentShader: /* glsl */`
-            varying vec2 vP;
-            void main() {
-                if (dot(vP, vP) > 1.0) discard;
-                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
-            }`,
-        // drawn after the (transparent) sky behind it and before the hole's own
-        // additive light, which is occluded analytically; it writes no depth
-        transparent: true, depthWrite: false, depthTest: true,
-    }));
-    m.frustumCulled = false;
-    m.renderOrder = 6;
-    return m;
-}
-
-const RING_SPAN = 1.3; // quad half-size in shadow radii
-function makeRing() {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
-        uniforms: { uR: { value: 1 }, uColor: { value: new THREE.Vector3() }, uWidth: { value: .035 } },
-        vertexShader: BILLBOARD_VS,
-        fragmentShader: /* glsl */`
-            uniform vec3 uColor;
-            uniform float uWidth;
-            varying vec2 vP;
-            void main() {
-                float rho = length(vP) * ${RING_SPAN.toFixed(2)}; // in shadow radii
-                // the n = 1, 2 ... images pile up just outside the critical curve
-                float d = (rho - 1.02) / uWidth;
-                float a = exp(-d * d) + 0.35 * exp(-pow((rho - 1.08) / (2.5 * uWidth), 2.0));
-                if (rho < 1.0 || a < 0.002) discard;
-                gl_FragColor = vec4(uColor * a, a);
-                #include <tonemapping_fragment>
-                #include <colorspace_fragment>
-            }`,
-        transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
-    }));
-    m.frustumCulled = false;
-    m.renderOrder = 8;
-    return m;
-}
-
-function makeDisk() {
-    // a square in the disk plane (local xy, normal +z), in units of r_in;
-    // the fragment shader cuts the annulus
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
-        uniforms: {
-            uRout: { value: 20 }, uRsL: { value: 1 / 3 }, uTmax: { value: 1e5 }, uGain: { value: 1 },
-            uTauA: { value: 0 }, uTauB: { value: 0 }, uWA: { value: 1 }, uOmegaIn: { value: 1e-3 }, uFrameDt: { value: 0 },
-            uAxisX: { value: new THREE.Vector3(1, 0, 0) }, uAxisY: { value: new THREE.Vector3(0, 0, -1) },
-            uCamRel: { value: new THREE.Vector3(0, 1, 0) }, uShadowR: { value: 0 },
-        },
-        vertexShader: /* glsl */`
-            uniform float uRout;
-            varying vec2 vL;      // disk-plane position, units of r_in
-            varying vec3 vRel;    // world offset from the hole centre (scene units)
-            void main() {
-                vL = position.xy * uRout;
-                vec3 p = vec3(vL, 0.0);
-                vRel = mat3(modelMatrix) * p;
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-            }`,
-        fragmentShader: /* glsl */`
-            uniform float uRout, uRsL, uTmax, uGain, uTauA, uTauB, uWA, uOmegaIn, uFrameDt;
-            uniform vec3 uAxisX, uAxisY;
-            varying vec2 vL;
-            varying vec3 vRel;
-            ${GLSL_BLACKBODY}
-            ${GLSL_NOISE}
-            ${GLSL_SHADOW_OCCLUSION}
-            void main() {
-                float x = length(vL);                     // r / r_in
-                if (x < 1.0 || x > uRout) discard;
-                if (shadowed(vRel) > 0.5) discard;
-                float phi = atan(vL.y, vL.x);
-                // Novikov-Thorne-like profile, normalised to its peak at 49/36 r_in
-                float f = pow(x, -0.75) * pow(max(0.0, 1.0 - inversesqrt(x)), 0.25) / 0.48805;
-                float T = uTmax * f;
-                // circular speed seen by a static observer sqrt(r_s / 2(r - r_s)),
-                // Doppler + gravitational shift of that orbit toward the camera
-                float beta = min(0.95, sqrt(uRsL / (2.0 * max(x - uRsL, 1e-3))));
-                vec3 vdir = -sin(phi) * uAxisX + cos(phi) * uAxisY;
-                vec3 n = normalize(uCamRel - vRel);
-                float g = sqrt(max(0.0, 1.0 - 1.5 * uRsL / x)) / (1.0 - beta * dot(vdir, n));
-                // Paczynski-Wiita circular angular velocity, relative to r_in
-                float om = uOmegaIn * sqrt(1.0 / x) * (1.0 - uRsL) / (x - uRsL);
-                // turbulence carried round at the local rate: two noise layers
-                // cross-faded over a cycle (flow noise) so the shear never winds up
-                float lr = log(x) * 7.0;
-                float aA = phi - om * uTauA, aB = phi - om * uTauB;
-                float nA = fbm(vec3(cos(aA) * 3.0, sin(aA) * 3.0, lr));
-                float nB = fbm(vec3(cos(aB) * 3.0 + 7.1, sin(aB) * 3.0 - 3.3, lr + 1.7));
-                float n0 = mix(nB, nA, uWA);
-                // an orbit shorter than this frame's sim-time step: orbit-averaged ring
-                float contrast = clamp(1.0 - om * uFrameDt / 3.0, 0.0, 1.0);
-                float tex = max(0.0, 1.0 + 1.1 * contrast * (n0 - 0.5));
-                float edge = smoothstep(uRout, uRout * 0.75, x);
-                float g2 = g * g, f2 = f * f;
-                float I = uGain * g2 * g2 * f2 * f2 * tex * edge;
-                vec3 col = blackbody(T * g) * I;
-                gl_FragColor = vec4(col, 1.0);
-                #include <tonemapping_fragment>
-                #include <colorspace_fragment>
-            }`,
-        transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    }));
-    m.frustumCulled = false;
-    m.renderOrder = 7;
-    return m;
-}
-
-// twin cones along local +/-y, apex at the hole, opening half-angle ~3 deg
-function makeJet() {
-    const geo = new THREE.CylinderGeometry(.055, 0, 1, 24, 16, true);
-    geo.translate(0, .5, 0);
-    const mat = new THREE.ShaderMaterial({
-        uniforms: { uColor: { value: new THREE.Vector3(.55, .75, 1) }, uI: { value: 0 }, uCamRel: { value: new THREE.Vector3(0, 1, 0) }, uShadowR: { value: 0 } },
-        vertexShader: /* glsl */`
-            varying float vS;
-            varying vec3 vRel;
-            varying vec3 vN;
-            void main() {
-                vS = position.y;
-                vRel = mat3(modelMatrix) * position;
-                vN = normalize(mat3(modelMatrix) * vec3(position.x + 1e-6, 0.0, position.z));
-                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-            }`,
-        fragmentShader: /* glsl */`
-            uniform vec3 uColor;
-            uniform float uI;
-            varying float vS;
-            varying vec3 vRel;
-            varying vec3 vN;
-            ${GLSL_SHADOW_OCCLUSION}
-            void main() {
-                if (shadowed(vRel) > 0.5) discard;
-                vec3 view = normalize(uCamRel - vRel);
-                float rim = 1.0 - abs(dot(vN, view));       // brighter toward the limbs
-                float a = uI * (0.25 + 0.75 * rim * rim) * (1.0 - vS) * (1.0 - vS);
-                gl_FragColor = vec4(uColor * a, a);
-                #include <tonemapping_fragment>
-                #include <colorspace_fragment>
-            }`,
-        transparent: true, depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
-    });
-    const g = new THREE.Group();
-    const up = new THREE.Mesh(geo, mat), down = new THREE.Mesh(geo, mat);
-    down.rotation.x = Math.PI;
-    up.frustumCulled = down.frustumCulled = false;
-    up.renderOrder = down.renderOrder = 9;
-    g.add(up, down);
-    g.userData.mat = mat;
-    return g;
-}
-
-// The camera's offset from the hole, taken from the camera actually rendering
-// (the frame's camera is placed after the visuals update). `holeOf` returns the
-// Object3D sitting at the hole centre.
-export function trackCameraRel(mesh, uniforms, holeOf) {
-    mesh.onBeforeRender = (r, sc, cam) => {
-        const h = holeOf(mesh);
-        if (!h) return;
-        h.getWorldPosition(_hw);
-        cam.getWorldPosition(_cw);
-        uniforms.uCamRel.value.set(_cw.x - _hw.x, _cw.y - _hw.y, _cw.z - _hw.z);
-    };
-}
-const _hw = new THREE.Vector3(), _cw = new THREE.Vector3();
+        vec3 viewRay = normalize(vec3(vScreen.x*uAspect*uTanFov, vScreen.y*uTanFov, -1.0));
+        vec3 ray = uCameraRotation * viewRay;
+        vec3 toHole = -uOrigin / max(uDistance, 1e-12);
+        float cosAngle = dot(ray,toHole);
+        float aa = max(fwidth(cosAngle), 1e-7);
+        float shadow = smoothstep(uShadowCos-aa, uShadowCos+aa, cosAngle);
+        vec3 col = vec3(0.0);
+        float alpha = shadow;
+        float depthRs = max(1e-5, uDistance);
+        vec3 ro = local(uOrigin), rd = local(ray);
+        // Plane hit is analytical, so even a camera inside the disk's bounding
+        // box cannot expose triangle edges or its rectangular support plane.
+        if (uDiskOn > 0.5 && abs(rd.z) > 1e-7) {
+            float hit = -ro.z/rd.z;
+            if (hit > 0.0) {
+                vec3 p = ro+hit*rd;
+                float r = length(p.xy), x = r/3.0;
+                float dx = max(fwidth(x), .001);
+                float mask = smoothstep(1.0,1.0+dx,x) * (1.0-smoothstep(uRout*.82,uRout,x));
+                // Near-side emission may stand in front of the angular shadow.
+                float behind = step(uDistance*cosAngle, hit);
+                mask *= 1.0-shadow*behind;
+                if (mask > .0001 && x > 1.0 && x < uRout) {
+                    float phi = atan(p.y,p.x);
+                    float f = pow(x,-.75)*pow(max(0.0,1.0-inversesqrt(x)),.25)/.48805;
+                    float beta = min(.7, sqrt(1.0/(2.0*max(r-1.0,.01))));
+                    vec3 velocity = vec3(-sin(phi),cos(phi),0.0);
+                    float shift = sqrt(max(.01,1.0-1.5/r))/(1.0-beta*dot(velocity,-rd));
+                    float omega = sqrt(1.0/x)*2.0/(3.0*x-1.0);
+                    float a = phi-omega*uPhaseA, b = phi-omega*uPhaseB;
+                    float n = mix(fbm(vec3(cos(b)*7.0+7.1,sin(b)*7.0-3.3,log(x)*12.0+1.7)),
+                                  fbm(vec3(cos(a)*7.0,sin(a)*7.0,log(x)*12.0)),uWA);
+                    float footprint = max(length(fwidth(p.xy)),.001);
+                    float detail = (1.0-smoothstep(.4,2.0,footprint))*(1.0-smoothstep(.5,3.0,uFrameOrbits*omega));
+                    float bands = sin(log(x)*95.0+3.0*n);
+                    float texture = max(.2,1.0+detail*(1.5*(n-.5)+.12*bands));
+                    float I = uGain*pow(shift*f,4.0)*texture;
+                    col += blackbody(uTmax*f*shift)*I*mask;
+                    alpha = max(alpha,mask);
+                    depthRs = min(depthRs,hit);
+                }
+            }
+        }
+        // Filtered critical-curve halo. An illustrative light-transfer cue,
+        // not a resolved sequence of n-th order photon rings.
+        float angle = acos(clamp(cosAngle,-1.0,1.0));
+        float edge = acos(clamp(uShadowCos,-1.0,1.0));
+        float width = max(fwidth(angle)*1.25, edge*.014);
+        float ring = exp(-pow((angle-edge-width*.9)/max(width,1e-7),2.0));
+        float halo = exp(-pow((angle-edge-width*3.0)/max(width*4.0,1e-7),2.0));
+        float asymmetry = .55+.45*clamp(dot(ray,uAxisX)*3.0+.5,0.0,1.0);
+        float ringI = (uDiskOn>.5 ? .16+uGain*.6 : .015)*asymmetry;
+        col += blackbody(uDiskOn>.5 ? uTmax : 6500.0)*(ring+.18*halo)*ringI*(1.0-shadow);
+        alpha = max(alpha, clamp((ring+.12*halo)*ringI,0.0,.95)*(1.0-shadow));
+        // Optional, analytically smooth pair of jets; no tessellated cones or
+        // camera-facing stretched sprites. Dormant named holes have none.
+        if (uJetLength > 0.0 && uJetI > 0.0) {
+            float rr = dot(rd.xy,rd.xy);
+            float t = max(0.0,-dot(ro.xy,rd.xy)/max(rr,1e-8));
+            vec3 p = ro+t*rd;
+            float z = abs(p.z), widthJ = max(.12,z*.055);
+            float jet = exp(-dot(p.xy,p.xy)/(widthJ*widthJ))*smoothstep(2.0,8.0,z)
+                      *(1.0-smoothstep(uJetLength*.65,uJetLength,z))*uJetI;
+            jet *= 1.0-shadow*step(uDistance*cosAngle,t);
+            col += vec3(.35,.6,1.0)*jet;
+            alpha = max(alpha,min(.9,jet));
+        }
+        if (alpha < .0005 && max(col.r,max(col.g,col.b)) < .0005) discard;
+        // Straight-alpha composition retains emitted HDR light and a fully
+        // opaque shadow. Blackness is a boundary of escaping rays, not a ball.
+        gl_FragColor = vec4(col/max(alpha,.001),alpha);
+        float z = max(1e-12,depthRs*uRsUnits*(-viewRay.z));
+        // Fullscreen support is not clipped by projection: enforce the active
+        // tier per fragment, otherwise both depth passes paint the same light.
+        if (z < uNear || z > uFar) discard;
+        gl_FragDepthEXT = clamp(uFar/(uFar-uNear) - uFar*uNear/((uFar-uNear)*z),0.0,1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+    }
+`;
 
 export function makeHoleOptics() {
-    const shadow = makeShadow(), ring = makeRing(), disk = makeDisk(), jet = makeJet();
-    disk.visible = false;
-    jet.visible = false;
-    trackCameraRel(disk, disk.material.uniforms, m => m.parent);
-    for (const cone of jet.children) trackCameraRel(cone, jet.userData.mat.uniforms, m => m.parent?.parent);
-    return { shadow, ring, disk, jet, flowC: 0 };
+    const uniforms = {
+        uOrigin:{value:new THREE.Vector3()}, uAxisX:{value:new THREE.Vector3(1,0,0)},
+        uAxisY:{value:new THREE.Vector3(0,0,-1)}, uNormal:{value:new THREE.Vector3(0,1,0)},
+        uCameraRotation:{value:new THREE.Matrix3()}, uAspect:{value:1}, uTanFov:{value:1},
+        uShadowCos:{value:1}, uDistance:{value:100}, uNear:{value:.02}, uFar:{value:1e20}, uRsUnits:{value:1},
+        uDiskOn:{value:0}, uRout:{value:20}, uTmax:{value:6500}, uGain:{value:0},
+        uPhaseA:{value:0}, uPhaseB:{value:0}, uWA:{value:1}, uFrameOrbits:{value:0},
+        uJetLength:{value:0}, uJetI:{value:0},
+    };
+    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMaterial({
+        uniforms, vertexShader:'varying vec2 vScreen; void main(){ vScreen=position.xy; gl_Position=vec4(position.xy,0.0,1.0); }',
+        fragmentShader:analyticFragment, transparent:true, depthWrite:false, depthTest:true,
+    }));
+    shadow.name='analytic black-hole optics'; shadow.frustumCulled=false; shadow.renderOrder=8;
+    const center=new THREE.Vector3(), eye=new THREE.Vector3(), forward=new THREE.Vector3();
+    const o={shadow,ring:new THREE.Group(),disk:new THREE.Group(),jet:new THREE.Group(),rsUnits:1,parameters:null};
+    shadow.onBeforeRender=(_r,_s,camera)=>{
+        shadow.parent.getWorldPosition(center); camera.getWorldPosition(eye);
+        const orbit=camera.userData.preciseOrbit;
+        if (orbit && orbit.worldPosition.equals(eye)) {
+            // Keep target-centre subtraction separate from the small orbit
+            // offset; this also preserves stellar-mass horizons in the Galaxy.
+            uniforms.uOrigin.value.copy(orbit.target).sub(center).add(orbit.offset).divideScalar(o.rsUnits);
+        } else uniforms.uOrigin.value.copy(eye).sub(center).divideScalar(o.rsUnits);
+        const d=uniforms.uOrigin.value.length();
+        uniforms.uDistance.value=d;
+        uniforms.uShadowCos.value=Math.cos(shadowAngularRadius(d));
+        uniforms.uCameraRotation.value.setFromMatrix4(camera.matrixWorld);
+        uniforms.uAspect.value=camera.aspect;
+        uniforms.uTanFov.value=Math.tan(camera.fov*Math.PI/360);
+        uniforms.uNear.value=camera.near; uniforms.uFar.value=camera.far;
+        // Cull subpixel/off-screen optics in double precision. Distant search
+        // beacons are separate UI guides and never inflate the physical hole.
+        const extent=Math.max(SHADOW_RS,uniforms.uDiskOn.value > .5 ? 3*uniforms.uRout.value : 0,uniforms.uJetLength.value);
+        forward.set(0,0,-1).applyQuaternion(camera.quaternion);
+        const z=-uniforms.uOrigin.value.dot(forward);
+        shadow.geometry.setDrawRange(0,d<extent*2 || (z>0 && extent/d/uniforms.uTanFov.value>1e-5) ? 6 : 0);
+    };
+    return o;
 }
 
-const _q = new THREE.Quaternion(), _ax = new THREE.Vector3(), _ay = new THREE.Vector3(), _up = new THREE.Vector3(0, 0, 1), _yUp = new THREE.Vector3(0, 1, 0);
-const _c3 = new THREE.Vector3();
-function tannerLinear(T, out) {
-    const t = Math.max(10, Math.min(400, T / 100));
-    let r, g, b;
-    if (t <= 66) { r = 255; g = 99.4708025861 * Math.log(t) - 161.1195681661; }
-    else { r = 329.698727446 * Math.pow(t - 60, -0.1332047592); g = 288.1221695283 * Math.pow(t - 60, -0.0755148492); }
-    if (t >= 66) b = 255; else if (t <= 19) b = 0; else b = 138.5177312231 * Math.log(t - 10) - 305.0447927307;
-    return out.set(Math.pow(Math.min(1, Math.max(0, r / 255)), 2.2), Math.pow(Math.min(1, Math.max(0, g / 255)), 2.2), Math.pow(Math.min(1, Math.max(0, b / 255)), 2.2));
+const axis=new THREE.Vector3(), q=new THREE.Quaternion(), zAxis=new THREE.Vector3(0,0,1);
+export function updateHoleOptics(o,p) {
+    const u=o.shadow.material.uniforms;
+    o.rsUnits=Math.max(1e-15,p.rsKm*K); u.uRsUnits.value=o.rsUnits;
+    u.uDiskOn.value=p.diskOn ? 1 : 0; u.uRout.value=Math.max(2,p.routOverRin||20);
+    u.uTmax.value=p.TmaxK||6500; u.uGain.value=Math.max(0,p.gain||0);
+    axis.set(p.axisX||0,p.axisY??1,p.axisZ||0).normalize();
+    q.setFromUnitVectors(zAxis,axis);
+    u.uNormal.value.copy(axis); u.uAxisX.value.set(1,0,0).applyQuaternion(q); u.uAxisY.value.set(0,1,0).applyQuaternion(q);
+    const rin=3*p.rsKm, omega=Math.sqrt(p.muKm3/rin)/(rin-p.rsKm), period=2*Math.PI/omega;
+    const s=p.t/period, a=s-Math.floor(s), b=s+.5-Math.floor(s+.5);
+    u.uPhaseA.value=a*2*Math.PI; u.uPhaseB.value=b*2*Math.PI; u.uWA.value=1-Math.abs(2*a-1);
+    u.uFrameOrbits.value=Math.abs(p.frameDt||0)*omega;
+    u.uJetLength.value=p.jetOn ? Math.min(2e4,Math.max(0,p.jetLenKm/p.rsKm)) : 0;
+    u.uJetI.value=p.jetOn ? p.jetI||0 : 0;
 }
 
-// Per frame. p: {
-//   rsKm, muKm3,            the hole
-//   t, frameDt,             sim time (s) of the state shown, sim seconds this frame spans
-//   camRelX/Y/Z,            camera minus hole centre, scene units (doubles)
-//   diskOn, TmaxK, gain, routOverRin, axisX/Y/Z (scene; disk normal),
-//   jetOn, jetLenKm, jetI }
-export function updateHoleOptics(o, p) {
-    const rsU = p.rsKm * K;
-    const shadowR = SHADOW_RS * rsU;
-    o.shadow.material.uniforms.uR.value = shadowR;
-    const ru = o.ring.material.uniforms;
-    ru.uR.value = shadowR * RING_SPAN;
-    // camera-relative geometry, in doubles on the CPU
-    const dU = Math.hypot(p.camRelX, p.camRelY, p.camRelZ);
-    // ---- disk ----
-    const du = o.disk.material.uniforms;
-    o.disk.visible = !!p.diskOn;
-    let ringI = .045; // lensed starlight
-    tannerLinear(6500, _c3);
-    if (p.diskOn) {
-        const rIn = 3 * p.rsKm;
-        const rOut = Math.max(2, p.routOverRin);
-        o.disk.scale.setScalar(rIn * K);
-        du.uRout.value = rOut;
-        du.uRsL.value = 1 / 3;
-        du.uTmax.value = p.TmaxK;
-        du.uGain.value = p.gain;
-        // orientation: local +z along the disk normal
-        _ax.set(p.axisX, p.axisY, p.axisZ).normalize();
-        _q.setFromUnitVectors(_up, _ax);
-        o.disk.quaternion.copy(_q);
-        du.uAxisX.value.set(1, 0, 0).applyQuaternion(_q);
-        du.uAxisY.value.set(0, 1, 0).applyQuaternion(_q);
-        // Paczynski-Wiita circular rate at r_in; flow-noise cycle = one orbit there
-        const omIn = Math.sqrt(p.muKm3 / rIn) / (rIn - p.rsKm);
-        const C = 2 * Math.PI / omIn;
-        const s = p.t / C;
-        const fa = s - Math.floor(s), fb = (s + .5) - Math.floor(s + .5);
-        du.uTauA.value = fa * C;
-        du.uTauB.value = fb * C;
-        du.uWA.value = 1 - Math.abs(2 * fa - 1);
-        du.uOmegaIn.value = omIn;
-        du.uFrameDt.value = p.frameDt;
-        ringI += .4 * p.gain;
-        tannerLinear(p.TmaxK, _c3);
-    }
-    du.uCamRel.value.set(p.camRelX, p.camRelY, p.camRelZ);
-    du.uShadowR.value = shadowR;
-    ru.uColor.value.copy(_c3).multiplyScalar(ringI);
-    // a ring thinner than a pixel still reads as one pixel of light
-    ru.uWidth.value = Math.max(.035, 1.2 / Math.max(1e-9, shadowR * p.pxScale / Math.max(dU, 1e-30)));
-    // ---- jet ----
-    const jet = o.jet, ju = jet.userData.mat.uniforms;
-    jet.visible = !!p.jetOn && p.jetLenKm > 0;
-    if (jet.visible) {
-        _ay.set(p.axisX, p.axisY, p.axisZ).normalize();
-        jet.quaternion.setFromUnitVectors(_yUp, _ay);
-        const L = p.jetLenKm * K;
-        jet.scale.set(L, L, L);
-        ju.uI.value = p.jetI;
-        ju.uCamRel.value.set(p.camRelX, p.camRelY, p.camRelZ);
-        ju.uShadowR.value = shadowR;
-    }
+// Retained for TDE debris, whose separate stream geometry is camera-relative.
+export function trackCameraRel(mesh,uniforms,holeOf) {
+    const h=new THREE.Vector3(), c=new THREE.Vector3();
+    mesh.onBeforeRender=(_r,_s,camera)=>{const root=holeOf(mesh); if(!root)return;root.getWorldPosition(h);camera.getWorldPosition(c);uniforms.uCamRel.value.copy(c).sub(h);};
 }

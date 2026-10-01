@@ -97,8 +97,14 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
                 zBent = min(zBent, uDist[i]);
             }
             q.x /= uAspect;
-            vec2 uvq = clamp(q * 0.5 + 0.5, 0.0, 1.0);
-            gl_FragColor = texture2D(tDiffuse, uvq);
+            vec2 rawUv = q * 0.5 + 0.5;
+            vec2 uvq = clamp(rawUv, 0.0, 1.0);
+            // A screen-space lens has no image outside its framebuffer. Edge
+            // clamping used to stretch the last texel into angular wedges.
+            // Continuously return to the unbent pixel when support runs out.
+            float border = min(min(rawUv.x,rawUv.y),min(1.0-rawUv.x,1.0-rawUv.y));
+            float supported = smoothstep(0.0,0.035,border);
+            gl_FragColor = mix(texture2D(tDiffuse,vUv),texture2D(tDiffuse,uvq),supported);
             if (uHasDepth == 1 && zBent < 1e29) {
                 // the sky this ray comes from is hidden behind a body in front
                 // of the lens (sampling it would show a ghost of that body):
@@ -155,7 +161,11 @@ function consider(cands, wx, wy, wz, rsU, camera, f) {
     if (_v.z > -1e-9) return;
     const d = _v.length();
     if (d < rsU * 1.5) return;
-    const t = Math.min(f * Math.tan(Math.min(Math.sqrt(2 * rsU / d), .6)), .55);
+    // Point-lens weak-deflection approximation is unsuitable at the horizon.
+    // Fade it smoothly; local analytic optics supplies the finite-distance
+    // shadow and the illustrative disk instead of a diverging screen warp.
+    const weakField = THREE.MathUtils.smoothstep(d / rsU, 1.5, 12);
+    const t = Math.min(f * Math.tan(Math.min(Math.sqrt(2 * rsU / d), .6)), .55) * weakField;
     if (t < .004) return;
     const cx = f * (_v.x / -_v.z), cy = f * (_v.y / -_v.z);
     if (Math.hypot(cx, cy) > 4) return;

@@ -647,6 +647,7 @@ function buildHoleVisual(i) {
         scene.add(g);
     } else {
         optics = makeHoleOptics();
+        horizon.visible = false; // Analytic angular shadow replaces the near-clipped polygon sphere.
         g.add(horizon, optics.shadow, optics.ring, optics.disk, optics.jet, marker);
         holeRoot.add(g);
     }

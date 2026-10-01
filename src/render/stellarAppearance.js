@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { stellarSurfaceProfile, stellarSurfaceIdentity } from './stellarSurfaceProfile.js';
 
 // Astronomical-camera sky is the default display interpretation: foreground
 // bodies keep their own surface exposure, rather than dimming all starlight.
@@ -126,3 +127,27 @@ export const STELLAR_PSF_GLSL = /* glsl */`
         return max(0.0, exp(-32.0 * r2) - exp(-8.0));
     }
 `;
+
+
+// Update rendering priors when a star evolves, preserving its identity and all
+// physical/photometric state. Quantization avoids rebuilding the same profile
+// every animation frame (the Sun's deep-time temperature can change continuously).
+export function updatePhotosphereAppearance(material, star = {}) {
+    const state = material?.userData?.photosphere;
+    if (!state) return null;
+    const tempK = Number.isFinite(star.tempK) && star.tempK > 0 ? star.tempK : 5772;
+    const radiusSolar = Math.max(0.000001, star.radiusSolar || (star.R > 0 ? star.R / 696340 : 1));
+    const key = `${stellarSurfaceIdentity(star)}:${Math.round(tempK)}:${Math.round(Math.log(radiusSolar) * 1000)}:${star.kind || star.spect || star.cls || ''}:${!!star.pulsar}`;
+    if (state.key === key) return state.profile;
+    const p = stellarSurfaceProfile(star);
+    const u = state.uniforms;
+    u.uSurfaceOffset.value.fromArray(p.offset);
+    u.uGranulation.value.set(p.granuleScale, p.granuleContrast, p.mesoScale, p.mesoContrast);
+    u.uSurfaceLimb.value = p.limbDarkening;
+    u.uSurfaceGain.value = p.opticalGain;
+    u.uSpots.value.set(p.spotRadius, p.spotStrength);
+    for (let i = 0; i < 3; i++) u.uSpotCenters.value[i].fromArray(p.spots[i]);
+    state.key = key;
+    state.profile = p;
+    return p;
+}

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Stellar surface GPU checks</title>
+<style>body{background:#03050a;color:#bec8d4;font:14px system-ui;margin:12px}main{display:grid;grid-template-columns:repeat(3,minmax(250px,420px));gap:12px}figure{margin:0}img{max-width:100%;height:auto}figcaption{padding:7px}h1{font-size:18px}pre{white-space:pre-wrap}</style>
+<h1>Visible-light stellar surfaces · deterministic illustrations, not observed maps</h1><p id="status">Running GPU checks…</p><main></main><pre id="results"></pre>
+<script type="module">
+import {runStellarSurfaceChecks} from './stellar-surface-fixture.js';
+try {
+    const r = await runStellarSurfaceChecks();
+    const checks = [...r.findings];
+    if(r.programCount !== 1) checks.push('Expected one shared shader program');
+    if(r.rendered[1].mean[0] <= r.rendered[1].mean[2]) checks.push('Cool star tint not red');
+    if(r.rendered[2].mean[2] <= r.rendered[2].mean[0]) checks.push('Hot star tint not blue');
+    document.querySelector('#status').textContent = checks.length ? `FAIL: ${checks.join('; ')}` : 'PASS: all 76 non-BH destinations, stable details, filtered LOD, no clipping, temperature colors, one shared shader';
+    document.querySelector('#results').textContent = JSON.stringify(r, null, 2);
+} catch(error) { document.querySelector('#status').textContent = 'ERROR: '+error; }
+</script></html>
