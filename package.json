@@ -64,7 +64,8 @@
     "smoke:deep-clock": "node scripts/smoke-deep-clock.mjs",
     "smoke:deep-time": "node scripts/smoke-deep-time.mjs",
     "smoke:deep-stars": "node scripts/smoke-deep-stars.mjs",
-    "smoke:galaxy-population": "node scripts/smoke-galaxy-population.mjs"
+    "smoke:galaxy-population": "node scripts/smoke-galaxy-population.mjs",
+    "smoke:galaxy-dynamics": "node scripts/smoke-galaxy-dynamics.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

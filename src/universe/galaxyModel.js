@@ -50,6 +50,10 @@ import { R0_PC } from "./coords.js";
 import { FAINT_LIGHT_V, FAINT_LIGHT_V_YOUNG, FAINT_LIGHT_V_OLD, LF_J_V_SUN, LF_YOUNG_LIGHT_SHARE } from "./resolvedLF.js";
 import { TIDES, MW_BIN_COUNT, keepAtRadius } from "./mergerTides.js";
 import { galaxyMaps, sampleGalaxyMapsInto, MAP_EXTENT_PC, LANE_OFFSET } from "./galaxyMaps.js";
+import {
+    SPIRAL_PATTERN_KMS_KPC, BAR_PATTERN_KMS_KPC, generationState, epochState, generationAngle,
+    DYNAMICS_GLSL, dynamicsUniformValues,
+} from "./galaxyDynamics.js";
 
 const DEG = Math.PI / 180;
 // 1 km/s/kpc in rad/s.
@@ -127,8 +131,8 @@ export const MW = Object.freeze({
     longBarL: 4300, longBarB: 420, longBarZ: 180,
     barLum: 9e9,           // Lsun,V, bulge + long bar
     longBarFrac: 0.35,
-    barPatternKmsKpc: 39,
-    spiralPatternKmsKpc: 28.2,
+    barPatternKmsKpc: BAR_PATTERN_KMS_KPC,
+    spiralPatternKmsKpc: SPIRAL_PATTERN_KMS_KPC,
     armAmpYoung: 3.0,      // young light contrast (astroConstants ARM_AMP_YOUNG)
     armAmpOld: 0.3,
     // Dust: V-band opacity, mean midplane value within 1 kpc of the Sun (the
@@ -242,18 +246,26 @@ export function barLaneDust(xb, yb, z) {
     return MW.barLaneKappa * win * Math.exp(-0.5 * q * q) * Math.exp(-Math.abs(z) / MW.hzDust);
 }
 
-// Pattern angles at simulation time t (seconds from the session epoch).
+// Pattern state at simulation time t (seconds from the session epoch): the
+// bar angle, the mean spiral pattern angle, and the time-dependent
+// structure of galaxyDynamics.js -- the two spiral generations alive
+// (`dyn`) and the material epochs (`ep`). A hand-made { spiral, bar } object
+// without `dyn` still works: one rigid generation at angle `spiral`.
 export function patternAngles(tSec, out = {}) {
     out.spiral = MW.spiralPatternKmsKpc * KMS_KPC_RAD_S * tSec;
     out.bar = MW.barAngle0 + MW.barPatternKmsKpc * KMS_KPC_RAD_S * tSec;
+    out.dyn = generationState(tSec, out.dyn);
+    out.ep = epochState(tSec, out.ep);
     return out;
 }
 
-// Structure-map modulations at a galactocentric point (galaxyMaps.js, in
-// the spiral pattern frame); without maps (a context that has not built
-// them) the smooth model: disk and dust holes, no arms.
+// Structure-map modulations at a galactocentric point (galaxyMaps.js): the
+// weighted sum over the spiral generations alive, each sampling the maps in
+// its own (radius-dependent, winding) frame. Without maps (a context that
+// has not built them) the smooth model: disk and dust holes, no arms.
 const _mm = { young: 1, old: 1, dust: 1, hii: 0 };
-export function structureAt(x, y, spiral, out = _mm) {
+const _mg = { young: 0, old: 0, dust: 0, hii: 0 };
+export function structureAt(x, y, angles, out = _mm) {
     const m = galaxyMaps();
     if (!m) {
         const R = Math.hypot(x, y);
@@ -261,8 +273,24 @@ export function structureAt(x, y, spiral, out = _mm) {
         out.dust = smoothstep(MW.dustHoleR * 0.45, MW.dustHoleR, R); out.hii = 0;
         return out;
     }
-    const c = Math.cos(spiral), s = Math.sin(spiral);
-    return sampleGalaxyMapsInto(m, x * c + y * s, -x * s + y * c, out);
+    const gens = typeof angles === "number" || !angles?.dyn ? null : angles.dyn.gens;
+    if (!gens) {
+        const a = typeof angles === "number" ? angles : angles?.spiral || 0;
+        const c = Math.cos(a), s = Math.sin(a);
+        return sampleGalaxyMapsInto(m, x * c + y * s, -x * s + y * c, out);
+    }
+    const R = Math.hypot(x, y);
+    out.young = out.old = out.dust = out.hii = 0;
+    for (let i = 0; i < gens.length; i++) {
+        const g = gens[i];
+        if (!(g.w > 0) && !(g.wGas > 0)) continue;
+        const a = generationAngle(g, R), c = Math.cos(a), s = Math.sin(a);
+        sampleGalaxyMapsInto(m, x * c + y * s, -x * s + y * c, _mg);
+        const wg = g.wGas ?? g.w;
+        out.young += wg * _mg.young; out.old += g.w * _mg.old;
+        out.dust += wg * _mg.dust; out.hii += wg * _mg.hii;
+    }
+    return out;
 }
 
 // V luminosity density (Lsun/pc^3) by component, HII line emission, and
@@ -280,7 +308,7 @@ export function mwSample(x, y, z, angles, era, disrupt, out, sunX = MW.R0, sunY 
         ? keepAtRadius(disrupt, TIDES.mwBinEdgesKpc, R / 1000)
         : 1 - Math.max(0, Math.min(1, disrupt || 0));
     const j0 = MW.jSun;
-    const m = structureAt(x, y, angles.spiral);
+    const m = structureAt(x, y, angles);
     const hole = smoothstep(MW.diskHoleIn, MW.diskHoleOut, R);
     const radial = Math.exp(-(R - MW.R0) / MW.hrThin);
     const az = Math.abs(z);
@@ -375,9 +403,10 @@ function KEEP_GLSL() {
 }
 
 export const GALAXY_MODEL_GLSL = /* glsl */`
+${DYNAMICS_GLSL}
 uniform float uFaintY[21], uFaintO[21];
 uniform float uMagLimit;
-uniform float uSpiral, uBar, uSfr, uKeep;
+uniform float uBar, uSfr, uKeep;
 uniform float uKeepR[${MW_BIN_COUNT}];
 uniform vec3 uSun;
 uniform float uJ0, uFYoung, uFThin, uFThick, uFHalo;
@@ -434,6 +463,9 @@ float gmNoise(vec3 x) {
     return mix(mix(mix(n000, n100, u.x), mix(n010, n110, u.x), u.y), mix(mix(n001, n101, u.x), mix(n011, n111, u.x), u.y), u.z);
 }
 uniform float uClumpDust, uClumpYoung;
+// Material detail exposure filter (galaxyDynamics.materialDetailLod): 1 at
+// rest, fading to the unit mean when a frame spans much of an epoch.
+uniform float uMatLod;
 // Fine-detail availability. The volume renderer keeps this on in motion;
 // projected pixel/step footprints below select the resolved frequencies.
 uniform float uFine;
@@ -455,7 +487,9 @@ vec3 gdHash3(vec2 p) {
 }
 // Young light below the maps' texel, hierarchical like star formation
 // itself (Efremov & Elmegreen 1998): star-forming complexes, one per cell of
-// a 100 pc grid in the plane (cell units g = q.xy / 100 + 11.3) at a random
+// a 100 pc grid in the plane of the material frame of an epoch
+// (galaxyDynamics.js; cell units g = q.xy / 100 + 11.3 + the epoch's integer
+// cell salt cs, so each epoch draws new complexes on the same grid) at a random
 // height drawn from the young layer (Laplace, scale height ${MW.hzYoung.toFixed(1)} pc), each a
 // 15 pc Gaussian; and inside each complex three star clusters (3 pc), offset
 // from its centre by a 12 pc Gaussian in the plane and +-20 pc in height.
@@ -491,15 +525,15 @@ float gdLapCdf(float z) {
 // by the exact volume integral of a Gaussian shell, which stays right when
 // the resolution blurs a shell into a ball).
 // (complexes, clusters, HII shells), each faded to 1 by f1, f2, f1
-vec3 gdYoungField(vec3 q, vec3 dir, float wT, float wL, float f1, float f2) {
-    vec2 c = floor(q.xy / 100.0 + 11.3);
+vec3 gdYoungField(vec3 q, vec3 dir, float wT, float wL, float f1, float f2, vec2 cs) {
+    vec2 c = floor(q.xy / 100.0 + 11.3 + cs);
     float st1 = 225.0 + wT * wT, sl1 = st1 + wL * wL, k1 = wL * wL / sl1;
     float st2 = 9.0 + wT * wT, sl2 = st2 + wL * wL, k2 = wL * wL / sl2;
     float a1 = 0.0, a2 = 0.0, a3 = 0.0;
     for (int i = -1; i <= 1; i++) for (int j = -1; j <= 1; j++) {
         vec2 cc = c + vec2(float(i), float(j));
         vec3 h = gdHash3(cc);
-        vec3 D = q - vec3((cc + h.xy - 11.3) * 100.0, gdCellZ(cc));
+        vec3 D = q - vec3((cc + h.xy - 11.3 - cs) * 100.0, gdCellZ(cc));
         float a = dot(D, dir);
         float B = 0.126458 / max(h.z, 1e-3);
         a1 += B * exp(-(dot(D, D) - k1 * a * a) / (2.0 * st1));
@@ -532,11 +566,11 @@ vec3 gdYoungField(vec3 q, vec3 dir, float wT, float wL, float f1, float f2) {
 // clusters: (young, HII shells).
 // A level fades out where the pixel no longer resolves it or where the ray
 // step outgrows its cells.
-vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL) {
-    if (wT > 120.0 || wL > 110.0 || abs(q.z) > 5.0 * ${MW.hzYoung.toFixed(1)}) return vec2(1.0);
-    float f1 = (1.0 - gmSmooth(70.0, 120.0, wT)) * (1.0 - gmSmooth(70.0, 110.0, wL));
-    float f2 = uFine * (1.0 - gmSmooth(25.0, 40.0, wT)) * (1.0 - gmSmooth(20.0, 35.0, wL));
-    vec3 cf = gdYoungField(q, dir, wT, wL, f1, f2);
+vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL, vec2 cs) {
+    if (wT > 120.0 || wL > 110.0 || abs(q.z) > 5.0 * ${MW.hzYoung.toFixed(1)} || uMatLod <= 0.0) return vec2(1.0);
+    float f1 = uMatLod * (1.0 - gmSmooth(70.0, 120.0, wT)) * (1.0 - gmSmooth(70.0, 110.0, wL));
+    float f2 = uMatLod * uFine * (1.0 - gmSmooth(25.0, 40.0, wT)) * (1.0 - gmSmooth(20.0, 35.0, wL));
+    vec3 cf = gdYoungField(q, dir, wT, wL, f1, f2, cs);
     return vec2(0.3 + 0.35 * cf.x + 0.35 * cf.y, cf.z);
 }
 // Dust: turbulent clouds from ~90 pc down to ~6 pc, a multiplicative
@@ -554,11 +588,13 @@ vec2 gdYoungClusters(vec3 q, vec3 dir, float wT, float wL) {
 // every cloud into a trailing spiral streak. Rotating each point by
 // C ln R before sampling the isotropic noise is an area-preserving simple
 // shear of strain C, so the clouds keep their statistics and lean along
-// the spiral (C = 0.35: stretched ~1.4:1). amp scales every octave: the
+// the spiral (C = 0.35: stretched ~1.4:1); on top of it q is in an epoch's
+// material frame, which keeps shearing at Omega(R) through the epoch, and
+// ns is the epoch's noise salt (new clouds each epoch). amp scales every octave: the
 // dense, clumpy molecular clouds lie in the arms and lanes, the interarm
 // medium is smoother (gmSample sets it from the maps' dust).
 float gdKg(float t) { return t * (-0.001050 + t * (0.500426 + t * (-0.005287 - 0.005212 * t))); }
-float gdDust(vec3 q, float wide, float amp) {
+float gdDust(vec3 q, float wide, float amp, vec3 ns) {
     float sa = 0.35 * log(max(length(q.xy), 200.0) / ${MW.R0.toFixed(1)});
     q.xy = vec2(cos(sa) * q.x - sin(sa) * q.y, sin(sa) * q.x + cos(sa) * q.y);
     float n = 0.0, dense = 1.0;
@@ -570,7 +606,7 @@ float gdDust(vec3 q, float wide, float amp) {
         if (lod <= 0.0) break;
         float ang = 2.39996 * float(o + 1);
         float c = cos(ang), sn = sin(ang);
-        float v = 5.2247 * gmNoise(vec3(c * q.x - sn * q.y, sn * q.x + c * q.y, 1.8 * q.z) / lam + float(o) * 17.13);
+        float v = 5.2247 * gmNoise(vec3(c * q.x - sn * q.y, sn * q.x + c * q.y, 1.8 * q.z) / lam + float(o) * 17.13 + ns);
         float t = uClumpDust * amp * lod * dense * (o == 0 ? 1.4 : o == 1 ? 1.0 : o == 2 ? 0.75 : 0.55);
         n += t * v - gdKg(t);
         // the cloud this sample sits in (in standard deviations of the
@@ -588,18 +624,18 @@ float gdDust(vec3 q, float wide, float amp) {
 // avoids a sample-count boundary when FOV, DPR or integration scale changes.
 // No new light, cloud seeds, frame noise or screen-space sharpening is added.
 uniform float uDustQuadrature;
-float gdDustSegment(vec3 q, vec3 dir, float wT, float wL, float amp) {
+float gdDustSegment(vec3 q, vec3 dir, float wT, float wL, float amp, vec3 ns) {
     float longitudinal = max(2.0 * uWideK, 0.35 * length(dir.xy)) * wL;
     float wide = max(wT, longitudinal);
     float blend = uDustQuadrature * gmSmooth(0.8, 1.6, wide)
         * (1.0 - gmSmooth(0.6, 1.0, wT / max(wide, 1e-6)));
-    if (blend <= 0.0) return gdDust(q, wide, amp);
+    if (blend <= 0.0) return gdDust(q, wide, amp, ns);
     float subWide = max(wT, longitudinal / 3.0);
     vec3 offset = dir * (2.0 * wL / 3.0);
-    float fine = (gdDust(q - offset, subWide, amp)
-        + gdDust(q, subWide, amp) + gdDust(q + offset, subWide, amp)) / 3.0;
+    float fine = (gdDust(q - offset, subWide, amp, ns)
+        + gdDust(q, subWide, amp, ns) + gdDust(q + offset, subWide, amp, ns)) / 3.0;
     if (blend >= 1.0) return fine;
-    return mix(gdDust(q, wide, amp), fine, blend);
+    return mix(gdDust(q, wide, amp, ns), fine, blend);
 }
 // Structure maps at pattern-frame q (pc), filtered to the footprint (pc) the
 // sample stands for: (young, old, dust, hii), each normalized like
@@ -626,6 +662,17 @@ vec4 gmMap(vec2 q, float R, float footPc) {
     }
     return max(m, vec4(0.0)) / uMapNorm;
 }
+// The structure maps at galactocentric pxy: the weighted sum over the two
+// spiral generations alive (galaxyDynamics.js), each in its own winding
+// frame (old stars: w, the gas and young channels: wGas); om = dynOmega(R).
+vec4 gmMapGen(vec2 pxy, float R, float om, float footPc) {
+    float wind = dynWind(om);
+    vec4 m = gmMap(dynRot(pxy, -(uGenA.x + wind * uGenA.y)), R, footPc);
+    if (uGenW.y <= 0.0) return m;
+    vec4 m1 = gmMap(dynRot(pxy, -(uGenA.z + wind * uGenA.w)), R, footPc);
+    vec4 w0 = vec4(uGenW.z, uGenW.x, uGenW.z, uGenW.z), w1 = vec4(uGenW.w, uGenW.y, uGenW.w, uGenW.w);
+    return w0 * m + w1 * m1;
+}
 // Luminosity densities: x = young, y = old (thin+thick+halo), z = bar;
 // w = dust opacity (V, per pc); hii: HII line emission. footPc: the pixel
 // footprint (filters the maps); dir: the ray direction; wT, wL: the
@@ -634,23 +681,33 @@ vec4 gmMap(vec2 q, float R, float footPc) {
 // texel.
 vec4 gmSample(vec3 p, vec3 dir, float footPc, float wT, float wL, out float hii, out float armExcess) {
     float R = length(p.xy);
-    // pattern-frame coordinates (structures co-rotate with the spiral)
-    float cs = cos(uSpiral), sn = sin(uSpiral);
-    vec3 q = vec3(p.x * cs + p.y * sn, -p.x * sn + p.y * cs, p.z);
-    vec3 dq = vec3(dir.x * cs + dir.y * sn, -dir.x * sn + dir.y * cs, dir.z);
-    vec4 mp = gmMap(q.xy, R, footPc);
+    float om = dynOmega(R);
+    // the arms: patterns, sampled per spiral generation
+    vec4 mp = gmMapGen(p.xy, R, om, footPc);
     // Detail below the maps' texels, each octave faded in only where the
     // footprint resolves it and unit-mean, so a distant view is the same
     // picture with less detail: hierarchical young clusters and dusty clouds.
+    // They are material: carried at Omega(R) in the frame of their epoch
+    // (galaxyDynamics.js), handed over between epochs by a weighted sum of
+    // unit-mean fields (so still unit mean).
     float youngC = 1.0, hiiC = 1.0, dustC = 1.0;
     // Both pixel footprint and integration-step reach limit resolvable dust.
     float wide = max(max(wT, 2.0 * uWideK * wL), 0.35 * wL * length(dir.xy));
     if (wide < 120.0 && abs(p.z) < 700.0) {
-        vec2 yc = gdYoungClusters(q, dq, wT, wL);
-        youngC = yc.x; hiiC = yc.y;
         // the dust's clumpiness follows its density in the maps (arms and
         // lanes 2-5x the local mean, the interarm a fraction of it)
-        dustC = gdDustSegment(q, dq, wT, wL, 0.4 + 0.6 * gmSmooth(0.4, 2.5, mp.z));
+        float amp = uMatLod * (0.4 + 0.6 * gmSmooth(0.4, 2.5, mp.z));
+        float a0 = uEpA.x + om * uEpA.y;
+        vec3 q = vec3(dynRot(p.xy, -a0), p.z), dq = vec3(dynRot(dir.xy, -a0), dir.z);
+        vec2 yc = gdYoungClusters(q, dq, wT, wL, uEpCell.xy);
+        dustC = gdDustSegment(q, dq, wT, wL, amp, uEpNoise0);
+        if (uEpW.y > 0.0) {
+            float a1 = uEpA.z + om * uEpA.w;
+            q = vec3(dynRot(p.xy, -a1), p.z); dq = vec3(dynRot(dir.xy, -a1), dir.z);
+            yc = uEpW.x * yc + uEpW.y * gdYoungClusters(q, dq, wT, wL, uEpCell.zw);
+            dustC = uEpW.x * dustC + uEpW.y * gdDustSegment(q, dq, wT, wL, amp, uEpNoise1);
+        }
+        youngC = yc.x; hiiC = yc.y;
     }
     float hole = gmSmooth(${MW.diskHoleIn.toFixed(1)}, ${MW.diskHoleOut.toFixed(1)}, R);
     float az = abs(p.z);
@@ -707,5 +764,7 @@ export function galaxyModelUniformValues() {
         uKeepR: new Array(MW_BIN_COUNT).fill(1),
         uMapReady: 0,
         uMapTexelPc: 2 * MAP_EXTENT_PC / 1024,
+        uMatLod: 1,
+        ...dynamicsUniformValues(0),
     };
 }

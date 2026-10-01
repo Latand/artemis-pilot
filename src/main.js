@@ -2134,7 +2134,7 @@ function frame() {
     // (mergerTides.js) leaves the smooth models; until the simulation has
     // run, a uniform ramp stands in.
     const tides = mergerKeepAt(tMwRet / GYR_S, tM31Ret / GYR_S);
-    updateGalaxyVolume(camera, G.t, era, tides ? tides.mwBins : mergeFrac, 1 - mwSprite, mwEvo.passive);
+    updateGalaxyVolume(camera, G.t, era, tides ? tides.mwBins : mergeFrac, 1 - mwSprite, mwEvo.passive, advanced);
     updateCosmicLayer();
     if (cosmicView) updateHoleBeacons(camera);
     // one exposure for stars and diffuse light: lowered where the Galaxy's

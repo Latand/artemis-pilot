@@ -11,6 +11,10 @@
 //   hidden    -- 1 hides the point (a catalog row promoted to another layer)
 //   radiusKm  -- photospheric radius; the point fades out as its disk
 //                resolves (0.75 -> 3 px), where the photosphere mesh takes over
+//   evo       -- (motion) material disk stars of the procedural field
+//                (universe/resolvedField.js): (arm threshold, hand-over
+//                random); the star moves on its circular orbit and shows
+//                while its epoch and the arms where it is allow it
 // Relativistic observer effects (relView.js): aberration, Doppler recolour,
 // and point-source beaming D^2 (see viewBrightness.js RELATIVISTIC_VIEW_GLSL).
 import * as THREE from "three";
@@ -19,6 +23,8 @@ import { stellarExposure, STELLAR_VISIBILITY_GLSL, STELLAR_PSF_GLSL } from "./st
 import { relUniforms } from "../relView.js";
 import { tierDepthRange } from "./tierDepth.js";
 import { BRIGHTNESS_CURVE, VIEW_BRIGHTNESS_GLSL, RELATIVISTIC_VIEW_GLSL } from "./viewBrightness.js";
+import { DYNAMICS_FN_GLSL } from "../universe/galaxyDynamics.js";
+import { MAP_EXTENT_PC } from "../universe/galaxyMaps.js";
 
 // Pixels per radian of the current view (h / (2 tan(fov/2))), shared by every
 // star material for the disk-resolve fade; main.js refreshes it per frame.
@@ -40,6 +46,48 @@ attribute float radiusKm;
 #ifdef STAR_RESOLVE_LIMIT
 uniform float uResolveLimit;
 #endif
+#ifdef STAR_MOTION
+// Disk stars of one material epoch (galaxyDynamics.js). position: the
+// star's epoch-frame position (pc) at the epoch's centre minus uRefE; the
+// mesh's matrix turns the frame by the orbital angle at |uRefE|, so each
+// star adds its own differential rotation (Omega(R) - uOmRef) uTau.
+attribute vec2 evo;
+uniform vec3 uRefE;
+uniform float uOmRef, uTau, uEpW, uMapReady;
+uniform vec4 uGenC, uGenWv, uMapNorm;
+uniform sampler2D uGalMap;
+${DYNAMICS_FN_GLSL}
+// structure maps at base-map position b: (young, old) modulation
+vec2 smMap(vec2 b) {
+    vec2 uv = b / ${(2 * MAP_EXTENT_PC).toFixed(1)} + 0.5;
+    if (uv.x <= 0.0 || uv.y <= 0.0 || uv.x >= 1.0 || uv.y >= 1.0) return vec2(0.0, 1.0);
+    vec4 m = textureLod(uGalMap, uv, 0.0);
+    return max(m.xy, vec2(0.0)) / uMapNorm.xy;
+}
+vec3 starMotion(vec3 d, out float vis) {
+    vec3 q = uRefE + d;
+    float R = length(q.xy), om = dynOmega(R);
+    float delta = (om - uOmRef) * uTau;
+    float sd = sin(delta), h = sin(0.5 * delta), cm1 = -2.0 * h * h;
+    vec2 rd = d.xy + vec2(cm1 * d.x - sd * d.y, sd * d.x + cm1 * d.y);
+    vec2 rr = vec2(cm1 * uRefE.x - sd * uRefE.y, sd * uRefE.x + cm1 * uRefE.y);
+    // the epoch hands its stars over one by one
+    vis = smoothstep(evo.y * 0.92, evo.y * 0.92 + 0.08, uEpW);
+    float thr = abs(evo.x);
+    if (thr > 0.0 && uMapReady > 0.5 && vis > 0.0) {
+        // the arms' modulation where the star is now (both generations)
+        float wind = dynWind(om);
+        vec2 m0 = smMap(dynRot(q.xy, uGenC.x + om * uTau - wind * uGenC.y));
+        float y = uGenWv.z * m0.x, o = uGenWv.x * m0.y;
+        if (uGenWv.y > 0.0) {
+            vec2 m1 = smMap(dynRot(q.xy, uGenC.z + om * uTau - wind * uGenC.w));
+            y += uGenWv.w * m1.x; o += uGenWv.y * m1.y;
+        }
+        vis *= smoothstep(thr * 0.96, thr * 1.04, evo.x > 0.0 ? y : o);
+    }
+    return vec3(rd + rr, d.z);
+}
+#endif
 varying vec3 vColor;
 varying float vHdr;
 uniform float uBasePx, uMagRef, uMinPx, uMaxPx, uMagLimit, uPcScene, uMagPenalty;
@@ -50,7 +98,14 @@ ${VIEW_BRIGHTNESS_GLSL}
 ${STELLAR_VISIBILITY_GLSL}
 ${RELATIVISTIC_VIEW_GLSL}
 void main() {
+    float keep = 1.0;
+#ifdef STAR_MOTION
+    float motionVis;
+    vec4 mvPosition = modelViewMatrix * vec4(starMotion(position, motionVis), 1.0);
+    keep = motionVis;
+#else
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+#endif
     // Depth-tier fence (scene.js tierDepthRange): drawn in exactly one pass.
     float viewDepth = -mvPosition.z;
     if (viewDepth < uDepthRange.x || viewDepth >= uDepthRange.y) {
@@ -68,11 +123,10 @@ void main() {
     float dScene = length(abPos);
     float mag = obmApparentMagAt(absMag + uMagPenalty, dScene / uPcScene);
     float flux = obmHdrIntensity(mag, uMagLimit) * dopplerD * dopplerD;
-    float keep = 1.0;
 #ifdef STAR_RADIUS
     float rScene = radiusKm * uKmScene;
     float rPx = rScene * uPxScale / max(dScene, rScene);
-    keep = 1.0 - smoothstep(0.75, 3.0, rPx);
+    keep *= 1.0 - smoothstep(0.75, 3.0, rPx);
 #endif
 #ifdef STAR_HIDDEN
     keep *= 1.0 - step(0.5, hidden);
@@ -103,11 +157,14 @@ void main() {
     #include <colorspace_fragment>
 }`;
 
-export function makeStarPointMaterial({ dim = 1, magPenalty = 0, hidden = false, radius = false, resolveLimit = true } = {}) {
+// motion: the moving disk stars of the procedural field; `uniforms` adds or
+// shares uniform objects (their per-epoch and per-mesh state).
+export function makeStarPointMaterial({ dim = 1, magPenalty = 0, hidden = false, radius = false, resolveLimit = true, motion = false, uniforms = null } = {}) {
     const defines = {};
     if (hidden) defines.STAR_HIDDEN = "";
     if (radius) defines.STAR_RADIUS = "";
     if (resolveLimit) defines.STAR_RESOLVE_LIMIT = "";
+    if (motion) defines.STAR_MOTION = "";
     const mat = new THREE.ShaderMaterial({
         defines,
         uniforms: {
@@ -127,6 +184,7 @@ export function makeStarPointMaterial({ dim = 1, magPenalty = 0, hidden = false,
             uMagPenalty: { value: magPenalty },
             uBeta: relUniforms.uBeta,
             uBoostDirView: relUniforms.uBoostDirView,
+            ...(uniforms || {}),
         },
         vertexShader: VERT,
         fragmentShader: FRAG,

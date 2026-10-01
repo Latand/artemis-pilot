@@ -13,6 +13,7 @@ import { canReuseGalaxyHistory, targetSizeChanged } from "./galaxyViewCache.js";
 import { teffToRGB, BRIGHTNESS_CURVE } from "./viewBrightness.js";
 import { stellarExposure, extragalacticExposure, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
 import { renderQuality } from "../scene.js";
+import { dynamicsUniformValues, materialDetailLod, MYR_S } from "../universe/galaxyDynamics.js";
 
 const q = typeof location !== "undefined" ? new URLSearchParams(location.search) : new URLSearchParams();
 const DISABLED = q.get("galaxyvol") === "0";
@@ -212,8 +213,25 @@ const state = {
     maps: null, mapsWorker: null, mapFade: 1, mapT: 0, mapError: null, mapTimer: null,
     mapRevision: 0, targetSize: [], history: null, rtHistory: null,
     copyScene: null, copyMat: null, historySaved: false, historyUsed: false,
-    camera: null, time: 0, era: null, disrupt: 0, oldFade: 1, invalidations: 0,
+    camera: null, time: 0, era: null, disrupt: 0, oldFade: 1, invalidations: 0, frameSimSec: 0,
 };
+// Time-dependent structure uniforms (galaxyDynamics.js), in a fixed order
+// for the change test and the history key. Times since a generation's or an
+// epoch's centre (Myr; odd entries of uGenA and uEpA) enter as the largest
+// angle they turn the structure by (x 0.05 rad/Myr, Omega's maximum), so the
+// key tolerates the same sub-1e-10 rad drift a pattern angle did.
+const DYN_KEYS = ["uGenA", "uGenW", "uEpA", "uEpW", "uEpCell", "uEpNoise0", "uEpNoise1"];
+const TAU_KEY_RAD_PER_MYR = 0.05;
+const _dyn = {};
+function dynamicsValues(u, out = []) {
+    out.length = 0;
+    for (const k of DYN_KEYS) {
+        const v = u[k].value, tau = k === "uGenA" || k === "uEpA";
+        for (let i = 0; i < v.length; i++) out.push(tau && i % 2 ? v[i] * TAU_KEY_RAD_PER_MYR : v[i]);
+    }
+    out.push(u.uMatLod.value);
+    return out;
+}
 
 function init() {
     if (state.ready) return;
@@ -231,7 +249,7 @@ function init() {
         uColArm: { value: linearRgbFromTeff(MW.teffArm) },
         uExtRGB: { value: new THREE.Vector3(...EXTINCTION_RGB) },
         uGain: { value: galaxyDisplayGain(900) },
-        uSpiral: { value: 0 }, uBar: { value: MW.barAngle0 },
+        uBar: { value: MW.barAngle0 },
         uSfr: { value: 1 }, uKeep: { value: 1 }, uOldFade: { value: 1 },
         uSun: { value: new THREE.Vector3(MW.R0, 0, 20.8) },
         uPixAngle: { value: 0.002 }, uFine: { value: 1 },
@@ -345,8 +363,9 @@ function historyUniforms() {
 }
 function modelKey() {
     const u = state.rayMat.uniforms;
-    return [u.uSpiral.value, u.uBar.value, u.uSfr.value, u.uKeep.value, u.uOldFade.value,
-        u.uMagLimit.value, state.mapRevision, u.uMapBlend.value, ...u.uSun.value.toArray(), ...u.uKeepR.value];
+    return [u.uBar.value, u.uSfr.value, u.uKeep.value, u.uOldFade.value,
+        u.uMagLimit.value, state.mapRevision, u.uMapBlend.value, ...u.uSun.value.toArray(), ...u.uKeepR.value,
+        ...dynamicsValues(u)];
 }
 function prepareHistory() {
     const u = state.rayMat.uniforms, h = state.history;
@@ -419,6 +438,7 @@ const _m = new THREE.Matrix3();
 const _rot = new THREE.Matrix4();
 const _observer = new THREE.Vector3();
 const _ang = {};
+const _dynVals = [];
 // scene (x,y,z) -> world (x,-z,y) -> W2G -> galactocentric.
 const SCENE_TO_GAL = (() => {
     const s2w = [[1, 0, 0], [0, 0, -1], [0, 1, 0]];
@@ -431,10 +451,14 @@ const SCENE_TO_GAL = (() => {
     return out;
 })();
 
-export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacity = 1, oldFade = 1) {
+// frameSimSec: the sim time this frame spans (its exposure); material detail
+// that lives a fraction of that is averaged to its mean
+// (galaxyDynamics.materialDetailLod). 0 (paused, captures): full detail.
+export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacity = 1, oldFade = 1, frameSimSec = 0) {
     if (!state.enabled) return;
     init();
     state.camera = camera; state.time = tSec; state.era = era; state.disrupt = disrupt; state.oldFade = oldFade;
+    state.frameSimSec = frameSimSec;
     const u = state.rayMat.uniforms;
     camera.updateWorldMatrix(true, false);
     const p = _observer.setFromMatrixPosition(camera.matrixWorld);
@@ -458,7 +482,13 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
     u.uTanHalf.value.set(tanX, tanY);
     u.uRayOffset.value.set(projection[8] * tanX, projection[9] * tanY);
     patternAngles(tSec, _ang);
-    u.uSpiral.value = _ang.spiral; u.uBar.value = _ang.bar;
+    u.uBar.value = _ang.bar;
+    dynamicsUniformValues(tSec, _ang.dyn, _ang.ep, _dyn);
+    for (const k of DYN_KEYS) {
+        const dst = u[k].value, src = _dyn[k];
+        for (let i = 0; i < src.length; i++) dst[i] = src[i];
+    }
+    u.uMatLod.value = materialDetailLod(Math.abs(frameSimSec) / MYR_S);
     u.uSfr.value = era ? era.blueFrac : 1;
     const kr = u.uKeepR.value;
     if (disrupt && disrupt.length === kr.length) {
@@ -477,12 +507,14 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
     const vals = [
         _camGal[0], _camGal[1], _camGal[2],
         M[0][0], M[0][1], M[0][2], M[1][0], M[1][1], M[1][2], M[2][0], M[2][1], M[2][2],
-        _ang.spiral, _ang.bar, u.uSfr.value, u.uKeep.value, tanX, tanY, u.uOldFade.value, ...kr, ...u.uRayOffset.value.toArray(), ...sun,
+        _ang.bar, u.uSfr.value, u.uKeep.value, tanX, tanY, u.uOldFade.value, ...kr, ...u.uRayOffset.value.toArray(), ...sun,
+        ...dynamicsValues(u, _dynVals),
     ];
     const posTol = Math.max(1e-8, Math.hypot(..._camGal) * 1e-12);
+    const dynStart = vals.length - _dynVals.length;
     let changed = false;
     for (let i = 0; i < vals.length; i++) {
-        const tol = i < 3 ? posTol : i < 12 ? 1e-6 : i < 14 ? 1e-10 : 1e-8;
+        const tol = i < 3 ? posTol : i < 12 ? 1e-6 : i < 13 || i >= dynStart ? 1e-10 : 1e-8;
         if (!Number.isFinite(key[i]) || Math.abs(vals[i] - key[i]) > tol) { changed = true; break; }
     }
     if (changed) {
@@ -608,7 +640,7 @@ function meterUpdate(now) {
 export function renderGalaxyVolume(renderer, camera = state.camera) {
     if (!state.enabled || !state.ready || state.opacity <= 0.001 || !state.maps) { meter.target = 1; meter.fresh = true; return; }
     renderer.getDrawingBufferSize(_size);
-    if (camera) updateGalaxyVolume(camera, state.time, state.era, state.disrupt, state.opacity, state.oldFade);
+    if (camera) updateGalaxyVolume(camera, state.time, state.era, state.disrupt, state.opacity, state.oldFade, state.frameSimSec);
     ensureTargets(renderer);
     const prevTarget = renderer.getRenderTarget();
     const prevAuto = renderer.autoClear, prevXR = renderer.xr.enabled;
@@ -698,6 +730,17 @@ export function galaxyVolumeStats() {
         anchor: { peak: anchor.peak, cover: anchor.cover, fresh: anchor.fresh },
         budget: { draft: budget.draft, refine: budget.refine }, exposureCap: meter.cap, meterPeak: meter.peak, meterMid: meter.mid,
     };
+}
+// The structure-map texture the volume samples, for layers that must read
+// the same arms (the procedural field's moving stars). full: the worker's
+// 1024^2 maps are in (before that only the coarse preview).
+const _mapTex = { texture: null, norm: null, full: false };
+export function galaxyMapTexture() {
+    const u = state.rayMat?.uniforms;
+    _mapTex.texture = u ? u.uGalMap.value : null;
+    _mapTex.norm = u ? u.uMapNorm.value : null;
+    _mapTex.full = !!(state.maps?.full && _mapTex.texture);
+    return _mapTex;
 }
 export function setGalaxyVolumeEnabled(on) {
     const enabled = !!on && !DISABLED;
