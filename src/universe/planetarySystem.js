@@ -15,6 +15,7 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const logUniform = (rng, lo, hi) => lo * Math.pow(hi / lo, rng());
 
 export function stableStarKey(star) {
+    if (star?.formedStar && star.id) return star.id;
     if (star?.procedural && star.id) return "proc:" + star.id;
     if (star?.tier1) return "t1:" + star.tier1.tileId + ":" + star.tier1.idx;
     return "cat:" + (star?.hip ?? star?.hyg ?? star?.hygIndex ?? star?.name ?? "unknown");
@@ -165,7 +166,7 @@ export function generateSystem(star) {
     const host = hostFields(star);
     const hz = hzEdgesAU(host.L);
     const base = { starId: stableStarKey(star), hostMass: host.mass, hostL: host.L, hostTeff: host.Teff, hostKind: host.kind, hzInnerAU: hz.inner, hzOuterAU: hz.outer, planets: [] };
-    if (host.kind === "BH" || host.kind === "NS" || !(host.mass > 0)) return base;
+    if (star?.formedStar || host.kind === "BH" || host.kind === "NS" || !(host.mass > 0)) return base;
     const seed = systemSeed(star);
     const rngCount = makeRNG(splitSeed(seed, SALT_COUNT));
     const rngArch = makeRNG(splitSeed(seed, SALT_ARCH));

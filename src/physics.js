@@ -255,6 +255,11 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 
         const dx = x - sx, dy = y - sy, dz = z - sz;
         const d2 = dx * dx + dy * dy + dz * dz;
         if (d2 < star.R * star.R * 400) {
+            if (star.gasSink) {
+                const effectiveR=Math.sqrt(d2+star.softeningKm*star.softeningKm);
+                dt=Math.min(dt,Math.sqrt(effectiveR**3/star.mu)/90);
+                continue; // a numerical core has no solid collision surface
+            }
             const d = Math.sqrt(d2);
             const tStar = Math.sqrt(d * d2 / star.mu) / 90;
             if (tStar < dt) dt = tStar;
@@ -633,12 +638,13 @@ function cosmologyJumpClear(x0, y0, z0, x1, y1, z1, dt = 0) {
     if (!cosmologyJumpLocalClear(x0, y0, z0, x1, y1, z1, dt)) return false;
     for (const star of ACTIVE_STARS) {
         const sx = star.x - eph.earthX, sy = star.y - eph.earthY, sz = star.z || 0;
-        const radius = star.bh ? Math.max(star.rs * 1.5, star.R) : star.R;
+        const radius = star.gasSink ? star.softeningKm*10 : star.bh ? Math.max(star.rs * 1.5, star.R) : star.R;
         if (segmentSphereHit(x0 - sx, y0 - sy, z0 - sz, x1 - sx, y1 - sy, z1 - sz, radius)) return false;
     }
     return true;
 }
 function stellarContactRadius(star) {
+    if (star?.gasSink) return 0;
     return star?.bh ? Math.max(star.rs * 1.5, star.R) : star?.R || 0;
 }
 function osculatingPeriapsis(rx, ry, rz, rvx, rvy, rvz, mu) {
@@ -658,6 +664,7 @@ function osculatingPeriapsis(rx, ry, rz, rvx, rvy, rvz, mu) {
 }
 function stellarJumpClear(star, x0, y0, z0, x1, y1, z1, rp) {
     if (!star) return false;
+    if (star.gasSink && Math.min(rp,Math.hypot(x0,y0,z0),Math.hypot(x1,y1,z1)) < star.softeningKm*10) return false;
     const radius = stellarContactRadius(star);
     if (rp <= radius * 1.1) return false;
     if (Math.hypot(x0, y0, z0) <= radius * 1.1 || Math.hypot(x1, y1, z1) <= radius * 1.1) return false;
@@ -983,6 +990,7 @@ function advanceFlight(simAdv, atx, aty, atz, aMag) {
         if (contactStars.length) {
             let hitStar = null;
             for (const star of contactStars) {
+                if (star.gasSink) continue;
                 if (perfStats) perfStats.starContactChecks++;
                 const sx = star.x - (eph.earthX + eph.earthVx * lag);
                 const sy = star.y - (eph.earthY + eph.earthVy * lag);

@@ -70,7 +70,9 @@
     "smoke:stellar-surfaces": "node scripts/smoke-stellar-surfaces.mjs",
     "verify:stellar-surfaces": "node scripts/verify-stellar-surfaces.mjs",
     "smoke:body-surfaces": "node scripts/smoke-body-surfaces.mjs",
-    "smoke:hole-precision": "node scripts/smoke-hole-precision.mjs"
+    "smoke:hole-precision": "node scripts/smoke-hole-precision.mjs",
+    "smoke:gas-formation": "node scripts/smoke-gas-formation.mjs",
+    "smoke:gas-sph": "node scripts/smoke-gas-sph.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

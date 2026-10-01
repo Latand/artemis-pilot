@@ -111,3 +111,41 @@ body.mode-observe #hudTR { top:88px; }
  #explorePanel{top:132px;max-height:calc(100dvh - 436px);}
  body.mode-observe #navPanel{top:126px;}body.mode-observe:not(.mode-xr) #evPanel.open{top:132px;}
 }
+
+/* Gas creation shares the Create panel on desktop and a compact touch sheet. */
+#gasActions[hidden], #gasLive[hidden] { display:none; }
+#gasActions { display:flex;flex-wrap:wrap;gap:6px;margin-top:10px; }
+#gasActions button, .gasButtons button { min-height:40px;padding:8px 10px;border:1px solid #776953;border-radius:5px;background:#302b24;color:#f5e7cc;cursor:pointer;font:12px var(--font-ui); }
+#gasActions p, #gasLive p { font:11px/1.4 var(--font-ui);color:#bcc6d0;margin:6px 0; }
+#gasLive { border-top:1px solid #4c4b46;margin-top:12px;padding-top:10px; }
+#gasStage { color:#f0ce95;font:14px var(--font-ui); }
+#gasProgress { width:100%;height:6px;accent-color:#edbd79;margin-top:8px; }
+.gasButtons { display:flex;gap:6px; }
+#gasWatch:disabled { opacity:.5;cursor:default; }
+body.mode-direct #bhKindRail .bhSizeBtn { min-height:36px; }
+body.mode-direct #bhSizeRail { grid-template-columns:repeat(3,minmax(0,1fr)); }
+body.mode-direct #objPanel { display:none; }
+body.compact-explorer.mode-direct #hudTR { display:block!important;position:fixed;left:10px;right:10px;top:auto;bottom:calc(var(--time-dock-height,130px) + 18px);width:auto;max-height:43dvh;overflow:auto;z-index:10; }
+body.compact-explorer.mode-direct #bhPlacer { padding:10px 12px; }
+body.compact-explorer.mode-direct #bhPreviewCanvas, body.compact-explorer.mode-direct #bhReadout { display:none; }
+body.compact-explorer.mode-direct #bhKindRail .bhSizeBtn, body.compact-explorer.mode-direct #bhSizeRail .bhSizeBtn, body.compact-explorer.mode-direct #gasActions button, body.compact-explorer.mode-direct .gasButtons button { min-height:44px; }
+body.compact-explorer.mode-direct #timeDock { display:block!important;left:10px;right:10px;transform:none;width:auto;bottom:10px;padding:8px 10px; }
+body.compact-explorer.mode-direct #mobileUI { display:none!important; }
+#gasCreateToggle { display:none; }
+body.compact-explorer.mode-direct #gasCreateToggle { display:block;min-height:44px;border:1px solid #776953;background:#302b24;color:#f5e7cc;border-radius:4px;padding:6px;font:11px var(--font-ui); }
+body.compact-explorer.mode-direct.gas-compact-live #hudTR { top:calc(var(--explore-toolbar-bottom,108px) + 8px);bottom:auto;max-height:36dvh; }
+body.compact-explorer.mode-direct.gas-compact-live #bhKindRail,
+body.compact-explorer.mode-direct.gas-compact-live #bhSizeRail,
+body.compact-explorer.mode-direct.gas-compact-live #gasActions,
+body.compact-explorer.mode-direct.gas-compact-live #bhPlaceHint,
+body.compact-explorer.mode-direct.gas-compact-live #bhActiveList { display:none!important; }
+body.compact-explorer.mode-direct.gas-compact-live #gasLive { margin-top:3px;padding-top:3px; }
+body.compact-explorer.mode-direct.gas-compact-live #gasModel { display:none; }
+body.mode-direct #hudTL, body.mode-direct #hudBot, body.mode-direct #navBall { display:none!important; }
+body.gas-view:not(.mode-pilot) #lblO, body.gas-view .starLbl, body.gas-view #hint { display:none!important; }
+/* The existing Settings disclosure also works on desktop while creating gas. */
+body.gas-view.mode-direct #tdMore { display:inline-flex;align-items:center;justify-content:center;min-height:36px;min-width:60px;padding:0 10px;border:1px solid var(--explore-line);border-radius:5px;background:#24282e;color:var(--explore-text);font:12px var(--font-ui); }
+body.gas-view.mode-direct #timeDock:has(#tdMore[aria-expanded="false"]) #tdOptions { display:none; }
+#gasActions label { display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;font:11px var(--font-ui);color:#cbd4df; }
+#gasActions select { min-height:36px;max-width:170px;background:#222831;border:1px solid #596777;border-radius:4px;color:#e6eef6;padding:4px;font:12px var(--font-ui); }
+body.compact-explorer #gasActions select { min-height:44px; }

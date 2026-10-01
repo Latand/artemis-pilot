@@ -40,6 +40,8 @@ Every frame of these tours is an unedited render of the running simulation (`nod
 
 ## Highlights
 
+- **Numerical gas collapse**: Create → Gas → Star releases a 96-parcel SPH cloud with self-gravity, pressure and an isothermal cooling approximation. Cold bound gas can form a protostellar sink; hot or outward-moving gas can disperse. Pause, checkpoint replay and quicksave share the universe clock. See [resolution limits and tests](docs/gas-star-formation.md).
+
 - **First-person 3D cockpit** (J): real interior geometry composited over the world render, three live canvas MFDs (attitude tape with prograde/retrograde, osculating-orbit nav map with apo/peri, drive/systems panel), head-look on drag, sun-tracking interior light, thrust flicker, and warning annunciators.
 - **WebXR / PSVR2 support**: sit inside the cockpit with full head tracking and fly on the Sense sticks, or switch to god mode and grab the solar system with your hands — one grip drags space, both grips zoom and twist it from tabletop Earth–Moon scale out to the Local Group. Controller haptics carry engine rumble and aero buffeting.
 - **Autopilot you can interrupt** (⇧T travel to focus, ⇧C circularize, ⇧X off): climbs out of the local gravity well, flies a flip-and-burn intercept, brakes, captures, and circularizes — any manual input returns control instantly.

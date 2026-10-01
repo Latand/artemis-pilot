@@ -1,3 +1,4 @@
+import { gasStateAt } from "./universe/gasFormation.js";
 // "Go to" navigator: a single searchable list of every focusable destination —
 // ship, Earth + Moon, Sun, the planets with their moons nested under them, any
 // active black holes, and the nearby named stars. Picking a row flies the
@@ -68,6 +69,11 @@ function rebuild() {
 
     for (let i = 0; i < NEBULAE.length; i++) {
         const n = NEBULAE[i];
+        if (n.formation) {
+            const s = gasStateAt(n, G.t);
+            if (has("GAS") || has("STAR") || has(s.phase)) add(s.phase.toUpperCase() + " " + (i+1), n.formation.massSolar + " M☉ · numerical SPH", "neb:"+i, 0, "#edbd79");
+            continue;
+        }
         const archetype = NEBULA_ARCHETYPES[nebulaArchetypeIndex(n.archetype)];
         const sizeLy = nebulaRadiusLy(n.radiusKm).toFixed(n.radiusKm >= 10 * 9.4607e12 ? 0 : 1);
         if (has("NEBULA") || has(archetype)) add("NEBULA " + (i + 1), archetype + " · " + sizeLy + " ly", "neb:" + i, 0, "#7fd8c8");
