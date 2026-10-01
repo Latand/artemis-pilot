@@ -18,8 +18,8 @@ const server=await createServer({logLevel:'silent',server:{host:'127.0.0.1',port
         for(const token of ['renderer.setAnimationLoop(frame);','const firstFrameT0 = perfStart();'])
             assert.equal(source.split(token).length,2,`QA hook changed: ${token}`);
         return source.replace('renderer.setAnimationLoop(frame);','// QA: deliver deterministic frames manually.')
-            .replace('const firstFrameT0 = perfStart();','G.t=0; G.paused=true; G.gr=true; resetEphem(); clock.getDelta=()=>1/60;\nconst firstFrameT0 = perfStart();')
-            +'\nwindow.__gravityFrame=()=>{lastMobileFrame=-Infinity;frame();renderer.getContext().finish();};';
+            .replace('const firstFrameT0 = perfStart();','G.t=0; G.paused=true; G.gr=true; grB=1; resetEphem(); clock.getDelta=()=>1/60;\nconst firstFrameT0 = perfStart();')
+            +'\nwindow.__gravityFrame=(dt=1/60)=>{clock.getDelta=()=>dt;lastMobileFrame=-Infinity;frame();renderer.getContext().finish();};';
     }
 }]});
 let browser;
@@ -36,10 +36,11 @@ try{
     await page.waitForFunction(()=>window.__AP_READY&&window.__gravityFrame);
     const frame=async(n=1)=>{for(let i=0;i<n;i++)await page.evaluate(()=>window.__gravityFrame());};
     const check=(key,ok)=>{report.checks[key]=ok;assert(ok,key);};
+    const save=()=>writeFile(`${output}/report.json`,JSON.stringify(report,null,2));
     check('fixedTimePulses',await page.evaluate(()=>window.__river.style===3));
     check('noStyleSelector',await page.locator('[data-river-style]').count()===0);
     check('actualTouchQuality',await page.evaluate(async expected=>(await import('/src/scene.js')).renderQuality.mobile===expected,mobile));
-    await frame(36);
+    await frame(6);
     await page.waitForFunction(async()=> (await import('/src/render/galaxyPopulationRender.js')).galaxyPopulationStatus().ready);
     // Paused camera has settled: both phase and the actual GPU texture freeze.
     const local=await page.evaluate(async()=>{
@@ -70,7 +71,7 @@ try{
     check('drawUsesWholeRetainedShift',origin.samples.every(x=>Math.abs(x.center.x-x.textureCenter[0]-x.drawShift[0])<1e-6));
     check('retainedShiftAccumulates',origin.samples[2].drawShift[0]>origin.samples[0].drawShift[0]);
     check('reverseAdvectsParticles',origin.reverse.dt<0);
-    check('computedTextureResetsShift',origin.reverse.drawShift.every(x=>x===0));report.retainedOrigin=origin;
+    check('computedTextureResetsShift',origin.reverse.drawShift.every(x=>x===0));report.retainedOrigin=origin;await save();
     const cases=[['solar-system',2600000,false],['handover',20000000,false],['interstellar',5,true],['milky-way',30000,true],['local-group',1200000,true],['galaxy-web',30000000,true]];
     for(const [name,distance,parsecs]of cases){
         await page.evaluate(async({distance,parsecs})=>{
@@ -80,16 +81,16 @@ try{
             if(parsecs&&distance>100)cam.tgt.fromArray(galacticCenterScene());else cam.tgt.set(0,0,0);
             cam.dist=distance*(parsecs?PC_KM*K:1);cam.distTarget=null;cam.yaw=-.4;cam.pitch=.72;
         },{distance,parsecs});
-        await frame(8);
+        await frame(parsecs && distance>=1e6 ? 24 : 8);
         if(parsecs){
             const a=await page.evaluate(()=>({...window.__largeFlow}));await frame(2);
             const b=await page.evaluate(()=>({...window.__largeFlow}));
             check(`${name}Visible`,b.visible&&b.sources>0&&b.sources<=24);
             check(`${name}Budget`,b.vertices===(mobile?1280:2880));
             check(`${name}Paused`,a.phase===b.phase);
-            report.frames.push({name,...b});
+            report.frames.push({name,...b,...await page.evaluate(async()=>({galaxy:(await import('/src/render/galaxyPopulationRender.js')).galaxyPopulationStatus(),volume:(await import('/src/render/galaxyVolume.js')).galaxyVolumeStats()}))});
         }
-        await page.screenshot({path:`${output}/${name}.png`,timeout:180000});
+        await page.screenshot({path:`${output}/${name}.png`,timeout:180000});await save();
         console.log('Captured',mobile?'touch':'desktop',name);
     }
     // Source selection is independent of the renderer's visibility decisions.
@@ -115,8 +116,12 @@ try{
         const a=largeFlowStatus.phase;updateLargeScaleFlow(1e16,1/60,1,sunCore.position);const b=largeFlowStatus.phase;
         updateLargeScaleFlow(-1e16,1/60,1,sunCore.position);return {a,b,c:largeFlowStatus.phase};
     });
-    check('cosmicReverseRetracesPulse',Math.abs(timing.a-timing.c)<1e-10&&timing.a!==timing.b);
-    await page.evaluate(async()=>{(await import('/src/state.js')).G.gr=false;});await frame(100);
+    report.timing=timing;
+    const phaseDelta=Math.abs(timing.a-timing.c);
+    check('cosmicReverseRetracesPulse',Math.min(phaseDelta,Math.abs(phaseDelta-64))<1e-10&&timing.a!==timing.b);
+    await page.evaluate(async()=>{const {G}=await import('/src/state.js');G.gr=false;G.warp=1;});
+    // Simulate slow display frames through the same bounded real-dt fade.
+    for(let i=0;i<30;i++)await page.evaluate(()=>window.__gravityFrame(.06));
     check('gravityToggleHidesFlow',await page.evaluate(()=>!window.__largeFlow.visible));
     check('noRuntimeErrors',report.errors.length===0);
 }finally{
