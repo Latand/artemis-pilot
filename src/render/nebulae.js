@@ -1,3 +1,8 @@
+import { G } from "../state.js";
+import { gasStateAt } from "../universe/gasFormation.js";
+import { formedStarForNebula } from "../universe/nebulaeData.js";
+import { addStarVisual, removeStarVisual } from "../stars.js";
+import { makeGasCloudVisual, updateGasCloudVisual, disposeGasCloudVisual } from "../gasCloudVisuals.js";
 import * as THREE from "three";
 import { K } from "../constants.js";
 import { scene, renderQuality } from "../scene.js";
@@ -71,6 +76,7 @@ function makeSoftBlobTexture(seed, archetype, layerIndex) {
 }
 
 function buildNebulaVisual(record) {
+    if (record.formation) { const vis = makeGasCloudVisual(record); scene.add(vis.group); return vis; }
     const group = new THREE.Group();
     const layers = [];
     const count = renderQuality.mobile ? 2 : 4;
@@ -103,6 +109,8 @@ export function removeNebula(i) {
     const vis = VIS[i];
     if (vis) {
         scene.remove(vis.group);
+        if (vis.volume) disposeGasCloudVisual(vis);
+        if (vis.formedVisual) removeStarVisual(vis.formedVisual.star);
         for (const layer of vis.layers) layer.material.map?.dispose?.();
         for (const layer of vis.layers) layer.material.dispose();
     }
@@ -114,6 +122,8 @@ export function clearNebulae() {
     while (VIS.length) {
         const vis = VIS.pop();
         scene.remove(vis.group);
+        if (vis.volume) disposeGasCloudVisual(vis);
+        if (vis.formedVisual) removeStarVisual(vis.formedVisual.star);
         for (const layer of vis.layers) layer.material.map?.dispose?.();
         for (const layer of vis.layers) layer.material.dispose();
     }
@@ -139,6 +149,14 @@ export function updateNebulae(camera, dtReal = 0) {
         const vis = VIS[i];
         if (!record || !vis) continue;
         const base = nebulaScenePos(i, vis.group.position);
+        if (record.formation) {
+            const state = gasStateAt(record, G.t);
+            updateGasCloudVisual(vis, record, state, camera);
+            const star = formedStarForNebula(i, G.t);
+            if (star && !vis.formedVisual) vis.formedVisual = addStarVisual(star);
+            else if (!star && vis.formedVisual) { removeStarVisual(vis.formedVisual.star); vis.formedVisual = null; }
+            continue;
+        }
         const radiusScene = record.radiusKm * K;
         tmpAxis.copy(base).sub(camera.position);
         if (tmpAxis.lengthSq() < 1e-18) tmpAxis.set(0, 0, -1);
@@ -157,7 +175,16 @@ export function updateNebulae(camera, dtReal = 0) {
 export function nebulaHudSummary(i) {
     const n = NEBULAE[i];
     if (!n) return "";
+    if (n.formation) { const s = gasStateAt(n, G.t); return s.phase.toUpperCase() + " · " + Math.round(s.progress * 100) + "% · " + s.totalMassSolar + " M☉ · illustrative collapse"; }
     const ly = n.radiusKm / 9.4607e12;
     return NEBULA_ARCHETYPES[nebulaArchetypeIndex(n.archetype)] + " NEBULA · radius " + ly.toFixed(ly >= 10 ? 0 : 1) +
         " ly · visual impostor · real cloud mass ~10^2-10^4 M☉ spread over light-years - locally negligible";
+}
+
+export function nebulaViewRadius(i) {
+    const n = NEBULAE[i];
+    return n?.formation ? gasStateAt(n, G.t).radiusKm : n?.radiusKm || 1;
+}
+export function clearFormingNebulae() {
+    for (let i = NEBULAE.length - 1; i >= 0; i--) if (NEBULAE[i].formation) removeNebula(i);
 }

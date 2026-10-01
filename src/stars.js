@@ -192,7 +192,7 @@ export function addStarVisual(star) {
     let photosphere = null;
     const photometry = CURATED_PHOTOMETRY[star.name];
     const tempK = star.tempK || photometry?.tempK || (Number.isFinite(star.bv) ? bvToTeff(star.bv) : null);
-    const active = !!(star.procedural || star.activeCatalog);
+    const active = !!(star.procedural || star.activeCatalog || star.formedStar);
     const absMag = active ? activeAbsMagV(star, tempK) : curatedAbsMagV(star);
     if (star.bh) {
         const rsU = star.rs * K;
@@ -222,7 +222,7 @@ export function addStarVisual(star) {
         }))
         : null;
     if (glow) g.add(glow);
-    const point = !star.bh && star.activeCatalog ? activeStarPoint(absMag, tempK, star.R) : null;
+    const point = !star.bh && (star.activeCatalog || star.formedStar) ? activeStarPoint(absMag, tempK, star.R) : null;
     if (point) g.add(point);
     if (star.activeCatalog) holdCatalogRow(star.hygIndex, true);
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
@@ -232,6 +232,15 @@ export function addStarVisual(star) {
     entries.push(entry);
     entryById.set(id, entry);
     return entry;
+}
+
+export function removeStarVisual(star) {
+    const id = starVisualId(star), entry = entryById.get(id);
+    if (!entry) return;
+    entry.g.parent?.remove(entry.g);
+    disposeStarVisual(entry);
+    entries.splice(entries.indexOf(entry), 1);
+    entryById.delete(id);
 }
 
 function buildNamedStarVisuals() {

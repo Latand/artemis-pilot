@@ -1,3 +1,5 @@
+import { NEBULAE } from "./universe/nebulaeData.js";
+import { gasStateAt } from "./universe/gasFormation.js";
 import { initCompactExplorer } from "./compactExplorer.js";
 import * as THREE from "three";
 import { G, keys, WORLD, BH } from "./state.js";
@@ -88,6 +90,11 @@ export function moveExplorerCamera(dt) {
 // epistemic tier those numbers belong to. A body that simply has no record for
 // a quantity carries no field for it, and bodyFacts then omits that row.
 function selectedBody() {
+    const ni = /^neb:(\d+)$/.exec(String(G.focus));
+    if (ni && NEBULAE[+ni[1]]?.formation) {
+        const n = NEBULAE[+ni[1]], s = gasStateAt(n,G.t);
+        return {name:s.phase+" "+(+ni[1]+1),kind:s.totalMassSolar+" M☉ · "+Math.round(s.progress*100)+"% formed",R:s.radiusKm,basis:"metaphor"};
+    }
     if(G.focus==='sun'&&cam.dist>=LY_SCENE*20000)return {name:cam.dist>LY_SCENE*800000?'Local Group':'Milky Way',kind:'Galaxy-scale view',basis:'modeled'};
     const bi=/^bh:(\d+)$/.exec(String(G.focus));
     if(bi&&+bi[1]<BH.n)return {name:(BH.kind[+bi[1]]===1?'Quasar ':BH.kind[+bi[1]]===2?'Pulsar ':'Black hole ')+(+bi[1]+1),kind:'Modeled compact object',rs:BH.rs[+bi[1]],bhMass:bhMassLabel(BH.rs[+bi[1]]),basis:'modeled'};

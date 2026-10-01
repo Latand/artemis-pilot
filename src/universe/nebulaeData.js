@@ -1,3 +1,6 @@
+import { K, MU_S, LY_KM } from "../constants.js";
+import { normalizeFormation, gasStateAt } from "./gasFormation.js";
+
 export const NEBULA_RADIUS_PRESETS_LY = [1, 4, 10];
 export const NEBULA_RADIUS_PRESETS_KM = NEBULA_RADIUS_PRESETS_LY.map(ly => ly * 9.4607e12);
 export const NEBULA_ARCHETYPES = ["EMISSION", "REFLECTION", "PLANETARY"];
@@ -25,7 +28,9 @@ export function nebulaRadiusLy(radiusKm) {
 }
 
 export function addNebulaRecord(record) {
+    if (!record || typeof record !== "object") return -1;
     if (NEBULAE.length >= NEB_MAX) return -1;
+    if (![record.xKm, record.yKm, record.zKm, record.radiusKm].every(Number.isFinite) || !(record.radiusKm > 0)) return -1;
     const archetype = nebulaArchetypeIndex(record.archetype);
     const row = {
         xKm: Number(record.xKm) || 0,
@@ -34,7 +39,9 @@ export function addNebulaRecord(record) {
         radiusKm: Number(record.radiusKm) || NEBULA_RADIUS_PRESETS_KM[1],
         archetype,
         seed: Number(record.seed) >>> 0,
+        ...(normalizeFormation(record.formation) ? { formation: normalizeFormation(record.formation) } : {}),
     };
+    if (row.formation && NEBULAE.some(n => n.formation && formationId(n) === formationId(row))) return -1;
     NEBULAE.push(row);
     return NEBULAE.length - 1;
 }
@@ -50,17 +57,64 @@ export function clearNebulaRecords() {
 }
 
 export function serializeNebulae() {
-    return NEBULAE.map(n => [n.xKm, n.yKm, n.zKm, n.radiusKm, nebulaArchetypeIndex(n.archetype), n.seed >>> 0]);
+    return NEBULAE.map(n => [n.xKm, n.yKm, n.zKm, n.radiusKm, nebulaArchetypeIndex(n.archetype), n.seed >>> 0, ...(n.formation ? [{ ...n.formation }] : [])]);
 }
 
 export function restoreNebulaRecords(rows = []) {
     clearNebulaRecords();
-    for (const row of rows || []) {
+    for (const row of Array.isArray(rows) ? rows : []) {
         if (!Array.isArray(row) || row.length < 6) continue;
         addNebulaRecord({
             xKm: row[0], yKm: row[1], zKm: row[2],
-            radiusKm: row[3], archetype: row[4], seed: row[5],
+            radiusKm: row[3], archetype: row[4], seed: row[5], formation: row[6],
         });
     }
     return NEBULAE.length;
+}
+
+// Stars are views of their source records, never appended to the catalogue.
+// Stable identities survive save/load; bounded by the same NEB_MAX slots.
+const formedCache = new WeakMap();
+function formationId(n) { return "formed:" + [n.seed, n.formation.v, n.formation.bornAtSec, n.formation.massSolar, n.radiusKm, n.xKm, n.yKm, n.zKm].join(":"); }
+export function formedStarForNebula(i, simT) {
+    const n = NEBULAE[i];
+    if (!n?.formation || !gasStateAt(n, simT).born) return null;
+    let star = formedCache.get(n);
+    if (!star) {
+        const s = gasStateAt(n, simT);
+        star = {
+            id: formationId(n), name: "NEWBORN " + (i + 1), formedStar: true,
+            nebulaIndex: i, catalog: "illustrative-formation", estimated: true,
+            x: n.xKm, y: n.yKm, z: n.zKm, dLy: Math.hypot(n.xKm, n.yKm, n.zKm) / LY_KM,
+            mass: s.totalMassSolar, mu: MU_S * s.totalMassSolar,
+            R: s.radiusKm, radiusSolar: s.radiusSolar, lumSolar: s.lumSolar, tempK: s.tempK,
+            color: 0xffefdb, kind: "MS", flowC: .001 * Math.sqrt(2 * MU_S * s.totalMassSolar / 1000),
+            flowSink: s.radiusKm * K,
+        };
+        formedCache.set(n, star);
+    }
+    star.nebulaIndex = i;
+    return star;
+}
+export function formedStarsAt(simT) {
+    const stars = [];
+    for (let i = 0; i < NEBULAE.length; i++) {
+        const star = formedStarForNebula(i, simT);
+        if (star) stars.push(star);
+    }
+    return stars;
+}
+export function nextFormationBoundary(t, requested) {
+    let next = t + requested;
+    for (const n of NEBULAE) {
+        if (!n.formation) continue;
+        const birth = n.formation.bornAtSec + gasStateAt(n, t).durationSec;
+        // Reverse at the boundary samples just before birth before integrating.
+        if (requested > 0 && birth > t && birth < next) next = birth;
+        if (requested < 0 && birth < t && birth > next) next = birth;
+    }
+    return next - t;
+}
+export function clearFormingNebulaRecords() {
+    for (let i = NEBULAE.length - 1; i >= 0; i--) if (NEBULAE[i].formation) NEBULAE.splice(i, 1);
 }

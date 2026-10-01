@@ -1,3 +1,4 @@
+import { formedStarsAt, formedStarForNebula } from "./nebulaeData.js";
 import { K, LY_KM, MU_S, R_SUN, STARS } from "../constants.js";
 import { SUN_GAL, PC_KM, galToWorldKmFromInto, worldKmToGalFromInto } from "./coords.js";
 import { getSeed, localStarById, sampleLocalStarsNow, starPositionNow } from "./galaxy.js";
@@ -42,8 +43,11 @@ export function activeStarEvalTime(simT) {
     return b === 0 ? 0 : b * PROC_REEVAL_DT_S;
 }
 let LAST_EVAL_T = 0;
+let FORMATION_TIME = 0;
+let FORMATION_SIGNATURE = "";
 // The evaluation time of the latest refresh: "now" for the active layer.
 export function activeStarsTime() { return LAST_EVAL_T; }
+export function activeStarsExactTime() { return FORMATION_TIME; }
 
 // Where galaxy.js's local tier supplies every procedural star (galactocentric
 // pc of the ship at the last full refresh, and the sampled radius). The
@@ -157,6 +161,7 @@ export { hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats };
 
 export function activeStarFocusValue(star) {
     if (!star) return "";
+    if (star.formedStar) return "neb:" + star.nebulaIndex;
     if (star.procedural) return proceduralFocusValue(star);
     if (star.activeCatalog) return hygCatalogFocusValue(star);
     return "";
@@ -379,6 +384,8 @@ export function activeStarById(id) {
 // (before refreshActiveStars has had a chance to push the companion into
 // ACTIVE_STARS itself).
 export function activeStarForFocus(focus) {
+    const formed = /^neb:(\d+)$/.exec(String(focus));
+    if (formed) return formedStarForNebula(Number(formed[1]), FORMATION_TIME);
     const id = proceduralFocusId(focus) || hygCatalogFocusId(focus);
     if (!id) return null;
     const direct = activeStarById(id);
@@ -391,7 +398,7 @@ export function activeStarForFocus(focus) {
 }
 
 export function getFocusedSystem(star, simT = 0) {
-    if (!star) return null;
+    if (!star || star.formedStar) { _focusSystem = { starId: "", system: null }; return null; }
     const id = stableStarKey(star);
     if (_focusSystem.starId !== id) {
         const system = generateSystem(star);
@@ -523,7 +530,7 @@ function starInfluence(star, wx, wy, wz) {
 }
 
 function priorityGravityStar(star, id, d2, forcedIndex, forcedProcId, forcedCatalogId) {
-    if (star.bh) return true;
+    if (star.bh || star.formedStar) return true;
     if (forcedIndex >= 0 && id === "known:" + forcedIndex) return true;
     if (forcedProcId && id === forcedProcId) return true;
     if (forcedCatalogId && id === forcedCatalogId) return true;
@@ -572,6 +579,16 @@ function rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalo
 // sim time the caller's frame covers; past ACTIVE_STAR_CONFIG
 // .decorrelatedFrameSec only the nearest decorrelatedRadiusPc is sampled.
 export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0, frameAdvanceSec = 0) {
+    FORMATION_TIME = simT;
+    // A reverse slice starting exactly at birth belongs to the pre-birth side.
+    const lifecycleT = frameAdvanceSec < 0 ? simT - Math.max(1e-6, Math.abs(simT) * Number.EPSILON) : simT;
+    const formed = formedStarsAt(lifecycleT);
+    const formationSignature = formed.map(s => s.id).join("|");
+    if (formationSignature !== FORMATION_SIGNATURE) {
+        FORMATION_SIGNATURE = formationSignature;
+        ACTIVE_REFRESH_KEY = "";
+        FAST_REFRESH.simTBucket = undefined;
+    }
     simT = activeStarEvalTime(simT);
     LAST_EVAL_T = simT;
     const lite = Math.abs(frameAdvanceSec) > ACTIVE_STAR_CONFIG.decorrelatedFrameSec;
@@ -591,6 +608,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
         hStats.version || 0,
         hStats.count || 0,
         lite ? "near" : "full",
+        FORMATION_SIGNATURE,
     ].join("|");
     const gravKey = gravityCacheKey(gal[0], gal[1], gal[2], focus, refreshKey);
     if (refreshKey === ACTIVE_REFRESH_KEY && ACTIVE_STARS.length > 0) {
@@ -608,6 +626,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
     STATS.procedural = 0;
     STATS.gravity = 0;
     STATS.seed = getSeed();
+    for (const star of formed) pushActive(star, star.id, "known");
     const known = [];
     for (let i = 0; i < STARS.length; i++) known.push(scoreKnownStar(STARS[i], wx, wy, wz, i, forcedIndex));
     known.sort((a, b) => b.score - a.score || a.d2 - b.d2);
