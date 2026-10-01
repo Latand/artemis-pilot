@@ -30,7 +30,7 @@ export function gasStateAt(record, simT, out = {}) {
     const present = Number.isFinite(simT) && ageSec >= 0;
     const coreFraction = smooth((progress - .25) / .75);
     const radiusSolar = Math.pow(f.massSolar, .8);
-    const radiusKm = born ? radiusSolar * R_SUN : record.radiusKm * Math.exp(-5.7 * smooth(progress));
+    const radiusKm = born ? radiusSolar * R_SUN : radiusSolar * R_SUN + (record.radiusKm - radiusSolar * R_SUN) * Math.pow(1 - progress, 1.2);
     const lumSolar = Math.pow(f.massSolar, 3.5);
     const tempK = 5772 * Math.pow(lumSolar / (radiusSolar * radiusSolar), .25);
     return Object.assign(out, {

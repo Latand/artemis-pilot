@@ -131,3 +131,13 @@ body.compact-explorer.mode-direct #bhPreviewCanvas, body.compact-explorer.mode-d
 body.compact-explorer.mode-direct #bhKindRail .bhSizeBtn, body.compact-explorer.mode-direct #bhSizeRail .bhSizeBtn, body.compact-explorer.mode-direct #gasActions button, body.compact-explorer.mode-direct .gasButtons button { min-height:44px; }
 body.compact-explorer.mode-direct #timeDock { display:block!important;left:10px;right:10px;transform:none;width:auto;bottom:10px;padding:8px 10px; }
 body.compact-explorer.mode-direct #mobileUI { display:none!important; }
+#gasCreateToggle { display:none; }
+body.compact-explorer.mode-direct #gasCreateToggle { display:block;min-height:44px;border:1px solid #776953;background:#302b24;color:#f5e7cc;border-radius:4px;padding:6px;font:11px var(--font-ui); }
+body.compact-explorer.mode-direct.gas-compact-live #hudTR { top:calc(var(--explore-toolbar-bottom,108px) + 8px);bottom:auto;max-height:36dvh; }
+body.compact-explorer.mode-direct.gas-compact-live #bhKindRail,
+body.compact-explorer.mode-direct.gas-compact-live #bhSizeRail,
+body.compact-explorer.mode-direct.gas-compact-live #gasActions,
+body.compact-explorer.mode-direct.gas-compact-live #bhPlaceHint,
+body.compact-explorer.mode-direct.gas-compact-live #bhActiveList { display:none!important; }
+body.compact-explorer.mode-direct.gas-compact-live #gasLive { margin-top:3px;padding-top:3px; }
+body.compact-explorer.mode-direct.gas-compact-live #gasModel { display:none; }

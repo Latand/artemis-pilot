@@ -1,4 +1,4 @@
-import { nextFormationBoundary, NEB_MAX } from "./universe/nebulaeData.js";
+import { nextFormationBoundary, NEB_MAX, NEBULAE } from "./universe/nebulaeData.js";
 import { refreshActiveStars } from "./universe/activeStars.js";
 import { eph } from "./ephemeris.js";
 // ONE per-frame world step, shared by every way the ship can be (flying,
@@ -45,13 +45,14 @@ function shortfallReason(aMag) {
 
 // requested: simulated seconds this frame asks for (signed). Returns the
 // simulated seconds actually delivered; details in WORLD_STEP.
-function stepWorldSlice(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast = null) {
+function stepWorldSlice(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast = null, sharedFrame = null) {
     const r = WORLD_STEP;
     r.requested = requested;
     r.delivered = 0;
     r.activeStarsFresh = false;
     const lostOrLanded = G.dead || !!G.landed;
-    const frame = beginEphemFrame(Math.abs(G.warp));
+    const frame = sharedFrame || beginEphemFrame(Math.abs(G.warp));
+    const stepsBefore = frame.stepsUsed, analyticBefore = frame.analyticCalls;
     try {
         updateSunEvolution(G.t);
         if (REL.active && requested < 0) relCancel("reverse warp", toast);
@@ -70,9 +71,9 @@ function stepWorldSlice(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast = 
             r.activeStarsFresh = true;
         }
     } finally {
-        r.bodySteps = frame.stepsUsed;
-        r.analyticCalls = frame.analyticCalls;
-        endEphemFrame();
+        r.bodySteps = frame.stepsUsed - stepsBefore;
+        r.analyticCalls = frame.analyticCalls - analyticBefore;
+        if (!sharedFrame) endEphemFrame();
         syncEphemClock();
     }
     // Not physics shortfalls: a reverse clamp at the irreversible floor (the
@@ -83,26 +84,30 @@ function stepWorldSlice(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast = 
     const short = !blocked && !ended && Math.abs(r.delivered) < Math.abs(requested) * (1 - 1e-6);
     r.limited = short;
     r.reason = short ? shortfallReason(aMag) : "";
-    noteFrameDelivery(short ? requested : r.delivered, r.delivered, r.reason);
+    if (!sharedFrame) noteFrameDelivery(short ? requested : r.delivered, r.delivered, r.reason);
     return r.delivered;
 }
 
 // Split at the at-most-four birth boundaries, so a large warp cannot apply a
 // newborn's gravity to the pre-birth segment or skip its post-birth segment.
 export function stepWorld(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast = null) {
+    if (!NEBULAE.some(n => n.formation)) return stepWorldSlice(requested,atx,aty,atz,aMag,toast);
     let remaining = requested, delivered = 0, steps = 0, analytic = 0;
     let limited = false, reason = "";
+    const frame = beginEphemFrame(Math.abs(G.warp));
+    try {
     for (let slice = 0; slice <= NEB_MAX; slice++) {
         const dt = nextFormationBoundary(G.t, remaining);
         refreshActiveStars(eph.earthX+G.x,eph.earthY+G.y,G.z,G.focus,G.t,dt);
-        const advanced = stepWorldSlice(dt,atx,aty,atz,aMag,toast);
+        const advanced = stepWorldSlice(dt,atx,aty,atz,aMag,toast,frame);
         delivered += advanced; steps += WORLD_STEP.bodySteps; analytic += WORLD_STEP.analyticCalls;
         limited ||= WORLD_STEP.limited; if (WORLD_STEP.reason) reason = WORLD_STEP.reason;
         remaining -= advanced;
-        if (advanced !== dt || dt === 0 || Math.abs(remaining) <= Math.abs(requested)*1e-14) break;
+        if (advanced !== dt || dt === 0 || remaining === 0) break;
     }
+    } finally { endEphemFrame(); }
     // Actual delivered clock is authoritative, including reverse and budgets.
-    refreshActiveStars(eph.earthX+G.x,eph.earthY+G.y,G.z,G.focus,G.t);
+    refreshActiveStars(eph.earthX+G.x,eph.earthY+G.y,G.z,G.focus,G.t,Math.abs(delivered));
     Object.assign(WORLD_STEP,{requested,delivered,bodySteps:steps,analyticCalls:analytic,limited,reason,activeStarsFresh:true});
     noteFrameDelivery(limited ? requested : delivered,delivered,reason);
     return delivered;

@@ -681,7 +681,7 @@ function isNebulaTarget(target) { return nebulaFocusIndex(target) >= 0; }
 function targetBHIndex(target) { return blackHoleFocusIndex(target); }
 function isStarTarget(target) { return starFocusIndex(target) >= 0; }
 function targetStarIndex(target) { return starFocusIndex(target); }
-function isDynamicStarTarget(target) { return !!(proceduralFocusId(target) || hygCatalogFocusId(target)); }
+function isDynamicStarTarget(target) { return !!(proceduralFocusId(target) || hygCatalogFocusId(target) || activeStarForFocus(target)?.formedStar); }
 function stellarTarget(target) {
     const si = targetStarIndex(target);
     if (si >= 0 && si < STARS.length) return STARS[si];
@@ -1017,7 +1017,7 @@ function pickSceneTarget(clientX, clientY) {
             d = screenDistance(starScenePos(i, _pickProbePos), x, y, w, h, pickProject);
             if (d < starPickRadius() && d < bestD) { best = starFocusValue(i); bestD = d; }
         }
-        for (const star of ACTIVE_STARS) if (star.procedural || star.activeCatalog) {
+        for (const star of ACTIVE_STARS) if (star.procedural || star.activeCatalog || star.formedStar) {
             d = screenDistance(activeStarScenePos(star, _pickProbePos), x, y, w, h, pickProject);
             if (d < starPickRadius() && d < bestD) { best = activeStarFocusValue(star); bestD = d; }
         }
@@ -1206,7 +1206,7 @@ function updateHover(w, h) {
                 d = screenDistance(pos, lastPtr[0], lastPtr[1], w, h, hoverProject);
                 if (d < bestD) { bestD = d; best = starFocusValue(i); bestPos = _hoverBestPos.copy(pos); }
             }
-            for (const star of ACTIVE_STARS) if (star.procedural || star.activeCatalog) {
+            for (const star of ACTIVE_STARS) if (star.procedural || star.activeCatalog || star.formedStar) {
                 const pos = activeStarScenePos(star, _hoverProbePos);
                 d = screenDistance(pos, lastPtr[0], lastPtr[1], w, h, hoverProject);
                 if (d < bestD) { bestD = d; best = activeStarFocusValue(star); bestPos = _hoverBestPos.copy(pos); }
@@ -1865,7 +1865,7 @@ function frame() {
                 moonSurfaces[i].rotation.y = (G.t * 6e-6 * (m.retro ? -1 : 1)) % (Math.PI * 2);
             }
         }
-        const bhVisualDue = BH.n > 0 || isBHPlacementMode() || !nearVisualReady || frameNo % 12 === 0;
+        const bhVisualDue = BH.n > 0 || NEBULAE.some(n => n.formation) || isBHPlacementMode() || !nearVisualReady || frameNo % 12 === 0;
         if (bhVisualDue) updateBHVisuals(dtR, earthX, earthZ);
         minorSunWorld[0] = eph.earthX + eph.sunX;
         minorSunWorld[1] = eph.earthY + eph.sunY;

@@ -24,6 +24,7 @@ try {
   const context=await browser.newContext({viewport,deviceScaleFactor:1,isMobile:mobile,hasTouch:mobile});
   const page=await context.newPage();page.setDefaultTimeout(45000);
   const entry={name,viewport,checks:[],frames:[]};report.profiles.push(entry);
+  try {
   page.on('pageerror',e=>report.errors.push(e.message));
   page.on('console',m=>{if(m.type()==='error'&&/Shader|WebGL|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
   await context.addInitScript(()=>{Date.now=()=>Date.UTC(2026,9,1,12);localStorage.setItem('ap_introSeen','1');});
@@ -45,7 +46,7 @@ try {
   });
   check(source.count===1&&source.focus==='neb:0','Release creates one cloud and focuses index zero');
   check(await page.evaluate(()=>__G.paused),'Placement preserves paused state');
-  check(await page.locator('#gasStage').textContent()==='Gas cloud · 0%','Cloud exists before ignition');
+  check((await page.locator('#gasStage').textContent()).startsWith('Gas cloud · 0%'),'Cloud exists before ignition');
   await snap('cloud');
   const frozen=await page.evaluate(async()=>JSON.stringify((await import('/src/universe/gasFormation.js')).gasStateAt((await import('/src/universe/nebulaeData.js')).NEBULAE[0],__G.t)));
   await frames(5);
@@ -68,18 +69,37 @@ try {
   await phase(0);
   await click('#gasWatch');
   check(await page.evaluate(async()=>!__G.paused&&(await import('/src/timeCtl.js')).jumpActive()),'Watch starts real cancellable simulation-time acceleration');
+  check(await page.evaluate(async()=>(await import('/src/universe/gasFormation.js')).gasStateAt((await import('/src/universe/nebulaeData.js')).NEBULAE[0],__G.t).progress<.25),'Watch leaves time to see the cloud evolve');
   await click('#tdPause');
   check(await page.evaluate(async()=>__G.paused&&!(await import('/src/timeCtl.js')).jumpActive()),'Pause cancels Watch rather than fighting user time controls');
+  // Complete the same watch through real delivered physics without rendering
+  // dozens of redundant GPU frames; the UI action still starts the controller.
+  await click('#gasWatch');
+  const watched = await page.evaluate(async()=>{
+   const ctl=await import('/src/timeCtl.js'),world=await import('/src/worldStep.js'),state=await import('/src/state.js');
+   let iterations=0;
+   while(ctl.jumpActive()&&iterations++<200) {
+    const frame=ctl.tickJump(1,1,false);if(!frame)break;
+    const delivered=world.stepWorld(frame.advanceSec);
+    const settled=ctl.settleTimeJump(frame,delivered,false);
+    if(Number.isFinite(settled?.syncTimeSec))state.setSimTime(settled.syncTimeSec);
+   }
+   return {active:ctl.jumpActive(),outcome:ctl.jumpStatus().outcome,t:state.G.t,iterations};
+  });
+  check(!watched.active&&watched.outcome==='arrive'&&watched.t===source.birth,'Watch reaches exact ignition and releases time control');
+  await frames();
   // Explicit world-step tests cover a large forward and reverse boundary crossing.
   const clock=await page.evaluate(async()=>{
    const d=await import('/src/universe/nebulaeData.js'),m=await import('/src/universe/gasFormation.js'),st=await import('/src/state.js'),w=await import('/src/worldStep.js'),a=await import('/src/universe/activeStars.js');
    const birth=d.NEBULAE[0].formation.bornAtSec+m.formationDuration(d.NEBULAE[0]);
    st.G.dead=true;st.setSimTime(birth-100);const forward=w.stepWorld(200);const f=a.ACTIVE_STARS.filter(s=>s.formedStar).length;
    const reverse=w.stepWorld(-200);const r=a.ACTIVE_STARS.filter(s=>s.formedStar).length;st.G.dead=false;
-   return {forward,reverse,f,r,t:st.G.t,birth};
+   return {forward,reverse,f,r,t:st.G.t,birth,steps:w.WORLD_STEP.bodySteps};
   });
   check(clock.forward===200&&clock.reverse===-200&&clock.f===1&&clock.r===0,'Delivered world steps cross birth in both directions');
+  check(clock.steps<=2500,'Birth slices share the existing per-frame physics budget');
   await phase(0);
+  if (mobile) await click('#gasCreateToggle');
   await click('[data-create-kind="4"]');
   // Leaving Create must always cancel the armed touch/click handler.
   await click('[data-ui-mode="observe"]');
@@ -91,6 +111,10 @@ try {
   check(bounds.x>=0&&bounds.x+bounds.width<=viewport.width+1,'Create panel stays in viewport');
   await page.evaluate(()=>__gasRestart());await frames();
   check(await page.evaluate(async()=>(await import('/src/universe/nebulaeData.js')).NEBULAE.length===0),'Restart clears created gas and stars');
+  } catch (error) {
+   report.errors.push(name + ": " + error.stack); console.error(name,error);
+   await page.screenshot({path:`${out}/${name}-failure.png`}).catch(()=>{});
+  }
   await context.close();
  }
  assert.deepEqual(report.errors,[],'No runtime or shader errors');

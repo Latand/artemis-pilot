@@ -142,6 +142,41 @@ test("next birth boundary limits forward and reverse jumps", () => {
     assert.equal(neb.nextFormationBoundary(birth + 100, -20), -20);
 });
 
+test("empty and populated boundary queries preserve sub-ULP signed advances", () => {
+    const t = 1e21;
+    assert.equal(t + 1, t, "fixture must exercise sub-ULP arithmetic");
+    neb.clearNebulaRecords();
+    for (const dt of [1, -1]) assert.equal(neb.nextFormationBoundary(t, dt), dt);
+    install();
+    for (const dt of [1, -1]) assert.equal(neb.nextFormationBoundary(t, dt), dt);
+    install(makeRecord({ formation: { v: model.GAS_MODEL_VERSION, bornAtSec: t, massSolar: 1 } }));
+    for (const dt of [1, -1]) assert.equal(neb.nextFormationBoundary(t, dt), dt);
+});
+
+test("four birth boundaries are traversed in chronological order in both directions", () => {
+    neb.clearNebulaRecords();
+    const births = [];
+    for (let i = 0; i < neb.NEB_MAX; i++) {
+        const record = makeRecord({ seed: i, formation: { v: model.GAS_MODEL_VERSION, bornAtSec: i * 100, massSolar: 1 } });
+        neb.addNebulaRecord(record);
+        births.push(birthOf(record));
+    }
+    const lo = births[0] - 50, hi = births[births.length - 1] + 50;
+    for (const direction of [1, -1]) {
+        let t = direction > 0 ? lo : hi;
+        const target = direction > 0 ? hi : lo;
+        const expected = direction > 0 ? [...births, hi] : [...births].reverse().concat(lo);
+        const reached = [];
+        while (t !== target && reached.length <= neb.NEB_MAX) {
+            const dt = neb.nextFormationBoundary(t, target - t);
+            assert.ok(dt * direction > 0, "boundary slicing must make progress");
+            t += dt;
+            reached.push(t);
+        }
+        assert.deepEqual(reached, expected);
+    }
+});
+
 test("the absolute birth boundary stays exact at deep-time clock magnitudes", () => {
     for (const bornAtSec of [0, 1e12, 1e15, 1e17, 1e18, 1e20]) {
         const record = makeRecord({ formation: { v: model.GAS_MODEL_VERSION, bornAtSec, massSolar: 1 } });
@@ -294,6 +329,25 @@ test("reverse removes active and gravity stars while preserving reusable cloud f
     assert.equal(formed().length, 0);
     refresh(record, birth + 1);
     assert.equal(formed()[0]?.id, id);
+});
+
+test("reverse excludes a newborn only at its exact boundary, not one clock tick later", () => {
+    const record = install(makeRecord({ formation: { v: model.GAS_MODEL_VERSION, bornAtSec: 1e21, massSolar: 1 } }));
+    const birth = birthOf(record);
+    const tick = 2 ** (Math.floor(Math.log2(birth)) - 52);
+    assert.ok(birth + tick > birth && birth - tick < birth);
+    active.refreshActiveStars(record.xKm, record.yKm, record.zKm, "neb:0", birth + tick, -1);
+    assert.equal(formed().length, 1, "reverse must retain post-birth gravity until the boundary");
+    assert.equal(gravFormed().length, 1);
+    active.refreshActiveStars(record.xKm, record.yKm, record.zKm, "neb:0", birth, -1);
+    assert.equal(formed().length, 0, "a reverse slice beginning exactly at birth uses the pre-birth side");
+    assert.equal(gravFormed().length, 0);
+    // Post-delivery/UI refresh describes the actual instant, not integration's
+    // one-sided value. An unchanged exact-birth clock must still render a star.
+    active.refreshActiveStars(record.xKm, record.yKm, record.zKm, "neb:0", birth, 0);
+    assert.equal(formed().length, 1);
+    assert.equal(gravFormed().length, 1);
+    assert.equal(active.activeStarsExactTime(), birth);
 });
 
 test("same-count save replacement invalidates membership without stale newborns", () => {

@@ -581,8 +581,7 @@ function rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalo
 export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0, frameAdvanceSec = 0) {
     FORMATION_TIME = simT;
     // A reverse slice starting exactly at birth belongs to the pre-birth side.
-    const lifecycleT = frameAdvanceSec < 0 ? simT - Math.max(1e-6, Math.abs(simT) * Number.EPSILON) : simT;
-    const formed = formedStarsAt(lifecycleT);
+    const formed = formedStarsAt(simT, frameAdvanceSec >= 0);
     const formationSignature = formed.map(s => s.id).join("|");
     if (formationSignature !== FORMATION_SIGNATURE) {
         FORMATION_SIGNATURE = formationSignature;

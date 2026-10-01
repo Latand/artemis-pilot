@@ -76,9 +76,10 @@ export function restoreNebulaRecords(rows = []) {
 // Stable identities survive save/load; bounded by the same NEB_MAX slots.
 const formedCache = new WeakMap();
 function formationId(n) { return "formed:" + [n.seed, n.formation.v, n.formation.bornAtSec, n.formation.massSolar, n.radiusKm, n.xKm, n.yKm, n.zKm].join(":"); }
-export function formedStarForNebula(i, simT) {
+export function formedStarForNebula(i, simT, includeBoundary = true) {
     const n = NEBULAE[i];
     if (!n?.formation || !gasStateAt(n, simT).born) return null;
+    if (!includeBoundary && simT <= n.formation.bornAtSec + gasStateAt(n, simT).durationSec) return null;
     let star = formedCache.get(n);
     if (!star) {
         const s = gasStateAt(n, simT);
@@ -96,24 +97,25 @@ export function formedStarForNebula(i, simT) {
     star.nebulaIndex = i;
     return star;
 }
-export function formedStarsAt(simT) {
+export function formedStarsAt(simT, includeBoundary = true) {
     const stars = [];
     for (let i = 0; i < NEBULAE.length; i++) {
-        const star = formedStarForNebula(i, simT);
+        const star = formedStarForNebula(i, simT, includeBoundary);
         if (star) stars.push(star);
     }
     return stars;
 }
 export function nextFormationBoundary(t, requested) {
-    let next = t + requested;
+    let next = t + requested, split = false;
     for (const n of NEBULAE) {
         if (!n.formation) continue;
         const birth = n.formation.bornAtSec + gasStateAt(n, t).durationSec;
         // Reverse at the boundary samples just before birth before integrating.
-        if (requested > 0 && birth > t && birth < next) next = birth;
-        if (requested < 0 && birth < t && birth > next) next = birth;
+        if (requested > 0 && birth > t && birth < next) { next = birth; split = true; }
+        if (requested < 0 && birth < t && birth > next) { next = birth; split = true; }
     }
-    return next - t;
+    // Preserve sub-ULP requested deltas for the compensated simulation clock.
+    return split ? next - t : requested;
 }
 export function clearFormingNebulaRecords() {
     for (let i = NEBULAE.length - 1; i >= 0; i--) if (NEBULAE[i].formation) NEBULAE.splice(i, 1);

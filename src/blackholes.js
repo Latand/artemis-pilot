@@ -340,6 +340,7 @@ function ensureBHPanel() {
             if (row.title) b.title = row.title;
             b.onclick = e => {
                 e.preventDefault();
+                document.body.classList.remove("gas-compact-live");
                 BH_PLACE.kind = row.kind;
                 BH_PLACE.presetIdx = 0;
                 setBHPlacementMode(true);
@@ -362,11 +363,19 @@ function ensureBHPanel() {
         live.id = "gasLive"; live.hidden = true;
         live.innerHTML = '<div id="gasStage"></div><progress id="gasProgress" max="1" value="0" aria-label="Star formation"></progress><p id="gasBudget"></p><div class="gasButtons"><button id="gasWatch" type="button">Watch star form</button><button id="gasRemove" type="button">Remove cloud</button></div><p id="gasModel">Illustrative collapse · diffuse gravity omitted. Watch speeds up the whole universe; time controls cancel it.</p>';
         document.getElementById("bhActiveList").before(live);
+        const toggle = document.createElement("button"); toggle.id = "gasCreateToggle"; toggle.type = "button";
+        toggle.textContent = "Create controls"; toggle.setAttribute("aria-expanded","true");
+        toggle.onclick = () => {
+            const collapsed = document.body.classList.toggle("gas-compact-live");
+            toggle.setAttribute("aria-expanded", String(!collapsed));
+            toggle.textContent = collapsed ? "Create controls" : "Hide controls";
+        };
+        document.getElementById("bhPanelHead").append(toggle);
         live.querySelector("#gasWatch").onclick = watchGasFormation;
         live.querySelector("#gasRemove").onclick = () => {
             const i = gasFocusIndex();
             if (i < 0) return;
-            removeNebula(i); G.focus = "free"; updateBHPlacementUI(true);
+            removeNebula(i); G.focus = "free"; document.body.classList.remove("gas-compact-live"); updateBHPlacementUI(true);
         };
         onModeChange(mode => { if (mode !== "direct") cancelBHPlacementMode(); });
     }
@@ -642,6 +651,9 @@ function commitBHPlacement(clientX, clientY) {
             formation: { v: GAS_MODEL_VERSION, bornAtSec: G.t, massSolar: preset.massSolar } });
         if (i < 0) return;
         G.focus = "neb:" + i; cam.tgt.copy(placeHit); cam.dist = GAS_RADIUS_KM * K * 4; cam.distTarget = null;
+        document.body.classList.add("gas-compact-live");
+        const toggle = document.getElementById("gasCreateToggle");
+        if (toggle) { toggle.setAttribute("aria-expanded","false"); toggle.textContent = "Create controls"; }
         BH_PLACE.active = false; updateBHPlacementPreview(); updateBHPlacementUI(true);
         H.toast("Gas released · Watch star form advances simulation time"); return;
     }
@@ -957,7 +969,7 @@ function updateGasLive() {
     const i = gasFocusIndex(); live.hidden = i < 0;
     if (i < 0) return;
     const s = gasStateAt(NEBULAE[i], G.t);
-    document.getElementById("gasStage").textContent = s.phase + " · " + Math.round(s.progress*100) + "%";
+    document.getElementById("gasStage").textContent = s.phase + " · " + Math.round(s.progress*100) + "% · illustrative";
     document.getElementById("gasProgress").value = s.progress;
     document.getElementById("gasBudget").textContent = s.gasMassSolar.toFixed(2) + " M☉ gas + " + s.coreMassSolar.toFixed(2) + " M☉ core";
     document.getElementById("gasWatch").disabled = s.born;
@@ -968,8 +980,8 @@ function watchGasFormation() {
     const n = NEBULAE[i], s = gasStateAt(n,G.t), targetSec = n.formation.bornAtSec+s.durationSec;
     const remaining = targetSec-G.t; if (!(remaining > 0)) return;
     const feasible = maxFeasibleWarp();
-    const warp = WARPS.find(w => w >= remaining / 24 && w <= feasible);
-    if (!warp) { H.toast("Formation watch needs free time warp. Remove black holes or use the time controls."); return; }
+    const warp = WARPS.filter(w => w <= remaining / 16 && w <= feasible).at(-1);
+    if (!warp || remaining / warp > 180) { H.toast("Formation watch needs free time warp. Remove black holes or use the time controls."); return; }
     const etaWallSec = remaining / warp;
     const plan = {ok:true,targetSec,holdWarp:warp,etaWallSec,legs:[{kind:"hold",warp,fromSimT:G.t,toSimT:targetSec,wallSec:etaWallSec}]};
     cancelBHPlacementMode();
