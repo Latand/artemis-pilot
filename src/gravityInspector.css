@@ -23,3 +23,9 @@ body.compact-explorer #explorePanel .gravitySummary { min-height:44px;padding:4p
 body.compact-explorer .gravityLeading { flex:1;flex-basis:auto;text-align:right;max-width:60%; }
 body.compact-explorer .gravityContributors li { font-size:12px; }
 @media(prefers-reduced-motion:no-preference){.gravityInspector[open]>.gravityTarget{animation:gravityReveal .18s ease-out;}@keyframes gravityReveal{from{opacity:.3}to{opacity:1}}}
+
+/* Give the expanded desktop inspector its own column; the centered time dock
+   otherwise covers its lower rows on mid-sized laptops. Compact layout keeps
+   its existing full-width, vertically separated panels. */
+body:not(.compact-explorer):has(#gravityInspector[open]) #timeDock { left:auto;right:24px;transform:none;width:min(740px,calc(100vw - 350px)); }
+body:not(.compact-explorer) #explorePanel:has(#gravityInspector[open]) { max-height:calc(100dvh - 136px); }

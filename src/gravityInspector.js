@@ -32,6 +32,7 @@ export function initGravityInspector(options={}) {
     (host.querySelector('.compactObjectHeader')||host.firstElementChild).after(panel);
     panel.addEventListener('toggle',()=>{
         if(panel.open){
+            document.getElementById('explorePanel').scrollTop=0;panel.scrollTop=0;
             for(const id of ['exploreInfo','exploreDestinations']){const d=document.getElementById(id);if(d)d.open=false;}
             document.dispatchEvent(new CustomEvent('gravity-inspector-toggle',{detail:{open:true}}));
         }
@@ -89,7 +90,12 @@ export function updateGravityInspector(force=false) {
     const key=String(G.focus)+':'+nextContext;
     const now=performance.now();
     if(force||panel.open||key!==identity||now-lastRead>250){
-        if(key!==identity){previous=[];identity=key;context=nextContext;panel.dataset.context=context;}
+        if(key!==identity){
+            previous=[];identity=key;context=nextContext;panel.dataset.context=context;
+            // A new target/context must not inherit the scroll position of a
+            // lower prediction button, hiding its model-scope heading.
+            if(panel.open){panel.scrollTop=0;document.getElementById('explorePanel').scrollTop=0;}
+        }
         snapshot=context==='galaxy'?getGalaxyGravityInspection():getLocalGravityInspection(G.focus);
         lastRead=now;
         setText(scope,snapshot.estimated?'Estimated':'Local');

@@ -33,6 +33,7 @@ try{
  check(force.sum.every((v,i)=>Math.abs(v-force.net[i])<1e-15),'Displayed source ledger sums to the actual model acceleration');
  check(await page.evaluate(()=>document.querySelector('#gravityNetVector').parentElement===document.querySelector('#root')),'Scene arrow shares the UI stacking context and stays beneath panels');
  check(await page.locator('.gravityDirection').isVisible(),'Net row retains a visible screen-projected direction cue');
+ check(await page.evaluate(()=>{const a=document.querySelector('#explorePanel').getBoundingClientRect(),b=document.querySelector('#timeDock').getBoundingClientRect();return a.right<=b.left||b.right<=a.left||a.bottom<=b.top||b.bottom<=a.top;}),'Expanded inspector and time dock do not overlap');
  await capture('earth-local');
  // At 25k km the world-XY Earth path is mostly off-screen. Capture it
  // at a useful scene scale without changing the selected body or physics.
@@ -63,7 +64,9 @@ try{
  check((await page.locator('.gravityContributors').innerText()).includes('Andromeda'),'Neighboring galaxy replaces stellar-member clutter');
  const galaxyLedger=await page.evaluate(async()=>{const s=(await import('/src/gravityGalaxyInspection.js')).getGalaxyGravityInspection();return {ids:s.contributions.map(r=>r.id),count:s.contributions.length};});
  check(new Set(galaxyLedger.ids).size===galaxyLedger.count,'Local and distant aggregate cell identities remain distinct');
+ check(await page.evaluate(()=>{const t=document.querySelector('.gravityTarget').getBoundingClientRect(),p=document.querySelector('#explorePanel').getBoundingClientRect();return t.top>=p.top&&t.bottom<=p.bottom;}),'Scale switch keeps its context heading visible');
  await capture('galaxy-context');
+ await page.evaluate(async()=>{const {cam}=await import('/src/scene.js'),{LY_KM,K}=await import('/src/constants.js');cam.dist=3000000*LY_KM*K;cam.distTarget=null;});await capture('local-group');
  const hysteresis=await page.evaluate(async()=>{const {cam}=await import('/src/scene.js'),{LY_KM,K}=await import('/src/constants.js');const states=[];for(const d of [19000,21000,18000,13000]){cam.dist=d*LY_KM*K;cam.distTarget=null;__inspectorFrame();states.push(document.querySelector('.gravityScope').textContent);}return states;});
  check(JSON.stringify(hysteresis)===JSON.stringify(['Estimated','Estimated','Estimated','Local']),'Scale hysteresis avoids boundary flicker');
  // A numerical system exposes its actual local kicks with the prescribed
