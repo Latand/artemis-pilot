@@ -274,13 +274,20 @@ export function setCamRoll(r) {
 export function applyCameraRoll() {
     if (camRoll) camera.rotateZ(camRoll);
 }
+const orbitRotation = new THREE.Matrix4(), orbitZero = new THREE.Vector3();
+const preciseOrbit = { target:new THREE.Vector3(), offset:new THREE.Vector3(), worldPosition:new THREE.Vector3() };
 export function applyCamera() {
     const cp = Math.cos(cam.pitch), spc = Math.sin(cam.pitch);
-    camera.position.set(
-        cam.tgt.x + cam.dist * cp * Math.cos(cam.yaw),
-        cam.tgt.y + cam.dist * spc,
-        cam.tgt.z + cam.dist * cp * Math.sin(cam.yaw));
-    camera.lookAt(cam.tgt);
+    preciseOrbit.offset.set(cam.dist*cp*Math.cos(cam.yaw), cam.dist*spc, cam.dist*cp*Math.sin(cam.yaw));
+    preciseOrbit.target.copy(cam.tgt);
+    camera.position.copy(cam.tgt).add(preciseOrbit.offset);
+    preciseOrbit.worldPosition.copy(camera.position);
+    camera.userData.preciseOrbit = preciseOrbit;
+    // Derive the orientation before adding a tiny orbit offset to a galactic
+    // coordinate. Otherwise even double-precision lookAt can snap by degrees
+    // around a stellar-mass horizon thousands of light-years from the Sun.
+    orbitRotation.lookAt(preciseOrbit.offset,orbitZero,camera.up);
+    camera.quaternion.setFromRotationMatrix(orbitRotation);
     applyCameraRoll();
 }
 const ptrs = new Map();

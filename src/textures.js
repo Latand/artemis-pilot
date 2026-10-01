@@ -1,8 +1,10 @@
 import * as THREE from "three";
 import { PL } from "./constants.js";
 import { mulberry32, makeNoise } from "./format.js";
+import { getBodyAppearance } from "./render/bodyAppearanceProfiles.js";
+import { generateBodySurfaceMaps } from "./render/bodySurfaceMaps.js";
 
-// ---------- procedural fallbacks (used when a NASA map fails to load) ----------
+// ---------- procedural fallbacks (used when a color map fails to load) ----------
 export function earthTextureProc() {
     const W = 1024, H = 512, cv = document.createElement("canvas");
     cv.width = W; cv.height = H;
@@ -94,25 +96,19 @@ export function moonColorProc() {
     return t2;
 }
 export function planetTextureProc(hex, gas, seed) {
-    const W = 256, H = 128;
-    const cv = document.createElement("canvas");
-    cv.width = W; cv.height = H;
-    const ctx = cv.getContext("2d"), img = ctx.createImageData(W, H);
-    const n = makeNoise(seed, 32, 16);
-    const r0 = (hex >> 16) & 255, g0 = (hex >> 8) & 255, b0 = hex & 255;
-    for (let y = 0; y < H; y++)
-        for (let x = 0; x < W; x++) {
-            let t;
-            if (gas) t = .55 + .3 * Math.sin(y / H * 24 + 5 * n(x / W * 1.2, y / H * 5)) + .18 * (n(x / W * 4, y / H * 8) - .5);
-            else t = .5 + .8 * (n(x / W * 5, y / H * 5) - .45) + .25 * (n(x / W * 13, y / H * 13) - .5);
-            t = Math.max(.25, Math.min(1.15, t));
-            const i = (y * W + x) * 4;
-            img.data[i] = r0 * t; img.data[i + 1] = g0 * t; img.data[i + 2] = b0 * t; img.data[i + 3] = 255;
-        }
-    ctx.putImageData(img, 0, 0);
-    const t = new THREE.CanvasTexture(cv);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
+    const profile = { ...getBodyAppearance({ color: hex, gas }, String(seed)), seed };
+    const maps = generateBodySurfaceMaps(profile, 512);
+    const texture = new THREE.DataTexture(maps.color, maps.width, maps.height, THREE.RGBAFormat);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.flipY = true;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = true;
+    texture.userData.procedural = true;
+    texture.userData.provenance = profile.provenance;
+    texture.needsUpdate = true;
+    return texture;
 }
 export function ringTextureProc() {
     const rc = document.createElement("canvas");
@@ -130,6 +126,7 @@ export function ringTextureProc() {
     rctx.fillRect(0, 0, 512, 16);
     const t = new THREE.CanvasTexture(rc);
     t.colorSpace = THREE.SRGBColorSpace;
+    t.userData.procedural = true;
     return t;
 }
 // ---------- sprite helpers ----------
@@ -168,7 +165,7 @@ export function ringTexture(color, size = 128, lineWidth = Math.max(5, size * .0
     return t;
 }
 
-// ---------- NASA maps (solarsystemscope.com renditions, CC BY 4.0) ----------
+// ---------- Solar System Scope artistic maps (CC BY 4.0; see docs/celestial-detail/body-surfaces.md) ----------
 const loader = new THREE.TextureLoader();
 function highQualityMipmaps() {
     return typeof location !== "undefined" && new URLSearchParams(location.search).get("mips") !== "0";
@@ -176,6 +173,9 @@ function highQualityMipmaps() {
 function tryLoad(file, srgb = true) {
     return loader.loadAsync("textures/" + file).then(t => {
         t.name = file;
+        t.userData.provenance = "Solar System Scope artistic mosaic, CC BY 4.0; modified rendering";
+        t.userData.source = "https://www.solarsystemscope.com/textures/";
+        t.userData.license = "https://creativecommons.org/licenses/by/4.0/";
         if (srgb) t.colorSpace = THREE.SRGBColorSpace;
         if (highQualityMipmaps()) {
             t.anisotropy = 4;

@@ -1,13 +1,15 @@
 import * as THREE from "three";
 import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT, AU_KM } from "./constants.js";
 import { earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
-import { stellarExposure, meteredSkyExposure, linearStarColor } from "./render/stellarAppearance.js";
+import { stellarExposure, meteredSkyExposure, linearStarColor, updatePhotosphereAppearance } from "./render/stellarAppearance.js";
 import { makeStarPointMaterial } from "./render/starPointMaterial.js";
 import { MOONS } from "./moons.js";
+import { getBodyAppearance } from "./render/bodyAppearanceProfiles.js";
+import { createBodySurfaceMaterial, requestBodySurfaceDetail, setBodyColorMap, updateBodySurface } from "./render/bodySurfaceMaterial.js";
 import { mulberry32 } from "./format.js";
 import {
     dotTexture, earthTextureProc,
-    planetTextureProc, ringTextureProc, loadEarthNightMap, loadPlanetMap, loadEarthCloudMap, loadMoonMap,
+    ringTextureProc, loadEarthNightMap, loadPlanetMap, loadEarthCloudMap, loadMoonMap,
 } from "./textures.js";
 import { renderQuality, scene, viewportSize } from "./scene.js";
 import { initRealSky, realSkyReady, realSkyStatus, updateRealSkyFade } from "./realSky.js";
@@ -20,7 +22,7 @@ export const sunPos = new THREE.Vector3();
 export let sunLight, sunCore, sunGlow, sunCorona, sunPN, sky, skyStars, galaxyBackdrop;
 export let earthG, earth, clouds, earthAtmo, earthBeacon, moon, moonOrbitRing, moonSoiRing;
 export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], plLabels = [];
-// planetary moons: small textured-free spheres + always-on glow dot + label
+// Planetary moons: physical-size detailed surfaces + unresolved guide dot + label
 export const moonGroups = [], moonSurfaces = [], moonGlows = [], moonLabels = [];
 let deferredRealSky = false;
 
@@ -75,17 +77,10 @@ export function requestPlanetTexture(i) {
     loadPlanetMap(i).then(tex => {
         if (!surface.material) return;
         if (!tex) {
-            if (!surface.material.map) {
-                const p = PL[i];
-                tex = planetTextureProc(p.color, p.gas, 1000 + i * 31);
-                tex.userData.procedural = true;
-            } else return;
+            requestBodySurfaceDetail(surface.material, undefined, 30, renderQuality.mobile);
+            return;
         }
-        const old = surface.material.map;
-        surface.material.map = tex;
-        surface.material.color.set(0xffffff);
-        surface.material.needsUpdate = true;
-        if (old?.userData?.procedural) old.dispose?.();
+        setBodyColorMap(surface.material, tex);
     }).catch(err => console.warn("planet map:", err?.message || String(err)));
 }
 
@@ -194,11 +189,13 @@ export function updateBodyShaders(camera, t) {
     if (sunCore.visible) exposure = Math.min(exposure, meteredSkyExposure(camera, sunPos, SUN_RADIUS * sunCore.scale.x));
     if (moon.visible) {
         exposure = Math.min(exposure, meteredSkyExposure(camera, moon.position, R_MOON * K, sunPos));
-        if (!moonRequested && !moon.material.map && R_MOON * K * pxScale / camera.position.distanceTo(moon.position) > 8 && moonPhotoEnabled) {
+        requestBodySurfaceDetail(moon.material, undefined, R_MOON * K * pxScale / Math.max(R_MOON * K, camera.position.distanceTo(moon.position)), renderQuality.mobile);
+        updateBodySurface(moon.material, t);
+        if (!moonRequested && !moon.material.userData.surfacePhotographic && R_MOON * K * pxScale / camera.position.distanceTo(moon.position) > 8 && moonPhotoEnabled) {
             moonRequested = true;
             loadMoonMap().then(map => {
                 if (!map) return;
-                moon.material.map = map; moon.material.color.set(0xffffff); moon.material.needsUpdate = true;
+                setBodyColorMap(moon.material, map);
             });
         }
     }
@@ -209,6 +206,8 @@ export function updateBodyShaders(camera, t) {
         const rpx = p.R * K * pxScale / Math.max(p.R * K, distance);
         exposure = Math.min(exposure, meteredSkyExposure(camera, group.position, p.R * K, sunPos));
         if (rpx > 2) requestPlanetTexture(i);
+        requestBodySurfaceDetail(plSurfaces[i].material, undefined, rpx, renderQuality.mobile);
+        updateBodySurface(plSurfaces[i].material, t);
         // A distant marker fades continuously as the physical disk resolves.
         plGlows[i].scale.setScalar(distance * (renderQuality.mobile ? 12 : 10) / Math.max(1, pxScale));
         plGlows[i].material.opacity = 0.9 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4)) * (plGlows[i].userData.guideFade ?? 1);
@@ -220,6 +219,21 @@ export function updateBodyShaders(camera, t) {
                 direction.value.copy(sunPos).sub(group.position).normalize().applyQuaternion(inverseRotation);
             }
         }
+    }
+    for (let i = 0; i < MOONS.length; i++) {
+        if (!moonGroups[i].visible) continue;
+        const m = MOONS[i], group = moonGroups[i], surface = moonSurfaces[i];
+        const distance = camera.position.distanceTo(group.position);
+        const rpx = m.R * K * pxScale / Math.max(m.R * K, distance);
+        requestBodySurfaceDetail(surface.material, undefined, rpx, renderQuality.mobile);
+        updateBodySurface(surface.material, t);
+        // Approximate synchronous spin in this analytic, coplanar moon model.
+        // No orbit/integrator state is changed; pause and reverse are deterministic.
+        surface.rotation.y = (m.phase + m.n * t) % (Math.PI * 2);
+        moonGlows[i].scale.setScalar(distance * (renderQuality.mobile ? 10 : 8) / Math.max(1, pxScale));
+        moonGlows[i].material.opacity = .8 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4));
+        moonGlows[i].visible = moonGlows[i].material.opacity > .01;
+        exposure = Math.min(exposure, meteredSkyExposure(camera, group.position, m.R * K, sunPos));
     }
     stellarExposure.value = exposure;
     if (u.coronaUniforms) u.coronaUniforms.uT.value = t;
@@ -262,6 +276,7 @@ export function updateSunView(camera, camDistPc) {
         attrs.absMag.needsUpdate = attrs.teffK.needsUpdate = attrs.radiusKm.needsUpdate = attrs.color.needsUpdate = true;
     }
     linearStarColor(teffColor, sunCore.material.color);
+    updatePhotosphereAppearance(sunCore.material, { name: 'SUN', tempK: sun.Teff, radiusSolar: sun.R_Rsun, kind: sun.R_Rsun < .1 ? 'WD' : undefined });
     if (sunNow === sun) sunLight.color.copy(sunCore.material.color);
     else linearStarColor(teffToRGB(sunNow.Teff, _sunNowTint), sunLight.color);
     sunCore.rotation.y = (G.t * 2 * Math.PI / (25.38 * 86400)) % (2 * Math.PI);
@@ -305,7 +320,7 @@ export function buildBodies(maps) {
     // showing their night side to the camera)
     sunLight = new THREE.PointLight(0xffffff, Math.PI, 0, 0);
     scene.add(sunLight, new THREE.AmbientLight(0xffffff, .004));
-    const sunMat = applyTerrellToMaterial(photosphereMaterial(0xffffff, maps.sun));
+    const sunMat = applyTerrellToMaterial(photosphereMaterial(0xffffff, maps.sun, { name: 'SUN', tempK: SUN_TEFF_K, radiusSolar: 1 }));
     sunCore = new THREE.Mesh(sphere(SUN_RADIUS, 96, 72, 48, 32), sunMat);
     scene.add(sunCore);
     // animated corona: fresnel rim shell with streamer noise
@@ -475,10 +490,9 @@ export function buildBodies(maps) {
     scene.add(earthG);
     // ---- moon ----
     const moonMap = maps.moon;
-    const useMoonBump = !!moonMap && new URLSearchParams(location.search).get("moonbump") === "1";
     moon = new THREE.Mesh(
         sphere(R_MOON * K, 112, 80, 48, 32),
-        applyTerrellToMaterial(new THREE.MeshPhongMaterial({ color: moonMap ? 0xffffff : 0xb9bcc2, map: moonMap || null, bumpMap: useMoonBump ? moonMap : null, bumpScale: .045, shininess: 2.2, specular: 0x20242b })));
+        applyTerrellToMaterial(createBodySurfaceMaterial(getBodyAppearance("MOON"), { map: moonMap || null })));
     scene.add(moon);
     // moon orbit ring
     {
@@ -505,9 +519,8 @@ export function buildBodies(maps) {
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];
         const g = new THREE.Group();
-        const materialConfig = { color: maps.planets[i] ? 0xffffff : p.color, roughness: 1, metalness: 0 };
-        if (maps.planets[i]) materialConfig.map = maps.planets[i];
-        const surface = new THREE.Mesh(sphere(p.R * K, 96, 64, 48, 32), applyTerrellToMaterial(new THREE.MeshStandardMaterial(materialConfig)));
+        const surface = new THREE.Mesh(sphere(p.R * K, 96, 64, 48, 32),
+            applyTerrellToMaterial(createBodySurfaceMaterial(getBodyAppearance(p), { map: maps.planets[i] })));
         g.rotation.z = p.visualTilt || 0;
         g.add(surface);
         if (p.ring) {
@@ -545,8 +558,8 @@ export function buildBodies(maps) {
         const m = MOONS[i];
         const g = new THREE.Group();
         const surface = new THREE.Mesh(
-            sphere(Math.max(m.R, 30) * K, 28, 20, 16, 12),
-            applyTerrellToMaterial(new THREE.MeshPhongMaterial({ color: m.color, shininess: 3, specular: 0x1a1d22 })));
+            sphere(m.R * K, 80, 56, 40, 28),
+            applyTerrellToMaterial(createBodySurfaceMaterial(getBodyAppearance(m))));
         g.add(surface);
         scene.add(g);
         const glow = new THREE.Sprite(new THREE.SpriteMaterial({
