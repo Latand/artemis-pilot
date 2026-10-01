@@ -1,0 +1,37 @@
+name: Black hole river regression
+on:
+  pull_request:
+    paths:
+      - 'scripts/*bh-river*'
+      - 'src/river.js'
+      - 'src/holeOptics.js'
+      - '.github/workflows/bh-river.yml'
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/probe-bh-river.mjs evidence/bh-river
+        env:
+          DEVICE: ${{ matrix.device }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bh-river-${{ matrix.device }}
+          path: evidence/
+          retention-days: 14
