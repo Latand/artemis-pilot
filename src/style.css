@@ -734,9 +734,3 @@ body.mode-xr #evJumpChip { display: none !important; }
 #vrBtn { position: absolute; right: 14px; bottom: 38px; z-index: 9; pointer-events: auto;
   border-color: #3a6a8e; color: #9fe8ff; letter-spacing: .2em; }
 #vrBtn:hover { background: rgba(26,40,56,.92); color: #fff; }
-
-.riverStyleControl { display:flex;flex-direction:column;gap:6px;margin-top:12px;color:var(--ink-2);font:12px var(--font-ui); }
-.riverStyleControl select { box-sizing:border-box;width:100%;min-height:44px;border:1px solid var(--line-2);border-radius:5px;background:#141b25;color:#eeeae1;padding:8px 10px;font:13px var(--font-ui);cursor:pointer; }
-#explorePanel .riverStyleControl { color:var(--explore-muted); }
-#flowPanel .riverStyleControl { margin:6px 0 8px; }
-#flowPanel .riverStyleControl select { min-height:32px;font-size:11px; }

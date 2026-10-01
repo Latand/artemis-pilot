@@ -1,4 +1,5 @@
 import { initRiverStyles } from "./riverStyles.js";
+import { updateLargeScaleFlow } from "./render/largeScaleFlow.js";
 import * as THREE from "three";
 import {
     R_EARTH, R_MOON, A_MOON, R_SUN, SUN_RADIUS, PL, K, SOI_M, BH_MAX,
@@ -1841,9 +1842,9 @@ function frame() {
             const px = (eph.earthX + eph.plX[i]) * K, pz = -(eph.earthY + eph.plY[i]) * K;
             const py = (eph.plZ[i] || 0) * K; // real inclined orbits (ecliptic J2000 z)
             plGroups[i].position.set(px, py, pz);
+            plGlows[i].position.set(px, py, pz);
             flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
             if (nearVisualDue) {
-                plGlows[i].position.set(px, py, pz);
                 plOrbitRings[i].position.copy(sunPos);
                 plGroups[i].rotation.z = PL[i].visualTilt || 0;
                 plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
@@ -1856,8 +1857,8 @@ function frame() {
             const mz = -(eph.earthY + eph.plY[m.p] + _moonOff.y) * K;
             const my = (eph.plZ[m.p] || 0) * K;
             moonGroups[i].position.set(mx, my, mz);
+            moonGlows[i].position.set(mx, my, mz);
             if (nearVisualDue) {
-                moonGlows[i].position.set(mx, my, mz);
                 const dCam = camera.position.distanceTo(moonGroups[i].position);
                 // hold the beacon at a near-constant on-screen size so even tiny
                 // moons (Phobos, Mimas) stay visible as dots; the true sphere
@@ -2166,7 +2167,15 @@ function frame() {
     // The Sun's point and evolving photosphere: every view, not only near it.
     updateSunView(camera, camera.position.distanceTo(sunPos) / K / PC_KM);
     perfEnd("cosmic.update", cosmicT0, PERF.enabled ? { cosmicView, dist: cam.dist } : null);
+    const grT = G.gr ? 1 : 0;
+    grB += (grT - grB) * Math.min(1, dtR * 3.4);
+    if (Math.abs(grT - grB) < .004) grB = grT;
+    const fB = grB;
+    updateLargeScaleFlow(advanced, dtR, fB, sunPos);
     if (cosmicView) {
+        // Hide the local GPU layer even on the cosmic early-return path.
+        updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
+        updateShells(0, 0);
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
         updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, G.uiMode === "observe" ? 0 : 1);
@@ -2331,10 +2340,6 @@ function frame() {
     const thrustPredEvery = G.warp > 60 ? 10 : 4;
     if (G.predict && frameNo % (aMag > 0 && G.warp <= 600 ? thrustPredEvery : predEvery) === 0) computePrediction();
     // ---- spacetime river (GPU) ----
-    const grT = G.gr ? 1 : 0;
-    grB += (grT - grB) * Math.min(1, dtR * 3.4);
-    if (Math.abs(grT - grB) < .004) grB = grT;
-    const fB = grB;
     const fRiver = fB * (1 - smooth01(2.0e7, 7.0e7, cam.dist));
     if (PERF.enabled) {
         const riverT0 = performance.now();
@@ -2354,11 +2359,11 @@ function frame() {
             vRefCadence: river.vRefCadence || 1,
         });
         const shellsT0 = performance.now();
-        updateShells(Math.min(river.dtVis ?? advanced, 900), fRiver);
+        updateShells(Math.max(-900, Math.min(river.dtVis ?? advanced, 900)), fRiver);
         markPerf("river.shells", performance.now() - shellsT0, { visible: fRiver > .01 });
     } else {
         updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR);
-        updateShells(Math.min(river.dtVis ?? advanced, 900), fRiver);
+        updateShells(Math.max(-900, Math.min(river.dtVis ?? advanced, 900)), fRiver);
     }
     if (fRiver > .01 && hudDue && !renderQuality.mobile) {
         if (flModeEl) setHudText(flModeEl, "INFALL");

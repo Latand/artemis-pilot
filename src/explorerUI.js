@@ -1,3 +1,4 @@
+import { largeFlowStatus } from './render/largeScaleFlow.js';
 import { NEBULAE } from "./universe/nebulaeData.js";
 import { gasStateAt } from "./universe/gasFormation.js";
 import { initCompactExplorer } from "./compactExplorer.js";
@@ -142,7 +143,11 @@ export function updateExplorerUI() {
     renderFacts(bodyFactRows(body).concat({label:'Viewing distance',value:fmtDist(cam.dist/K)}));
     text('exploreBasis',basisDescription(body));
     text('exploreFollow',G.focus==='free'?'Free camera':'Following object');
-    text('exploreGravityStatus',G.gr?'Gravity flow visible':'Natural view');
+    text('exploreGravityStatus',G.gr?'Time pulses visible':'Natural view');
+    const pullers = largeFlowStatus.visible ? largeFlowStatus.dominantSources?.join(', ') : '';
+    text('exploreGravityNote', pullers
+        ? `Net attraction: ${pullers}. Direction is qualitative; pulses are not orbital paths or measured clock rates.`
+        : 'Time pulses illustrate net attraction toward nearby masses. They are not object trajectories.');
     if($('exploreGravity').getAttribute('aria-pressed')!==String(G.gr)) $('exploreGravity').setAttribute('aria-pressed',String(G.gr));
     $('exploreRefocus').hidden=G.focus!=='free';
 }

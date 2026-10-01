@@ -1,0 +1,44 @@
+name: Gravity continuity QA
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/*gravity*'
+      - 'scripts/*river*'
+      - '.github/workflows/gravity-continuity.yml'
+permissions:
+  contents: read
+concurrency:
+  group: gravity-continuity-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  gravity:
+    name: Gravity ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npm test && npm run smoke:river-visual && npm run smoke:galaxy-dynamics && npm run smoke:body-surfaces && npm run smoke:gas-sph && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Verify paused, reversed, skipped and cross-scale gravity frames
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: node scripts/verify-gravity-continuity.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gravity-${{ matrix.device }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
