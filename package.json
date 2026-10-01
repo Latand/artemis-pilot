@@ -75,7 +75,9 @@
     "smoke:gas-sph": "node scripts/smoke-gas-sph.mjs",
     "smoke:gas-stellar": "node scripts/smoke-gas-stellar-evolution.mjs",
     "smoke:gas-dynamics": "node scripts/smoke-gas-dynamics.mjs",
-    "smoke:gas-world": "node scripts/smoke-gas-world.mjs"
+    "smoke:gas-world": "node scripts/smoke-gas-world.mjs",
+    "smoke:gravity-inspector": "node scripts/smoke-gravity-inspector.mjs && node scripts/smoke-gravity-display.mjs && node scripts/smoke-gravity-prediction.mjs",
+    "verify:gravity-inspector": "node scripts/verify-gravity-inspector.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

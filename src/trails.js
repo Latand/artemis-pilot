@@ -7,7 +7,7 @@ import {
     snapshotEphem, loadEphemSnapshot, advanceEphemSnapshot, advanceEphemSnapshotKepler,
     bodyStateForTarget, IDX_MOON, IDX_SUN, IDX_PLANETS,
     beginPredictionBH, endPredictionBH, predBHX, predBHY, predBHZ,
-    beginPredictionStars, endPredictionStars,
+    beginPredictionStars, endPredictionStars, currentGravityStars, ephemPredictionStepSize, advanceEphemSnapshotBounded,
 } from "./ephemeris.js";
 import { G, BH, WORLD, EPHT } from "./state.js";
 import { speedColor } from "./format.js";
@@ -124,6 +124,7 @@ export function setJourneyOpacity(o) {
     recent.mesh.material.uniforms.uOpacity.value = 0.48 * (1 - Math.min(1, o / 0.48));
 }
 export function clearTrail() {
+    clearInspectionPrediction();
     for (const p of [recent, journey]) { p.history.clear(); p.mesh.geometry.setDrawRange(0, 0); p.mesh.visible = false; }
 }
 export function flightTrailStatus() {
@@ -132,6 +133,35 @@ export function flightTrailStatus() {
 }
 
 // ---- prediction ----
+let boundedInspectionPrediction=false,inspectionPredictionFocus=null;
+export const bodyCoastStatus={target:null,seconds:0,points:0,bounded:false,truncated:false};
+export const shipCoastStatus={seconds:0,points:0,bounded:false,truncated:false};
+let clearInspectionBodyLock=()=>{};
+export function initInspectionPredictionHooks({clearBodyLock=()=>{}}={}){clearInspectionBodyLock=clearBodyLock;}
+export function clearInspectionPrediction(){
+    if(!boundedInspectionPrediction)return false;
+    boundedInspectionPrediction=false;inspectionPredictionFocus=null;
+    clearBodyPrediction();clearInspectionBodyLock();
+    Object.assign(bodyCoastStatus,{target:null,seconds:0,points:0,bounded:false,truncated:false});
+    Object.assign(shipCoastStatus,{seconds:0,points:0,bounded:false,truncated:false});
+    return true;
+}
+export function syncInspectionPrediction(){
+    return boundedInspectionPrediction&&(!G.predict||G.focus!==inspectionPredictionFocus||G.uiMode!=='observe')
+        ?clearInspectionPrediction():false;
+}
+export function useBoundedCoastPrediction(focus=null){
+    clearInspectionPrediction();
+    boundedInspectionPrediction=focus!==null;inspectionPredictionFocus=focus;
+}
+// Keyboard and touch Pilot controls always select the normal prediction path.
+export function togglePrediction(){clearInspectionPrediction();G.predict=!G.predict;computePrediction();}
+export function gravityPredictionActive(focus){return G.predict&&boundedInspectionPrediction&&focus===inspectionPredictionFocus;}
+export function gravityPredictionNote(focus){
+    const s=focus==='ship'?shipCoastStatus:bodyCoastStatus;
+    const span=s.seconds<60?s.seconds.toFixed(1)+' s':s.seconds<86400?(s.seconds/3600).toFixed(1)+' h':(s.seconds/86400).toFixed(1)+' d';
+    return gravityPredictionActive(focus)?`Short coast: ${span}, ${s.points} points${s.truncated?' · budget-limited':''}. ${focus==='earth'?'World-XY path':'Earth-relative path'}. Same local force laws; frozen source inventory and extrapolated massive partners. No thrust or close-encounter guarantee.`:'Uses the existing path renderer with bounded local integration. No galaxy-wide forecast.';
+}
 const PRN = 2400;
 const prPos = new Float32Array(PRN * 3);
 const prGeom = new THREE.BufferGeometry();
@@ -250,7 +280,8 @@ function predShouldEmit(cx, cy, cz, hasEmitted, lastX, lastY, lastZ, hasDir, dir
     return { emit: cosAng < TURN_COS || len > PRED_MAX_ARC_SCENE, dx, dy, dz, len };
 }
 export function computePrediction() {
-    if (!G.predict || G.dead || G.landed) { prGeom.setDrawRange(0, 0); impactSpr.visible = false; ghostMoon.visible = false; caDot.visible = false; return; }
+    syncInspectionPrediction();
+    if (!G.predict || G.dead || G.landed || (boundedInspectionPrediction && inspectionPredictionFocus!=='ship')) { prGeom.setDrawRange(0, 0); impactSpr.visible = false; ghostMoon.visible = false; caDot.visible = false; return; }
     const liveEphem = snapshotEphem(predictionLiveEphem);
     const predEphem = snapshotEphem(predictionEphem);
     _ps[0] = G.x; _ps[1] = G.y; _ps[2] = G.z; _ps[3] = G.vx; _ps[4] = G.vy; _ps[5] = G.vz;
@@ -259,18 +290,18 @@ export function computePrediction() {
     const t0 = performance.now();
     const predBudgetMs = renderQuality.mobile ? PRED_BUDGET_MS_MOBILE : PRED_BUDGET_MS_DESKTOP;
     const predMinSteps = renderQuality.mobile ? PRED_MIN_STEPS_MOBILE : PRED_MIN_STEPS_DESKTOP;
-    const predStars = predictionStars(eph.earthX + G.x, eph.earthY + G.y, G.z);
+    const predStars = boundedInspectionPrediction ? [...currentGravityStars()] : predictionStars(eph.earthX + G.x, eph.earthY + G.y, G.z);
     let truncated = false;
     try {
         loadEphemSnapshot(predEphem);
         beginPredictionBH(); // holes coast linearly from their snapshot state
         beginPredictionGas(EPHT.t);
-        beginPredictionStars(predStars);
+        beginPredictionStars(predStars,boundedInspectionPrediction);
         const far = Math.hypot(G.x, G.y, G.z) > 2e6;
         const tMax = G.t + 86400 * (far ? 160 : 8);
         let pmx = 0, pmy = 0, pmz = 0, pex = 0, pey = 0, pez = 0, hasPrev = false, plNear = false;
         while (n < PRN && pt < tMax) {
-            const cx = (predEphem.earthX + _ps[0]) * K, cy = _ps[2] * K, cz = -(predEphem.earthY + _ps[1]) * K;
+            const cx = ((boundedInspectionPrediction?liveEphem.earthX:predEphem.earthX) + _ps[0]) * K, cy = _ps[2] * K, cz = -((boundedInspectionPrediction?liveEphem.earthY:predEphem.earthY) + _ps[1]) * K;
             const decision = predShouldEmit(cx, cy, cz, hasEmitted, lastEx, lastEy, lastEz, hasDir, dirX, dirY, dirZ);
             if (decision.emit && n < PRN) {
                 prPos[n * 3] = cx; prPos[n * 3 + 1] = cy; prPos[n * 3 + 2] = cz;
@@ -287,7 +318,7 @@ export function computePrediction() {
             moonState(pt, _m);
             const dmx = _ps[0] - _m.mx, dmy = _ps[1] - _m.my, dmz = _ps[2] - eph.moonZ;
             const rM = Math.sqrt(dmx * dmx + dmy * dmy + dmz * dmz);
-            if (rM < minRM) { minRM = rM; caT = pt; caX = _ps[0]; caY = _ps[1]; caZ = _ps[2]; caMX = _m.mx; caMY = _m.my; caMZ = eph.moonZ; caEX = predEphem.earthX; caEY = predEphem.earthY; caEZ = predEphem.earthZ; }
+            if (rM < minRM) { minRM = rM; caT = pt; caX = _ps[0]; caY = _ps[1]; caZ = _ps[2]; caMX = _m.mx; caMY = _m.my; caMZ = eph.moonZ; caEX = boundedInspectionPrediction?liveEphem.earthX:predEphem.earthX; caEY = boundedInspectionPrediction?liveEphem.earthY:predEphem.earthY; caEZ = predEphem.earthZ; }
             const dsx = _ps[0] - eph.sunX, dsy = _ps[1] - eph.sunY, dsz = _ps[2] - eph.sunZ;
             const rSp = Math.sqrt(dsx * dsx + dsy * dsy + dsz * dsz);
             if (rE < R_EARTH) { impact = 1; }
@@ -339,9 +370,11 @@ export function computePrediction() {
             // sensitive for coarsened steps near the Moon or a planet
             const mult = (rM < SOI_M * 1.5 || plNear) ? 1 : far ? 14 : 3;
             let dt = stepSize(rE, rM, rSp, rE - R_EARTH, Math.hypot(_ps[3], _ps[4], _ps[5]), _ps[0], _ps[1], _ps[2], _ps[3], _ps[4], _ps[5]) * mult;
-            dt = Math.max(.5, Math.min(far ? 3200 : 600, dt));
+            dt = boundedInspectionPrediction ? Math.min(dt/mult,ephemPredictionStepSize(predEphem,180)) : Math.max(.5, Math.min(far ? 3200 : 600, dt));
+            if(!(dt>0)||!Number.isFinite(dt)){truncated=true;break;}
             rk4Step(_ps, 0, dt, 0, 0, 0);
-            advanceEphemSnapshot(predEphem, dt);
+            if(boundedInspectionPrediction)advanceEphemSnapshotBounded(predEphem,dt,1,dt);
+            else advanceEphemSnapshot(predEphem, dt);
             pt += dt;
         }
     } finally {
@@ -361,6 +394,7 @@ export function computePrediction() {
             budget: predBudgetMs,
         });
     }
+    Object.assign(shipCoastStatus,{seconds:Math.max(0,pt-G.t),points:n,bounded:boundedInspectionPrediction,truncated});
     markAttrFull(prPosAttr, n);
     prGeom.setDrawRange(0, n);
     if (impact) {
@@ -459,7 +493,33 @@ function ellipseSampleCount(e, cap) {
 }
 const _ell = { ok: false, a: 0, e: 0, px: 0, py: 0, pz: 0, qx: 0, qy: 0, qz: 0 };
 const _ellP = { x: 0, y: 0, z: 0 };
+function computeBoundedBodyPrediction(target,locked) {
+    const live=snapshotEphem(),st=snapshotEphem(bodyPredictionEphem),t0=performance.now();
+    let n=0,elapsed=0,truncated=false;
+    const budget=renderQuality.mobile?2:3,minPoints=16;
+    try{
+        beginPredictionBH();beginPredictionGas(EPHT.t);beginPredictionStars([...currentGravityStars()],true);
+        while(n<BPN){
+            bodyStateForTarget(target,_bs,st);
+            // Match the ledger frame: Earth world XY, all other bodies Earth-relative
+            // with the origin drawn at today's Earth, not a second moving frame.
+            const px=target===-3?_bs.x:live.earthX+(_bs.x-st.earthX);
+            const py=target===-3?_bs.y:live.earthY+(_bs.y-st.earthY);
+            bpPos[n*3]=px*K;bpPos[n*3+1]=_bs.z*K;bpPos[n*3+2]=-py*K;n++;
+            if(n>=minPoints&&performance.now()-t0>budget){truncated=true;break;}
+            const dt=advanceEphemSnapshotBounded(st,3600,1,3600);
+            if(!(dt>0)){truncated=true;break;}elapsed+=dt;
+        }
+    }finally{endPredictionStars();endPredictionGas();endPredictionBH();loadEphemSnapshot(live);}
+    Object.assign(bodyCoastStatus,{target,seconds:elapsed,points:n,bounded:true,truncated});
+    bodyPredLine.material.opacity=locked?.55:.4;bodyPredLine.material.color.set(0x92d7cb);
+    bodyPredDots.material.opacity=0;bodyPredDots.visible=false;bodyPredLine.visible=n>1;
+    markAttrFull(bpPosAttr,n);bpGeom.setDrawRange(0,n);
+}
 export function computeBodyPrediction(target, locked = false) {
+    if(syncInspectionPrediction())return;
+    const inspectorTarget=inspectionPredictionFocus==='earth'?-3:inspectionPredictionFocus==='moon'?-2:inspectionPredictionFocus==='sun'?-1:typeof inspectionPredictionFocus==='number'?inspectionPredictionFocus:-99;
+    if(boundedInspectionPrediction && target===inspectorTarget && target>=-3 && target<PL.length)return computeBoundedBodyPrediction(target,locked);
     if (target < -3 || target >= PL.length) { clearBodyPrediction(); return; }
     const t0 = PERF.enabled ? performance.now() : 0;
     const st = snapshotEphem(bodyPredictionEphem);

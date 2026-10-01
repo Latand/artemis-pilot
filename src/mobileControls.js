@@ -4,7 +4,7 @@ import { G, keys } from "./state.js";
 import { fmtDist, fmtMET } from "./format.js";
 import { apOff, apTravelToFocus } from "./autopilot.js";
 import { toast } from "./achievements.js";
-import { computePrediction } from "./trails.js";
+import { togglePrediction } from "./trails.js";
 import { setConstellationsVisible } from "./realSky.js";
 import { requestRealSkyLoad } from "./bodies.js";
 import { toggleHelp } from "./hud.js";
@@ -148,7 +148,7 @@ function initMenu(hooks) {
     bindTap("mPause", () => { setPaused(!G.paused, "mobile"); });
     bindTap("mFocusBtn", hooks.cycleFocus);
     bindTap("mScaleBtn", hooks.cycleScale);
-    bindTap("mPredict", () => { G.predict = !G.predict; computePrediction(); });
+    bindTap("mPredict", togglePrediction);
     bindTap("mRiver", () => { G.gr = !G.gr; });
     bindTap("mConst", () => {
         G.constellations = !G.constellations;

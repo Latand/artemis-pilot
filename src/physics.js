@@ -7,7 +7,7 @@ import {
 import {
     eph, updEphem, moonState, planetVel, relGravityAt3, advanceEphem, keplerAdvance3,
     gravityStarsFor, currentGravityStars, STELLAR_GRAVITY_MIN_R, pairG, pairRadius, liveEarthRadius, liveEarthMu,
-    beginEphemFrame, endEphemFrame, ephemFrameStats, ephemBudgetLeft, localGasStepLimit,
+    beginEphemFrame, endEphemFrame, ephemFrameStats, ephemBudgetLeft, localGasStepLimit, recordGravityContribution,
 } from "./ephemeris.js";
 import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody, advanceSimTime, syncEphemClock } from "./state.js";
 // the encounter pipeline is headless (bhEncounters.js); blackholes.js only
@@ -148,8 +148,8 @@ let warnedLostSysPlanetLanding = false;
 // actually are mid-step.
 const J2_R2_MAX = 4e9;        // J2 negligible beyond ~10 Earth radii
 const PN_R2_MAX = 7.5e7 * 7.5e7; // Sun 1PN active inside ~0.5 AU
-export function deriv(x, y, z, vx, vy, vz, tau, atx, aty, atz, out) {
-    relGravityAt3(x, y, z, _ga, -1, null, tau);
+export function deriv(x, y, z, vx, vy, vz, tau, atx, aty, atz, out, gravityOnly = false, contributions = null) {
+    relGravityAt3(x, y, z, _ga, -1, null, tau, null, contributions);
     let ax = _ga[0], ay = _ga[1], az = _ga[2];
     if (!WORLD.earthDestroyed) {
         const rE2 = x * x + y * y + z * z;
@@ -160,9 +160,10 @@ export function deriv(x, y, z, vx, vy, vz, tau, atx, aty, atz, out) {
             ax += w * x * (q - 1);
             ay += w * y * (q - 1);
             az += w * z * (q - 3);
+            if (contributions) recordGravityContribution(contributions, "earth:j2", "Earth J2 correction", w * x * (q - 1), w * y * (q - 1), w * z * (q - 3), null, "correction");
         }
         const h = rE - R_EARTH;
-        if (h < ATM_TOP) {
+        if (!gravityOnly && h < ATM_TOP) {
             const rho = Math.exp(-Math.max(0, h) / DRAG_H);
             const avx = -OMEGA_EARTH * y, avy = OMEGA_EARTH * x;
             const rvx = vx - avx, rvy = vy - avy, rvz = vz;
@@ -185,11 +186,15 @@ export function deriv(x, y, z, vx, vy, vz, tau, atx, aty, atz, out) {
             ax += k * ((4 * MU_S / r - v2) * dx + 4 * rv * rvx);
             ay += k * ((4 * MU_S / r - v2) * dy + 4 * rv * rvy);
             az += k * ((4 * MU_S / r - v2) * dz + 4 * rv * rvz);
+            if (contributions) recordGravityContribution(contributions, "sun:1pn", "Sun 1PN correction",
+                k * ((4 * MU_S / r - v2) * dx + 4 * rv * rvx),
+                k * ((4 * MU_S / r - v2) * dy + 4 * rv * rvy),
+                k * ((4 * MU_S / r - v2) * dz + 4 * rv * rvz), null, "correction");
         }
     }
     for (let i = 0; i < PL.length; i++) {
         const p = PL[i];
-        if (!p.atmH || WORLD.plDestroyed[i]) continue;
+        if (gravityOnly || !p.atmH || WORLD.plDestroyed[i]) continue;
         const px = eph.plX[i] + eph.plVx[i] * tau, py = eph.plY[i] + eph.plVy[i] * tau, pz = eph.plZ[i] + eph.plVz[i] * tau;
         const dx = x - px, dy = y - py, dz = z - pz;
         const lim = p.R + p.atmTop;
@@ -203,6 +208,15 @@ export function deriv(x, y, z, vx, vy, vz, tau, atx, aty, atz, out) {
         ax += f * rvx; ay += f * rvy; az += f * rvz;
     }
     out[0] = vx; out[1] = vy; out[2] = vz; out[3] = ax + atx; out[4] = ay + aty; out[5] = az + atz;
+}
+
+// Read-only gravity portion of the exact RK4 derivative. Drag, thrust and
+// contact constraints are deliberately excluded from a gravity inspection.
+export function shipGravityAt3(x, y, z, vx, vy, vz, out, tau = 0, contributions = null) {
+    const derivative = [0, 0, 0, 0, 0, 0];
+    deriv(x, y, z, vx, vy, vz, tau, 0, 0, 0, derivative, true, contributions);
+    out[0] = derivative[3]; out[1] = derivative[4]; out[2] = derivative[5];
+    return out;
 }
 
 const _ga = [0, 0, 0];

@@ -1,3 +1,4 @@
+import { initGravityInspector, closeGravityInspector } from './gravityInspector.js';
 import { largeFlowStatus } from './render/largeScaleFlow.js';
 import { NEBULAE } from "./universe/nebulaeData.js";
 import { gasStateAt } from "./universe/gasFormation.js";
@@ -31,6 +32,7 @@ function visit(focus) {
 export function initExplorerUI(options) {
     hooks=options;
     initCompactExplorer({ stopMovement: () => { movement = null; } });
+    initGravityInspector({togglePrediction:options.toggleGravityPrediction,predictionNote:options.gravityPredictionNote,predictionActive:options.gravityPredictionActive});
     document.querySelectorAll('[data-ui-mode]').forEach(btn => btn.addEventListener('click',()=>setUiMode(btn.dataset.uiMode)));
     document.querySelectorAll('[data-destination]').forEach(btn => btn.addEventListener('click',()=>visit(routes[btn.dataset.destination])));
     $('exploreHome').addEventListener('click',()=>visit('earth'));
@@ -53,7 +55,7 @@ export function initExplorerUI(options) {
     });
     window.addEventListener('blur',()=>{movement=null;});
     onModeChange((mode)=>{
-        keys.clear(); movement=null;
+        keys.clear(); movement=null;closeGravityInspector();
         if(mode==='pilot') {
             if(G.focus!=='ship'&&G.focus!=='free') lastFocus=G.focus;
             hooks.flyTo('ship');

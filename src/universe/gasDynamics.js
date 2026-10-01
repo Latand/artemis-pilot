@@ -135,7 +135,7 @@ export function gasGravitySources(simT) {
         // rms size plus the unresolved core softening while gas remains.
         const eps = s.gasMassSolar > 0 ? Math.max(s.softeningKm,
             s.diagnostics.rmsRadius * record.radiusKm * Math.sqrt(s.gasMassSolar / mass)) : 0;
-        cacheRows.push({ record, ...gasWorldState(record, simT), mu: MU_S * mass, massSolar: mass,
+        cacheRows.push({ record, sourceId: "neb:" + NEBULAE.indexOf(record), ...gasWorldState(record, simT), mu: MU_S * mass, massSolar: mass,
             softeningKm: eps, radiusKm: s.stellar?.radiusKm || s.sinkRadiusKm, rs: s.stellar?.kind === "BH" ? s.stellar.radiusKm : 0,
             acceleration: [0, 0, 0] });
     }
@@ -149,7 +149,9 @@ export function gasPairWeight(dx, dy, dz, softeningKm, rs = 0) {
     const eff = Math.max(r - rs, rs * .02, 1e-12);
     return 1 / (r * eff * eff);
 }
-export function gasFieldAt(wx, wy, wz, simT, out, holeIndex = -1, ex = 0, ey = 0) {
+// Optional rows trace this exact applied kernel without changing the source
+// inventory or COM. scale=-1 records the accelerating Earth-frame correction.
+export function gasFieldAt(wx, wy, wz, simT, out, holeIndex = -1, ex = 0, ey = 0, contributions = null, scale = 1) {
     out[0] = 0; out[1] = 0; out[2] = 0;
     if (!predictionGas && !hasGasDynamics()) return out;
     for (const s of gasGravitySources(simT)) {
@@ -159,13 +161,17 @@ export function gasFieldAt(wx, wy, wz, simT, out, holeIndex = -1, ex = 0, ey = 0
         const gate = holeIndex >= 0 && BH.mu[holeIndex] > 0 ? bhMuAt(holeIndex, s.x - ex, s.y - ey, s.z, simT) / BH.mu[holeIndex] : 1;
         const w = s.mu * gate * gasPairWeight(dx, dy, dz, s.softeningKm, s.rs + (holeIndex >= 0 ? BH.rs[holeIndex] : 0));
         out[0] -= w * dx; out[1] -= w * dy; out[2] -= w * dz;
+        if (contributions && w !== 0) contributions.push({
+            id: s.sourceId, label: "Gas + core system " + (Number(s.sourceId.slice(4)) + 1),
+            acceleration: [-w * dx * scale, -w * dy * scale, -w * dz * scale],
+            position: [s.x, s.y, s.z], kind: "gas",
+        });
     }
     return out;
 }
 // Solar sources are world-km {x,y,z,mu}; no Earth-frame term is applied to the
 // aggregate because its displacement is stored in world axes, not Earth-local.
-export function kickGasDynamics(st, dt, solarSources) {
-    const rows = gasGravitySources(st.t);
+function computeGasLocalAccelerations(st, solarSources, rows, inspected = null, contributions = null) {
     for (const s of rows) {
         const a = s.acceleration; a.fill(0);
         for (const body of solarSources) {
@@ -173,19 +179,46 @@ export function kickGasDynamics(st, dt, solarSources) {
             const dx = s.x - body.x, dy = s.y - body.y, dz = s.z - body.z;
             const w = body.mu * gasPairWeight(dx, dy, dz, s.softeningKm, s.rs);
             a[0] -= w * dx; a[1] -= w * dy; a[2] -= w * dz;
+            if (contributions && s === inspected) contributions.push({ id: body.id, label: body.label,
+                acceleration: [-w * dx, -w * dy, -w * dz], position: [body.x, body.y, body.z], kind: "gravity" });
         }
         for (let j = 0; j < BH.n; j++) {
             const dx = s.x - (st.earthX + BH.x[j]), dy = s.y - (st.earthY + BH.y[j]), dz = s.z - BH.z[j];
             const mu = bhMuAt(j, s.x - st.earthX, s.y - st.earthY, s.z, st.t);
             const w = mu * gasPairWeight(dx, dy, dz, s.softeningKm, s.rs + BH.rs[j]);
             a[0] -= w * dx; a[1] -= w * dy; a[2] -= w * dz;
+            if (contributions && s === inspected && w !== 0) contributions.push({ id: "bh:" + j,
+                label: (BH.kind[j] === 2 ? "Pulsar " : BH.kind[j] === 1 ? "Quasar " : "Black hole ") + (j + 1),
+                acceleration: [-w * dx, -w * dy, -w * dz],
+                position: [st.earthX + BH.x[j], st.earthY + BH.y[j], BH.z[j]], kind: "black-hole" });
         }
     }
     for (let i = 0; i < rows.length; i++) for (let j = i + 1; j < rows.length; j++) {
         const a = rows[i], b = rows[j], dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z;
         const w = gasPairWeight(dx, dy, dz, Math.hypot(a.softeningKm, b.softeningKm), a.rs + b.rs);
         for (const [axis, d] of [[0, dx], [1, dy], [2, dz]]) { a.acceleration[axis] -= b.mu * w * d; b.acceleration[axis] += a.mu * w * d; }
+        if (contributions && (a === inspected || b === inspected)) {
+            const source = a === inspected ? b : a, sign = a === inspected ? -1 : 1;
+            contributions.push({ id: source.sourceId, label: "Gas + core system " + (Number(source.sourceId.slice(4)) + 1),
+                acceleration: [sign * source.mu * w * dx, sign * source.mu * w * dy, sign * source.mu * w * dz],
+                position: [source.x, source.y, source.z], kind: "gas" });
+        }
     }
+    return rows;
+}
+// Read-only local kick acceleration. Work on private acceleration arrays so
+// inspecting a source cannot alter a cached live force or the COM integrator.
+export function gasLocalAcceleration(record, st, solarSources, out, contributions = null) {
+    const sourceId = "neb:" + NEBULAE.indexOf(record);
+    const rows = gasGravitySources(st.t).map(s => ({ ...s, acceleration: [0, 0, 0] }));
+    const inspected = rows.find(s => s.sourceId === sourceId);
+    if (!inspected) return null;
+    computeGasLocalAccelerations(st, solarSources, rows, inspected, contributions);
+    out[0] = inspected.acceleration[0]; out[1] = inspected.acceleration[1]; out[2] = inspected.acceleration[2];
+    return out;
+}
+export function kickGasDynamics(st, dt, solarSources) {
+    const rows = computeGasLocalAccelerations(st, solarSources, gasGravitySources(st.t));
     for (const s of rows) {
         const d = mutableData(s.record);
         residualAt(s.record, d, st.t, d);

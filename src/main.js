@@ -1,4 +1,5 @@
 import { initRiverStyles } from "./riverStyles.js";
+import { updateGravityInspector } from "./gravityInspector.js";
 import { updateLargeScaleFlow } from "./render/largeScaleFlow.js";
 import * as THREE from "three";
 import {
@@ -37,7 +38,7 @@ import {
 } from "./ship.js";
 import {
     pushTrail, pushJourney, setJourneyOpacity, clearTrail, computePrediction,
-    computeBodyPrediction, clearBodyPrediction,
+    computeBodyPrediction, clearBodyPrediction, useBoundedCoastPrediction, gravityPredictionNote, gravityPredictionActive, initInspectionPredictionHooks, syncInspectionPrediction,
     arrPos, arrAttr, arrow, flArrPos, flArrAttr, flowArrow, deArrPos, deArrAttr, darkEnergyArrow, tipV, tipF, tipDE,
     haloArrPos, haloArrAttr, haloArrow, tipHalo,
 } from "./trails.js";
@@ -312,7 +313,7 @@ initRiverStyles();
 initTimeDock();
 initEvents({ mergerState: mergerDebugState });
 initUiMode();
-initExplorerUI({flyTo: flyFocus, openNavigator, openCatalog: openCatalogSearchLazy, toggleHelp});
+initExplorerUI({flyTo: flyFocus, openNavigator, openCatalog: openCatalogSearchLazy, toggleHelp, toggleGravityPrediction, gravityPredictionNote:()=>gravityPredictionNote(G.focus), gravityPredictionActive:()=>gravityPredictionActive(G.focus)});
 
 // Camera/share-state must be applied before renderer warmup; otherwise startup
 // compiles the default low-orbit view, then immediately renders a different
@@ -591,6 +592,7 @@ function scheduleCockpitWarmup(delayMs = 0) {
 const BODY_NONE = -99, BODY_EARTH = -3, BODY_MOON = -2, BODY_SUN = -1;
 let hoverBodyTarget = BODY_NONE, lockedBodyTarget = BODY_NONE, labelHoverTarget = BODY_NONE, labelPtr = null;
 let bodyPredHiddenForPredictOff = true;
+initInspectionPredictionHooks({clearBodyLock:unlockBodyPrediction});
 const labelPtrPos = [0, 0];
 function bodyScenePos(target) {
     return target === BODY_EARTH ? earthG.position : target === BODY_MOON ? moon.position : target === BODY_SUN ? sunCore.position : target >= 0 ? plGroups[target].position : null;
@@ -623,6 +625,13 @@ function focusAndLockBody(target, focusValue) {
     setFocus(focusValue);
     cam.dist = Math.max(cam.dist, keepDist);
     lockBodyPrediction(target);
+}
+function toggleGravityPrediction(){
+    const active=gravityPredictionActive(G.focus);useBoundedCoastPrediction(active?null:G.focus);G.predict=!active;
+    const target=G.focus==='earth'?-3:G.focus==='moon'?-2:G.focus==='sun'?-1:typeof G.focus==='number'?G.focus:BODY_NONE;
+    if(!G.predict){computePrediction();unlockBodyPrediction();return;}
+    if(target!==BODY_NONE){computePrediction();lockedBodyTarget=target;bodyPredHiddenForPredictOff=false;computeBodyPrediction(target,true);}
+    else {unlockBodyPrediction();computePrediction();}
 }
 function unlockBodyPrediction() {
     lockedBodyTarget = BODY_NONE;
@@ -1665,6 +1674,7 @@ function frame() {
     // ---- input → attitude & thrust (keyboard merged with VR controllers) ----
     const vrIn = vrPoll(dtR);
     moveExplorerCamera(Math.min(rawDtR, .06));
+    syncInspectionPrediction();
     const flightKeys = G.uiMode === "pilot" || VR.active;
     let rotIn = !flightKeys ? 0 : ((keys.has("KeyA") || keys.has("ArrowLeft")) ? 1 : 0) - ((keys.has("KeyD") || keys.has("ArrowRight")) ? 1 : 0);
     if (!rotIn) rotIn = vrIn.rot;
@@ -2173,6 +2183,7 @@ function frame() {
     if (Math.abs(grT - grB) < .004) grB = grT;
     const fB = grB;
     updateLargeScaleFlow(advanced, dtR, fB, sunPos);
+    updateGravityInspector();
     if (cosmicView) {
         // Hide the local GPU layer even on the cosmic early-return path.
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
