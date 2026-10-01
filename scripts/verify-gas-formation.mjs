@@ -63,6 +63,27 @@ try{
    check(core.core>0&&Math.abs(core.gas+core.core-1)<1e-12,'Bound collapsing gas becomes a mass-conserving protostellar sink');
    await capture('protostar');
    await evolve(2.2);await frames();await capture('core');await click('#gasWatch');await capture('core-close');
+   // Exercise the real preview loop inside the numerical control radius.
+   // The ordinary-star control catches a missing/empty prediction source list.
+   const prediction=await page.evaluate(async()=>{
+    const {formedStarForNebula}=await import('/src/universe/nebulaeData.js');
+    const {eph}=await import('/src/ephemeris.js');
+    const {computePrediction,impactSpr}=await import('/src/trails.js');
+    const {PERF}=await import('/src/perf.js');
+    const star=formedStarForNebula(0,__G.t),saved={};
+    for(const key of ['x','y','z','vx','vy','vz','predict','dead','landed'])saved[key]=__G[key];
+    const wasPerf=PERF.enabled;
+    try{
+     Object.assign(__G,{x:star.x-eph.earthX+.5*star.R,y:star.y-eph.earthY,z:star.z||0,vx:0,vy:0,vz:0,predict:true,dead:false,landed:null});
+     PERF.enabled=true;computePrediction();
+     const sink={...PERF.last.prediction,marker:impactSpr.visible};
+     star.gasSink=false;computePrediction();
+     return {sink,ordinary:{...PERF.last.prediction,marker:impactSpr.visible}};
+    }finally{star.gasSink=true;Object.assign(__G,saved);PERF.enabled=wasPerf;computePrediction();}
+   });
+   entry.prediction=prediction;
+   check(prediction.sink.gravityStars>0&&prediction.sink.steps>1&&prediction.sink.impact===0&&!prediction.sink.marker,'Trajectory preview crosses the sink control region without a false impact');
+   check(prediction.ordinary.impact===6&&prediction.ordinary.marker,'Ordinary stellar photosphere still ends the trajectory with an impact marker');
    const reverse=await evolve(1.1);await frames();const replay=await state();
    check(reverse.ready&&replay.core===0,'Reverse restores and replays gas history instead of reversing cooling');
    check(JSON.stringify(replay.positions)===JSON.stringify(saved.positions),'Replayed canonical parcel state is exact');

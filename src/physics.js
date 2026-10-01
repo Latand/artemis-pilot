@@ -16,6 +16,7 @@ import { NS_SURFACE_KM } from "./tde.js";
 import { fmtMET, fmtKm } from "./format.js";
 import { ACTIVE_STARS, GRAVITY_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
 import { strongestActiveStarWell } from "./universe/starDominance.js";
+import { stellarSurfaceHit } from "./universe/stellarContact.js";
 import { syncGalacticFrame } from "./universe/galacticClock.js";
 import { dominantSystemBody, moonWorldState, planetWorldState } from "./universe/planetarySystem.js";
 import { darkEnergyAccel, darkEnergyVisibleFractionKm, darkMatterRelativeAccel, darkMatterVisibleFractionPc } from "./cosmology.js";
@@ -995,7 +996,8 @@ function advanceFlight(simAdv, atx, aty, atz, aMag) {
                 const sx = star.x - (eph.earthX + eph.earthVx * lag);
                 const sy = star.y - (eph.earthY + eph.earthVy * lag);
                 const sz = star.z || 0;
-                if (Math.hypot(s[0] - sx, s[1] - sy, s[2] - sz) <= star.R) { hitStar = star; break; }
+                const dx = s[0] - sx, dy = s[1] - sy, dz = s[2] - sz;
+                if (stellarSurfaceHit(star, dx * dx + dy * dy + dz * dz)) { hitStar = star; break; }
             }
             if (hitStar) {
                 G.x = s[0]; G.y = s[1]; G.z = s[2]; G.vx = s[3]; G.vy = s[4]; G.vz = s[5];
