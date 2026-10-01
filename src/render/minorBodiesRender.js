@@ -2,6 +2,9 @@ import * as THREE from "three";
 import { AU_KM, K } from "../constants.js";
 import { CURATED_MINOR_BODIES, MINOR_STRIDE } from "../universe/minorBodies.js";
 import { worldToResidualArr } from "../universe/renderOrigin.js";
+import { getBodyAppearance } from './bodyAppearanceProfiles.js';
+import { createBodySurfaceMaterial, requestBodySurfaceDetail } from './bodySurfaceMaterial.js';
+import { applyTerrellToMaterial } from '../relView.js';
 
 const VERT = /* glsl */`
 attribute float size;
@@ -98,11 +101,35 @@ export function createMinorBodyPoints(parent, capacity, { color = 0xcfc8aa, size
 }
 
 export function createMinorBodyRenderers({ scene, farTierGroup, swarms }) {
+    const curated = createMinorBodyPoints(scene, CURATED_MINOR_BODIES.length, { color: 0xfff2c0, size: 3.4, brightness: 0.9 });
+    const ceresIndex = CURATED_MINOR_BODIES.findIndex(body => body.name.toUpperCase() === 'CERES');
+    if (ceresIndex >= 0) {
+        // Dawn final coordinate-system mean radius (469.73 km, rounded). Render-only disk;
+        // the existing minor-body orbit and point-marker population stay intact.
+        const radius = 469.7 * K;
+        const surface = new THREE.Mesh(new THREE.SphereGeometry(radius, 80, 56),
+            applyTerrellToMaterial(createBodySurfaceMaterial(getBodyAppearance('CERES'))));
+        surface.name = 'Ceres resolved surface';
+        surface.visible = false;
+        curated.mesh.add(surface);
+        curated.resolvedBodies = [{ index: ceresIndex, surface, radius }];
+        const screen = new THREE.Vector2();
+        surface.onBeforeRender = (renderer, _scene, camera) => {
+            renderer.getSize(screen);
+            const distance = camera.position.distanceTo(surface.position);
+            const pxScale = screen.y / (2 * Math.tan((camera.fov || 50) * Math.PI / 360));
+            const rpx = radius * pxScale / Math.max(radius, distance);
+            requestBodySurfaceDetail(surface.material, undefined, rpx, screen.x < 720);
+            const bright = curated.geometry.attributes.brightness;
+            bright.setX(ceresIndex, .9 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4)));
+            bright.needsUpdate = true;
+        };
+    }
     return Object.freeze({
         belt: createMinorBodyPoints(scene, swarms.meta.counts.belt, { color: 0xd9c28f, size: 1.55, brightness: 0.42 }),
         kuiper: createMinorBodyPoints(scene, swarms.meta.counts.kuiper, { color: 0x9fc7ff, size: 1.35, brightness: 0.35 }),
         oort: createMinorBodyPoints(farTierGroup || scene, swarms.meta.counts.oort, { color: 0xbad8ff, size: 1.1, brightness: 0.20 }),
-        curated: createMinorBodyPoints(scene, CURATED_MINOR_BODIES.length, { color: 0xfff2c0, size: 3.4, brightness: 0.9 }),
+        curated,
     });
 }
 
@@ -112,6 +139,12 @@ export function refreshResidualRange(group, startIdx = 0, count = group.capacity
     const arr = group.geometry.attributes.position.array;
     for (let i = start; i < end; i++) {
         worldToResidualArr(group.worldKm[i * 3], group.worldKm[i * 3 + 1], group.worldKm[i * 3 + 2], arr, i * 3, K);
+    }
+    for (const body of group.resolvedBodies || []) {
+        if (body.index >= start && body.index < end) {
+            body.surface.position.fromArray(arr, body.index * 3);
+            body.surface.visible = true;
+        }
     }
     const attr = group.geometry.attributes.position;
     attr.addUpdateRange(start * 3, (end - start) * 3);

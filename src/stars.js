@@ -1,8 +1,9 @@
 import * as THREE from "three";
-import { STARS, K, LY_SCENE } from "./constants.js";
+import { STARS, K, LY_SCENE, MU_S } from "./constants.js";
 import { CURATED_PHOTOMETRY } from "./render/curatedPhotometry.js";
 import { photosphereMaterial } from "./render/planetAppearance.js";
-import { stellarExposure, linearStarColor, meteredSkyExposure } from "./render/stellarAppearance.js";
+import { stellarExposure, linearStarColor, meteredSkyExposure, updatePhotosphereAppearance } from "./render/stellarAppearance.js";
+import { stellarSurfaceTemperature } from "./render/stellarSurfaceProfile.js";
 import { teffToRGB, bvToTeff, absMagVFromL } from "./render/viewBrightness.js";
 import { makeStarPointMaterial, starPointAlpha } from "./render/starPointMaterial.js";
 import { curatedAbsMagV, holdCatalogRow } from "./render/catalogStars.js";
@@ -11,11 +12,13 @@ import { renderQuality, scene, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
 import { ACTIVE_STARS, activeStarsTime } from "./universe/activeStars.js";
 import { applyTerrellToMaterial } from "./relView.js";
-import { holeRoot } from "./holeOptics.js";
+import { holeRoot, makeHoleOptics, updateHoleOptics } from "./holeOptics.js";
+import { namedHoleAppearance } from "./render/holeAppearance.js";
+import { G } from "./state.js";
 
 // Physical renderings for the named stellar destinations and the active stars
 // around the ship: each star gets a photosphere mesh that appears as its disk
-// resolves; SGR A* gets an event horizon, an accretion disk, and polar jets.
+// resolves; black holes share analytic optics with source-specific accretion.
 // The unresolved point of a curated star is its row in the curated point
 // layer (render/catalogStars.js). Every procedural star of the active
 // neighbourhood (galaxy.js's local tier, the ball the resolved field leaves
@@ -23,8 +26,8 @@ import { holeRoot } from "./holeOptics.js";
 // (syncActiveProceduralPoints). An active catalog star carries its own point
 // at its live position while its static catalog point steps aside. So every
 // star is drawn by exactly one point.
-// Known limit: float32 world coordinates wobble at light-year distances —
-// close approaches render, but sub-1000 km precision out there is not exact.
+// Orbit-relative surface transforms retain detail at distant compact objects;
+// authoritative physics remains in world coordinates.
 
 const entries = [];
 const starRGB = [1,1,1];
@@ -56,7 +59,7 @@ function starVisualId(star) {
 export function starVisualAlpha(star) {
     const entry = entryById.get(starVisualId(star));
     if (!entry) return 0;
-    if (entry.star.bh) return entry.g.visible ? entry.glow.material.opacity : 0;
+    if (entry.star.bh) return entry.g.visible ? 1 : 0;
     return entry.alpha;
 }
 
@@ -88,54 +91,6 @@ function setActivePointPhotometry(pt, absMag, tempK, radiusKm) {
 function activeAbsMagV(star, tempK) {
     if (Number.isFinite(star.absMag)) return star.absMag;
     return star.lumSolar > 0 ? absMagVFromL(star.lumSolar, tempK || 5800) : NaN;
-}
-
-function fresnelShell(radius, color, power, gain) {
-    return new THREE.Mesh(sphere(radius, 48, 32, 24, 16), new THREE.ShaderMaterial({
-        transparent: true, blending: THREE.AdditiveBlending, side: THREE.BackSide, depthWrite: false,
-        uniforms: { c: { value: new THREE.Color(color) }, uP: { value: power }, uG: { value: gain } },
-        vertexShader: /* glsl */`
-            varying float vF; uniform float uP;
-            void main(){
-                vec3 n = normalize(normalMatrix * normal);
-                vec4 mv = modelViewMatrix * vec4(position, 1.0);
-                vF = pow(1.0 + dot(normalize(mv.xyz), n), uP);
-                gl_Position = projectionMatrix * mv;
-            }`,
-        fragmentShader: /* glsl */`
-            uniform vec3 c; uniform float uG; varying float vF;
-            void main(){ gl_FragColor = vec4(c, clamp(vF * uG, 0.0, 1.0)); }`,
-    }));
-}
-
-function accretionTexture(hex) {
-    const cv = document.createElement("canvas");
-    cv.width = 512; cv.height = 16;
-    const ctx = cv.getContext("2d");
-    const g = ctx.createLinearGradient(0, 0, 512, 0);
-    // inner edge white-hot, cooling outward through the star's tint
-    g.addColorStop(0, "rgba(255,255,255,0.95)");
-    g.addColorStop(.12, "rgba(255,236,200,0.9)");
-    g.addColorStop(.34, hexRgba(hex, .62));
-    g.addColorStop(.62, hexRgba(hex, .3));
-    g.addColorStop(1, hexRgba(hex, 0));
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 512, 16);
-    const t = new THREE.CanvasTexture(cv);
-    t.colorSpace = THREE.SRGBColorSpace;
-    return t;
-}
-
-function radialRing(rIn, rOut, map) {
-    const rg = new THREE.RingGeometry(rIn, rOut, seg(96, 48), 1);
-    const posA = rg.attributes.position, uvA = rg.attributes.uv;
-    for (let vi = 0; vi < posA.count; vi++) {
-        const r = Math.hypot(posA.getX(vi), posA.getY(vi));
-        uvA.setXY(vi, (r - rIn) / (rOut - rIn), .5);
-    }
-    return new THREE.Mesh(rg, new THREE.MeshBasicMaterial({
-        map, transparent: true, side: THREE.DoubleSide, depthWrite: false, blending: THREE.AdditiveBlending,
-    }));
 }
 
 function collectMaterialTextures(material, textures) {
@@ -181,6 +136,7 @@ export function addStarVisual(star) {
         if (star.tempK > 0 && existing.photosphere) {
             existing.tempK = star.tempK;
             linearStarColor(teffToRGB(star.tempK, starRGB), existing.photosphere.material.color);
+            updatePhotosphereAppearance(existing.photosphere.material, star);
         }
         const m = existing.active ? activeAbsMagV(star, existing.tempK) : curatedAbsMagV(star);
         if (Number.isFinite(m)) existing.absMag = m;
@@ -190,29 +146,20 @@ export function addStarVisual(star) {
     const g = new THREE.Group();
     let disk = null;
     let photosphere = null;
+    let optics = null;
     const photometry = CURATED_PHOTOMETRY[star.name];
-    const tempK = star.tempK || photometry?.tempK || (Number.isFinite(star.bv) ? bvToTeff(star.bv) : null);
+    const tempK = stellarSurfaceTemperature(star, photometry) || (Number.isFinite(star.bv) ? bvToTeff(star.bv) : null);
     const active = !!(star.procedural || star.activeCatalog);
     const absMag = active ? activeAbsMagV(star, tempK) : curatedAbsMagV(star);
     if (star.bh) {
-        const rsU = star.rs * K;
-        g.add(new THREE.Mesh(sphere(rsU, 48, 32, 24, 16), applyTerrellToMaterial(new THREE.MeshBasicMaterial({ color: 0x000000 }))));
-        // thin photon-ring halo hugging the horizon
-        g.add(fresnelShell(rsU * 1.06, 0xfff2d8, 5.0, .9));
-        disk = radialRing(rsU * 1.9, rsU * 7.5, accretionTexture(0xffb46a));
-        disk.rotation.x = -Math.PI / 2 + .3;
-        g.add(disk);
-        // polar jets: stretched additive sprites
-        const jetMap = dotTexture("rgba(190,220,255,0.9)", "rgba(120,160,255,0.25)");
-        for (const dir of [1, -1]) {
-            const jet = new THREE.Sprite(new THREE.SpriteMaterial({ map: jetMap, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: .55 }));
-            jet.scale.set(rsU * 1.6, rsU * 14, 1);
-            jet.position.y = dir * rsU * 7.5;
-            g.add(jet);
-        }
+        optics = makeHoleOptics();
+        g.add(optics.shadow, optics.ring, optics.disk, optics.jet);
+        g.userData.appearance = namedHoleAppearance(star).label;
     } else {
         const color = tempK ? linearStarColor(teffToRGB(tempK, starRGB)) : new THREE.Color(star.color);
-        photosphere = new THREE.Mesh(sphere(star.R * K, 64, 48, 32, 24), applyTerrellToMaterial(photosphereMaterial(color)));
+        photosphere = new THREE.Mesh(sphere(star.R * K, 64, 48, 32, 24), applyTerrellToMaterial(photosphereMaterial(color, null, { ...star, tempK })));
+        photosphere.name = star.name + " photosphere";
+        g.userData.appearance = photosphere.material.userData.photosphere.profile.provenance;
         g.add(photosphere);
     }
     const glow = star.bh
@@ -228,7 +175,7 @@ export function addStarVisual(star) {
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
     // a hole's own light sits at the lens: drawn unbent after it (lensing.js)
     (star.bh ? holeRoot : scene).add(g);
-    const entry = { g, glow, point, disk, photosphere, tempK, absMag, star, id, active, alpha: 0 };
+    const entry = { g, glow, point, disk, optics, photosphere, tempK, absMag, star, id, active, alpha: 0 };
     entries.push(entry);
     entryById.set(id, entry);
     return entry;
@@ -340,9 +287,16 @@ function updateHoleVisual(e, d, cameraSolarDistance) {
     const skyBeacon = smooth01(LY_SCENE * .0006, LY_SCENE * .02, cameraSolarDistance) * nucleus;
     const alpha = Math.max(.82 * local, .85 * skyBeacon);
     e.g.visible = alpha > .012;
-    e.glow.material.opacity = alpha;
-    const localScale = Math.min(e.star.rs * K * 14, Math.max(e.star.rs * K * 2.2, d * .002));
+    const rsU = e.star.rs * K;
+    // Search guide gives way to physical optics before the hole resolves.
+    e.glow.material.opacity = alpha * smooth01(80, 220, d / rsU);
+    const localScale = Math.min(rsU * 14, Math.max(rsU * 2.2, d * .002));
     e.glow.scale.setScalar(Math.max(localScale, d * .0075 * skyBeacon));
+    const profile = namedHoleAppearance(e.star);
+    updateHoleOptics(e.optics, {
+        ...profile, rsKm:e.star.rs, muKm3:e.star.mass*MU_S, t:G.t, frameDt:G.paused?0:G.warp/60,
+        axisX:.16, axisY:.95, axisZ:.27, jetLenKm:0, jetI:0,
+    });
 }
 // Cosmic frames skip updateStars (the near-field renderer) except at the
 // label cadence; the holes' beacons still follow the camera every frame, or

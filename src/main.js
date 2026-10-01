@@ -55,6 +55,7 @@ import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatal
 import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
 import { starViewUniforms } from "./render/starPointMaterial.js";
 import { eraModulation } from "./universe/cosmicEra.js";
+import { MIN_HOLE_OBSERVER_RS } from "./render/holeAppearance.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, isBHPlacementMode } from "./blackholes.js";
 import { thrustGain, boom } from "./audio.js";
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
@@ -1958,13 +1959,13 @@ function frame() {
         camPrevTgt.copy(tgt);
         camPrevFocus = G.focus;
     } else camPrevFocus = null;
-    const minD = activeBHFocus ? Math.max(.05, BH.rs[focusBH] * K * 1.3) :
+    const minD = activeBHFocus ? Math.max(.000002, BH.rs[focusBH] * K * MIN_HOLE_OBSERVER_RS) :
         activeNebFocus ? Math.max(.05, NEBULAE[activeNebFocus].radiusKm * K * 2.5) :
         activePlanetMoonFocus && focusedSystem?.planets?.[activePlanetMoonFocus.planetIndex]?.moons?.[activePlanetMoonFocus.moonIndex] ? focusedSystem.planets[activePlanetMoonFocus.planetIndex].moons[activePlanetMoonFocus.moonIndex].R * K * 1.3 :
         activePlanetFocus >= 0 && focusedSystem?.planets?.[activePlanetFocus] ? focusedSystem.planets[activePlanetFocus].radiusKm * K * 1.8 :
-        activeStarFocus ? STARS[focusStar].R * K * 1.8 :
+        activeStarFocus ? (STARS[focusStar].bh ? STARS[focusStar].rs * K * MIN_HOLE_OBSERVER_RS : STARS[focusStar].R * K * 1.8) :
         activeMoonFocus ? Math.max(.05, MOONS[focusMoon].R * K * 1.3) :
-        activeDynamicFocus ? activeDynamicFocus.R * K * 1.8 :
+        activeDynamicFocus ? (activeDynamicFocus.bh ? activeDynamicFocus.rs * K * MIN_HOLE_OBSERVER_RS : activeDynamicFocus.R * K * 1.8) :
         G.focus === "free" ? .03 : typeof G.focus === "number" ? PL[G.focus].R * K * 1.3 :
         G.focus === "earth" ? R_EARTH * K * 1.3 : G.focus === "moon" ? R_MOON * K * 1.3 : G.focus === "sun" ? SUN_RADIUS * 1.25 : .05;
     // smooth fly-in toward the distance a focus pick requested (manual zoom clears it)

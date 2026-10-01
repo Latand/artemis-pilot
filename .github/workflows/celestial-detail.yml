@@ -1,0 +1,133 @@
+name: Celestial surface and horizon QA
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/*celestial*'
+      - 'scripts/*stellar-surfaces*'
+      - 'scripts/stellar-surface-fixture.*'
+      - '.github/workflows/celestial-detail.yml'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Exact baseline revision for black-hole mechanism screenshots
+        required: true
+        default: '0764f40'
+permissions:
+  contents: read
+concurrency:
+  group: celestial-detail-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  model:
+    name: Model and capture contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - name: Check deterministic capture hooks, surface model and app build
+        run: |
+          node scripts/capture-celestial-detail.mjs --validate
+          node scripts/smoke-stellar-surfaces.mjs
+          node scripts/smoke-body-surfaces.mjs
+          node scripts/smoke-hole-appearance.mjs
+          node scripts/smoke-hole-precision.mjs
+          node scripts/smoke-hole-appearance.mjs
+          node scripts/smoke-hole-precision.mjs
+          node scripts/smoke-body-surfaces.mjs
+          npm test
+          npm run build
+  capture:
+    name: ${{ matrix.device }} ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        suite: [bodies, stars, holes]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact revision and dependency resolution
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          cp package-lock.json evidence/sources/
+      - name: Verify stellar shader families and paused determinism
+        if: matrix.suite == 'stars' && matrix.device == 'desktop'
+        run: node scripts/verify-stellar-surfaces.mjs evidence/stellar-shader
+      - name: Capture actual application materials and camera states
+        # Preserve full-app screenshots even if the independent GPU check fails.
+        if: ${{ !cancelled() }}
+        env:
+          DEVICE: ${{ matrix.device }}
+          SUITE: ${{ matrix.suite }}
+        run: node scripts/capture-celestial-detail.mjs . evidence/celestial
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: celestial-${{ matrix.device }}-${{ matrix.suite }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+  baseline:
+    name: Baseline hole mechanism (six views, reused)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/cache@v4
+        id: baseline-cache
+        with:
+          # No duplicate desktop/mobile baseline matrix and no repeated base
+          # capture on shader-only revisions. Invalidate if QA itself changes.
+          path: evidence/baseline
+          key: celestial-baseline-v1-${{ runner.os }}-${{ github.event.pull_request.base.sha || inputs.base_ref }}-${{ hashFiles('scripts/*celestial*.mjs', 'scripts/celestial-detail-browser.js') }}
+      - uses: actions/setup-node@v4
+        if: steps.baseline-cache.outputs.cache-hit != 'true'
+        with:
+          node-version: 22
+      - if: steps.baseline-cache.outputs.cache-hit != 'true'
+        run: npm install --ignore-scripts
+      - if: steps.baseline-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Prepare exact baseline; use HEAD harness unchanged
+        if: steps.baseline-cache.outputs.cache-hit != 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_ref }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/celestial-base" "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/celestial-base/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/celestial-base" >> "$GITHUB_ENV"
+      - name: Capture baseline clipping, facets and disk artifacts
+        if: steps.baseline-cache.outputs.cache-hit != 'true'
+        env:
+          SUITE: holes
+          DEVICE: desktop
+        run: node scripts/capture-celestial-detail.mjs . evidence/baseline
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: celestial-baseline-holes
+          path: evidence/baseline/
+          if-no-files-found: error
+          retention-days: 14
