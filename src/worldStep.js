@@ -96,15 +96,15 @@ export function stepWorld(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast 
     let limited = false, reason = "";
     const frame = beginEphemFrame(Math.abs(G.warp));
     try {
-    for (let slice = 0; slice <= NEB_MAX; slice++) {
-        const dt = nextFormationBoundary(G.t, remaining);
-        refreshActiveStars(eph.earthX+G.x,eph.earthY+G.y,G.z,G.focus,G.t,dt);
-        const advanced = stepWorldSlice(dt,atx,aty,atz,aMag,toast,frame);
-        delivered += advanced; steps += WORLD_STEP.bodySteps; analytic += WORLD_STEP.analyticCalls;
-        limited ||= WORLD_STEP.limited; if (WORLD_STEP.reason) reason = WORLD_STEP.reason;
-        remaining -= advanced;
-        if (advanced !== dt || dt === 0 || remaining === 0) break;
-    }
+        for (let slice = 0; slice <= NEB_MAX; slice++) {
+            const dt = nextFormationBoundary(G.t, remaining);
+            refreshActiveStars(eph.earthX+G.x,eph.earthY+G.y,G.z,G.focus,G.t,dt);
+            const advanced = stepWorldSlice(dt,atx,aty,atz,aMag,toast,frame);
+            delivered += advanced; steps += WORLD_STEP.bodySteps; analytic += WORLD_STEP.analyticCalls;
+            limited ||= WORLD_STEP.limited; if (WORLD_STEP.reason) reason = WORLD_STEP.reason;
+            remaining -= advanced;
+            if (advanced !== dt || dt === 0 || remaining === 0) break;
+        }
     } finally { endEphemFrame(); }
     // Actual delivered clock is authoritative, including reverse and budgets.
     refreshActiveStars(eph.earthX+G.x,eph.earthY+G.y,G.z,G.focus,G.t,Math.abs(delivered));

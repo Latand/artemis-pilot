@@ -47,6 +47,7 @@ try {
   check(source.count===1&&source.focus==='neb:0','Release creates one cloud and focuses index zero');
   check(await page.evaluate(()=>__G.paused),'Placement preserves paused state');
   check((await page.locator('#gasStage').textContent()).startsWith('Gas cloud · 0%'),'Cloud exists before ignition');
+  await page.waitForTimeout(4500); // transient placement toasts clear naturally
   await snap('cloud');
   const frozen=await page.evaluate(async()=>JSON.stringify((await import('/src/universe/gasFormation.js')).gasStateAt((await import('/src/universe/nebulaeData.js')).NEBULAE[0],__G.t)));
   await frames(5);
@@ -108,6 +109,18 @@ try {
   check(await page.evaluate(async()=>!(await import('/src/blackholes.js')).isBHPlacementMode()),'Leaving Create cancels gas placement');
   await click('[data-ui-mode="direct"]');
   await snap('controls');
+  // Real canvas input uses the same one-shot placement on mouse and touch.
+  await click('[data-create-kind="4"]');
+  const emptyPixel=await page.evaluate(()=>{
+   const canvas=qaScene.renderer.domElement;
+   for(let y=120;y<innerHeight-140;y+=20)for(let x=40;x<innerWidth-40;x+=20)
+    if(document.elementFromPoint(x,y)===canvas)return{x,y};
+   return null;
+  });
+  check(!!emptyPixel,'Open canvas remains reachable beside creation controls');
+  if(mobile)await page.touchscreen.tap(emptyPixel.x,emptyPixel.y);else await page.mouse.click(emptyPixel.x,emptyPixel.y);
+  await frames();
+  check(await page.evaluate(async()=>(await import('/src/universe/nebulaeData.js')).NEBULAE.length===2&&!(await import('/src/blackholes.js')).isBHPlacementMode()),'Canvas tap releases exactly one cloud and disarms');
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No horizontal overflow');
   const bounds=await page.locator('#bhPlacer').boundingBox();
   check(bounds.x>=0&&bounds.x+bounds.width<=viewport.width+1,'Create panel stays in viewport');

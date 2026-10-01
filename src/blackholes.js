@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { BH_MAX, BH_SIZES, C_LIGHT, MU_S, K, LY_SCENE, LY_KM, WARPS } from "./constants.js";
+import { BH_MAX, BH_SIZES, C_LIGHT, MU_S, K, LY_SCENE, LY_KM } from "./constants.js";
 import { tdeLuminosityW, fallbackRate, L_EDD_PER_MSUN, TDE_ETA } from "./tde.js";
 import { G, BH } from "./state.js";
 import { eph } from "./ephemeris.js";
@@ -9,7 +9,7 @@ import { scene, camera, cam, cvHost, lastPtr, renderer, renderQuality, viewportS
 import { noteNotable } from "./discoveryLog.js";
 import { hashInts, splitSeed } from "./universe/prng.js";
 import { registerPlacedPulsar, unregisterPlacedPulsar } from "./ambientAudio.js";
-import { gasStateAt, GAS_RADIUS_KM, GAS_MASSES, GAS_MODEL_VERSION } from "./universe/gasFormation.js";
+import { gasStateAt, gasWatchWarp, GAS_RADIUS_KM, GAS_MASSES, GAS_MODEL_VERSION } from "./universe/gasFormation.js";
 import { startTimeJump, maxFeasibleWarp } from "./timeCtl.js";
 import { onModeChange } from "./uiMode.js";
 import { addNebula, removeNebula } from "./render/nebulae.js";
@@ -342,7 +342,7 @@ function ensureBHPanel() {
                 e.preventDefault();
                 document.body.classList.remove("gas-compact-live");
                 BH_PLACE.kind = row.kind;
-                BH_PLACE.presetIdx = 0;
+                BH_PLACE.presetIdx = row.kind === 4 ? 1 : 0;
                 setBHPlacementMode(true);
                 updateBHPlacementUI(true);
             };
@@ -651,6 +651,9 @@ function commitBHPlacement(clientX, clientY) {
             formation: { v: GAS_MODEL_VERSION, bornAtSec: G.t, massSolar: preset.massSolar } });
         if (i < 0) return;
         G.focus = "neb:" + i; cam.tgt.copy(placeHit); cam.dist = GAS_RADIUS_KM * K * 4; cam.distTarget = null;
+        // An oblique view separates the released cloud from the old target
+        // behind it; otherwise the Sun/ship marker looks like an instant core.
+        cam.yaw += .32;
         document.body.classList.add("gas-compact-live");
         const toggle = document.getElementById("gasCreateToggle");
         if (toggle) { toggle.setAttribute("aria-expanded","false"); toggle.textContent = "Create controls"; }
@@ -982,8 +985,8 @@ function watchGasFormation() {
     if (s.born) { cancelBHPlacementMode(); cam.dist = s.radiusKm * K * 12; cam.distTarget = null; return; }
     const remaining = targetSec-G.t; if (!(remaining > 0)) return;
     const feasible = maxFeasibleWarp();
-    const warp = WARPS.filter(w => w <= remaining / 16 && w <= feasible).at(-1);
-    if (!warp || remaining / warp > 180) { H.toast("Formation watch needs free time warp. Remove black holes or use the time controls."); return; }
+    const warp = gasWatchWarp(remaining, feasible);
+    if (!warp) { H.toast("Formation watch needs free time warp. Remove black holes or use the time controls."); return; }
     const etaWallSec = remaining / warp;
     const plan = {ok:true,targetSec,holdWarp:warp,etaWallSec,legs:[{kind:"hold",warp,fromSimT:G.t,toSimT:targetSec,wallSec:etaWallSec}]};
     cancelBHPlacementMode();

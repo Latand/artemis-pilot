@@ -1,7 +1,7 @@
 // An illustrative, reversible single-core birth sequence, NOT hydrodynamics.
 // Uniform-sphere free-fall time sets the order of magnitude; phase timings,
 // colour and radius easing are art-directed. No pressure, cooling or feedback.
-import { MU_S, R_SUN, SEC_YEAR } from "../constants.js";
+import { MU_S, R_SUN, SEC_YEAR, WARPS } from "../constants.js";
 
 export const GAS_RADIUS_KM = 0.045 * 9.4607e12;
 export const GAS_MASSES = [0.3, 1, 3];
@@ -42,4 +42,12 @@ export function gasStateAt(record, simT, out = {}) {
         gasMassSolar: present ? f.massSolar * (1 - coreFraction) : 0,
         durationYears: durationSec / SEC_YEAR,
     });
+}
+
+// Keep every preset visible for at least eight seconds. The coarse time ladder
+// has a 1000→1,000,000 yr/s gap: choosing the next faster rung skips the birth.
+export function gasWatchWarp(remainingSec, feasibleWarp = Infinity) {
+    if (!(remainingSec > 0) || !Number.isFinite(remainingSec) || !(feasibleWarp > 0)) return 0;
+    const warp = WARPS.filter(w => w <= remainingSec / 8 && w <= feasibleWarp).at(-1) || 0;
+    return warp > 0 && remainingSec / warp <= 180 ? warp : 0;
 }

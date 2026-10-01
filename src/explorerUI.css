@@ -143,3 +143,6 @@ body.compact-explorer.mode-direct.gas-compact-live #gasLive { margin-top:3px;pad
 body.compact-explorer.mode-direct.gas-compact-live #gasModel { display:none; }
 body.mode-direct #hudTL, body.mode-direct #hudBot, body.mode-direct #navBall { display:none!important; }
 body.gas-view:not(.mode-pilot) #lblO, body.gas-view .starLbl, body.gas-view #hint { display:none!important; }
+/* The existing Settings disclosure also works on desktop while creating gas. */
+body.gas-view.mode-direct #tdMore { display:inline-flex;align-items:center;justify-content:center;min-height:36px;min-width:60px;padding:0 10px;border:1px solid var(--explore-line);border-radius:5px;background:#24282e;color:var(--explore-text);font:12px var(--font-ui); }
+body.gas-view.mode-direct #timeDock:has(#tdMore[aria-expanded="false"]) #tdOptions { display:none; }

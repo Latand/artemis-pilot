@@ -64,6 +64,7 @@ export function serializeNebulae() {
 export function restoreNebulaRecords(rows = []) {
     clearNebulaRecords();
     for (const row of Array.isArray(rows) ? rows : []) {
+        if (NEBULAE.length >= NEB_MAX) break;
         if (!Array.isArray(row) || row.length < 6) continue;
         addNebulaRecord({
             xKm: row[0], yKm: row[1], zKm: row[2],

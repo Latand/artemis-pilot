@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 globalThis.window ??= {};
 
-const { STARS, MU_S, LY_KM, R_SUN } = await import("../src/constants.js");
+const { STARS, MU_S, LY_KM, R_SUN, SEC_YEAR, WARPS } = await import("../src/constants.js");
 const model = await import("../src/universe/gasFormation.js");
 const neb = await import("../src/universe/nebulaeData.js");
 const active = await import("../src/universe/activeStars.js");
@@ -189,6 +189,51 @@ test("the absolute birth boundary stays exact at deep-time clock magnitudes", ()
         assert.equal(atBirth.coreMassSolar, 1);
         assert.equal(atBirth.gasMassSolar, 0);
     }
+});
+
+console.log("\nGas-cloud watch speed");
+test("every mass preset selects a real time rung with 8–180 seconds to watch", () => {
+    for (const massSolar of model.GAS_MASSES) {
+        const record = makeRecord({ formation: { v: model.GAS_MODEL_VERSION, bornAtSec: 0, massSolar } });
+        const remaining = model.formationDuration(record);
+        const warp = model.gasWatchWarp(remaining);
+        assert.ok(WARPS.includes(warp), "unsupported rung for " + massSolar + " solar masses");
+        const viewingSeconds = remaining / warp;
+        assert.ok(viewingSeconds >= 8 && viewingSeconds <= 180, "unwatchable duration: " + viewingSeconds);
+        assert.equal(warp, 1000 * SEC_YEAR, "preset must not jump across the million-year/s gap");
+    }
+});
+
+test("watch speed refuses ladder gaps instead of skipping the visible birth", () => {
+    const slow = 1000 * SEC_YEAR, fast = 1e6 * SEC_YEAR;
+    assert.equal(model.gasWatchWarp(8 * slow), slow);
+    assert.equal(model.gasWatchWarp(180 * slow), slow);
+    assert.equal(model.gasWatchWarp(180 * slow + 1), 0, "too slow at the lower rung");
+    assert.equal(model.gasWatchWarp(8 * fast - 1), 0, "next rung would leave fewer than eight seconds");
+    assert.equal(model.gasWatchWarp(8 * fast), fast);
+});
+
+test("infeasible black-hole or gravity-ghost speed caps return no watch speed", () => {
+    for (const massSolar of model.GAS_MASSES) {
+        const record = makeRecord({ formation: { v: model.GAS_MODEL_VERSION, bornAtSec: 0, massSolar } });
+        const remaining = model.formationDuration(record);
+        for (const feasibleWarp of [1, 60, 3600, SEC_YEAR, remaining / 181]) {
+            assert.equal(model.gasWatchWarp(remaining, feasibleWarp), 0);
+        }
+        assert.equal(model.gasWatchWarp(remaining, 1000 * SEC_YEAR), 1000 * SEC_YEAR);
+    }
+});
+
+test("invalid watch spans and invalid feasible caps are rejected", () => {
+    for (const span of [undefined, null, false, "100", NaN, Infinity, -Infinity, -1, 0]) {
+        assert.equal(model.gasWatchWarp(span), 0);
+    }
+    const span = model.formationDuration(makeRecord());
+    for (const feasibleWarp of [NaN, -Infinity, -1, 0, null, false]) {
+        assert.equal(model.gasWatchWarp(span, feasibleWarp), 0);
+    }
+    assert.equal(model.gasWatchWarp(.079), 0, "even the slowest rung would complete in under eight seconds");
+    assert.equal(model.gasWatchWarp(.08), .01);
 });
 
 console.log("\nGas-cloud records and persistence");
