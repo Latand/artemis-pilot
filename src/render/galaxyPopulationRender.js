@@ -34,6 +34,9 @@
 // position relative to that centre is computed on the CPU in float64, so
 // camera-relative positions stay exact at any distance.
 import * as THREE from "three";
+import { coarsenGalaxyWells, flowMassFromMagnitude } from '../flowScaleMath.js';
+import { MERGER } from '../universe/localGroupOrbit.js';
+import { TIDES } from '../universe/mergerTides.js';
 import { galaxySeed, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
 import { K, MPC_KM } from "../constants.js";
 import { galaxyDisplayGain, galaxyVolumeMeter } from "./galaxyVolume.js";
@@ -779,6 +782,51 @@ export function galaxyPopulationStatus() {
 }
 
 export function galaxyCatalog() { return state.catalog; }
+
+// Bounded sample for the qualitative gravity overlay. Reuse the displayed
+// light-cone positions, including the live Local Group merger offsets, so
+// flow sources follow the same galaxies rather than their catalog epoch.
+// Large chunks represent unresolved populations with at most 256 candidates.
+export function galaxyFlowSources(camera, scale, limit = 20, includeHalos = false) {
+    if (!state.ready) return [];
+    const candidates = [];
+    const lc = state.lcData, a = state.shared.uAObs.value;
+    let sampled = 0;
+    const chunks = state.chunks.filter(m => m.visible).sort((x, y) =>
+        x.material.uniforms.uCamRel.value.lengthSq() - y.material.uniforms.uCamRel.value.lengthSq());
+    for (const mesh of chunks) {
+        if (!mesh.visible) continue;
+        const g = mesh.geometry.attributes;
+        const n = g.aPhot.count, stride = mesh.userData.lg ? 1 : Math.max(1, Math.ceil(n / 256));
+        const cr = mesh.material.uniforms.uCamRel.value;
+        for (let i = 0; i < n; i += stride) {
+            if (!mesh.userData.lg && sampled++ >= 4096) break;
+            const rx = g.aUnit.getX(i) - cr.x, ry = g.aUnit.getY(i) - cr.y, rz = g.aUnit.getZ(i) - cr.z;
+            const chi = Math.hypot(rx, ry, rz);
+            const u = Math.min(LC_N - 1, chi / CHI_MAX_MPC * (LC_N - 1));
+            const j = Math.floor(u), f = u - j;
+            const factor = a * Math.exp(lc[j] * (1 - f) + lc[Math.min(j + 1, LC_N - 1)] * f);
+            const x = (rx * factor + g.aDelta.getX(i)) * MPC_SCENE;
+            const y = (rz * factor + g.aDelta.getZ(i)) * MPC_SCENE;
+            const z = -(ry * factor + g.aDelta.getY(i)) * MPC_SCENE;
+            const d = Math.hypot(x, y, z);
+            if (!Number.isFinite(d) || d > scale * 8) continue;
+            const type = g.aT.getX(i);
+            // MW is supplied separately using its measured NFW halo.
+            if (type > 99 && type < 199) continue;
+            const mv = g.aPhot.getX(i);
+            const m31 = type >= 199 && includeHalos;
+            const core = (m31 ? TIDES.aM31Kpc * .001 : Math.max(.001, g.aPhot.getZ(i) * .003)) * MPC_SCENE;
+            const mass = m31 ? MERGER.massM31Msun : flowMassFromMagnitude(mv);
+            candidates.push({ x: camera.position.x + x, y: camera.position.y + y,
+                z: camera.position.z + z, mass, core, score: mass / Math.max(core * core, d * d),
+                id: mesh.name + ':' + i });
+        }
+    }
+    const grouped = coarsenGalaxyWells(candidates, scale, camera.position);
+    grouped.sort((x, y) => y.score - x.score);
+    return grouped.slice(0, limit);
+}
 
 // Test hook: a standalone chunk mesh with its own shared uniforms (smokes).
 export function makeGalaxyChunkForTest(c) {

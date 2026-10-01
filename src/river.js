@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { largeScaleFlowBlend } from './flowScaleMath.js';
 import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, SOI_E, SOI_M, SUN_RADIUS } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
@@ -501,7 +502,7 @@ export function setRiverStyle(index) {
     uniformsShared.uStyle.value = n;
     return true;
 }
-setRiverStyle(1);
+setRiverStyle(3);
 
 export function initRiver() {
     if (location.search.includes("river=0")) return;
@@ -742,15 +743,10 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     river.frame++;
     shellAnchorLive = false;
     const riverFocusT0 = PERF.enabled ? performance.now() : 0;
-    // Fade the river out as the camera zooms past the local system into
-    // interstellar/cosmic scale. Out there every body's inflow collapses onto a
-    // sub-pixel point and the additive streaks pile into a blinding white core
-    // (the reported bug). Folding the fade into fEff also makes lines.visible go
-    // false below, which short-circuits the expensive 64-source GPU compute — so
-    // zoomed-out frames cost nothing. The river stays fully on through the whole
-    // solar-system survey and whenever the camera is near a star/system.
+    // Hand local detail over to the camera-normalized large-scale pulse layer.
+    // Keep planetary wells from piling into a bright subpixel core out there.
     const zoomFade = 1 - smooth01(LY_SCENE * 0.004, LY_SCENE * 0.02, cam.dist);
-    const fEff = fB * zoomFade * scaleFade(cam.dist);
+    const fEff = fB * zoomFade * (1 - largeScaleFlowBlend(cam.dist));
     lines.visible = fEff > .01 && river.style !== 2;
     dots.visible = fEff > .01 && river.style === 2;
     if (fEff <= .01) {
@@ -894,11 +890,11 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const deFade = G.darkEnergy ? smooth01(DARK_ENERGY.VISIBLE_START_KM * K, DARK_ENERGY.VISIBLE_FULL_KM * K, smoothR) : 0;
     uniformsShared.uDE.value = DARK_ENERGY.H_PHYS * deFade;
     uniformsShared.uPlaneBias.value = planeBias;
-    uniformsShared.uTimeRate.value = dtReal > 0 ? Math.max(1, dtSim / dtReal) : 1;
+    uniformsShared.uTimeRate.value = dtReal > 0 ? Math.max(1, Math.abs(dtSim) / dtReal) : 1;
     // Render-only pulse clock: accumulated REAL time (dtReal), never sim
     // state — determinism smokes see no new randomness or sim-time consumers.
-    const dtPulse = Math.max(0, Math.min(dtReal, 0.1));
-    uniformsShared.uPhase.value = (uniformsShared.uPhase.value + dtPulse * pulsePhaseRate(uniformsShared.uTimeRate.value)) % 64;
+    const dtPulse = Math.sign(dtSim) * Math.max(0, Math.min(dtReal, 0.1));
+    uniformsShared.uPhase.value = (uniformsShared.uPhase.value + dtPulse * pulsePhaseRate(uniformsShared.uTimeRate.value) + 64) % 64;
     uniformsShared.uTick.value = (uniformsShared.uTick.value + .618) % 64;
     if (PERF.enabled) markPerf("river.volume", performance.now() - riverVolumeT0, { radius: smoothR, respawn });
 

@@ -48,8 +48,18 @@ async function warmRendererStartup()`);
     await page.waitForFunction(() => window.__AP_READY, null, { timeout: 30000 });
     assert.equal(await page.locator('#intro').isVisible(), false, 'Returning users enter directly');
     await page.waitForFunction(() => window.__startupDraws > 0, null, { timeout: 30000 });
+    await page.evaluate(async () => {
+        const {G} = await import('/src/state.js');
+        const {cam} = await import('/src/scene.js');
+        const {PC_KM,K} = await import('/src/constants.js');
+        const {galacticCenterScene} = await import('/src/universe/starfield.js');
+        G.paused = true; G.focus = 'free'; G.gr = true;
+        cam.tgt.fromArray(galacticCenterScene()); cam.dist = 30000*PC_KM*K; cam.distTarget = null;
+    });
+    await page.waitForFunction(() => window.__largeFlow?.visible, null, { timeout: 30000 });
+    assert.equal(await page.evaluate(() => window.__largeFlow.vertices), 1280, 'Mobile flow uses 160 glyphs');
     assert.deepEqual(errors, []);
-    console.log('Mobile entry, travel menu, returning-user startup, and nonblocking GPU checks passed');
+    console.log('Mobile entry, travel menu, returning-user startup, bounded cosmic flow, and nonblocking GPU checks passed');
 } finally {
     await browser.close();
     await server.close();
