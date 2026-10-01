@@ -967,17 +967,19 @@ function updateGasLive() {
     const live = document.getElementById("gasLive");
     if (!live) return;
     const i = gasFocusIndex(); live.hidden = i < 0;
+    document.body.classList.toggle("gas-view", i >= 0);
     if (i < 0) return;
     const s = gasStateAt(NEBULAE[i], G.t);
     document.getElementById("gasStage").textContent = s.phase + " · " + Math.round(s.progress*100) + "% · illustrative";
     document.getElementById("gasProgress").value = s.progress;
     document.getElementById("gasBudget").textContent = s.gasMassSolar.toFixed(2) + " M☉ gas + " + s.coreMassSolar.toFixed(2) + " M☉ core";
-    document.getElementById("gasWatch").disabled = s.born;
+    document.getElementById("gasWatch").textContent = s.born ? "View newborn star" : "Watch star form";
     document.getElementById("gasRemove").textContent = s.born ? "Remove star" : "Remove cloud";
 }
 function watchGasFormation() {
     const i = gasFocusIndex(); if (i < 0) return;
     const n = NEBULAE[i], s = gasStateAt(n,G.t), targetSec = n.formation.bornAtSec+s.durationSec;
+    if (s.born) { cancelBHPlacementMode(); cam.dist = s.radiusKm * K * 12; cam.distTarget = null; return; }
     const remaining = targetSec-G.t; if (!(remaining > 0)) return;
     const feasible = maxFeasibleWarp();
     const warp = WARPS.filter(w => w <= remaining / 16 && w <= feasible).at(-1);

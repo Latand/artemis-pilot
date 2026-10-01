@@ -1,5 +1,5 @@
 import { K, MU_S, LY_KM } from "../constants.js";
-import { normalizeFormation, gasStateAt } from "./gasFormation.js";
+import { normalizeFormation, gasStateAt, formationDuration } from "./gasFormation.js";
 
 export const NEBULA_RADIUS_PRESETS_LY = [1, 4, 10];
 export const NEBULA_RADIUS_PRESETS_KM = NEBULA_RADIUS_PRESETS_LY.map(ly => ly * 9.4607e12);
@@ -41,6 +41,7 @@ export function addNebulaRecord(record) {
         seed: Number(record.seed) >>> 0,
         ...(normalizeFormation(record.formation) ? { formation: normalizeFormation(record.formation) } : {}),
     };
+    if (row.formation && (!(formationDuration(row) > 0) || !Number.isFinite(formationDuration(row)))) return -1;
     if (row.formation && NEBULAE.some(n => n.formation && formationId(n) === formationId(row))) return -1;
     NEBULAE.push(row);
     return NEBULAE.length - 1;

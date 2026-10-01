@@ -55,6 +55,8 @@ try {
   await phase(.55);await snap('collapse');
   await phase(.86);await snap('protostar');
   await phase(1.001);await snap('star');
+  await click('#gasWatch');await snap('star-close');
+  await page.evaluate(async()=>{const n=(await import('/src/universe/nebulaeData.js')).NEBULAE[0];__cam.dist=n.radiusKm*.001*4;});await frames();
   const born=await page.evaluate(async()=>{const d=await import('/src/universe/nebulaeData.js'),a=await import('/src/universe/activeStars.js');a.refreshActiveStars(__G.x,__G.y,__G.z,__G.focus,__G.t);return {stars:a.ACTIVE_STARS.filter(s=>s.formedStar).length,gas:d.NEBULAE.length,hasPoint:qaScene.scene.children.some(g=>g.children?.some(o=>o.isPoints)&&Math.abs(g.position.x-d.NEBULAE[0].xKm*.001)<1)};});
   check(born.stars===1&&born.gas===1,'Ignition creates exactly one active star from retained source');
   await page.evaluate(async()=>{const s=await import('/src/saves.js');window.assertSave=s.saveState();});

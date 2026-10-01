@@ -25,7 +25,7 @@ export function gasStateAt(record, simT, out = {}) {
     if (!f) return null;
     const durationSec = formationDuration(record);
     const ageSec = simT - f.bornAtSec;
-    const born = simT >= f.bornAtSec + durationSec;
+    const born = Number.isFinite(simT) && simT >= f.bornAtSec + durationSec;
     const progress = born ? 1 : clamp(ageSec / durationSec);
     const present = Number.isFinite(simT) && ageSec >= 0;
     const coreFraction = smooth((progress - .25) / .75);

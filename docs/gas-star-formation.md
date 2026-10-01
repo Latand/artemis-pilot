@@ -11,7 +11,8 @@ at arrival, and cancels on manual time controls. It does not run a private
 animation clock. Black holes/landed/dead states can limit or prevent the shortcut;
 the normal Time controls remain available. A newborn remains a navigable source
 under its original cloud entry, with an ordinary point/photosphere, stellar mass,
-radius, gravity and contact surface. It does not instantly acquire planets.
+radius, gravity and contact surface. **View newborn star** moves in for a close
+look. It does not instantly acquire planets.
 
 ## Model scope
 

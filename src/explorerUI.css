@@ -141,3 +141,5 @@ body.compact-explorer.mode-direct.gas-compact-live #bhPlaceHint,
 body.compact-explorer.mode-direct.gas-compact-live #bhActiveList { display:none!important; }
 body.compact-explorer.mode-direct.gas-compact-live #gasLive { margin-top:3px;padding-top:3px; }
 body.compact-explorer.mode-direct.gas-compact-live #gasModel { display:none; }
+body.mode-direct #hudTL, body.mode-direct #hudBot, body.mode-direct #navBall { display:none!important; }
+body.gas-view:not(.mode-pilot) #lblO, body.gas-view .starLbl, body.gas-view #hint { display:none!important; }
