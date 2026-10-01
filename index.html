@@ -132,7 +132,7 @@
         <button id="exploreCatalog" class="exploreTextButton" type="button">Search the star catalog ↗</button>
       </details>
       <button id="exploreGravity" type="button" aria-pressed="false">Gravity flow <span id="exploreGravityStatus">Natural view</span></button>
-      <p class="exploreNote">Gravity flow is a visual metaphor. Object motion follows the simulation.</p>
+      <p class="exploreNote" id="exploreGravityNote">Time pulses illustrate net attraction toward the masses around you. They are not object trajectories.</p>
     </aside>
     <div id="exploreCamera" aria-label="Free camera controls">
       <span>Drag to look · scroll to approach · WASD to move · Q/E up/down</span>
@@ -153,12 +153,12 @@
       </div>
 
       <div id="bhPlacer" class="panel panel--violet" aria-live="polite">
-        <div id="bhPanelHead" class="panel__head"><span>BLACK HOLE SELECTOR</span><span id="bhModePill">B ARM</span></div>
-        <canvas id="bhPreviewCanvas" width="220" height="124" aria-label="Selected black hole preview"></canvas>
+        <div id="bhPanelHead" class="panel__head"><span>CREATE OBJECT</span><span id="bhModePill">B ARM</span></div>
+        <canvas id="bhPreviewCanvas" width="220" height="124" aria-label="Selected object preview"></canvas>
         <div id="bhReadout">
-          <div><span>r<sub>s</sub></span><strong id="bhRsVal">—</strong></div>
+          <div><span id="bhRadiusLabel">SIZE</span><strong id="bhRsVal">—</strong></div>
           <div><span>MASS</span><strong id="bhMassVal">—</strong></div>
-          <div><span>PW GRAVITY @ 3r<sub>s</sub></span><strong id="bhGravityVal">—</strong></div>
+          <div><span id="bhModelLabel">GRAVITY</span><strong id="bhGravityVal">—</strong></div>
         </div>
         <div id="bhSizeRail" aria-label="Black hole size selector"></div>
         <div id="bhPlaceHint">B arms placement · click the orbital plane</div>

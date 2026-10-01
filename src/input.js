@@ -59,7 +59,7 @@ function focusNextBlackHole() {
     toast("Black-hole focus " + (next + 1) + "/" + BH.n);
 }
 function focusNextStar() {
-    const active = ACTIVE_STARS.filter(st => st.procedural || st.activeCatalog);
+    const active = ACTIVE_STARS.filter(st => st.procedural || st.activeCatalog || st.formedStar);
     const targets = STARS.map((star, i) => ({ focus: "star:" + i, star }))
         .concat(active.map(star => ({ focus: activeStarFocusValue(star), star })).filter(t => t.focus));
     if (!targets.length) return;

@@ -8,7 +8,7 @@ import { scene, renderer, camera, cam, renderQuality, registerNearTierOnly } fro
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
-import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW, shipFrameW, frameVelToScene, scaleFade, RIVER_VIS } from "./riverMath.js";
+import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW, shipFrameW, frameVelToScene, RIVER_VIS } from "./riverMath.js";
 import { eph } from "./ephemeris.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
@@ -29,7 +29,7 @@ import { eph } from "./ephemeris.js";
 // that tracks the camera and is subtracted on the CPU before upload. Because
 // `smoothCenter` itself moves every frame, the persistent particle-position
 // texture is re-based each frame by `uCenterShift` (this frame's center minus
-// last frame's, computed in float64) so stored positions keep meaning across
+// last computed texture's, computed in float64) so stored positions keep meaning across
 // frames instead of drifting. See WP22 deep-time fix.
 const SEGS = renderQuality.mobile ? 1 : 2;
 // Desktop's default particle count is traded down (176 -> 124, ~1/sqrt(2))
@@ -292,7 +292,7 @@ void main() {
 const LINE_VERT = /* glsl */`
 uniform sampler2D uPos;
 uniform float uVRef, uOpacity, uPhase, uStyle, uPixelRatio;
-uniform vec3 uCam;
+uniform vec3 uCam, uCenterShift;
 uniform int uSegs;
 attribute vec2 ref;
 attribute float aSeg;
@@ -300,7 +300,7 @@ varying vec3 vColor;
 varying float vAlong, vPhase;
 ${FLOW_GLSL}
 void main() {
-    vec3 p = texture2D(uPos, ref).xyz;
+    vec3 p = texture2D(uPos, ref).xyz - uCenterShift;
     vec3 v = flowField(p);
     float spd = max(length(v), 1e-12);
     vec3 vDir = v / spd;
@@ -631,6 +631,8 @@ export function riverDebugReadPositions(rows = 4) {
     return {
         finite, nonZero, distinct, sampled: w * h, hash,
         center: { x: smoothCenter.x, y: smoothCenter.y, z: smoothCenter.z }, radius: smoothR,
+        textureCenter: textureCenter.toArray(), drawShift: uniformsShared.uCenterShift.value.toArray(),
+        firstPosition: [firstX, firstY, firstZ], phase: uniformsShared.uPhase.value,
         // render placement: the lines mesh must carry the center back into
         // world space (review C1 — particles are center-relative; a mesh left
         // at origin renders the river displaced by -smoothCenter)
@@ -648,12 +650,10 @@ const shellRnd = mulberry32(20260702);
 let frameW = 0, lastFrameKind = -1, lastFrameIdx = -1;
 const frameVelScene = [0, 0, 0];
 const smoothCenter = new THREE.Vector3();
-// Absolute (scene-space, float64-as-JS-number) center from the previous
-// frame, used only to compute uCenterShift — never uploaded to the GPU
-// itself. Kept equal to smoothCenter on any frame that resets/snaps the
-// center so the shift is exactly zero instead of a stale, possibly huge
-// jump on the frame where the center relocates.
-const prevCenter = new THREE.Vector3();
+// Frame of the last computed position texture, not the last render frame.
+// Mobile may skip several compute passes; draws and the next compute must
+// subtract the WHOLE retained shift. Paused camera pans use the same rule.
+const textureCenter = new THREE.Vector3();
 let smoothR = 0;
 const bhRiverPos = new THREE.Vector3();
 const riverStarPickIndex = new Int32Array(RIVER_STAR_SOURCE_MAX);
@@ -839,15 +839,17 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const localMinR = localFocus > .05 ? Math.max(10, Math.min(72, earthClear * 5.5 + 9)) : 16;
     const targetR = Math.min(1.2e8, Math.max(localMinR, cd * (localFocus > .05 ? 4.2 : 2.8)));
     const c = cam.tgt;
-    let respawn = .006;
+    let respawn = dtSim === 0 ? 0 : .006;
+    let viewChanged = false;
     if (smoothR === 0) {
         smoothCenter.copy(c);
         smoothR = targetR;
         respawn = 1;
-        prevCenter.copy(smoothCenter); // first frame: no prior center to shift from
+        textureCenter.copy(smoothCenter); // first texture frame
     } else {
         const move = Math.hypot(c.x - smoothCenter.x, c.y - smoothCenter.y, c.z - smoothCenter.z);
         const zoomDelta = Math.abs(Math.log(Math.max(1e-9, targetR / smoothR)));
+        viewChanged = move > Math.max(1e-5, smoothR * 1e-6) || zoomDelta > 1e-6;
         const dtSmooth = Math.min(dtReal, 1 / 30);
         const easeC = Math.min(1, .08 + dtSmooth * 8);
         const easeR = Math.min(1, .05 + dtSmooth * 5);
@@ -857,11 +859,11 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         if (zoomDelta > 2.2 || move > targetR * 2.5) {
             smoothCenter.copy(c);
             smoothR = targetR;
-            respawn = .28;
-            prevCenter.copy(smoothCenter); // hard snap: treat as a fresh center, zero shift
+            respawn = 1; // a discontinuous view needs a fresh volume, not misplaced survivors
+            textureCenter.copy(smoothCenter);
         }
     }
-    respawn = Math.min(.18, respawn + localFocus * .075);
+    if (respawn < 1) respawn = dtSim === 0 && !viewChanged ? 0 : Math.min(.18, respawn + localFocus * .075);
     river.radius = smoothR;
     lastR = smoothR; lastCx = smoothCenter.x; lastCz = smoothCenter.z;
     // Particle positions live in the smoothCenter-relative frame (float32-safe
@@ -878,11 +880,10 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // drifted in deep time/space. uCenterShift re-bases the persistent
     // particle-position texture onto this frame's center (see COMPUTE_FRAG).
     uniformsShared.uCenterShift.value.set(
-        smoothCenter.x - prevCenter.x,
-        smoothCenter.y - prevCenter.y,
-        smoothCenter.z - prevCenter.z,
+        smoothCenter.x - textureCenter.x,
+        smoothCenter.y - textureCenter.y,
+        smoothCenter.z - textureCenter.z,
     );
-    prevCenter.copy(smoothCenter);
     uniformsShared.uOrigin.value.set(earthV.x - smoothCenter.x, earthV.y - smoothCenter.y, earthV.z - smoothCenter.z);
     uniformsShared.uRadius.value = smoothR;
     uniformsShared.uCam.value.set(camera.position.x - smoothCenter.x, camera.position.y - smoothCenter.y, camera.position.z - smoothCenter.z);
@@ -890,7 +891,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const deFade = G.darkEnergy ? smooth01(DARK_ENERGY.VISIBLE_START_KM * K, DARK_ENERGY.VISIBLE_FULL_KM * K, smoothR) : 0;
     uniformsShared.uDE.value = DARK_ENERGY.H_PHYS * deFade;
     uniformsShared.uPlaneBias.value = planeBias;
-    uniformsShared.uTimeRate.value = dtReal > 0 ? Math.max(1, Math.abs(dtSim) / dtReal) : 1;
+    if (dtSim !== 0) uniformsShared.uTimeRate.value = dtReal > 0 ? Math.max(1, Math.abs(dtSim) / dtReal) : 1;
     // Render-only pulse clock: accumulated REAL time (dtReal), never sim
     // state — determinism smokes see no new randomness or sim-time consumers.
     const dtPulse = Math.sign(dtSim) * Math.max(0, Math.min(dtReal, 0.1));
@@ -1057,19 +1058,22 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // River motion follows simulated time. At real time the field is almost
     // still at solar-system scale; higher warp advances it proportionally,
     // while the compute shader caps per-frame displacement inside the volume.
-    const dtVis = dtSim > 0 ? dtSim : 0;
+    const dtVis = Number.isFinite(dtSim) ? dtSim : 0;
     river.dtVis = dtVis;
     uniformsShared.uRespawn.value = respawn;
     const adaptiveComputeEvery = renderQuality.mobile ? (river.computeEveryAdaptive || 1) : 1;
     const baseComputeEvery = renderQuality.mobile && renderQuality.loadShed >= 2 ? 2 : 1;
     const computeEvery = Math.max(baseComputeEvery, adaptiveComputeEvery);
     river.computeEvery = computeEvery;
+    // Do not spend pending forward time after pause/reverse. This is display
+    // advection; respawning means it does not promise exact historical replay.
+    if (dtVis === 0 || Math.sign(dtVis) !== Math.sign(river.dtAccum)) river.dtAccum = 0;
     river.dtAccum += dtVis;
-    const shouldCompute = (dtVis > 0 || respawn > .001) &&
+    const shouldCompute = (dtVis !== 0 || respawn > .001) &&
         (computeEvery <= 1 || river.frame % computeEvery === 0 || respawn > .08);
     river.skippedCompute = !shouldCompute;
     if (shouldCompute) {
-        const computeDt = Math.max(dtVis, river.dtAccum);
+        const computeDt = river.dtAccum;
         uniformsShared.uDtSim.value = computeDt;
         river.dtVis = computeDt;
         river.dtAccum = 0;
@@ -1085,6 +1089,8 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         else if (!renderQuality.mobile) river.computeEveryAdaptive = 1;
         const sw = rtA; rtA = rtB; rtB = sw;
         uniformsShared.uPos.value = rtA.texture;
+        textureCenter.copy(smoothCenter);
+        uniformsShared.uCenterShift.value.set(0, 0, 0);
     } else uniformsShared.uDtSim.value = 0;
 }
 

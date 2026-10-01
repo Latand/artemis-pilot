@@ -24,11 +24,12 @@ export function coarsenGalaxyWells(wells, scale, origin) {
     const groups = new Map();
     for (const w of wells) {
         const key = [w.x-origin.x,w.y-origin.y,w.z-origin.z].map(v=>Math.floor(v/cell)).join(',');
-        const g = groups.get(key) || {x:0,y:0,z:0,mass:0,core:0,members:0};
+        const g = groups.get(key) || {x:0,y:0,z:0,mass:0,core:0,members:0,label:w.label,dominantMass:0};
         const mass = g.mass + w.mass;
         const weight = w.mass / mass;
         g.x += (w.x-g.x)*weight; g.y += (w.y-g.y)*weight; g.z += (w.z-g.z)*weight;
         g.mass = mass; g.core = Math.max(g.core,w.core); g.members++;
+        if (w.mass > g.dominantMass) { g.label = w.label; g.dominantMass = w.mass; }
         groups.set(key,g);
     }
     return [...groups.values()].map(g=>({...g,core:Math.max(g.core,g.members>1 ? cell*.35 : 0),

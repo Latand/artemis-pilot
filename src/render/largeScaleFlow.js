@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { K, MU_S, PC_KM, DARK_MATTER } from '../constants.js';
-import { G, WORLD } from '../state.js';
+import { G, WORLD, BH } from '../state.js';
 import { camera, cam, scene, renderQuality } from '../scene.js';
 import { tierDepthRange } from './tierDepth.js';
+import { eph } from '../ephemeris.js';
 import { GRAVITY_STARS } from '../universe/activeStars.js';
 import { galacticCenterScene } from '../universe/starfield.js';
 import { galaxyFlowSources } from './galaxyPopulationRender.js';
@@ -55,7 +56,7 @@ void main() {
     float cycle = fract(uPhase + hash(aSeed));
     vec3 p = uCenter + randomDir(aSeed) * pow(hash(aSeed+9.0), .3333333) * 1.7;
     // Half the glyphs sample the strongest wells, half the surrounding field.
-    int anchor = int(mod(aSeed, float(max(1,uCount))));
+    int anchor = int(mod(floor((aSeed-1.0)*.5), float(max(1,uCount))));
     for (int i = 0; i < ${MAX_SOURCES}; i++) {
         if (i == anchor && mod(aSeed, 2.0) < 1.0) {
             float reach = clamp(length(uSources[i].xyz-uCenter)*.35, .12, 1.4);
@@ -91,7 +92,7 @@ const fragmentShader = /* glsl */`
 varying vec3 vColor;
 void main() { gl_FragColor = vec4(vColor,1.0); }
 `;
-let mesh, cachedGalaxies = [], lastSample = -Infinity, lastScale = 0, lastDarkMatter;
+let mesh, cachedGalaxies = [], lastSample = -Infinity, lastScale = 0, lastDarkMatter, lastEpoch = NaN;
 const lastTarget = new THREE.Vector3(Infinity, Infinity, Infinity);
 export const largeFlowStatus = { visible: false, sources: 0, galaxies: 0, phase: 0, blend: 0, crossingSeconds: 0 };
 window.__largeFlow = largeFlowStatus;
@@ -120,7 +121,7 @@ function init() {
 export function updateLargeScaleFlow(dtSim, dtReal, opacity, sunPosition) {
     const blend = largeScaleFlowBlend(cam.dist);
     largeFlowStatus.blend = blend;
-    if (!mesh && blend > 0 && opacity > .01) init();
+    if (!mesh && blend > 0 && opacity > .01 && !location.search.includes("river=0")) init();
     if (!mesh) return;
     mesh.visible = blend * opacity > .01;
     largeFlowStatus.visible = mesh.visible;
@@ -129,26 +130,32 @@ export function updateLargeScaleFlow(dtSim, dtReal, opacity, sunPosition) {
     mesh.position.copy(camera.position); mesh.updateMatrixWorld();
     const now = performance.now();
     if (now-lastSample > 750 || Math.abs(Math.log(scale/Math.max(1,lastScale))) > .15 ||
-        lastTarget.distanceTo(cam.tgt) > scale*.1 || dtSim > 1e6*31557600 || lastDarkMatter !== G.darkMatter) {
-        cachedGalaxies = galaxyFlowSources(camera, scale, 18, G.darkMatter);
+        lastTarget.distanceTo(cam.tgt) > scale*.05 || Math.abs(G.t-lastEpoch) > 1e5*31557600 || lastDarkMatter !== G.darkMatter) {
+        // Distant catalog sampling is bounded/throttled; the moving Local Group
+        // is cheap enough to refresh every frame, including paused epoch jumps.
+        cachedGalaxies = galaxyFlowSources(camera, scale, 18, G.darkMatter, false, cam.tgt);
+        lastEpoch = G.t;
         lastDarkMatter = G.darkMatter;
         lastSample = now; lastScale = scale; lastTarget.copy(cam.tgt);
     }
     const wells = [];
-    const add = (x,y,z,mass,core=0,rs=0,virial=0) => {
-        if (Number.isFinite(x+y+z+mass) && mass > 0) wells.push({x,y,z,mass,core,rs,virial});
+    const add = (x,y,z,mass,core=0,rs=0,virial=0,label="Stars") => {
+        if (Number.isFinite(x+y+z+mass) && mass > 0) wells.push({x,y,z,mass,core,rs,virial,label});
     };
-    if (!WORLD.sunDestroyed) add(sunPosition.x,sunPosition.y,sunPosition.z,1);
-    for (const star of GRAVITY_STARS) add(star.x*K,(star.z||0)*K,-star.y*K,star.mu/MU_S,(star.R||0)*K);
+    if (!WORLD.sunDestroyed) add(sunPosition.x,sunPosition.y,sunPosition.z,1,0,0,0,"Sun");
+    for (const star of GRAVITY_STARS) add(star.x*K,(star.z||0)*K,-star.y*K,star.mu/MU_S,(star.R||0)*K,0,0,star.name || "Stars");
+    for (let i=0;i<BH.n;i++) add((eph.earthX+BH.x[i])*K,BH.z[i]*K,
+        -(eph.earthY+BH.y[i])*K,BH.mu[i]/MU_S,BH.rs[i]*K,0,0,"Placed compact objects");
     const gc = galacticCenterScene();
     const stellarCore = 2600*PC_KM*K;
-    add(...gc,6e10,stellarCore);
+    add(...gc,6e10,stellarCore,0,0,"Milky Way stars");
     if (G.darkMatter) add(...gc,DARK_MATTER.HALO_MASS_SOLAR,DARK_MATTER.SOFTENING_PC*PC_KM*K,
-        DARK_MATTER.SCALE_RADIUS_PC*PC_KM*K,DARK_MATTER.VIRIAL_RADIUS_PC*PC_KM*K);
-    for (const gal of cachedGalaxies) {
+        DARK_MATTER.SCALE_RADIUS_PC*PC_KM*K,DARK_MATTER.VIRIAL_RADIUS_PC*PC_KM*K,"Milky Way halo");
+    const localGalaxies = galaxyFlowSources(camera, scale, 18, G.darkMatter, true, cam.tgt);
+    for (const gal of [...localGalaxies,...cachedGalaxies]) {
         // M31 uses its existing merger-model total mass with dark matter on.
         // Other catalog galaxies contribute estimated stellar masses only.
-        add(gal.x,gal.y,gal.z,gal.mass,gal.core);
+        add(gal.x,gal.y,gal.z,gal.mass,gal.core,0,0,gal.label);
     }
     wells.sort((a,b) => b.mass/Math.max(b.core*b.core, (b.x-cam.tgt.x)**2+(b.y-cam.tgt.y)**2+(b.z-cam.tgt.z)**2,1) -
         a.mass/Math.max(a.core*a.core,(a.x-cam.tgt.x)**2+(a.y-cam.tgt.y)**2+(a.z-cam.tgt.z)**2,1));
@@ -177,8 +184,10 @@ export function updateLargeScaleFlow(dtSim, dtReal, opacity, sunPosition) {
     uniforms.uCount.value=wells.length; uniforms.uScale.value=scale; uniforms.uFar.value=camera.far;
     uniforms.uCenter.value.copy(cam.tgt).sub(camera.position).divideScalar(scale);
     uniforms.uOpacity.value=opacity*blend*.72;
-    uniforms.uLength.value=.065+.1*Math.min(1,rate/Math.max(1,crossing));
-    Object.assign(largeFlowStatus,{sources:wells.length,galaxies:cachedGalaxies.length,
+    if (dtSim !== 0) uniforms.uLength.value=.065+.1*Math.min(1,rate/Math.max(1,crossing));
+    Object.assign(largeFlowStatus,{sources:wells.length,galaxies:cachedGalaxies.length+localGalaxies.length,
+        dominantSources:[...new Set(wells.slice(0,4).map(w=>w.label))],
+        wells:wells.map(w=>({x:w.x,y:w.y,z:w.z,mass:w.mass,label:w.label})),
         haloSources:wells.filter(w=>w.rs>0).length,
         phase:uniforms.uPhase.value,crossingSeconds:crossing,vertices:mesh.geometry.attributes.position.count});
 }

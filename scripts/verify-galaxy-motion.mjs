@@ -22,9 +22,10 @@ const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',
             return code.replace('DRAFT_INSIDE_SCALE = 0.5','DRAFT_INSIDE_SCALE = 1.0');
         }
         if(['integration','step035','step045'].includes(mode)){
-            assert(code.includes('draft ? 0.055 : 0.03'),'Integration ablation seam changed');
+            // the probe's observer is inside the disk, where moving frames use DRAFT_STEP_K
+            assert(code.includes('DRAFT_STEP_K = 0.04'),'Integration ablation seam changed');
             const step=mode==='step035'? '0.035':mode==='step045'?'0.045':'0.03';
-            return code.replace('draft ? 0.055 : 0.03',`draft ? ${step} : 0.03`);
+            return code.replace('DRAFT_STEP_K = 0.04',`DRAFT_STEP_K = ${step}`);
         }
     }
 }]});

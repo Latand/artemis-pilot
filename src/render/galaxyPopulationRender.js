@@ -787,15 +787,23 @@ export function galaxyCatalog() { return state.catalog; }
 // light-cone positions, including the live Local Group merger offsets, so
 // flow sources follow the same galaxies rather than their catalog epoch.
 // Large chunks represent unresolved populations with at most 256 candidates.
-export function galaxyFlowSources(camera, scale, limit = 20, includeHalos = false) {
+export function galaxyFlowSources(camera, scale, limit = 20, includeHalos = false, localGroup = null, origin = camera.position) {
     if (!state.ready) return [];
     const candidates = [];
     const lc = state.lcData, a = state.shared.uAObs.value;
     let sampled = 0;
-    const chunks = state.chunks.filter(m => m.visible).sort((x, y) =>
-        x.material.uniforms.uCamRel.value.lengthSq() - y.material.uniforms.uCamRel.value.lengthSq());
+    // Rendering visibility must never select gravity sources: turning the
+    // camera cannot switch off an off-screen attractor. Select around the
+    // view's target instead; every chunk already has current uCamRel data.
+    const distance = mesh => {
+        const cr = mesh.material.uniforms.uCamRel.value;
+        return Math.hypot(-cr.x*a*MPC_SCENE + camera.position.x-origin.x,
+            -cr.z*a*MPC_SCENE + camera.position.y-origin.y,
+            cr.y*a*MPC_SCENE + camera.position.z-origin.z);
+    };
+    const chunks = state.chunks.filter(m => localGroup === null || m.userData.lg === localGroup)
+        .sort((x,y) => distance(x)-distance(y));
     for (const mesh of chunks) {
-        if (!mesh.visible) continue;
         const g = mesh.geometry.attributes;
         const n = g.aPhot.count, stride = mesh.userData.lg ? 1 : Math.max(1, Math.ceil(n / 256));
         const cr = mesh.material.uniforms.uCamRel.value;
@@ -810,7 +818,8 @@ export function galaxyFlowSources(camera, scale, limit = 20, includeHalos = fals
             const y = (rz * factor + g.aDelta.getZ(i)) * MPC_SCENE;
             const z = -(ry * factor + g.aDelta.getY(i)) * MPC_SCENE;
             const d = Math.hypot(x, y, z);
-            if (!Number.isFinite(d) || d > scale * 8) continue;
+            if (!Number.isFinite(d) || Math.hypot(camera.position.x+x-origin.x,
+                camera.position.y+y-origin.y,camera.position.z+z-origin.z) > scale * 8) continue;
             const type = g.aT.getX(i);
             // MW is supplied separately using its measured NFW halo.
             if (type > 99 && type < 199) continue;
@@ -820,10 +829,11 @@ export function galaxyFlowSources(camera, scale, limit = 20, includeHalos = fals
             const mass = m31 ? MERGER.massM31Msun : flowMassFromMagnitude(mv);
             candidates.push({ x: camera.position.x + x, y: camera.position.y + y,
                 z: camera.position.z + z, mass, core, score: mass / Math.max(core * core, d * d),
-                id: mesh.name + ':' + i });
+                id: String(mesh.userData.source.gid?.[i] ?? i),
+                label: type >= 199 ? 'Andromeda' : 'Catalog galaxies' });
         }
     }
-    const grouped = coarsenGalaxyWells(candidates, scale, camera.position);
+    const grouped = coarsenGalaxyWells(candidates, scale, origin);
     grouped.sort((x, y) => y.score - x.score);
     return grouped.slice(0, limit);
 }

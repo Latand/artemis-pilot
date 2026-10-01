@@ -1,3 +1,6 @@
+import { largeFlowStatus } from './render/largeScaleFlow.js';
+import { NEBULAE } from "./universe/nebulaeData.js";
+import { gasStateAt } from "./universe/gasFormation.js";
 import { initCompactExplorer } from "./compactExplorer.js";
 import * as THREE from "three";
 import { G, keys, WORLD, BH } from "./state.js";
@@ -88,6 +91,11 @@ export function moveExplorerCamera(dt) {
 // epistemic tier those numbers belong to. A body that simply has no record for
 // a quantity carries no field for it, and bodyFacts then omits that row.
 function selectedBody() {
+    const ni = /^neb:(\d+)$/.exec(String(G.focus));
+    if (ni && NEBULAE[+ni[1]]?.formation) {
+        const n = NEBULAE[+ni[1]], s = gasStateAt(n,G.t);
+        return {name:s.phase+" "+(+ni[1]+1),kind:s.gasMassSolar.toFixed(2)+" M☉ gas · "+s.coreMassSolar.toFixed(2)+" M☉ sink · numerical SPH",basis:"modeled"};
+    }
     if(G.focus==='sun'&&cam.dist>=LY_SCENE*20000)return {name:cam.dist>LY_SCENE*800000?'Local Group':'Milky Way',kind:'Galaxy-scale view',basis:'modeled'};
     const bi=/^bh:(\d+)$/.exec(String(G.focus));
     if(bi&&+bi[1]<BH.n)return {name:(BH.kind[+bi[1]]===1?'Quasar ':BH.kind[+bi[1]]===2?'Pulsar ':'Black hole ')+(+bi[1]+1),kind:'Modeled compact object',rs:BH.rs[+bi[1]],bhMass:bhMassLabel(BH.rs[+bi[1]]),basis:'modeled'};
@@ -135,7 +143,11 @@ export function updateExplorerUI() {
     renderFacts(bodyFactRows(body).concat({label:'Viewing distance',value:fmtDist(cam.dist/K)}));
     text('exploreBasis',basisDescription(body));
     text('exploreFollow',G.focus==='free'?'Free camera':'Following object');
-    text('exploreGravityStatus',G.gr?'Gravity flow visible':'Natural view');
+    text('exploreGravityStatus',G.gr?'Time pulses visible':'Natural view');
+    const pullers = largeFlowStatus.visible ? largeFlowStatus.dominantSources?.join(', ') : '';
+    text('exploreGravityNote', pullers
+        ? `Net attraction: ${pullers}. Direction is qualitative; pulses are not orbital paths or measured clock rates.`
+        : 'Time pulses illustrate net attraction toward nearby masses. They are not object trajectories.');
     if($('exploreGravity').getAttribute('aria-pressed')!==String(G.gr)) $('exploreGravity').setAttribute('aria-pressed',String(G.gr));
     $('exploreRefocus').hidden=G.focus!=='free';
 }

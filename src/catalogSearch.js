@@ -1,6 +1,6 @@
 import { addRuntimeStar, CATALOG_PROMOTION_MAX, INITIAL_STAR_COUNT, LY_KM, R_SUN, STARS } from "./constants.js";
 import {
-    ACTIVE_STARS, ACTIVE_STAR_CONFIG, activeStarFocusValue, activeStarStats, activeStarsTime, refreshActiveStars,
+    ACTIVE_STARS, ACTIVE_STAR_CONFIG, activeStarFocusValue, activeStarStats, activeStarsTime, activeStarsExactTime, refreshActiveStars,
 } from "./universe/activeStars.js";
 import { loadHygCatalogData, loadHygCatalogMeta } from "./universe/catalogData.js";
 import {
@@ -207,6 +207,7 @@ function describeActiveStar(star, dKm, source, focus) {
 }
 
 function activeSource(star) {
+    if (star.formedStar) return { label: "PROTOSTELLAR SINK", key: "formed" };
     if (star.activeCatalog) return { label: "HYG V4.1", key: "hyg" };
     if (star.procedural) return { label: "MILKY WAY MODEL", key: "procedural" };
     return { label: "CURATED", key: "known" };
@@ -219,7 +220,7 @@ export function activeNeighborhoodRows(limit = 10) {
     const wz = Number.isFinite(origin.wz) ? origin.wz : 0;
     const focus = origin.focus || "ship";
     // the neighbourhood as it is now (the time of the frame's refresh), not at the epoch
-    refreshActiveStars(wx, wy, wz, focus, activeStarsTime());
+    refreshActiveStars(wx, wy, wz, focus, activeStarsExactTime());
     return ACTIVE_STARS
         .filter(star => (star.procedural || star.activeCatalog) && activeStarFocusValue(star))
         .map(star => {

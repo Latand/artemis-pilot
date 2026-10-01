@@ -41,3 +41,38 @@ per rendered frame, ordinary temporal undersampling can still occur.
 
 Follow-ups: #18 (transient arms and phase mixing), #19 (dark matter maps and other
 halo models), #20 (distinct resolved galaxies and encounter/merger evolution).
+
+## Continuity review after the galaxy / surface / gas updates
+
+This branch includes the current galaxy dynamics, close-up surface and numerical
+SPH work from main. The follow-up fixes the display contract rather than adding
+another simulation model:
+
+- Camera culling no longer removes gravity sources. A galaxy behind the camera
+  still contributes to the illustrated net attraction. Selection is bounded and
+  centred on the view target, independently of which galaxy chunks render.
+- Moving Local Group wells are sampled every frame. The distant catalog remains
+  throttled, with invalidation in both time directions and after epoch jumps.
+  Player-placed compact objects now survive the local-to-large-scale handover.
+- A skipped mobile compute pass retains the position texture's original frame.
+  Both the line draw and the next compute subtract the whole accumulated camera
+  shift. A hard camera jump reseeds the volume rather than moving old particles
+  into the new region.
+- A settled paused view stops respawning particles and preserves pulse length.
+  Reverse time changes the sign of particle advection as well as pulse phase.
+  Display particles can respawn and are not a reversible physical trajectory
+  record; the underlying simulation's deterministic history is unchanged.
+- Every well receives seeded glyphs, including odd-indexed wells. Previously the
+  even-glyph condition and modulo index could exclude half the wells.
+- The Explore control identifies the dominant displayed mass sources and says
+  explicitly that these are qualitative attraction cues, not orbital paths or
+  measured clock rates. Large-scale sampling still omits most individual stars
+  and some catalog mass; it is not a force solver for galaxy dynamics.
+
+`node scripts/verify-gravity-continuity.mjs` captures the real application at six
+scales on desktop and touch/mobile, including the volumetric Milky Way and galaxy
+population. It records exact revision, budgets, pause/reverse behaviour, retained
+texture origins, camera-culling invariance and a paused Andromeda epoch jump.
+The test omits tier-1 streaming, HYG background and the procedural resolved star
+field to keep software-GPU evidence bounded. This is visual/functional QA, not a
+physical iPhone frame-rate claim.

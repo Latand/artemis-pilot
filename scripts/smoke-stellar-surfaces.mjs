@@ -1,0 +1,90 @@
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { STARS } from '../src/constants.js';
+import { CURATED_PHOTOMETRY } from '../src/render/curatedPhotometry.js';
+import { teffToRGB } from '../src/render/viewBrightness.js';
+import { stellarSurfaceProfile, stellarSurfaceSeed, stellarSurfaceIdentity, stellarDetailWeight, stellarSurfaceTemperature } from '../src/render/stellarSurfaceProfile.js';
+import { updatePhotosphereAppearance, linearStarColor } from '../src/render/stellarAppearance.js';
+import { photosphereMaterial } from '../src/render/planetAppearance.js';
+import { applyTerrellToMaterial } from '../src/relView.js';
+import { stabilizeBodyMaterial } from '../src/render/relativeBodyFrame.js';
+
+const physicalBefore = JSON.stringify(STARS);
+const profiles = STARS.filter(s => !s.bh).map(star => stellarSurfaceProfile({ ...star, tempK: stellarSurfaceTemperature(star, CURATED_PHOTOMETRY[star.name]) }));
+assert.equal(JSON.stringify(STARS), physicalBefore, 'appearance never mutates physical/catalog records');
+assert.equal(profiles.length, 76, 'all initially named/labeled non-hole destinations covered');
+assert.equal(new Set(profiles.map(p => p.seed)).size, profiles.length, 'star identities have unique stable seeds');
+for (const profile of profiles) {
+    const star = STARS.find(s => s.name === profile.identity);
+    assert.deepEqual(stellarSurfaceProfile({ ...star, tempK: stellarSurfaceTemperature(star, CURATED_PHOTOMETRY[star.name]) }), profile);
+    for (const key of ['granuleScale', 'granuleContrast', 'mesoScale', 'mesoContrast', 'spotRadius', 'spotStrength', 'opticalGain', 'limbDarkening']) {
+        assert.ok(Number.isFinite(profile[key]) && profile[key] >= 0, `${profile.identity}: finite ${key}`);
+    }
+    for (const point of profile.spots) assert.ok(Math.abs(Math.hypot(...point) - 1) < 1e-12, 'seeded spot centers stay on unit surface');
+}
+assert.equal(stellarSurfaceIdentity({ id: 'proc:4', name: 'random label' }), 'proc:4');
+assert.equal(stellarSurfaceIdentity({ hygIndex: 5, name: 'renamed' }), 'hyg:5');
+assert.equal(stellarSurfaceSeed('test'), stellarSurfaceSeed('test'));
+assert.equal(stellarSurfaceTemperature({name:'TEEGARDEN'}),3034);
+assert.equal(stellarSurfaceTemperature({name:'LUHMAN 16'}),1300);
+assert.equal(stellarSurfaceTemperature({name:'WISE 0855-0714'}),250);
+assert.equal(stellarSurfaceTemperature({name:'TEEGARDEN',tempK:3000}),3000, 'authoritative supplied temperature beats illustrative fallback');
+assert.equal(stellarSurfaceTemperature({name:'UNKNOWN'}),null, 'unknown star is not given invented measured Teff');
+const sun = stellarSurfaceProfile({ name: 'SUN', tempK: 5772, radiusSolar: 1 });
+const cool = stellarSurfaceProfile({ name: 'PROXIMA', tempK: 3383, radiusSolar: .1542 });
+const hot = stellarSurfaceProfile({ name: 'SIRIUS', tempK: 10014, radiusSolar: 1.71 });
+const giant = stellarSurfaceProfile({ name: 'BETELGEUSE', tempK: 3794, radiusSolar: 764 });
+const wd = stellarSurfaceProfile({ name: 'VAN MAANEN', tempK: 6154, radiusSolar: .011 });
+const ns = stellarSurfaceProfile({ name: 'CRAB', pulsar: true, tempK: 1e6, radiusSolar: 12 / 696340 });
+assert.ok(giant.granuleScale < sun.granuleScale / 30, 'cool supergiants show much larger cells');
+assert.ok(hot.granuleContrast < sun.granuleContrast / 10 && hot.spotStrength === 0, 'hot radiative stars avoid solar spots/lava');
+assert.ok(cool.spotRadius > sun.spotRadius, 'cool active dwarf illustration differs from solar type');
+assert.ok(wd.spotStrength === 0 && ns.spotStrength === 0 && ns.granuleContrast === 0, 'compact objects never receive solar spot maps');
+assert.ok(stellarSurfaceProfile({ tempK: 250 }).opticalGain < 1e-30, 'cold substellar object is optically dark despite 1000 K LUT floor');
+assert.equal(stellarDetailWeight(0), 1);
+assert.equal(stellarDetailWeight(2), 0);
+for (let f = 0; f < 2; f += .01) assert.ok(stellarDetailWeight(f) >= stellarDetailWeight(f + .01), 'filtered detail fades monotonically');
+const colors = [3000, 5772, 10000, 25000].map(t => linearStarColor(teffToRGB(t)));
+for (let i = 1; i < colors.length; i++) assert.ok(colors[i].b / colors[i].r > colors[i - 1].b / colors[i - 1].r, 'temperature ordering preserved in linear RGB');
+const mat = applyTerrellToMaterial(photosphereMaterial(colors[1], null, { name: 'SUN', tempK: 5772, radiusSolar: 1 }));
+const initialProfile = mat.userData.photosphere.profile;
+updatePhotosphereAppearance(mat, { name: 'SUN', tempK: 5772, radiusSolar: 1 });
+assert.equal(initialProfile, mat.userData.photosphere.profile, 'unchanged frames reuse profile and uniforms');
+updatePhotosphereAppearance(mat, { name: 'SUN', tempK: 3500, radiusSolar: 150 });
+assert.equal(mat.userData.photosphere.profile.seed, initialProfile.seed, 'evolution retains star identity');
+assert.ok(mat.userData.photosphere.uniforms.uGranulation.value.x < initialProfile.granuleScale, 'live solar evolution changes atmosphere class');
+updatePhotosphereAppearance(mat, { name: 'SUN', tempK: 100000, radiusSolar: .01, kind: 'WD' });
+assert.equal(mat.userData.photosphere.uniforms.uSpots.value.y, 0, 'white-dwarf evolution removes spots');
+assert.equal(mat.customProgramCacheKey(), 'photosphere-visible-v2');
+const shader = { uniforms: {}, vertexShader: THREE.ShaderLib.basic.vertexShader, fragmentShader: THREE.ShaderLib.basic.fragmentShader };
+mat.onBeforeCompile(shader);
+assert.ok(shader.vertexShader.includes('relApplyView'), 'relativistic vertex patch composes');
+assert.ok(shader.fragmentShader.includes('dFdx') && shader.fragmentShader.includes('uSurfaceOffset'), 'seeded derivative-filtered shader installed');
+assert.equal(shader.uniforms.uSurfaceGain, mat.userData.photosphere.uniforms.uSurfaceGain, 'live uniforms update compiled material');
+// A 12 km pulsar at a large catalog coordinate must still be centered. The
+// exact orbit offset is smaller than the world-coordinate ULP in this fixture.
+const camera = new THREE.PerspectiveCamera(48, 1, .001, 100);
+const target = new THREE.Vector3(1e16, 1e16, 1e16);
+const offset = new THREE.Vector3(0, 0, .032);
+camera.position.copy(target).add(offset); camera.updateMatrixWorld();
+camera.userData.preciseOrbit = { target, offset, worldPosition: camera.position.clone() };
+const globe = new THREE.Mesh(new THREE.SphereGeometry(.012, 16, 12), mat);
+globe.position.copy(target); globe.updateMatrixWorld();
+globe.modelViewMatrix.multiplyMatrices(camera.matrixWorldInverse, globe.matrixWorld);
+assert.equal(globe.modelViewMatrix.elements[14], 0, 'fixture loses sub-ULP naive translation');
+const rotationBefore = globe.modelViewMatrix.elements.slice(0, 12);
+mat.onBeforeRender(null, null, camera, globe.geometry, globe, null);
+assert.ok(Math.abs(globe.modelViewMatrix.elements[14] + .032) < 1e-15, 'precise compact-star center is restored');
+assert.deepEqual(globe.modelViewMatrix.elements.slice(0, 12), rotationBefore, 'precision correction preserves rotation and scale');
+let previousCallbackCount = 0;
+const callbackMaterial = new THREE.MeshBasicMaterial();
+callbackMaterial.onBeforeRender = () => previousCallbackCount++;
+stabilizeBodyMaterial(callbackMaterial);
+camera.position.x += 10; // stale orbit metadata must not override another camera move
+const translationBefore = globe.modelViewMatrix.elements.slice(12);
+callbackMaterial.onBeforeRender(null, null, camera, globe.geometry, globe, null);
+assert.equal(previousCallbackCount, 1, 'precision wrapper preserves earlier callback');
+assert.deepEqual(globe.modelViewMatrix.elements.slice(12), translationBefore, 'stale exact-orbit state is ignored');
+callbackMaterial.dispose(); globe.geometry.dispose();
+mat.dispose();
+console.log(`PASS: ${profiles.length} named/catalog photospheres; deterministic identity, spectral/compact classes, optical darkness, LOD, color ordering, live evolution, Terrell composition, physical-state preservation, distant compact-star precision`);

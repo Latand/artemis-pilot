@@ -100,7 +100,7 @@ export function saveState() {
         // hole tuples gained z, vz (3-D holes) as trailing fields: a v11 loader
         // that predates them still reads the first seven
         bh: Array.from({ length: BH.n }, (_, i) => [BH.x[i], BH.y[i], BH.vx[i], BH.vy[i], BH.rs[i], BH.kind[i], BH.period[i], BH.z[i], BH.vz[i]]),
-        neb: serializeNebulae(),
+        neb: serializeNebulae(G.t),
         // gravity-front bookkeeping: per-hole mass-gain events (a trailing
         // sixth field is a tidal fallback profile's t_fb), plus the
         // phantom/ghost sources (Infinity survives JSON as null)

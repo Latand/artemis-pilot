@@ -1,0 +1,35 @@
+name: Gas cloud star formation
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/*gas-*'
+      - '.github/workflows/gas-formation.yml'
+permissions:
+  contents: read
+concurrency:
+  group: gas-formation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  formation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - run: node scripts/smoke-gas-sph.mjs && node scripts/smoke-gas-formation.mjs && npm test && npm run smoke:exotic && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Desktop and touch interaction, lifecycle, persistence and WebGL screenshots
+        run: node scripts/verify-gas-formation.mjs evidence/gas-formation
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gas-formation-evidence
+          path: evidence/gas-formation/
+          retention-days: 14

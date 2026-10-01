@@ -17,6 +17,8 @@ import { R_SUN, AU_KM, G_SI, PL } from "../constants.js";
 import { eph } from "../ephemeris.js";
 import { fmtDist } from "../format.js";
 import { EPISTEMIC_TIERS } from "./epistemic.js";
+import { BODY_APPEARANCES } from "../render/bodyAppearanceProfiles.js";
+import { namedHoleAppearance } from "../render/holeAppearance.js";
 
 const finite = v => Number.isFinite(v) && v !== 0;
 
@@ -114,7 +116,19 @@ const hasSimulatedOrbit = body => body?.focusKey === "earth" ||
 // plus a live simulation seeded from published mean elements.
 const SIMULATED_ORBIT_BASIS = "Radius, mass and surface gravity are measured. Sun distance and orbital speed come from the live n-body simulation, started from JPL's J2000 mean orbital elements for today's date (within about 0.5% of the reference near the present); they evolve with the simulation.";
 
+export function appearanceDescription(body) {
+    if (!body) return "";
+    if (body.star?.bh || (body.rs && !/^Pulsar/i.test(body.name || ''))) {
+        const source = body.star?.bh ? namedHoleAppearance(body.star).label + '. ' : '';
+        return source + 'Close view: static Schwarzschild shadow; disk, light transfer and jets are illustrative. Camera limit: 1.06 horizon radii. No Kerr or full GR ray tracing.';
+    }
+    if (body.star || body.sun) return 'Surface detail is a stable procedural illustration, not an observed starspot map. Temperature sets visible-light color; cold brown dwarfs can be optically dark.';
+    const appearance = BODY_APPEARANCES[String(body.name || '').toUpperCase()];
+    if (appearance) return (appearance.provenance.startsWith('Solar System Scope') ? 'Observed-derived Solar System Scope mosaic when available; otherwise a procedural fallback' : appearance.provenance) + '. Fine relief is synthetic, not measured topography.';
+    if (body.R) return 'Unresolved surface: deterministic illustrative terrain; not an observed map.';
+    return '';
+}
 export function basisDescription(body) {
-    if (hasSimulatedOrbit(body)) return SIMULATED_ORBIT_BASIS;
-    return EPISTEMIC_TIERS[body?.basis]?.description || "";
+    const basis = hasSimulatedOrbit(body) ? SIMULATED_ORBIT_BASIS : EPISTEMIC_TIERS[body?.basis]?.description || "";
+    return [basis,appearanceDescription(body)].filter(Boolean).join(' ');
 }

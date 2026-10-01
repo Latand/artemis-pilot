@@ -7,7 +7,8 @@ export function strongestActiveStarWell(stars, wx, wy, wz, baseAcc = 0, margin =
         const rx = wx - star.x, ry = wy - star.y, rz = wz - (star.z || 0);
         const d2 = rx * rx + ry * ry + rz * rz;
         if (d2 <= 1e-18 || !(star.mu > 0)) continue;
-        const acc = star.mu / d2;
+        const soft2 = (star.softeningKm || 0) ** 2;
+        const acc = soft2 > 0 ? star.mu * Math.sqrt(d2) / Math.pow(d2 + soft2, 1.5) : star.mu / d2;
         if (acc > bestAcc) {
             second = best;
             secondAcc = bestAcc;
@@ -28,7 +29,7 @@ export function strongestActiveStarWell(stars, wx, wy, wz, baseAcc = 0, margin =
         secondAcc,
         acc: bestAcc,
         d: Math.hypot(bestRx, bestRy, bestRz),
-        dominant: bestAcc > Math.max(baseAcc, secondAcc) * Math.max(1, margin),
+        dominant: !(best.gasSink && Math.hypot(bestRx,bestRy,bestRz) < 10 * best.softeningKm) && bestAcc > Math.max(baseAcc, secondAcc) * Math.max(1, margin),
         rx: bestRx,
         ry: bestRy,
         rz: bestRz,
