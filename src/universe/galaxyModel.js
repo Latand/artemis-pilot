@@ -466,6 +466,10 @@ uniform float uClumpDust, uClumpYoung;
 // Material detail exposure filter (galaxyDynamics.materialDetailLod): 1 at
 // rest, fading to the unit mean when a frame spans much of an epoch.
 uniform float uMatLod;
+// Weights over which a handed-over epoch's detail fades to its unit mean
+// and stops being evaluated (desktop 0.2-0.5; mobile 0.45-0.55, so only a
+// short stretch around the middle of a hand-over integrates two cascades).
+uniform vec2 uFineBand;
 // Fine-detail availability. The volume renderer keeps this on in motion;
 // projected pixel/step footprints below select the resolved frequencies.
 uniform float uFine;
@@ -703,21 +707,25 @@ vec4 gmSample(vec3 p, vec3 dir, float footPc, float wT, float wL, out float hii,
         // lanes 2-5x the local mean, the interarm a fraction of it)
         float amp = uMatLod * (0.4 + 0.6 * gmSmooth(0.4, 2.5, mp.z));
         // the epochs alive (uEpN): one copy of the detail code, run-time
-        // loop. A fading epoch's finest levels (dust octaves below ~15 pc,
-        // clusters, the segment quadrature) follow its weight (each level
-        // keeps unit mean at any amplitude), so only the middle of a
-        // hand-over evaluates two full cascades.
+        // loop. A fading epoch's detail tends to its unit mean as its weight
+        // drops through uFineBand (dK; its finest levels -- dust octaves
+        // below ~15 pc, clusters, the segment quadrature -- fade with dK
+        // too) and is not evaluated below it, so only the middle of a
+        // hand-over integrates two cascades. Every level keeps unit mean.
         vec2 yc = vec2(0.0);
         dustC = 0.0;
         for (int k = 0; k < uEpN; k++) {
             float w = k == 0 ? uEpW.x : uEpW.y;
-            float fineK = gmSmooth(0.2, 0.5, w);
+            float fineK = gmSmooth(uFineBand.x, uFineBand.y, w);
+            if (fineK <= 0.0) { yc += w; dustC += w; continue; }
             float a = k == 0 ? uEpA.x + om * uEpA.y : uEpA.z + om * uEpA.w;
             float ca = cos(a), sa = sin(a);
             mat2 back = mat2(ca, -sa, sa, ca);   // turns by -a
             vec3 q = vec3(back * p.xy, p.z), dq = vec3(back * dir.xy, dir.z);
-            yc += w * gdYoungClusters(q, dq, wT, wL, k == 0 ? uEpCell.xy : uEpCell.zw, fineK);
-            dustC += w * gdDustSegment(q, dq, wT, wL, amp, k == 0 ? uEpNoise0 : uEpNoise1, fineK);
+            vec2 y = gdYoungClusters(q, dq, wT, wL, k == 0 ? uEpCell.xy : uEpCell.zw, fineK);
+            float d = gdDustSegment(q, dq, wT, wL, amp, k == 0 ? uEpNoise0 : uEpNoise1, fineK);
+            yc += w * (fineK >= 1.0 ? y : mix(vec2(1.0), y, fineK));
+            dustC += w * (fineK >= 1.0 ? d : mix(1.0, d, fineK));
         }
         youngC = yc.x; hiiC = yc.y;
     }
@@ -777,6 +785,7 @@ export function galaxyModelUniformValues() {
         uMapReady: 0,
         uMapTexelPc: 2 * MAP_EXTENT_PC / 1024,
         uMatLod: 1,
+        uFineBand: [0.2, 0.5],
         ...dynamicsUniformValues(0),
     };
 }

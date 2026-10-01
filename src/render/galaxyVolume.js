@@ -222,6 +222,9 @@ const state = {
 // key tolerates the same sub-1e-10 rad drift a pattern angle did.
 const DYN_KEYS = ["uGenA", "uGenW", "uEpA", "uEpW", "uEpCell", "uEpNoise0", "uEpNoise1"];
 const TAU_KEY_RAD_PER_MYR = 0.05;
+// Epoch weights over which a fading epoch keeps its finest detail levels
+// (GALAXY_MODEL_GLSL uFineBand): the mobile band bounds a hand-over's cost.
+const FINE_BAND_DESKTOP = [0.2, 0.5], FINE_BAND_MOBILE = [0.45, 0.55];
 const _dyn = {};
 function dynamicsValues(u, out = []) {
     out.length = 0;
@@ -229,7 +232,7 @@ function dynamicsValues(u, out = []) {
         const v = u[k].value, tau = k === "uGenA" || k === "uEpA";
         for (let i = 0; i < v.length; i++) out.push(tau && i % 2 ? v[i] * TAU_KEY_RAD_PER_MYR : v[i]);
     }
-    out.push(u.uMatLod.value, u.uGenN.value, u.uEpN.value);
+    out.push(u.uMatLod.value, u.uGenN.value, u.uEpN.value, u.uFineBand.value[0]);
     return out;
 }
 
@@ -490,6 +493,8 @@ export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacit
     }
     u.uGenN.value = _dyn.uGenN; u.uEpN.value = _dyn.uEpN;
     u.uMatLod.value = materialDetailLod(Math.abs(frameSimSec) / MYR_S);
+    const band = renderQuality.mobile ? FINE_BAND_MOBILE : FINE_BAND_DESKTOP;
+    if (u.uFineBand.value[0] !== band[0]) { u.uFineBand.value[0] = band[0]; u.uFineBand.value[1] = band[1]; state.dirty = true; }
     u.uSfr.value = era ? era.blueFrac : 1;
     const kr = u.uKeepR.value;
     if (disrupt && disrupt.length === kr.length) {
