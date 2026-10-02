@@ -42,6 +42,44 @@ export function galaxyScreenBounds(center, radius, projection = [1,1,0,0]) {
     const result = [Math.max(-1,nx-rx),Math.max(-1,ny-ry),Math.min(1,nx+rx),Math.min(1,ny+ry)];
     return result[0] >= result[2] || result[1] >= result[3] ? null : result;
 }
+// Meter visibility is tighter than raster coverage: a sphere around a thin
+// disk can cover the eye while all emitting material is behind it.
+export function galaxyEllipsoidVisible(center, normal, radius, q, projection=[1,1,0,0]) {
+    const [sx,sy,ox,oy]=projection, norm=Math.hypot(...normal);
+    const n=normal.map(v=>v/Math.max(norm,1e-20));
+    for(const p of [[sx,0,ox-1],[-sx,0,-ox-1],[0,sy,oy-1],[0,-sy,-oy-1],[0,0,-1]]){
+        const np=n.reduce((sum,v,i)=>sum+v*p[i],0), pp=p.reduce((sum,v)=>sum+v*v,0);
+        const extent=radius*Math.sqrt(Math.max(0,pp-(1-q*q)*np*np));
+        if(center.reduce((sum,v,i)=>sum+v*p[i],0)<-extent) return false;
+    }
+    return true;
+}
+export function galaxyVisibleColumnWeight(center, normal, h, q0, bulge, projection=[1,1,0,0]) {
+    const q=Math.max(.025,q0),spheroid=bulge>=.985,s1=spheroid?.7:1,s2=spheroid?.1:.12;
+    if(!galaxyEllipsoidVisible(center,normal,8*h*s1,Math.max(q,.15),projection)) return 0;
+    const [sx,sy,ox,oy]=projection,depth=-center[2];
+    const px=sx*center[0]/Math.max(depth,1e-20)-ox,py=sy*center[1]/Math.max(depth,1e-20)-oy;
+    if(depth>0 && Math.abs(px)<=1 && Math.abs(py)<=1) return 1;
+    const dot=(a,b)=>a.reduce((sum,v,i)=>sum+v*b[i],0);
+    const unit=a=>{const l=Math.hypot(...a);return a.map(v=>v/Math.max(l,1e-20));};
+    const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+    const n=unit(normal),e1=unit(cross(Math.abs(n[2])<.9?[0,0,1]:[0,1,0],n)),e2=cross(n,e1);
+    const local=a=>[dot(a,e1),dot(a,e2),dot(a,n)];
+    const origin=local(center.map(v=>-v/Math.max(h,1e-20)));
+    const w1=spheroid?.65:1-bulge,w2=spheroid?.35:bulge,q2=spheroid?q:Math.max(q,.65);
+    const column=d=>w1/(s1*s1)*gaussianRayColumn(origin,d,q,s1)+w2/(s2*s2)*gaussianRayColumn(origin,d,q2,s2);
+    const towards=local(unit(center)),reference=Math.hypot(...center)>1e-20?column(towards):w1/(s1*s1*q)+w2/(s2*s2*q2);
+    let visible=0;
+    for(const y of [-.95,0,.95]) for(const x of [-.95,0,.95]) visible=Math.max(visible,column(local(unit([(x+ox)/sx,(y+oy)/sy,-1]))));
+    const x=Math.max(-.999,Math.min(.999,px)),y=Math.max(-.999,Math.min(.999,py));
+    visible=Math.max(visible,column(local(unit([(x+ox)/sx,(y+oy)/sy,-1]))));
+    // Fade a source's metering influence as its remaining visible column
+    // becomes negligible, rather than exposing to an invisible central peak.
+    const ratio=visible/Math.max(reference,1e-30);
+    const t=Math.max(0,Math.min(1,(Math.log10(Math.max(ratio,1e-30))+4)/2));
+    return t*t*(3-2*t);
+}
+
 // Conservative smooth-column exposure bound when the observer is inside
 // the luminous core. The ordinary whole-galaxy meter cannot use its distant
 // disk-average peak for a bulge covering the entire sky. Display only.

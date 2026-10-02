@@ -111,3 +111,13 @@ out. It blends back to the exterior meter within one scale length.
 The old automatic exposure floor of 0.05 also had to be lowered to 0.0001 so
 this core adaptation can take effect. Screenshot luminance is checked after
 the actual renderer and display mapping, not only at the meter output.
+
+Metering visibility uses the emitting ellipsoid and bounded analytic forward-
+column samples, rather than the conservative raster sphere. A thin disk wholly
+behind the observer cannot darken unrelated visible galaxies; its remaining
+metering influence fades with a negligible visible column. The independent
+two-source regression verifies parity with a background-only control.
+Partially visible sources impose a continuous resolved exposure constraint;
+they do not insert their hidden central peak into the field-brightness
+percentile. A sub-parsec threshold sweep guards against sudden background
+brightness jumps as a thin disk leaves the view.

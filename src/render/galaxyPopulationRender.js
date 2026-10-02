@@ -38,7 +38,7 @@ import { coarsenGalaxyWells, flowMassFromMagnitude } from '../flowScaleMath.js';
 import { MERGER } from '../universe/localGroupOrbit.js';
 import { TIDES } from '../universe/mergerTides.js';
 import { galaxySeed, galaxyNoisePixels, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
-import { galaxyScreenBounds, galaxyInteriorMeterBoost, RESOLVED_VARYINGS, RESOLVED_GLSL } from "./galaxyResolved.js";
+import { galaxyScreenBounds, galaxyVisibleColumnWeight, galaxyInteriorMeterBoost, RESOLVED_VARYINGS, RESOLVED_GLSL } from "./galaxyResolved.js";
 import { K, MPC_KM } from "../constants.js";
 import { galaxyDisplayGain, galaxyVolumeMeter } from "./galaxyVolume.js";
 import { extragalacticExposure, EXT_STRETCH, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
@@ -603,8 +603,13 @@ function galaxyPeak(MV, hKpc, d, pxScale, out) {
     return out;
 }
 const _pf = [0, 0];
-function inView(e, x, y, z, tanX, tanY, marginRad = 0) {
+function inView(e, x, y, z, tanX, tanY, marginRad = 0, normal=null, q=.15, bulge=.28, h=1) {
     const vx = e[0] * x + e[3] * y + e[6] * z, vy = e[1] * x + e[4] * y + e[7] * z, vz = e[2] * x + e[5] * y + e[8] * z;
+    if(normal){
+        const [nx,ny,nz]=normal;
+        const nv=[e[0]*nx+e[3]*ny+e[6]*nz,e[1]*nx+e[4]*ny+e[7]*nz,e[2]*nx+e[5]*ny+e[8]*nz];
+        return galaxyVisibleColumnWeight([vx,vy,vz],nv,h,q,bulge,[1/tanX,1/tanY,0,0]);
+    }
     if(marginRad>0){
         const m=marginRad*Math.max(1e-6,Math.hypot(vx,vy,vz));
         return galaxyScreenBounds([vx,vy,vz],m,[1/tanX,1/tanY,0,0])!==null;
@@ -659,11 +664,14 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
             const factor=aObs*Math.exp(lc[j]*(1-f)+lc[Math.min(j+1,LC_N-1)]*f);
             const x=rx*factor+c.delta[k*3],y=ry*factor+c.delta[k*3+1],z=rz*factor+c.delta[k*3+2];
             const d=Math.hypot(x,y,z),h=c.phot[k*4+2];
-            if(d>h*.1 || !inView(e,x,y,z,tanX,tanY,8*h*.001/Math.max(d,1e-6))) continue;
+            if(d>h*.1) continue;
+            const visible=inView(e,x,y,z,tanX,tanY,8*h*.001/Math.max(d,1e-6),
+                [c.shape[k*4],c.shape[k*4+1],c.shape[k*4+2]],c.shape[k*4+3],c.phot[k*4+3],h*.001);
+            if(visible<=0) continue;
             galaxyPeak(c.phot[k*4],h,d,pxScale,_pf);
             _pf[0]*=galaxyInteriorMeterBoost(d/Math.max(h*.001,1e-10),c.shape[k*4+3],c.phot[k*4+3]);
             const slot=EXPOSURE.seen[i]>=0?EXPOSURE.seen[i]:m++;
-            _mPeak[slot]=_pf[0];_mFootOwn[slot]=Math.min(_pf[1],screenPx);_mFoot[slot]=_mFootOwn[slot];_mW[slot]=1;
+            _mPeak[slot]=_pf[0];_mFootOwn[slot]=Math.min(_pf[1],screenPx);_mFoot[slot]=visible>=1?_mFootOwn[slot]:0;_mW[slot]=visible;
             EXPOSURE.seen[i]=slot;
         }
     }
@@ -688,22 +696,28 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
             const x = d3[k * 3] - camGC[0], y = d3[k * 3 + 1] - camGC[1], z = d3[k * 3 + 2] - camGC[2];
             const d = Math.hypot(x, y, z);
             const rad = 8 * ph[k * 4 + 2] * 1e-3 / Math.max(d, 1e-6);
-            if (!Number.isFinite(d) || !inView(e, x, y, z, tanX, tanY, rad)) continue;
+            const shape=lg.mesh.geometry.attributes.aShape.array;
+            const visible=inView(e,x,y,z,tanX,tanY,rad,[shape[k*4],shape[k*4+1],shape[k*4+2]],shape[k*4+3],ph[k*4+3],ph[k*4+2]*.001);
+            if (!Number.isFinite(d) || visible<=0) continue;
             galaxyPeak(ph[k * 4], ph[k * 4 + 2], d, pxScale, _pf);
             const q0=lg.mesh.geometry.attributes.aShape.array[k*4+3];
             _pf[0]*=galaxyInteriorMeterBoost(d/Math.max(ph[k*4+2]*.001,1e-10),q0,ph[k*4+3]);
-            _mPeak[m] = _pf[0]; _mFootOwn[m] = Math.min(_pf[1], screenPx); _mFoot[m] = _mFootOwn[m] * wk; _mW[m] = wk; m++;
+            _mPeak[m] = _pf[0]; _mFootOwn[m] = Math.min(_pf[1], screenPx); _mFoot[m] = visible>=1?_mFootOwn[m]*wk:0; _mW[m] = wk * visible; m++;
         }
     }
     if (!m) return EXPOSURE.auto;
     for (let k = 0; k < m; k++) _mIdx[k] = k;
     const idx = _mIdx.subarray(0, m).sort((a, b) => _mPeak[b] - _mPeak[a]);
     const want = EXPOSURE.brightFrac * screenPx;
-    let acc = 0, ref = _mPeak[idx[m - 1]];
-    for (let k = 0; k < m; k++) {
-        acc += _mFoot[idx[k]];
-        if (acc >= want) { ref = _mPeak[idx[k]]; break; }
+    let acc=0,ref=0;
+    for(let k=0;k<m;k++){
+        if(_mFoot[idx[k]]<=0) continue;
+        ref=_mPeak[idx[k]];acc+=_mFoot[idx[k]];
+        if(acc>=want) break;
     }
+    // Partially visible sources supply the smooth resolved constraint below,
+    // not a full central peak in the field percentile. Otherwise crossing
+    // brightFrac with a fading footprint causes a huge exposure step.
     // Resolved galaxies: when a galaxy spans more than a few tens of pixels
     // (the Milky Way seen from above its disk or from the Local Group, a
     // neighbour), the brightest such core is exposed EXPOSURE.resolvedHeadroom
