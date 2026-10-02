@@ -1,0 +1,77 @@
+name: Twin-ring ship appearance
+on:
+  pull_request:
+    paths:
+      - 'src/ship.js'
+      - 'src/shipModel.js'
+      - 'scripts/*ship-*'
+      - 'docs/twin-ring-ship/**'
+      - '.github/workflows/ship-appearance.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ship-appearance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  model:
+    name: Ship model and flight regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/smoke-ship-model.mjs && npm test && npm run smoke:physics3d && npm run smoke:saves && npm run build
+  capture:
+    name: Ship ${{ matrix.variant }} / ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        variant: [before, after]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact source identities
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          git rev-parse "$BASE_SHA" > evidence/sources/base-sha.txt
+          cp package-lock.json evidence/sources/
+          git diff "$BASE_SHA" HEAD > evidence/sources/change.diff
+          if [ "$VARIANT" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/ship-base" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/ship-base/node_modules"
+            echo "BASE_ROOT=$RUNNER_TEMP/ship-base" >> "$GITHUB_ENV"
+          fi
+      - name: Full-application screenshots and runtime checks
+        env:
+          DEVICE: ${{ matrix.device }}
+          ARTEMIS_EVIDENCE: evidence/capture
+        run: node scripts/verify-ship-appearance.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ship-${{ matrix.variant }}-${{ matrix.device }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
