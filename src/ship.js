@@ -2,48 +2,11 @@ import * as THREE from "three";
 import { mulberry32 } from "./format.js";
 import { dotTexture } from "./textures.js";
 import { scene } from "./scene.js";
+import { createShipModel } from "./shipModel.js";
 
-// Interstellar vessel, nose along +Y (main.js orients +Y onto the heading).
-// Layout matches the first-person cabin: glass canopy forward, drive aft.
+// Exterior only; flight pose, scale, markers and exhaust retain their contract.
 export const shipG = new THREE.Group();
-export const craft = new THREE.Group();
-{
-    const mWhite = new THREE.MeshPhongMaterial({ color: 0xe6ecf3, shininess: 70, specular: 0x556070, emissive: 0x222932 });
-    const mHull = new THREE.MeshPhongMaterial({ color: 0xbac4d0, shininess: 45, emissive: 0x1c242e });
-    const mDark = new THREE.MeshPhongMaterial({ color: 0x2c3540, shininess: 20 });
-    const mGlass = new THREE.MeshPhongMaterial({ color: 0x16283f, shininess: 160, specular: 0x9fc6ee });
-    const mRad = new THREE.MeshPhongMaterial({ color: 0x57231a, shininess: 10, emissive: 0x3a0f08 });
-    const add = (mesh, y, x = 0, z = 0) => { mesh.position.set(x, y, z); craft.add(mesh); return mesh; };
-    // hull: tapered main body + forward fuselage + nose tip
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.3, .42, 1.5, 24), mHull), 0);
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.17, .3, .55, 24), mWhite), 1.02);
-    add(new THREE.Mesh(new THREE.ConeGeometry(.17, .34, 24), mWhite), 1.46);
-    // cockpit canopy: glass dome where the cabin sits
-    const canopy = add(new THREE.Mesh(new THREE.SphereGeometry(.17, 24, 16), mGlass), 1.22);
-    canopy.scale.set(1, 1.45, .85);
-    // red identity band
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.305, .305, .09, 24), new THREE.MeshPhongMaterial({ color: 0xc8351f })), .62);
-    // drive section: engine block + twin nozzles
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.46, .38, .38, 24), mDark), -.92);
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.09, .2, .32, 18), mDark), -1.22, .18);
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.09, .2, .32, 18), mDark), -1.22, -.18);
-    // radiator panels: the interstellar drive dumps heat sideways
-    for (const sx of [-1, 1]) {
-        const rad = add(new THREE.Mesh(new THREE.BoxGeometry(1.1, .02, .3), mRad), -.38, sx * .85);
-        rad.rotation.y = sx * .06;
-    }
-    // lit habitat window band: the crew lives behind these in VR
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.3, .3, .045, 24), new THREE.MeshBasicMaterial({ color: 0xffeec2 })), .82);
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.365, .365, .035, 24), new THREE.MeshBasicMaterial({ color: 0xcfe6ff })), .18);
-    // dorsal comm mast + dish
-    add(new THREE.Mesh(new THREE.CylinderGeometry(.015, .015, .55, 8), mHull), .35, 0, .3).rotation.x = .5;
-    const dish = add(new THREE.Mesh(new THREE.SphereGeometry(.1, 14, 10, 0, Math.PI * 2, 0, 1.1), mWhite), .5, 0, .44);
-    dish.rotation.x = -1.1;
-    // running lights: port red, starboard green, tail white
-    add(new THREE.Mesh(new THREE.SphereGeometry(.035, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff4040 })), -.38, -1.42);
-    add(new THREE.Mesh(new THREE.SphereGeometry(.035, 8, 6), new THREE.MeshBasicMaterial({ color: 0x3fe06a })), -.38, 1.42);
-    add(new THREE.Mesh(new THREE.SphereGeometry(.03, 8, 6), new THREE.MeshBasicMaterial({ color: 0xf2f6ff })), -1.42);
-}
+export const craft = createShipModel();
 shipG.add(craft);
 export const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,255,255,1)", "rgba(255,120,90,0.65)"), transparent: true, depthWrite: false, depthTest: false }));
 shipG.add(dot);

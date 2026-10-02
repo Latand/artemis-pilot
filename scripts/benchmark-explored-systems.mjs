@@ -71,6 +71,8 @@ function transform(source, id) {
     source = once(source, 'renderer.setAnimationLoop(frame);', '// QA: frames delivered explicitly and serially.');
     // The measured production frame is untouched. Its diagnostic copy is
     // compiled only after ALL acceptance windows, never before them.
+    // Chromium WebGL finish() is only Flush(); readPixels establishes completion:
+    // https://chromium.googlesource.com/chromium/src/third_party/+/master/blink/renderer/modules/webgl/webgl_rendering_context_base.cc#3557
     const fine = fineFrameSource(source);
     return source + `\nconst pairedReadbackPixel=new Uint8Array(4);\nwindow.__pairedFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;
         const start=performance.now();frame();const cpu=performance.now()-start;const gl=renderer.getContext();
@@ -255,7 +257,15 @@ try {
                 const block = { index: blockIndex + 1, label, activationMs, loadAverage: os.loadavg(), startTime, endTime, samples,
                     frame: summarize(samples.map(s => s.frameAndFinishMs)), cpu: summarize(samples.map(s => s.cpuMs)),
                     protocolAndScheduling: summarize(samples.map(s => s.protocolAndSchedulingMs)), roundTrip: summarize(samples.map(s => s.roundTripMs)) };
+                // Observe errors outside the timed block; a lost context makes
+                // readPixels a no-op and must never masquerade as a fast frame.
+                block.gpuStatus = await page.evaluate(() => {
+                    const gl = pairedQA.scene.renderer.getContext();
+                    return { contextLost: gl.isContextLost(), error: gl.getError() };
+                });
                 trial.blocks.push(block); await save();
+                assert.deepEqual(block.gpuStatus, { contextLost: false, error: 0 },
+                    `${fixture.name} ${label}: measured readback must use a live, error-free GL context`);
             }
             const forLabel = label => trial.blocks.filter(block => block.label === label).flatMap(block => block.samples);
             trial.A = summarize(forLabel('A').map(sample => sample.frameAndFinishMs));

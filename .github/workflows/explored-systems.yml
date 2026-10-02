@@ -11,7 +11,7 @@ on:
       base_ref:
         description: Exact pre-change baseline revision
         required: true
-        default: '848f476'
+        default: 'main'
 permissions:
   contents: read
 concurrency:
@@ -39,9 +39,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Preserve exact baseline and shared harness
         env:
-          # Freeze the pre-ship baseline for the Earth profiling experiment.
-          # Return to current-main baseline after the diagnosed fix is integrated.
-          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_ref || '848f47644e0411909e806302699ac465f963f71a' }}
+          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_ref || github.event.pull_request.base.sha }}
         run: |
           git worktree add --detach "$RUNNER_TEMP/explored-base" "$BASE_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/explored-base/node_modules"
