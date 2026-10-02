@@ -16,7 +16,8 @@ import { relTravelToFocus } from "./relTravel.js";
 import { toggleScenarioMenu } from "./scenarios.js";
 import { ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, proceduralFocusId } from "./universe/activeStars.js";
 import { getCachedFocusedSystem } from "./universe/activeStars.js";
-import { planetFocusIndex, planetFocusValue } from "./universe/planetarySystem.js";
+import { planetFocusIndex, planetFocusValue, planetMoonFocusIndex } from "./universe/planetarySystem.js";
+import { getExploredSystem, qualifySystemFocus } from "./universe/exploredSystem.js";
 import { setConstellationsVisible } from "./realSky.js";
 import { requestPlanetTexture, requestRealSkyLoad } from "./bodies.js";
 import { setCineOpen, toggleCine } from "./cinematic.js";
@@ -25,6 +26,8 @@ import { isXrPresenting, setUiMode } from "./uiMode.js";
 import { setPaused, setWarp, stepWarp } from "./timeCtl.js";
 
 export function setFocus(f) {
+    f = qualifySystemFocus(f);
+    const psys = getExploredSystem(f, null, G.t);
     if(f!==G.focus)clearInspectionPrediction();
     G.focus = f;
     if (typeof f === "number") requestPlanetTexture(f);
@@ -32,11 +35,12 @@ export function setFocus(f) {
     const si = starFocusIndex(f);
     const mi = moonFocusIndex(f);
     const pi = planetFocusIndex(f);
-    const psys = getCachedFocusedSystem();
+    const pm = planetMoonFocusIndex(f);
     const ps = activeStarForFocus(f);
     cam.dist = bi >= 0 && bi < BH.n ? Math.max(80, BH.rs[bi] * K * 12) :
         si >= 0 && si < STARS.length ? Math.max(STARS[si].R * K * (STARS[si].bh ? 30 : 12), 1) :
         mi >= 0 ? Math.max(MOONS[mi].R * K * 7, .25) :
+        pm && psys?.planets?.[pm.planetIndex]?.moons?.[pm.moonIndex] ? Math.max(psys.planets[pm.planetIndex].moons[pm.moonIndex].R * K * 9, .25) :
         pi >= 0 && psys?.planets?.[pi] ? Math.max(psys.planets[pi].radiusKm * K * 9, .25) :
         ps ? Math.max(ps.R * K * 12, 1) :
         typeof f === "number" ? Math.max(PL[f].R * K * 7, 2) :
@@ -113,8 +117,8 @@ function onKeyDown(e) {
             if (e.shiftKey) { // cycle the planets
                 const sys = getCachedFocusedSystem();
                 if (sys?.planets?.length) {
-                    const cur = planetFocusIndex(G.focus);
-                    setFocus(planetFocusValue((cur + 1) % sys.planets.length));
+                    const cur = planetMoonFocusIndex(G.focus)?.planetIndex ?? planetFocusIndex(G.focus);
+                    setFocus(planetFocusValue((cur + 1) % sys.planets.length, sys));
                 } else {
                     const cur = typeof G.focus === "number" ? G.focus : -1;
                     setFocus((cur + 1) % PL.length);

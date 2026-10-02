@@ -4,14 +4,18 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 const root=resolve(process.env.BASE_ROOT||'.'), before=!!process.env.BASE_ROOT;
+// Later PR baselines already contain recovery. Keep the legacy negative
+// reproduction only for exact source trees that predate the lifecycle module.
+const expectBrokenRecovery=before&&!existsSync(resolve(root,'src/render/contextLifecycle.js'));
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/mobile-thrust');
 const suite=process.env.THRUST_SUITE||'all';
 assert(['all','recovery','soak'].includes(suite),'Known mobile QA suite');
 await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),before,suite,errors:[],checks:[],samples:[],limitations:['Chromium/SwiftShader mobile viewport; not physical iPhone Safari.','GPU loss is explicitly injected; original device trigger is unknown.']};
+const report={revision:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),before,expectBrokenRecovery,suite,errors:[],checks:[],samples:[],limitations:['Chromium/SwiftShader mobile viewport; not physical iPhone Safari.','GPU loss is explicitly injected; original device trigger is unknown.']};
 const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);};
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'mobile-thrust-qa',enforce:'pre',transform(s,id){if(!id.split('?')[0].endsWith('/src/main.js'))return;
  const first='const firstFrameT0 = perfStart();';assert.equal(s.split(first).length,2);
@@ -40,11 +44,11 @@ try {
  await page.waitForTimeout(1600);await page.mouse.up();
  report.samples.push({name:'during-loss',...await state()});await capture('02-context-lost');
  const held=await state();await page.waitForTimeout(500);const heldLater=await state();
- if(!before){check(heldLater.t===held.t,'Flight time is held while GPU context is lost');check(heldLater.mode==='HOLD','HUD explicitly reports the held flight');check(await page.evaluate(async()=>(await import('/src/audio.js')).thrustGain?.gain.value===0),'Engine noise stops during the GPU outage');check(await page.locator('#renderContextStatus').isVisible(),'Recovery status is visible instead of unexplained black world');}
+ if(!expectBrokenRecovery){check(heldLater.t===held.t,'Flight time is held while GPU context is lost');check(heldLater.mode==='HOLD','HUD explicitly reports the held flight');check(await page.evaluate(async()=>(await import('/src/audio.js')).thrustGain?.gain.value===0),'Engine noise stops during the GPU outage');check(await page.locator('#renderContextStatus').isVisible(),'Recovery status is visible instead of unexplained black world');}
  await page.evaluate(()=>window.__loss.restoreContext());
  await page.waitForFunction(async()=>!(await import('/src/scene.js')).renderer.getContext().isContextLost());
  await page.waitForTimeout(2200);const restored=await state();report.samples.push({name:'after-restore',...restored});await capture('03-context-restored');
- if(before){check(report.errors.some(e=>/null/.test(e)&&/fromArray|galaxyVolume/.test(e)),'Baseline reproduces null WebGL query exception');check(restored.success===held.success,'Baseline animation loop stays stopped after GPU restoration');}
+ if(expectBrokenRecovery){check(report.errors.some(e=>/null/.test(e)&&/fromArray|galaxyVolume/.test(e)),'Baseline reproduces null WebGL query exception');check(restored.success===held.success,'Baseline animation loop stays stopped after GPU restoration');}
  else {
   check(await page.evaluate(async()=>{const p=(await import('/src/river.js')).riverDebugReadPositions();return p?.finite&&p.nonZero>0&&p.distinct>0;}),'Cosmetic river GPU positions are rebuilt after restore');
   check(await page.evaluate(()=>localStorage.getItem('artemis.quicksave.v1')===window.__savedBytes&&window.__savedBytes?.length>100),'Recovery leaves stored quicksave bytes unchanged');

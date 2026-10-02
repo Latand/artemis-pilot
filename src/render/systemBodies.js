@@ -19,7 +19,7 @@ const pos = new THREE.Vector3();
 const starPos = new THREE.Vector3();
 const hostDirection = new THREE.Vector3(), hostColor = new THREE.Color();
 const hostRGB = [1, 1, 1];
-let sceneRef = null, renderedStarId = "";
+let sceneRef = null, renderedStarId = "", renderedSystem = null;
 let gateOpen = false;
 
 function labelTexture(text, color) {
@@ -82,6 +82,7 @@ export function initSystemRender(scene) {
 function rebuild(system) {
     gateOpen = false;
     renderedStarId = system?.starId || "";
+    renderedSystem = system;
     for (let i = 0; i < SYS_MAX_PLANETS; i++) {
         const slot = groups[i], p = system?.planets?.[i] || null;
         slot.planet = p;
@@ -164,7 +165,7 @@ export function updateSystemRender(system, simT, camera, focus = "") {
         if (renderedStarId) rebuild(null);
         return;
     }
-    if (renderedStarId !== system.starId) rebuild(system);
+    if (renderedSystem !== system) rebuild(system);
     worldToResidual(system.hostStar.x, system.hostStar.y, system.hostStar.z || 0, starPos, K);
     // Beacon gate: a system's planets/glows/labels only render when the
     // camera is plausibly near that system (or explicitly flying to one of
@@ -257,6 +258,7 @@ export function disposeSystemRender() {
     }
     groups.length = 0;
     renderedStarId = "";
+    renderedSystem = null;
 }
 
 export function systemBodyRenderState() { return groups.slice(); }

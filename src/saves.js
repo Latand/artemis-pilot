@@ -1,3 +1,8 @@
+import { apOff } from "./autopilot.js";
+import { cam } from "./scene.js";
+import { getOrigin } from "./universe/renderOrigin.js";
+import { serializeExplorationCamera, restoreExplorationCamera } from "./universe/explorationCamera.js";
+import { relResetState } from "./relState.js";
 import { invalidateGasDynamics } from "./universe/gasDynamics.js";
 // Quicksave / quickload: one browser-storage slot holding the full simulation
 // state — ship, world flags, the live n-body ephemeris, and every black hole.
@@ -16,6 +21,9 @@ import {
     hygCatalogFocusId, hygCatalogFocusValue, proceduralFocusId, proceduralFocusValue,
     restorePinnedProceduralStars, serializePinnedProceduralStars,
 } from "./universe/activeStars.js";
+import { parseSystemFocus } from "./universe/planetarySystem.js";
+import { serializeExploredSystem, restoreExploredSystem } from "./universe/exploredSystem.js";
+import { ensureHygCatalogLoaded } from "./universe/hygActiveCatalog.js";
 import { getSeed, setSeed } from "./universe/galaxy.js";
 import { getEpochMs, setEpochMs } from "./epoch.js";
 import { cancelTimeJump, jumpActive, jumpSaveWarp } from "./timeCtl.js";
@@ -65,13 +73,17 @@ export function saveState() {
     const ephSt = snapshotEphem();
     const focusMatch = typeof G.focus === "string" && G.focus.match(/^star:(\d+)$/);
     const focusStar = focusMatch ? STARS[Number(focusMatch[1])] : null;
+    const exploredSystem = serializeExploredSystem();
     const focusProcId = proceduralFocusId(G.focus);
+    const exploredProcId = proceduralFocusId(exploredSystem?.hostFocus);
     const focusHygId = hygCatalogFocusId(G.focus);
-    const procStars = Array.from(new Set(serializePinnedProceduralStars().concat(focusProcId ? [focusProcId] : [])));
+    const procStars = Array.from(new Set(serializePinnedProceduralStars().concat(focusProcId ? [focusProcId] : [], exploredProcId ? [exploredProcId.endsWith(":B") ? exploredProcId.slice(0, -2) : exploredProcId] : [])));
     const epochMs = readEpochMs();
     const data = {
         v: 11,
         galaxySeed: getSeed(),
+        exploredSystem,
+        camera: serializeExplorationCamera(cam, getOrigin()),
         epochMs,
         g: Object.fromEntries(G_FIELDS.map(k => [k, k === "warp" && jumpActive() ? jumpSaveWarp() : G[k]])),
         focusCatalog: focusStar && focusStar.catalog === "hyg-v41-promoted"
@@ -125,6 +137,13 @@ export async function loadState() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
     if (!data || (data.v < 1 || data.v > 11)) { toast("No saved state · K to save one"); return false; }
+    // Catalog readiness is a preflight: no frame may see a loaded ship with
+    // the previous world while this network/index operation is pending.
+    let exploredCatalogUnavailable = false;
+    if (hygCatalogFocusId(data.exploredSystem?.hostFocus) || hygCatalogFocusId(parseSystemFocus(data.g?.focus)?.hostFocus)) {
+        try { await ensureHygCatalogLoaded(); }
+        catch { exploredCatalogUnavailable = true; }
+    }
     // The procedural galaxy is a pure function of (seed, cell coords), so the
     // seed must land before any procedural star is regenerated from a saved id.
     setSeed(data.v >= 9 && Number.isFinite(data.galaxySeed) ? (data.galaxySeed >>> 0) : DEFAULT_SEED);
@@ -133,6 +152,8 @@ export async function loadState() {
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     // Saves restore wall-time values directly; loading cancels any jump in flight. ap_uiMode stays a device preference outside the save format.
     cancelTimeJump("quickload");
+    apOff();
+    relResetState();
     Object.assign(G, data.g);
     if (data.v >= 10 && data.log) restoreLog(data.log);
     else restoreLog(null);
@@ -147,6 +168,9 @@ export async function loadState() {
     if (data.focusProcedural?.id && restoredProc.includes(data.focusProcedural.id)) {
         G.focus = proceduralFocusValue(data.focusProcedural.id);
     }
+    G.focus = restoreExploredSystem(exploredCatalogUnavailable ? null : data.exploredSystem,
+        exploredCatalogUnavailable && parseSystemFocus(G.focus) ? "earth" : G.focus);
+    if (!(parseSystemFocus(data.g.focus) && G.focus === "earth")) restoreExplorationCamera(data.camera, cam, getOrigin());
     if (!Number.isFinite(data.g.z)) G.z = 0;
     if (!Number.isFinite(data.g.vz)) G.vz = 0;
     if (!Number.isFinite(data.g.pitch)) G.pitch = 0;
@@ -204,6 +228,7 @@ export async function loadState() {
     computePrediction();
     if (G.dead) showBanner("VEHICLE LOST", G.deadReason + " · MET " + fmtMET(G.t), "R TO REBUILD SHIP");
     toast("Quickload · MET " + fmtMET(G.t) + (restoredStars.length ? " · HYG " + restoredStars.length : "") +
-        (restoredProc.length ? " · PROC " + restoredProc.length : ""));
+        (restoredProc.length ? " · PROC " + restoredProc.length : "") +
+        (exploredCatalogUnavailable ? " · Catalog host unavailable; view reset to Earth" : ""));
     return true;
 }

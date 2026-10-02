@@ -77,8 +77,9 @@ import { initHints, hintTick } from "./hints.js";
 import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
 import {
     ACTIVE_STARS, activeStarFocusValue, activeStarForFocus, hygCatalogFocusId, hygCatalogFocusValue, hygCatalogStats, nearestActiveStar, proceduralFocusId, activeNeighbourhood,
-    refreshActiveStars, getFocusedSystem, getCachedFocusedSystem,
+    refreshActiveStars, getCachedPhysicalSystem,
 } from "./universe/activeStars.js";
+import { getExploredSystem, serializeExploredSystem, restoreExploredSystem } from "./universe/exploredSystem.js";
 import { initSystemRender, updateSystemRender, planetScenePosition, moonScenePosition } from "./render/systemBodies.js";
 import { updateNebulae, nebulaScenePos, nebulaHudSummary, nebulaViewRadius, clearFormingNebulae } from "./render/nebulae.js";
 import { NEBULAE, preparePausedGas } from "./universe/nebulaeData.js";
@@ -327,7 +328,8 @@ function applyStartupCameraState() {
             cam.dist = saved.dist;
             cam.yaw = saved.yaw ?? cam.yaw;
             cam.pitch = saved.pitch ?? cam.pitch;
-            if (saved.focus !== undefined && saved.focus !== "free") G.focus = saved.focus;
+            const restoredFocus = restoreExploredSystem(saved.exploredSystem, saved.focus);
+            if (saved.focus !== undefined && saved.focus !== "free") G.focus = restoredFocus;
             if (isFinite(saved.warp) && saved.warp >= 1) setWarp(saved.warp, "startup");
         }
     } catch (e) { }
@@ -375,7 +377,7 @@ function applyStartupCameraState() {
 function installCameraPersistence() {
     const saveCam = () => {
         try {
-            localStorage.setItem("ap_cam", JSON.stringify({ dist: cam.dist, yaw: cam.yaw, pitch: cam.pitch, focus: G.focus, warp: G.warp }));
+            localStorage.setItem("ap_cam", JSON.stringify({ dist: cam.dist, yaw: cam.yaw, pitch: cam.pitch, focus: G.focus, warp: G.warp, exploredSystem: serializeExploredSystem() }));
         } catch (e) { }
     };
     setInterval(saveCam, 2500);
@@ -1285,7 +1287,7 @@ function updateHover(w, h) {
 function focusTargetValue() {
     const bi = blackHoleFocusIndex(G.focus);
     if (bi >= 0 && bi < BH.n) return G.focus;
-    if (planetFocusIndex(G.focus) >= 0) return G.focus;
+    if (planetFocusIndex(G.focus) >= 0 || planetMoonFocusIndex(G.focus)) return G.focus;
     const si = starFocusIndex(G.focus);
     if (si >= 0 && si < STARS.length) return G.focus;
     if (activeStarForFocus(G.focus)) return G.focus;
@@ -1644,7 +1646,7 @@ function noteLandedDiscovery(oi) {
     if (!G.landed) return;
     if (G.landed.body === "sysplanet" || G.landed.body === "sysmoon") {
         if (!G.landed.discoveryId) {
-            const sys = getCachedFocusedSystem();
+            const sys = getCachedPhysicalSystem();
             if (!sys || sys.starId !== G.landed.starId) return;
             const planetIndex = G.landed.body === "sysplanet" ? G.landed.i : G.landed.planetIndex;
             const planet = sys.planets?.[planetIndex];
@@ -1727,12 +1729,12 @@ function frameStep() {
             let cx = 0, cy = 0, cz = 0;
             if (G.landed.body === "planet") { cx = eph.plX[G.landed.i]; cy = eph.plY[G.landed.i]; cz = eph.plZ ? eph.plZ[G.landed.i] : 0; }
             else if (G.landed.body === "sysplanet") {
-                const sys = getCachedFocusedSystem();
+                const sys = getCachedPhysicalSystem();
                 if (sys?.starId === G.landed.starId && planetWorldState(sys, G.landed.i, sys.hostStar, G.t, _planetWorld)) {
                     cx = _planetWorld.x - eph.earthX; cy = _planetWorld.y - eph.earthY; cz = _planetWorld.z;
                 }
             } else if (G.landed.body === "sysmoon") {
-                const sys = getCachedFocusedSystem();
+                const sys = getCachedPhysicalSystem();
                 if (sys?.starId === G.landed.starId && moonWorldState(sys, G.landed.planetIndex, G.landed.moonIndex, sys.hostStar, G.t, _planetWorld)) {
                     cx = _planetWorld.x - eph.earthX; cy = _planetWorld.y - eph.earthY; cz = _planetWorld.z;
                 }
@@ -1958,8 +1960,7 @@ function frameStep() {
     const activeStarFocus = focusStar >= 0 && focusStar < STARS.length;
     const activeMoonFocus = focusMoon >= 0;
     const activeDynamicFocus = activeStarForFocus(G.focus);
-    const systemHost = activeDynamicFocus || (activeStarFocus ? STARS[focusStar] : nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star);
-    const focusedSystem = systemHost ? getFocusedSystem(systemHost, G.t) : null;
+    const focusedSystem = getExploredSystem(G.focus, nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star, G.t);
     const activePlanetFocus = planetFocusIndex(G.focus);
     const activePlanetMoonFocus = planetMoonFocusIndex(G.focus);
     updateSystemRender(focusedSystem, G.t, camera, G.focus);
