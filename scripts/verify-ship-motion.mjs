@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 const mobile=process.env.DEVICE==='mobile';
 const out=resolve(process.env.ARTEMIS_EVIDENCE||`evidence/motion-${mobile?'mobile':'desktop'}`);
 await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),mobile,fixture:'Paused world; prescribed HUD speed and real elapsed time drive the unchanged production presentation functions. Full-app physics equivalence tested separately.',errors:[],checks:[],frames:[]};
+const report={synchronization:'Reused typed-array readPixels from the production canvas; finishMs is flush overhead only.',revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),mobile,fixture:'Paused world; prescribed HUD speed and real elapsed time drive the unchanged production presentation functions. Full-app physics equivalence tested separately.',errors:[],checks:[],frames:[]};
 const check=(pass,name)=>{report.checks.push({name,pass:!!pass});assert(pass,name);};
 const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'ship-motion-qa',enforce:'pre',transform(source,id){
  if(id.split('?')[0].endsWith('/src/river.js'))return source.replace('const FLOW_GLSL =','export const FLOW_GLSL =');
@@ -18,7 +18,7 @@ const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:
  const marker='const firstFrameT0 = perfStart();';assert.equal(source.split(marker).length,2);
  return source.replace(marker,'G.t=0;G.paused=true;resetEphem();clock.getDelta=()=>window.__qaDt??.2;'+marker)
  .replace('G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused,','window.__qaSpeed ?? (G.dead || G.landed ? 0 : shipSpeed), rawDtR, window.__qaMotionPause ?? G.paused,')
- .replace('renderer.setAnimationLoop(frame);','')+'\nwindow.__motionFrame=()=>{lastMobileFrame=-Infinity;const start=performance.now();frame();const submitted=performance.now();renderer.getContext().finish();return{submissionMs:submitted-start,finishMs:performance.now()-submitted,totalMs:performance.now()-start};};';
+ .replace('renderer.setAnimationLoop(frame);','')+'\nconst motionReadbackPixel=new Uint8Array(4);\nwindow.__motionFrame=()=>{lastMobileFrame=-Infinity;const start=performance.now();frame();const submitted=performance.now();const gl=renderer.getContext();gl.finish();const flushed=performance.now();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,motionReadbackPixel);const finished=performance.now();return{submissionMs:submitted-start,finishMs:flushed-submitted,readbackMs:finished-flushed,totalMs:finished-start,frameNo};};';
 }}]});
 await server.listen();const browser=await chromium.launch({args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try{
@@ -84,14 +84,24 @@ try{
  // The test-only Vite export exposes the unchanged shader string.
  const parity=await page.evaluate(async()=> (await import('/scripts/ship-flow-parity-browser.js')).verifyShipFlowParity());
  report.flowParity=parity;check(parity.every(p=>Number.isFinite(p.error)&&p.error<1e-4),'CPU local display sample matches production river GLSL within 1e-4');
- // Paired full-app frame-cost samples (includes render and GPU completion).
+ // Chromium finish() only flushes. The reused typed-array readPixels above
+ // synchronously fences the real canvas after production rendering.
+ // Paired full-app frame-cost samples include that completion wait.
  // This is an overhead guard on the CI renderer, not a consumer FPS promise.
  const timing=async enabled=>{
   await page.evaluate(async enabled=>{(await import('/src/shipVisuals.js')).shipVisuals.enabled=enabled;},enabled);
   const frames=[];
   // A complete 48-frame cycle covers the existing 4/6/8/12/16-frame work
   // cadences equally in each mode. Both shaders were warmed above.
-  for(let i=0;i<48;i++)frames.push(await page.evaluate(()=>__motionFrame()));
+  const gpuStatus=()=>page.evaluate(async()=>{const {renderer}=await import('/src/scene.js');const gl=renderer.getContext();return{contextLost:gl.isContextLost(),error:gl.getError(),canvas:renderer.getRenderTarget()===null};});
+  const gpuBefore=await gpuStatus();
+  for(let i=0;i<48;i++)frames.push(await page.evaluate(()=>new Promise((resolve,reject)=>setTimeout(()=>{try{resolve(__motionFrame());}catch(e){reject(e);}},0))));
+  const gpuAfter=await gpuStatus();
+  report.timingGpuStatus??=[];report.timingGpuStatus.push({enabled,gpuBefore,gpuAfter});
+  await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
+  assert.deepEqual(gpuBefore,{contextLost:false,error:0,canvas:true},'Timing begins on live, error-free visible canvas');
+  assert.deepEqual(gpuAfter,{contextLost:false,error:0,canvas:true},'Timing readback completes on live, error-free visible canvas');
+  assert(frames.every((f,i)=>i===0||f.frameNo===frames[i-1].frameNo+1),'Every timing sample executes a real frame');
   const samples=frames.map(f=>f.totalMs);
   return {frames,samples,mean:samples.reduce((a,b)=>a+b,0)/samples.length};
  };

@@ -1,5 +1,7 @@
 # Actual-app visual review: c534340
 
+> Later timing correction: these historical measurements used Chromium `gl.finish()`, which flushes without establishing completed GPU work. The figures and coded guard outcomes below are retained as submission/flush observations, not final performance acceptance or isolated shader-cost evidence. Current QA uses synchronous typed-array readback and preserves the original overhead threshold. Visual critiques and independently verified functional results are unaffected.
+
 [Motion and parity run](https://github.com/Latand/artemis-pilot/actions/runs/37031571063) · [Before/after appearance run](https://github.com/Latand/artemis-pilot/actions/runs/37031570863)
 
 # Motion pixel review, c534340

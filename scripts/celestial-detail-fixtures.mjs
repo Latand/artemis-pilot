@@ -50,8 +50,10 @@ export function transformCelestialSource(source, id) {
     if (id.endsWith('/src/main.js')) {
         source = replaceOnce(source, 'initCosmicLayer(farTierGroup);', '// QA: unrelated cosmic background is not initialized.', 'cosmic startup');
         source = replaceOnce(source, 'initMergerTides(farTierGroup, galaxySharedUniforms());', '// QA: no unrelated merger worker.', 'merger startup');
-        source = replaceOnce(source, 'const focusedSystem = systemHost ? getFocusedSystem(systemHost, G.t) : null;',
-            'const focusedSystem = window.__celestialSystem || (systemHost ? getFocusedSystem(systemHost, G.t) : null);', 'generated-system fixture');
+        const exploredHook = 'const focusedSystem = getExploredSystem(G.focus, nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star, G.t);';
+        const legacyHook = 'const focusedSystem = systemHost ? getFocusedSystem(systemHost, G.t) : null;';
+        const systemHook = source.includes(exploredHook) ? exploredHook : legacyHook;
+        source = replaceOnce(source, systemHook, systemHook.replace('= ', '= window.__celestialSystem || (').replace(';', ');'), 'generated-system fixture');
         source = replaceOnce(source, 'const firstFrameT0 = perfStart();',
             'G.t = 0; G.paused = true; resetEphem(); clock.getDelta = () => 1 / 60;\nconst firstFrameT0 = perfStart();', 'first frame');
         source = replaceOnce(source, 'renderer.setAnimationLoop(frame);', '// QA: frames are delivered explicitly, not by wall-clock timing.', 'animation loop');

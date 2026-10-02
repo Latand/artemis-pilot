@@ -15,7 +15,7 @@ import { G, BH, WORLD, GS, EPHT, bhMuAt, destroyBody, advanceSimTime, syncEphemC
 import { bhAdvance } from "./bhEncounters.js";
 import { NS_SURFACE_KM } from "./tde.js";
 import { fmtMET, fmtKm } from "./format.js";
-import { ACTIVE_STARS, GRAVITY_STARS, refreshActiveStars, getCachedFocusedSystem } from "./universe/activeStars.js";
+import { ACTIVE_STARS, GRAVITY_STARS, refreshActiveStars, nearestActiveStar, getPhysicalSystem, getCachedPhysicalSystem } from "./universe/activeStars.js";
 import { strongestActiveStarWell } from "./universe/starDominance.js";
 import { stellarSurfaceHit } from "./universe/stellarContact.js";
 import { syncGalacticFrame } from "./universe/galacticClock.js";
@@ -303,6 +303,11 @@ export function stepSize(rE, rM, rS, h, vTot, x, y, z = 0, vx = 0, vy = 0, vz = 
     return Math.max(floor, Math.min(180, dt));
 }
 
+// One local system for the ship, independent of the explored/rendered host.
+function refreshPhysicalSystem() {
+    return getPhysicalSystem(nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star);
+}
+
 // dominant-body osculating orbit
 export function orbitInfo() {
     moonState(G.t, _m);
@@ -354,7 +359,7 @@ export function orbitInfo() {
         bh = !!starWell.star.bh;
         rs = starWell.star.rs || 0;
     }
-    const sys = getCachedFocusedSystem();
+    const sys = refreshPhysicalSystem();
     if (starWell?.star && sys?.hostStar === starWell.star) {
         const sp = dominantSystemBody(sys, starWell.star, { x: wx, y: wy, z: wz }, G.t);
         if (sp?.dominant) {
@@ -508,6 +513,7 @@ function handleSystemMoonContact(s, sys, planetIndex, moonIndex, hostStar) {
 }
 export function snapLanded() {
     if (!G.landed) return;
+    if (G.landed.body === "sysplanet" || G.landed.body === "sysmoon") refreshPhysicalSystem();
     if (G.landed.body === "earth") {
         const r = R_EARTH + 0.005;
         const th = G.landed.ang + OMEGA_EARTH * (G.t - (G.landed.t0 ?? G.t));
@@ -523,7 +529,7 @@ export function snapLanded() {
         planetVel(i, G.t, _pv);
         G.vx = _pv.vx; G.vy = _pv.vy; G.vz = eph.plVz[i];
     } else if (G.landed.body === "sysplanet") {
-        const sys = getCachedFocusedSystem();
+        const sys = getCachedPhysicalSystem();
         const star = sys?.hostStar;
         const p = sys?.starId === G.landed.starId ? sys.planets?.[G.landed.i] : null;
         if (!star || !p || !planetWorldState(sys, G.landed.i, star, G.t, _pwSnap)) {
@@ -541,7 +547,7 @@ export function snapLanded() {
         G.z = _pwSnap.z + r * uz;
         G.vx = _pwSnap.vx - eph.earthVx; G.vy = _pwSnap.vy - eph.earthVy; G.vz = _pwSnap.vz;
     } else if (G.landed.body === "sysmoon") {
-        const sys = getCachedFocusedSystem();
+        const sys = getCachedPhysicalSystem();
         const star = sys?.hostStar;
         const m = sys?.starId === G.landed.starId ? sys.planets?.[G.landed.planetIndex]?.moons?.[G.landed.moonIndex] : null;
         if (!star || !m || !moonWorldState(sys, G.landed.planetIndex, G.landed.moonIndex, star, G.t, _pwSnap)) {
@@ -913,6 +919,7 @@ function bridgeSpan(span, perfStats, tag) {
     return done;
 }
 function advanceFlight(simAdv, atx, aty, atz, aMag) {
+    refreshPhysicalSystem();
     const perfOn = PERF.enabled;
     const perfT0 = perfOn ? performance.now() : 0;
     const perfStats = perfOn ? {
@@ -1038,7 +1045,7 @@ function advanceFlight(simAdv, atx, aty, atz, aMag) {
         for (let i = 0; i < PL.length; i++)
             if (!WORLD.plDestroyed[i] && Math.hypot(s[0] - eph.plX[i], s[1] - eph.plY[i], s[2] - eph.plZ[i]) <= PL[i].R) { hitP = i; break; }
         if (hitP >= 0) { handlePlanetContact(s, hitP); break; }
-        const sys = getCachedFocusedSystem();
+        const sys = getCachedPhysicalSystem();
         if (sys?.hostStar && sys.planets?.length) {
             const wx = eph.earthX + s[0], wy = eph.earthY + s[1], wz = s[2];
             let hitSysP = -1, hitSysM = -1;
@@ -1274,7 +1281,7 @@ export function shipDeepJump(dt) {
     if (!_dj.ok) return 0;
     // validate the procedural host BEFORE the bodies move: bailing out after
     // advanceEphem would leave the ephemeris ahead of the ship and the clock
-    const sys = oi.domSysPlanet ? getCachedFocusedSystem() : null;
+    const sys = oi.domSysPlanet ? getCachedPhysicalSystem() : null;
     if (oi.domSysPlanet && (!sys?.hostStar || sys.starId !== oi.sysStarId ||
         !planetWorldState(sys, oi.sysPlanetIndex, sys.hostStar, G.t + dt, _pwSnap))) return 0;
     const got = advanceEphem(dt);

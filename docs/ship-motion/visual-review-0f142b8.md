@@ -1,5 +1,7 @@
 # First actual-app pixel review (0f142b8)
 
+> Later timing correction: these historical measurements used Chromium `gl.finish()`, which flushes without establishing completed GPU work. The figures and coded guard outcomes below are retained as submission/flush observations, not final performance acceptance or isolated shader-cost evidence. Current QA uses synchronous typed-array readback and preserves the original overhead threshold. Visual critiques and independently verified functional results are unaffected.
+
 Evidence: [desktop/mobile motion run](https://github.com/Latand/artemis-pilot/actions/runs/37025838604).
 All 22 PNGs were opened and individually inspected. These are full-app renders
 with a paused world and prescribed presentation-speed inputs; the HUD therefore

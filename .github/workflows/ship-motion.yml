@@ -33,7 +33,9 @@ jobs:
   capture:
     name: Motion ${{ matrix.device }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # Synchronous GPU readback preserves every sample but can take longer
+    # on the software CI renderer than command-submission timing.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:

@@ -47,6 +47,21 @@ upload. The effect switches off outside its bounded near-ship range.
   replay whose physics state must be bit-identical on and off, plus forced GPU
   loss/restore with warp active, retained CPU resource identities, finite
   recovered buffers, and exact paused-flight/rotation-phase preservation
+- Timing uses one reused four-byte typed-array `readPixels` on the normal
+  production canvas, after rendering, to synchronously complete GPU work.
+  Chromium's `finish()` alone only flushes; the older flush-only percentages
+  are retained as historical observations and do not establish performance
+  acceptance. Submission, flush and readback time are recorded separately;
+  live/error-free context, visible-canvas target and executed frame counters
+  are checked. The same 48-frame cadence cycle and 50% + 20 ms optional-field
+  overhead bound remain in force
+- `node scripts/benchmark-mobile-thrust.mjs`: separate serial base/head/head/base
+  OFF-path comparison with 48 actual-thrust warmup frames and 48 measured
+  frames per run. It verifies exact physical/camera state and records adaptive
+  workload differences before interpreting the whole-app ratio
+- The full mobile recovery soak retains every one of its 1,200 thrust frames
+  and assertions. Its CI wall-clock allowance is 90 minutes; the previous
+  60-minute timeout at frame 960 was incomplete, not a full-soak pass
 - Existing appearance/cockpit/mode/thrust/save tests and physics, relativity,
   river, prediction regression workflows remain required
 

@@ -115,7 +115,8 @@ const FAST_REFRESH = {
     pins: -1, seed: undefined, hLoaded: false, hReady: false, hVersion: -1, hCount: -1, simTBucket: undefined,
     lite: false,
 };
-let _focusSystem = { starId: "", system: null };
+let _focusSystem = { starId: "", seed: null, system: null };
+let _physicalSystem = { starId: "", seed: null, system: null };
 
 function sameFastRefresh(wx, wy, wz, focus, hStats, simT) {
     if (ACTIVE_STARS.length === 0 || GRAVITY_STARS.length === 0) return false;
@@ -371,7 +372,7 @@ function trimPinnedProcedural(keepId = "") {
 }
 
 export function activeStarById(id) {
-    for (const star of ACTIVE_STARS) if (activeId(star) === id) return star;
+    for (const star of ACTIVE_STARS) if (activeId(star) === id) return knownDuplicateFor(star) || star;
     return PINNED_PROC.get(id) || proceduralStarById(id, LAST_EVAL_T) || catalogStarById(id, LAST_EVAL_T);
 }
 
@@ -400,16 +401,33 @@ export function activeStarForFocus(focus) {
 export function getFocusedSystem(star, simT = 0) {
     if (!star || star.formedStar) { _focusSystem = { starId: "", system: null }; return null; }
     const id = stableStarKey(star);
-    if (_focusSystem.starId !== id) {
+    if (_focusSystem.starId !== id || _focusSystem.seed !== getSeed()) {
         const system = generateSystem(star);
         system.hostStar = star;
-        _focusSystem = { starId: id, system };
+        _focusSystem = { starId: id, seed: getSeed(), system };
     } else if (_focusSystem.system) _focusSystem.system.hostStar = star;
     return _focusSystem.system;
 }
 
 export function getCachedFocusedSystem() {
-    return _focusSystem.system;
+    return _focusSystem.seed === getSeed() ? _focusSystem.system : null;
+}
+
+// The ship's contact/orbit/landing system must not be replaced when the
+// exploration camera visits a distant host. This second CPU-only cache is
+// bounded to one system and never creates another rendered pool.
+export function getPhysicalSystem(star) {
+    if (!star || star.formedStar) { _physicalSystem = { starId: "", seed: null, system: null }; return null; }
+    const id = stableStarKey(star), seed = getSeed();
+    if (_physicalSystem.starId !== id || _physicalSystem.seed !== seed) {
+        const system = _focusSystem.starId === id && _focusSystem.seed === seed ? _focusSystem.system : generateSystem(star);
+        _physicalSystem = { starId: id, seed, system };
+    }
+    _physicalSystem.system.hostStar = star;
+    return _physicalSystem.system;
+}
+export function getCachedPhysicalSystem() {
+    return _physicalSystem.seed === getSeed() ? _physicalSystem.system : null;
 }
 
 export function promoteTier1Star(tileId, idx) {
@@ -509,6 +527,9 @@ function insertNearestProcedural(star, d2, limit) {
 
 function knownDuplicateFor(star) {
     if (!star?.activeCatalog) return null;
+    const key = stableStarKey(star);
+    const exact = STARS.find(known => stableStarKey(known) === key);
+    if (exact) return exact;
     const maskKm = ACTIVE_STAR_CONFIG.realMaskPc * PC_KM;
     const mask2 = maskKm * maskKm;
     for (const known of STARS) {
