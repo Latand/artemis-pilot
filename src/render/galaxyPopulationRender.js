@@ -38,6 +38,7 @@ import { coarsenGalaxyWells, flowMassFromMagnitude } from '../flowScaleMath.js';
 import { MERGER } from '../universe/localGroupOrbit.js';
 import { TIDES } from '../universe/mergerTides.js';
 import { galaxySeed, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
+import { RESOLVED_VARYINGS, RESOLVED_GLSL } from "./galaxyResolved.js";
 import { K, MPC_KM } from "../constants.js";
 import { galaxyDisplayGain, galaxyVolumeMeter } from "./galaxyVolume.js";
 import { extragalacticExposure, EXT_STRETCH, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
@@ -68,6 +69,7 @@ attribute vec4 aPhot;
 attribute float aT;
 attribute float aSeed;
 ${MORPH_VARYINGS}
+${RESOLVED_VARYINGS}
 uniform vec3 uCamRel;
 uniform mat3 uWorldToView;
 uniform sampler2D uLightCone;
@@ -85,7 +87,7 @@ float cosmicTimeAtLnA(float lnA) {
 }
 uniform vec2 uDepthRange;
 #ifndef GAL_POINTS
-varying vec2 vPx;          // pixel offset from the centre along (major, minor)
+// Quads evaluate a camera ray in the fragment; no affine billboard UVs.
 #endif
 varying vec4 vAB;          // component scales in px: (a1, b1, a2, b2)
 varying vec2 vW;           // component peak display values
@@ -118,7 +120,8 @@ vec3 bvColor(float bv, float zfac) {
 void offscreen() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 #ifndef GAL_POINTS
-    vPx = vec2(0.0);
+    vCenterH=vec3(0.0,0.0,-1.0); vAxisV=vec3(0.0,0.0,1.0); vBasisV=vec3(1.0,0.0,0.0);
+    vPhysical=vec4(1.0); vFacePeak=vec2(0.0); vNdc=vec2(2.0);
 #endif
     vMorph = vec4(0.0); vDiskFrame = vec3(1.0, 0.0, 1.0);
     vAB = vec4(1.0); vW = vec2(0.0); vColor = vec3(0.0); vLane = 0.0; vExt = 1.0;
@@ -144,9 +147,9 @@ void main() {
     vec2 evo = flagMerge > 0.5 ? vec2(uMwLum, 0.0) : galaxyEvolution(T, cosmicTimeAtLnA(uLnAObs + dlnA));
     if (evo.x <= 1e-12) { offscreen(); return; }
     vec3 appW = rel * (uAObs * ratio) + aDelta;       // apparent position, observer proper Mpc
-    float dMpc = length(appW);
-    if (dMpc <= 0.0) { offscreen(); return; }
-    vec3 dirV = uWorldToView * (appW / dMpc);
+    float dMpc = max(length(appW),1e-10);
+    vec3 appV = uWorldToView * appW;
+    vec3 dirV = length(appV)>1e-12 ? appV/dMpc : vec3(0.0,0.0,-1.0);
     float dScene = dMpc * uMpcScene;
     // Cheap early rejection: even as a point source (all light in the PSF core)
     // this galaxy stays below the display threshold. (Doppler brightening at
@@ -163,8 +166,13 @@ void main() {
     // ~6 Gly in scene units.
     float dopplerD;
     dirV = normalize(relApplyView(dirV, 5500.0, dopplerD));
-    float viewDepth = dScene * max(0.0, -dirV.z);
-    if (-dirV.z <= 0.0 || viewDepth < uDepthRange.x || viewDepth >= uDepthRange.y) { offscreen(); return; }
+    // Exactly ONE tier owns a galaxy, including support crossing the eye.
+    // Testing support overlap in both passes would double additive light.
+    float viewDepth = dScene * max(0.001, -dirV.z);
+    if (viewDepth < uDepthRange.x || viewDepth >= uDepthRange.y) { offscreen(); return; }
+#ifdef GAL_POINTS
+    if (-dirV.z<=0.0) { offscreen(); return; }
+#endif
     // --- shape: oblate body, symmetry axis n, intrinsic axis ratio q0
     // (the merging pair keeps its own shapes: the disk light the tide pulls
     // out is drawn as debris by render/mergerTidesRender.js and leaves the
@@ -225,55 +233,53 @@ void main() {
         float sc = KNEE * pow(pk / KNEE, 0.3) / pk;
         p1 *= sc; p2 *= sc;
     }
-    // --- quad covering ~4.5 scale lengths of the widest component
-    float drawD = min(dScene, uFarClamp);
-    vec3 center = dirV * drawD;
-    // Cull by the centre against the frustum with a margin for the quad:
-    // the clip vector is normalised below, which only works for quads that
-    // stay in front of the camera, so their half-size is also capped at
-    // ~0.5 rad (such a galaxy fills the view; the sprite is not the right
-    // representation any more, but it must never fold through w = 0).
-    // The quad only needs to reach where the profile drops below the display
-    // threshold: ln(peak / threshold) scale lengths, at most 4.5.
-    float rVis = clamp(log(max(p1 + p2, 1e-30) / (0.3 * uCull)), 1.2, 4.5);
-    float extA = min(rVis * max(A1, A2), 0.5 * uPxScale), extB = min(rVis * max(B1, B2), 0.5 * uPxScale);
-    vec4 clipC = projectionMatrix * vec4(center, 1.0);
-    if (clipC.w <= 0.0) { offscreen(); return; }
-    vec2 ndcC = clipC.xy / clipC.w;
-    vec2 margin = 2.0 * vec2(extA) / uViewport;
-    if (abs(ndcC.x) > 1.0 + margin.x || abs(ndcC.y) > 1.0 + margin.y) { offscreen(); return; }
+    // Conservative support in physical h units. Close or eye-plane-crossing
+    // support gets a viewport rectangle, clipped per ray in the fragment.
+    // This removes the old 0.5-radian cap whose nonzero edge made a diamond.
+    float rVis = mix(clamp(log(max(p1+p2,1e-30)/(0.3*uCull)),1.2,4.5),8.0,smoothstep(2.0,9.0,a1*q)*(1.0-flagMw));
 #ifdef GAL_POINTS
-    // One vertex per galaxy: a square point covering the rotated ellipse.
-    // The major axis' screen direction goes to the fragment shader.
-    float hs = max(extA, extB);
-    // Too large for a point sprite: cap the reach (the flux is unchanged).
-    hs = min(hs, 0.5 * uMaxPointPx);
-    vec4 clipM = projectionMatrix * vec4(center + maj * (drawD / uPxScale), 1.0);
-    vec2 sd = (clipM.xy / clipM.w - ndcC) * uViewport;
-    vRot = length(sd) > 1e-9 ? normalize(sd) : vec2(1.0, 0.0);
-    vHalf = hs;
-    gl_PointSize = 2.0 * hs * uDpr;
-    gl_Position = vec4(ndcC, 0.9999, 1.0);
+    float drawD = min(dScene,uFarClamp);
+    vec3 center=dirV*drawD;
+    vec4 clipC=projectionMatrix*vec4(center,1.0);
+    if(clipC.w<=0.0){offscreen();return;}
+    vec2 ndcC=clipC.xy/clipC.w;
+    float hs=min(rVis*max(max(A1,A2),max(B1,B2)),.5*uMaxPointPx);
+    vec4 clipM=projectionMatrix*vec4(center+maj*(drawD/uPxScale),1.0);
+    vec2 sd=(clipM.xy/clipM.w-ndcC)*uViewport;
+    vRot=length(sd)>1e-9?normalize(sd):vec2(1.0,0.0);
+    vHalf=hs; gl_PointSize=2.0*hs*uDpr;
+    gl_Position=vec4(ndcC,.9999,1.0);
 #else
-    vec2 corner = position.xy;
-    vPx = corner * vec2(extA, extB);
-    float pxToScene = drawD / uPxScale;
-    vec3 p = center + (maj * vPx.x + mnr * vPx.y) * pxToScene;
-    vec4 clip = projectionMatrix * vec4(p, 1.0);
-    // Normalise the homogeneous clip vector. At these distances w ~ 1e15-1e19:
-    // z/w rounds onto (or past) the far plane in float32, and rasterisers
-    // lose the varyings' perspective-correct interpolation (1/w ~ 1e-17
-    // skewed the profile toward one corner of the quad). A galaxy's quad is
-    // small against its distance, so affine interpolation is exact enough,
-    // and as background light that never writes depth it sits just inside
-    // the far plane.
-    gl_Position = vec4(clip.xy / clip.w, 0.9999, 1.0);
+    // Work near unity rather than projecting 1e15–1e19 scene coordinates.
+    vec3 c=dirV;
+    float radius=max(rVis*max(max(A1,A2),max(B1,B2))/uPxScale,1e-7);
+    float depth=-c.z;
+    if(depth+radius<=0.0){offscreen();return;}
+    vec2 lo=vec2(-1.0),hi=vec2(1.0);
+    if(depth>radius){
+        vec2 scale=vec2(projectionMatrix[0][0],projectionMatrix[1][1]);
+        vec2 offset=vec2(projectionMatrix[2][0],projectionMatrix[2][1]);
+        vec2 centerNdc=scale*c.xy/depth-offset;
+        vec2 reach=scale*radius/(depth-radius)*(vec2(1.0)+abs(c.xy)/depth);
+        lo=max(lo,centerNdc-reach);hi=min(hi,centerNdc+reach);
+        if(any(greaterThanEqual(lo,hi))){offscreen();return;}
+    }
+    vNdc=mix(lo,hi,position.xy*.5+.5);
+    gl_Position=vec4(vNdc,.9999,1.0);
+    vCenterH=dirV*(dMpc/max(h*.001,1e-10));
+    vAxisV=n;
+    vPhysical=vec4(q0,mix(max(q0,.65),q0,spheroid),spheroid,
+        smoothstep(.025,.065,h*.001/dMpc)*(1.0-flagMw));
+    vFacePeak=vec2(p1*A1*B1/max(a1*a1,1e-12),p2*A2*B2/max(a2*a2,1e-12));
 #endif
     // Stable intrinsic coordinates; changes of viewing angle do not rotate
     // the arms within their parent disk. Fine structure vanishes below PSF.
     vec3 nw = normalize(aShape.xyz);
     vec3 e1w = normalize(cross(abs(nw.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0), nw));
     vec3 e2w = cross(nw, e1w);
+#ifndef GAL_POINTS
+    vBasisV=uWorldToView*e1w;
+#endif
     vDiskFrame = vec3(dot(maj, uWorldToView * e1w), dot(maj, uWorldToView * e2w), dot(n, l));
     vMorph = vec4(aSeed, T, smoothstep(2.0, 9.0, a1 * q) * (1.0 - flagMw), morph);
     vAB = vec4(A1, B1, A2, B2);
@@ -291,10 +297,10 @@ precision highp float;
 uniform float uStretch;
 ${EXT_STRETCH_GLSL}
 ${MORPH_VARYINGS}
+${RESOLVED_VARYINGS}
+uniform vec4 uRayProjection;
+uniform float uPxScale;
 ${MORPH_GLSL}
-#ifndef GAL_POINTS
-varying vec2 vPx;
-#endif
 varying vec4 vAB;
 varying vec2 vW;
 varying vec3 vColor;
@@ -304,19 +310,33 @@ varying float vExt;
 varying vec2 vRot;
 varying float vHalf;
 #endif
+${RESOLVED_GLSL}
 void main() {
 #ifdef GAL_POINTS
     vec2 qp = (gl_PointCoord - 0.5) * vec2(2.0, -2.0) * vHalf;   // px, y up
-    vec2 vPx = vec2(dot(qp, vRot), dot(qp, vec2(-vRot.y, vRot.x)));
+    vec2 vPx=vec2(dot(qp,vRot),dot(qp,vec2(-vRot.y,vRot.x)));
+#else
+    vec3 ray=normalize(vec3((vNdc+uRayProjection.zw)/uRayProjection.xy,-1.0));
+    vec3 l=normalize(vCenterH),n=normalize(vAxisV);
+    vec3 nSky=n-dot(n,l)*l;
+    vec3 maj=length(nSky)>1e-5?normalize(cross(l,nSky)):normalize(cross(l,vec3(0.001,1.0,0.0)));
+    vec3 mnr=cross(l,maj);
+    vec2 vPx=vec2(dot(ray,maj),dot(ray,mnr))*uPxScale/max(dot(ray,l),1e-5);
 #endif
     float r1 = length(vPx / vAB.xy);
     float r2 = length(vPx / vAB.zw);
     // taper to zero at the quad edge (vExt scale lengths of the widest part)
     vec2 e = vPx / (vExt * max(vAB.xy, vAB.zw));
-    float edge = 1.0 - smoothstep(0.55, 1.0, length(e));
+    float edge = 1.0 - smoothstep(mix(.55,.75,vMorph.z), 1.0, length(e));
     float yl = vPx.y / max(0.18 * vAB.y, 0.5);
     float lane = 1.0 - vLane * exp(-yl * yl) * smoothstep(0.0, 0.6, r1);
-    vec3 c = galStructuredLight(vPx, vAB, vW, vColor, lane) * edge;
+    vec3 c=vec3(0.0);
+#ifndef GAL_POINTS
+    if(vPhysical.w<1.0) c=galStructuredLight(vPx,vAB,vW,vColor,lane)*edge;
+    if(vPhysical.w>0.0) c=mix(c,galResolvedLight(ray),vPhysical.w);
+#else
+    c=galStructuredLight(vPx,vAB,vW,vColor,lane)*edge;
+#endif
     float v = dot(c, vec3(0.2126, 0.7152, 0.0722));
     if (v < 1e-6) discard;
     // Keep a resolved disk's contrast instead of lifting all interarm light
@@ -350,6 +370,7 @@ function makeShared() {
     state.lcTex = tex;
     return {
         uWorldToView: { value: new THREE.Matrix3() },
+        uRayProjection: { value: new THREE.Vector4(1,1,0,0) },
         uLightCone: { value: tex },
         uChiMax: { value: CHI_MAX_MPC },
         uAObs: { value: 1 },
@@ -678,6 +699,8 @@ export function updateGalaxyPopulation(camera, f) {
         R(2, 0), -R(2, 2), R(2, 1),
     );
     s.uWorldToView.value.copy(_v);
+    const proj=camera.projectionMatrix.elements;
+    s.uRayProjection.value.set(proj[0],proj[5],proj[8],proj[9]);
     s.uPxScale.value = f.pxScale;
     if (f.viewport) s.uViewport.value.set(f.viewport[0], f.viewport[1]);
     if (f.dpr) s.uDpr.value = f.dpr;
@@ -739,9 +762,15 @@ export function updateGalaxyPopulation(camera, f) {
         // is reached, with hysteresis. No double-drawing or resident copy.
         if (!mesh.userData.lg) {
             const a = s.uAObs.value;
-            const quad = needsGalaxyQuads(Math.hypot(rx, ry, rz) * a,
-                (mesh.userData.radiusMpc * 1.05 + 0.5) * a, mesh.userData.maxScaleKpc,
-                f.pxScale, s.uMaxPointPx.value, !mesh.isPoints);
+            const chi=Math.hypot(rx,ry,rz), radius=mesh.userData.radiusMpc*1.05+.5;
+            // Conservative apparent-distance lower bound on the light cone.
+            // Observer-epoch distance alone under-promotes redshifted chunks.
+            const u=Math.min(LC_N-1,(chi+radius)/CHI_MAX_MPC*(LC_N-1));
+            const j=Math.floor(u), fLC=u-j;
+            const ratio=Math.exp(state.lcData[j]*(1-fLC)+state.lcData[Math.min(j+1,LC_N-1)]*fLC);
+            const nearest=Math.max(0,chi-radius)*a*ratio;
+            const quad = needsGalaxyQuads(nearest,0,mesh.userData.maxScaleKpc,
+                f.pxScale,s.uMaxPointPx.value,!mesh.isPoints) || s.uMaxPointPx.value<44;
             if (quad === !!mesh.isPoints) {
                 const old = mesh;
                 mesh = makeChunkMesh(old.userData.source, !quad);
