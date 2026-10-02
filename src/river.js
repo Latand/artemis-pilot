@@ -753,6 +753,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     if (!river.enabled) return;
     warpLines.visible = false;
     river.warpVisible = false;
+    river.warpStrength = 0;
     uniformsShared.uWarpStrength.value = 0;
     river.frame++;
     shellAnchorLive = false;

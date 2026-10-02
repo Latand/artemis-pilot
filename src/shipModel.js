@@ -93,13 +93,16 @@ export function createShipModel() {
             seam.rotateY(-angle);
             put("graphite", seam, Math.cos(angle) * .92, y + face * .131, Math.sin(angle) * .92);
         }
-        // Small separated segments in the inner channel, never a lens/shader.
+        // The illuminated channel belongs to the fixed inner bearing.
+        // Only its surrounding outer rim rotates, with radial clearance.
+        const rotorParts = parts; parts = staticParts;
         for (let i = 0; i < 16; i++) {
-            const arc = new THREE.TorusGeometry(.763, .013, 4, 5, Math.PI * 2 / 16 * .68);
+            const arc = new THREE.TorusGeometry(.737, .013, 4, 5, Math.PI * 2 / 16 * .68);
             arc.rotateZ(i * Math.PI * 2 / 16);
             arc.rotateX(Math.PI / 2);
             put("cyan", arc, 0, y);
         }
+        parts = rotorParts;
         for (let i = 0; i < 4; i++) {
             const angle = Math.PI / 4 + i * Math.PI / 2;
             const x = Math.cos(angle), z = Math.sin(angle);
@@ -115,15 +118,15 @@ export function createShipModel() {
         bake(rotor, parts, `ship.rotor.${rotors.length}`);
         craft.add(rotor); rotors.push(rotor);
         parts = staticParts;
-        put("graphite", tube(.798, .125, .025), 0, y);
+        put("graphite", tube(.775, .125, .025), 0, y);
         for (let i = 0; i < 4; i++) {
             const a = Math.PI / 4 + i * Math.PI / 2;
-            beam("silver", [Math.cos(a) * .17, y - .04, Math.sin(a) * .15], [Math.cos(a) * .79, y, Math.sin(a) * .79], .11, .07);
+            beam("silver", [Math.cos(a) * .17, y - .04, Math.sin(a) * .15], [Math.cos(a) * .77, y, Math.sin(a) * .77], .11, .07);
         }
     }
     for (let i = 0; i < 4; i++) {
         const angle = Math.PI / 4 + i * Math.PI / 2;
-        const x = Math.cos(angle) * .91, z = Math.sin(angle) * .91;
+        const x = Math.cos(angle) * .68, z = Math.sin(angle) * .68;
         beam("graphite", [x, -.61, z], [x, .48, z], .075, .075);
         beam("silver", [x * 1.025, -.55, z * 1.025], [x * 1.025, .42, z * 1.025], .028, .035);
     }

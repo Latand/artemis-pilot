@@ -25,7 +25,8 @@ Turning it off immediately sets its drawing strength to zero. Source field,
 GPU particle advection, ship forces, trajectory predictions, time control,
 relTravel and observer relView are untouched. The extra samples have one
 optional draw call, 600 vertices desktop / 272 mobile, no textures or render
-targets. The craft has 15 opaque material batches, seven shared materials,
+targets. The fixed inner bearing carries the cyan channel; it and the inward-set
+spars stay radially clear of the rims for their full 360° sweep. The craft has 13 opaque material batches, seven shared materials,
 9,020 triangles and 273,544 bytes of geometry (versus 7 batches, 8,996
 triangles and 271,864 bytes before animation). All buffers are created once.
 Positions use the river's existing CPU-float64-relative frame before GPU

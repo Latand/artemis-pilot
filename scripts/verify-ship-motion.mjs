@@ -56,12 +56,27 @@ try{
  const resources=await page.evaluate(async()=>{const {renderer}=await import('/src/scene.js');return{...renderer.info.memory,programs:renderer.info.programs.length};});
  for(let i=0;i<4;i++){await toggle();await frames(1);}
  check(await page.evaluate(async r=>{const {renderer}=await import('/src/scene.js');return JSON.stringify({...renderer.info.memory,programs:renderer.info.programs.length})===JSON.stringify(r);},resources),'Repeated on/off toggles keep geometry, textures and programs fixed');
+ // Paired full-app frame-cost samples (includes render and GPU completion).
+ // This is an overhead guard on the CI renderer, not a consumer FPS promise.
+ const timing=async enabled=>{
+  await page.evaluate(async enabled=>{(await import('/src/shipVisuals.js')).shipVisuals.enabled=enabled;},enabled);
+  await frames(3);const samples=[];
+  for(let i=0;i<8;i++)samples.push(await page.evaluate(()=>{const t=performance.now();__motionFrame();return performance.now()-t;}));
+  return {samples,mean:samples.reduce((a,b)=>a+b,0)/samples.length};
+ };
+ const timingOff=await timing(false),timingOn=await timing(true);
+ report.performance={off:timingOff,on:timingOn};
+ check(timingOn.mean<=timingOff.mean*1.5+20,'Speculative visual adds at most 50% + 20ms full-app frame cost on CI renderer');
  // Paired, real unpaused simulation replay from one quicksave. No presentation
  // input overrides; same advance/ephemerides/prediction code on both routes.
  await page.evaluate(async()=>{delete window.__qaSpeed;delete window.__qaMotionPause;__qaDt=1/60;__G.paused=true;__G.warp=1;await (await import('/src/saves.js')).saveState();});
  const replay=async(enabled)=>{
+  await page.evaluate(()=>document.activeElement?.blur());
   await page.evaluate(async enabled=>{await(await import('/src/saves.js')).loadState();(await import('/src/shipVisuals.js')).shipVisuals.enabled=enabled;__G.warp=1;__G.paused=false;},enabled);
-  await page.keyboard.down('w');await frames(12);await page.keyboard.up('w');
+  const before=await page.evaluate(()=>__G.dvUsed);
+  await page.keyboard.down('w');await frames(12);
+  check(await page.evaluate(async before=>{const {flame,exhaust}=await import('/src/ship.js');return __G.dvUsed>before&&flame.visible&&exhaust.visible;},before),`Warp ${enabled?'on':'off'} replay actually applies W thrust and renders exhaust`);
+  await page.keyboard.up('w');
   return page.evaluate(()=>Object.fromEntries(['t','tau','x','y','z','vx','vy','vz','heading','pitch','fuel','dvUsed','dead'].map(k=>[k,__G[k]])));
  };
  const off=await replay(false),on=await replay(true);report.physics={off,on};check(JSON.stringify(off)===JSON.stringify(on),'Real W-thrust physics is bit-identical with warp on/off');

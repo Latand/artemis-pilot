@@ -7,7 +7,7 @@ assert.equal(model.name, 'Artemis twin-ring explorer');
 assert.equal(model.userData.design, 'speculative-twin-ring');
 const meshesOf = model => { const a=[]; model.traverse(o=>{if(o.isMesh)a.push(o);}); return a; };
 assert.equal(model.userData.rotors.length, 2);
-assert.equal(meshesOf(model).length, 15, 'Seven fixed batches plus four per rotor');
+assert.equal(meshesOf(model).length, 13, 'Seven fixed batches plus three per rotor');
 const bounds = new THREE.Box3().setFromObject(model);
 assert(Math.abs(bounds.min.y + 1.05) < .065, 'Aft extremity stays attached to existing exhaust anchor');
 assert(bounds.min.y > -1.06 && bounds.max.y > 1.3 && bounds.max.y < 1.5, 'Nose +Y and tail retain orientation / exhaust offset contract');
@@ -35,7 +35,7 @@ for (const mesh of meshesOf(model)) {
  }
 }
 assert(triangles <= 9100 && bytes <= 300000, 'Fixed mobile geometry budget');
-assert.equal(geometries.size,15);assert.equal(materials.size,7);
+assert.equal(geometries.size,13);assert.equal(materials.size,7);
 // The two annuli must have outward-facing outer walls and inward-facing
 // inner walls; normals determine whether real application light reveals them.
 for(const [i,cy] of [-.61,.48].entries()) {
@@ -49,6 +49,14 @@ for(const [i,cy] of [-.61,.48].entries()) {
  }
  assert(outward>60&&inward>60,`Ring ${cy} correctly faces both surfaces`);
 }
+// Sweeping either rotor through every angle cannot intersect a fixed support:
+// their complete radial intervals are disjoint (including lathe chord sag).
+let staticMaxR=0, rotorMinR=Infinity;
+model.traverse(o=>{if(!o.isMesh)return;const p=o.geometry.attributes.position;
+ for(let i=0;i<p.count;i++){const r=Math.hypot(p.getX(i),p.getZ(i));
+ if(o.name.startsWith('ship.rotor'))rotorMinR=Math.min(rotorMinR,r);else staticMaxR=Math.max(staticMaxR,r);}
+});
+assert(staticMaxR+.01<rotorMinR*Math.cos(Math.PI/64),'Full 360-degree swept clearance from fixed hull, bearings, lights and supports');
 // A conventional engine aperture must not be buried behind the solid hull.
 model.updateMatrixWorld(true);
 for (const x of [.01,.05,.10,.13]) {
@@ -59,7 +67,7 @@ for (const x of [.01,.05,.10,.13]) {
 for (const y of [-.61,.48]) for (const theta of [.02,.05,.1,.2,.25]) {
  const direction = new THREE.Vector3(Math.cos(theta),0,Math.sin(theta));
  const ray = new THREE.Raycaster(direction.clone().multiplyScalar(.4).add(new THREE.Vector3(0,y,0)),direction);
- assert.match(ray.intersectObject(model,true)[0]?.object.name,/ship.rotor.[01].cyan/,'Inner-ring illumination is exposed');
+ assert.equal(ray.intersectObject(model,true)[0]?.object.name,'ship.cyan','Fixed inner-ring illumination is exposed');
 }
 const second=createShipModel();
 assert.deepEqual(meshesOf(model).map(o=>[o.name,...o.geometry.attributes.position.array]),meshesOf(second).map(o=>[o.name,...o.geometry.attributes.position.array]),'Construction is deterministic');
@@ -69,7 +77,7 @@ for(const m of [model,second]) {
  const mats=new Set(); m.traverse(o=>{if(!o.isMesh)return; mats.add(o.material);o.geometry.addEventListener('dispose',()=>disposed++);o.geometry.dispose();});
  for(const mat of mats){mat.addEventListener('dispose',()=>disposed++);mat.dispose();}
 }
-assert.equal(disposed,44);
+assert.equal(disposed,40);
 const source=readFileSync(new URL('../src/ship.js',import.meta.url),'utf8');
 assert(source.includes('export const craft = createShipModel();'));
-console.log('Twin-ring ship model PASS',JSON.stringify({drawCalls:15,triangles,geometryBytes:bytes,bounds:bounds.toArray?.()||{min:bounds.min.toArray(),max:bounds.max.toArray()}}));
+console.log('Twin-ring ship model PASS',JSON.stringify({drawCalls:13,triangles,geometryBytes:bytes,bounds:bounds.toArray?.()||{min:bounds.min.toArray(),max:bounds.max.toArray()}}));
