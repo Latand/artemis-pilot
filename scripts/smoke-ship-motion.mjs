@@ -26,6 +26,12 @@ for(const mobile of [false,true]){const layer=createWarpRiverLayer({},mobile);as
 // Architectural invariant: speculative terms never enter compute/advection.
 const river=readFileSync(new URL('../src/river.js',import.meta.url),'utf8');
 const compute=river.split('const COMPUTE_FRAG')[1].split('const LINE_VERT')[0];
+// The late HUD stage runs after actual pointer input can enter app fullscreen.
+// It must retain the existing capture viewport, not resize a fullscreen window.
+const hudLayout=readFileSync(new URL('./verify-ship-hud-layout.mjs',import.meta.url),'utf8');
+assert(!/\bsetViewportSize\s*\(/.test(hudLayout), 'HUD layout QA must not resize the browser after fullscreen entry');
+assert(hudLayout.includes('viewport:{width:innerWidth,height:innerHeight}'), 'HUD layout evidence records the actual viewport');
+assert(hudLayout.includes('layout.viewport.width===1280&&layout.viewport.height===820'), 'HUD layout QA verifies the configured desktop viewport');
 assert(!compute.includes('warpDrawPosition')&&!compute.includes('WARP_DRAW_GLSL'));
 assert(!river.split('const LINE_VERT')[1].split('const LINE_FRAG')[0].includes('warpDrawPosition'), 'Ordinary river vertices incur no speculative branch');
 assert(WARP_DRAW_GLSL.includes('if (uWarpStrength <= 0.0) return p;')&&WARP_DRAW_GLSL.includes('if (r2 >= 1.0) return p;'));

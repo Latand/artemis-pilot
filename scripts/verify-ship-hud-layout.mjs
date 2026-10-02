@@ -1,8 +1,10 @@
 // Run after timing/physics tests: a paused browser clock keeps genuine toast()
 // notifications alive while inspecting the actual app, even on slow CI renderers.
 export async function verifyShipHudLayout(page, { check, out, frames, report }) {
- // Match the desktop exploration screenshot that originally exposed the overlap.
- await page.setViewportSize({width:1200,height:800});await frames(2);
+ // Keep the capture harness's desktop viewport. The app enters fullscreen on
+ // pointer input, so a late browser-window resize can fail before layout QA.
+ // The exploration suite separately covers the original 1200x800 view. Here,
+ // record and verify 1280x820 without changing any populated-HUD assertions.
  await page.clock.install({ time: new Date('2026-10-02T12:00:00Z') });
  await page.clock.pauseAt(new Date('2026-10-02T12:00:01Z'));
  const settle=()=>page.clock.runFor(350);
@@ -35,6 +37,7 @@ export async function verifyShipHudLayout(page, { check, out, frames, report }) 
     positions:['shipVisualControls','dWarpVisualNote'].map(id=>getComputedStyle(document.getElementById(id)).position)};
   });
   report.hudLayouts.push({name,enabled,...layout});
+  check(layout.viewport.width===1280&&layout.viewport.height===820,`${name}: actual desktop viewport remains 1280x820`);
   check(layout.toastCount===count&&layout.obstacles.filter(e=>e.id==='toast').length===count&&layout.objectives>0&&layout.obstacles.some(e=>e.id==='objPanel'),`${name}: populated objective panel and ${count} visible live notifications`);
   check(layout.control.visible&&layout.control.inside&&layout.hits.every(Boolean),`${name}: desktop control visible, in viewport and hit-testable at three points`);
   check(layout.note.visible===enabled&&!layout.mobileNote.visible&&(!enabled||layout.note.inside),`${name}: only the desktop speculative annotation appears when enabled`);
