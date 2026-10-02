@@ -130,7 +130,7 @@ function initThrottle() {
     knob.addEventListener("pointerup", end);
     knob.addEventListener("pointercancel", end);
     knob.addEventListener("lostpointercapture", end);
-    window.addEventListener("ap:renderlost", () => { dragging = false; reset(); });
+    window.addEventListener("ap:releaseflightinput", () => { dragging = false; reset(); });
     reset();
 }
 
@@ -206,6 +206,11 @@ export function initMobileControls(hooks) {
     if (!ui) return;
     for (const [id, code] of holdButtons) bindHold(id, code);
     initThrottle();
+    window.addEventListener("ap:releaseflightinput", () => {
+        for (const [id] of holdButtons) $(id)?.classList.remove("active");
+        setText(mMode, "HOLD");
+        setClass(mMode, "warn");
+    });
     initMenu(hooks);
     window.addEventListener("blur", () => {
         for (const [, code] of holdButtons) keys.delete(code);

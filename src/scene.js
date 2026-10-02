@@ -61,15 +61,22 @@ contextStatus.hidden = true;
 contextStatus.textContent = "Graphics interrupted. Flight is held here while the display recovers.";
 Object.assign(contextStatus.style, { position: "fixed", left: "8%", right: "8%", top: "46%", padding: "18px", border: "1px solid #70818c", borderRadius: "12px", background: "#0b141fee", color: "#e9eff5", textAlign: "center", zIndex: "1000", pointerEvents: "none" });
 cvHost.appendChild(contextStatus);
+function releaseFlightInput() {
+    keys.clear();
+    G.thrustMain = G.thrustLat = 0;
+    G.boost = false;
+    window.dispatchEvent(new Event("ap:releaseflightinput"));
+}
 export const renderContext = bindContextLifecycle(renderer, {
-    onLost() {
-        keys.clear();
-        G.thrustMain = G.thrustLat = 0;
-        G.boost = false;
-        contextStatus.hidden = false;
-        window.dispatchEvent(new Event("ap:renderlost"));
+    onLost() { releaseFlightInput(); contextStatus.hidden = false; },
+    onRestored() {
+        // Three retains its CPU-side target reference when rebuilding GL.
+        // A loss during any offscreen pass must resume on the visible canvas.
+        renderer.setRenderTarget(null);
+        renderer.autoClear = true;
+        releaseFlightInput();
+        contextStatus.hidden = true;
     },
-    onRestored() { contextStatus.hidden = true; },
 });
 window.__renderContext = renderContext;
 
@@ -235,7 +242,8 @@ export async function ensurePostProcessing(lensingPass = null) {
         // so the bloom/lensing pipeline gets the same depth-precision fix.
         class TieredRenderPass extends RenderPass {
             render(rendererArg, writeBuffer, readBuffer) {
-                        rendererArg.autoClear = false;
+                const oldAutoClear = rendererArg.autoClear;
+                rendererArg.autoClear = false;
                 let oldClearAlpha, oldOverrideMaterial;
                 if (this.overrideMaterial !== null) {
                     oldOverrideMaterial = this.scene.overrideMaterial;

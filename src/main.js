@@ -465,7 +465,11 @@ mfdScreens.forEach((scr, i) => {
 const plPosArr = plGroups.map(g => g.position);
 const riverInitT0 = perfStart();
 initRiver();
+window.addEventListener("ap:releaseflightinput", () => {
+    if (thrustGain) thrustGain.gain.value = 0;
+});
 renderer.domElement.addEventListener("webglcontextrestored", () => {
+    clock.getDelta();
     resetGalaxyVolumeHistory();
     resetRiverContext();
 });

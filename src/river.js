@@ -597,9 +597,10 @@ export function initRiver() {
 export function warmRiverCompute() {
     if (!river.enabled || !rtA || !rtB || !computeScene || !computeCam) return false;
     const prevRT = renderer.getRenderTarget();
-    renderer.setRenderTarget(rtB);
-    renderer.render(computeScene, computeCam);
-    renderer.setRenderTarget(prevRT);
+    try {
+        renderer.setRenderTarget(rtB);
+        renderer.render(computeScene, computeCam);
+    } finally { renderer.setRenderTarget(prevRT); }
     const sw = rtA; rtA = rtB; rtB = sw;
     uniformsShared.uPos.value = rtA.texture;
     return true;
@@ -1079,9 +1080,10 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         river.dtAccum = 0;
         const computeT0 = performance.now();
         const prevRT = renderer.getRenderTarget();
-        renderer.setRenderTarget(rtB);
-        renderer.render(computeScene, computeCam);
-        renderer.setRenderTarget(prevRT);
+        try {
+            renderer.setRenderTarget(rtB);
+            renderer.render(computeScene, computeCam);
+        } finally { renderer.setRenderTarget(prevRT); }
         const computeMs = performance.now() - computeT0;
         river.computeMs = computeMs;
         if (renderQuality.mobile && computeMs > 24) river.computeEveryAdaptive = Math.min(4, Math.max(river.computeEveryAdaptive || 1, Math.ceil(computeMs / 18)));
