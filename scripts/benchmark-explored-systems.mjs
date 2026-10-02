@@ -70,14 +70,16 @@ function transform(source, id) {
         'G.t=0;G.paused=true;G.warp=1;resetEphem();clock.getDelta=()=>1/60;\nconst firstFrameT0 = perfStart();');
     source = once(source, 'renderer.setAnimationLoop(frame);', '// QA: frames delivered explicitly and serially.');
     // The measured production frame is untouched. Its diagnostic copy is
-    // compiled only after the Earth acceptance windows, never before them.
+    // compiled only after ALL acceptance windows, never before them.
     const fine = fineFrameSource(source);
-    return source + `\nwindow.__pairedFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;
-        const start=performance.now();frame();const cpu=performance.now()-start;renderer.getContext().finish();
-        return {cpuMs:cpu,frameAndFinishMs:performance.now()-start,frameNo};};
+    return source + `\nconst pairedReadbackPixel=new Uint8Array(4);\nwindow.__pairedFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;
+        const start=performance.now();frame();const cpu=performance.now()-start;const gl=renderer.getContext();
+        const finishStart=performance.now();gl.finish();const finishMs=performance.now()-finishStart;
+        const readbackStart=performance.now();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pairedReadbackPixel);
+        return {cpuMs:cpu,finishMs,readbackMs:performance.now()-readbackStart,frameAndFinishMs:performance.now()-start,frameNo};};
 let pairedFineFrame=null;
 window.__pairedFineFrame=()=>{pairedFineFrame ||= eval(${JSON.stringify('(')} + ${JSON.stringify(fine)} + ${JSON.stringify(')')});
-    clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;const start=performance.now();pairedFineFrame();renderer.getContext().finish();
+    clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;const start=performance.now();pairedFineFrame();const gl=renderer.getContext();gl.finish();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pairedReadbackPixel);
     return {frameAndFinishMs:performance.now()-start,frameNo};};
 window.__pairedWorkload=()=>({frameNo,beltCursor,kuiperCursor,nearVisualReady,nearFieldCadence:cam.dist>LY_SCENE*.2?'cosmic':'every-frame',
     mobile:renderQuality.mobile,loadShed:renderQuality.loadShed,warp:G.warp,gr:G.gr,uiMode:G.uiMode,
@@ -103,14 +105,15 @@ for (const [label, tree] of [['A', baselineRoot], ['B', root]]) {
     sourceHashes[label]['main.sceneBodies'] = createHash('sha256').update(mainSource.slice(start, end)).digest('hex');
 }
 
-const report = { version: 3, device, sourceHashes,
-    fixedDiagnosticExperiment: 'After all Earth timing trials:20 fine-substage frames and one120-frame CDP CPU profile of the unchanged production frame per revision, excluded from acceptance samples', baselineRevision: revision(baselineRoot), candidateRevision: revision(root),
+const report = { version: 4, device, sourceHashes,
+    fixedDiagnosticExperiment: 'After ALL acceptance fixtures and long-task collection: twenty attribution frames per fixture plus twenty fine-substage Earth frames and one 120-frame Earth CDP CPU profile per revision. No profiler runs between acceptance trials or fixtures', baselineRevision: revision(baselineRoot), candidateRevision: revision(root),
     epoch: '2026-10-01T12:00:00.000Z', query, viewport, deviceScaleFactor: 1, browserArgs, warmupFrames, samplesPerBlock, orders,
     hardware: { platform: os.platform(), release: os.release(), arch: os.arch(), logicalCPUs: os.cpus().length,
         cpuModels: [...new Set(os.cpus().map(cpu => cpu.model))], totalMemoryBytes: os.totalmem(), node: process.version },
     authority: 'Paired trials are the performance acceptance measurement because the sequential independent-browser timings confound revision with machine-time drift. Sequential raw reports and their comparison remain available as diagnostics; they are not deleted or relabeled as passing',
     scheduling: 'Both pages disable background timer/render throttling, have no automatic render loop, and are foregrounded before each measured block. The other page executes no application frames',
-    method: 'One Chromium instance; two actual full-app pages; serial alternating ABBA/BAAB blocks; each measured frame is delivered by a normal setTimeout browser task including GPU finish, never directly in a DevTools evaluation task',
+    method: 'One Chromium instance; two actual full-app pages; serial alternating ABBA/BAAB blocks; each measured frame is delivered by a normal setTimeout browser task including GPU finish plus a synchronous 1-pixel RGBA readback, never directly in a DevTools evaluation task',
+    gpuSynchronization: 'Prior finish-only evidence contained severe stalls inside arbitrary WebGL calls; this experiment tests explicit readback synchronization. Every frame now reads one pixel into one reusable 4-byte array, forcing completed framebuffer work before the next sample; readback time is included and separately reported',
     gate: 'For each fixture, median of all five paired trial p95 ratios must be <=1.05. Every trial is mandatory, no outlier removal, replacement trials or selective reruns',
     limitations: 'CI headless Chromium/SwiftShader, not physical desktop/mobile hardware; matched app view with declared unrelated layers disabled',
     omissions: ['AT-HYG streaming', 'background HYG layer', 'procedural background field', 'volumetric galaxy', 'galaxy population', 'gravity overlay', 'bloom'],
@@ -268,6 +271,43 @@ try {
             assert.equal(scenario.after[label].t, 0); assert.equal(scenario.after[label].paused, true);
             assert.deepEqual(scenario.after[label].ship, scenario.before[label].ship, 'Measured frames must never move the paused ship');
             assert.deepEqual(scenario.after[label].camera, scenario.before[label].camera, 'Measured camera must stay fixed');
+        }
+        await save();
+    }
+    report.longTasks = {};
+    for (const label of ['A', 'B']) {
+        const entries = await pages[label].evaluate(() => [...__pairedLongTasks, ...(__pairedObserver?.takeRecords() || []).map(entry => ({ startTime: entry.startTime, duration: entry.duration }))]);
+        const ranges = report.scenarios.flatMap(s => s.trials.flatMap(t => t.blocks.filter(b => b.label === label).map(b => ({ start: b.startTime, end: b.endTime }))));
+        const measured = entries.filter(entry => ranges.some(range => entry.startTime >= range.start && entry.startTime <= range.end));
+        report.longTasks[label] = { thresholdMs: 50, measuredCount: measured.length, measuredTotalBlockingMs: measured.reduce((n, entry) => n + Math.max(0, entry.duration - 50), 0),
+            measuredMaximumMs: Math.max(0, ...measured.map(entry => entry.duration)), measured, allEntries: entries };
+    }
+    // Tail stalls below the p95 cut must still be able to fail acceptance.
+    // Windows contain equal frame counts for both labels; retain the original
+    // explicit blocking-time/count/maximum budget on these paired windows.
+    const beforeLong = report.longTasks.A, afterLong = report.longTasks.B;
+    report.longTaskBudget = {
+        scope: 'All measured paired windows, with equal frame counts and no discarded tasks',
+        allowedTotalBlockingMs: beforeLong.measuredTotalBlockingMs * 1.05 + 50,
+        allowedMaximumMs: Math.max(200, beforeLong.measuredMaximumMs * 1.05),
+        allowedCount: Math.ceil(beforeLong.measuredCount * 1.05) + 1,
+    };
+    report.longTaskBudget.passed = afterLong.measuredTotalBlockingMs <= report.longTaskBudget.allowedTotalBlockingMs &&
+        afterLong.measuredMaximumMs <= report.longTaskBudget.allowedMaximumMs && afterLong.measuredCount <= report.longTaskBudget.allowedCount;
+    // CPU profiling can alter JIT state. Run all diagnostics only after every
+    // acceptance frame and its long-task record has been collected.
+    for (const scenario of report.scenarios) {
+        const { fixture } = scenario;
+        for (const label of ['A', 'B']) {
+            await activate(pages[label]);
+            await pages[label].evaluate(fixture => {
+                const q = pairedQA; q.input.setFocus(fixture.focus);
+                if (fixture.distance !== null) q.scene.cam.dist = fixture.distance;
+                q.scene.cam.distTarget = null; q.scene.cam.yaw = fixture.yaw; q.scene.cam.pitch = fixture.pitch;
+            }, fixture);
+            await frames(pages[label], warmupFrames);
+            await pages[label].waitForFunction(() => { const s = pairedQA.surfaces.pairedSurfaceQueue(); return !s.pending && !s.inFlight; });
+            await frames(pages[label], 4);
             // Attribution pass only: never included in the performance gate.
             const page = pages[label]; await activate(page);
             await page.evaluate(label => {
@@ -334,33 +374,13 @@ try {
                         topSelfTime: [...selfMicros].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([id, microseconds]) => ({ microseconds, ...byId.get(id)?.callFrame })),
                         metricsBefore: before.metrics, metricsAfter: after.metrics,
                         processCPU: processAfter.processInfo.map(process => ({ ...process, cpuDeltaSeconds: process.cpuTime - (processBefore.processInfo.find(before => before.id === process.id)?.cpuTime || 0) })),
-                        processAttributionNote: 'CPU deltas for all Chromium process types, including GPU, over the same120-frame profile window; only this page is manually rendering' };
+                        processAttributionNote: 'CPU deltas for all Chromium process types, including GPU, over the same 120-frame profile window; only this page is manually rendering' };
                     await session.send('Profiler.disable'); await session.detach();
                 }
             }
         }
         await save();
     }
-    report.longTasks = {};
-    for (const label of ['A', 'B']) {
-        const entries = await pages[label].evaluate(() => [...__pairedLongTasks, ...(__pairedObserver?.takeRecords() || []).map(entry => ({ startTime: entry.startTime, duration: entry.duration }))]);
-        const ranges = report.scenarios.flatMap(s => s.trials.flatMap(t => t.blocks.filter(b => b.label === label).map(b => ({ start: b.startTime, end: b.endTime }))));
-        const measured = entries.filter(entry => ranges.some(range => entry.startTime >= range.start && entry.startTime <= range.end));
-        report.longTasks[label] = { thresholdMs: 50, measuredCount: measured.length, measuredTotalBlockingMs: measured.reduce((n, entry) => n + Math.max(0, entry.duration - 50), 0),
-            measuredMaximumMs: Math.max(0, ...measured.map(entry => entry.duration)), measured, allEntries: entries };
-    }
-    // Tail stalls below the p95 cut must still be able to fail acceptance.
-    // Windows contain equal frame counts for both labels; retain the original
-    // explicit blocking-time/count/maximum budget on these paired windows.
-    const beforeLong = report.longTasks.A, afterLong = report.longTasks.B;
-    report.longTaskBudget = {
-        scope: 'All measured paired windows, with equal frame counts and no discarded tasks',
-        allowedTotalBlockingMs: beforeLong.measuredTotalBlockingMs * 1.05 + 50,
-        allowedMaximumMs: Math.max(200, beforeLong.measuredMaximumMs * 1.05),
-        allowedCount: Math.ceil(beforeLong.measuredCount * 1.05) + 1,
-    };
-    report.longTaskBudget.passed = afterLong.measuredTotalBlockingMs <= report.longTaskBudget.allowedTotalBlockingMs &&
-        afterLong.measuredMaximumMs <= report.longTaskBudget.allowedMaximumMs && afterLong.measuredCount <= report.longTaskBudget.allowedCount;
     report.passed = report.scenarios.length === fixtures.length && report.scenarios.every(s => s.trials.length === orders.length && s.passesFivePercentTarget) &&
         report.longTaskBudget.passed && !report.errors.length;
     await save();
