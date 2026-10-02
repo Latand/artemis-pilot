@@ -1,0 +1,63 @@
+name: Mobile thrust and GPU recovery
+on:
+  pull_request:
+    paths:
+      - 'src/main.js'
+      - 'src/scene.js'
+      - 'src/render/**'
+      - 'src/river.js'
+      - 'src/mobileControls.js'
+      - 'scripts/*mobile-thrust*'
+      - 'scripts/*context-*'
+      - '.github/workflows/mobile-thrust.yml'
+permissions:
+  contents: read
+concurrency:
+  group: mobile-thrust-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  capture:
+    name: GPU recovery ${{ matrix.variant }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [before, after]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact source identities
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          git rev-parse "$BASE_SHA" > evidence/sources/base-sha.txt
+          cp package-lock.json evidence/sources/
+          git diff "$BASE_SHA" HEAD > evidence/sources/change.diff
+          if [ "$VARIANT" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/thrust-base" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/thrust-base/node_modules"
+            echo "BASE_ROOT=$RUNNER_TEMP/thrust-base" >> "$GITHUB_ENV"
+          fi
+      - name: Actual-app thrust and forced loss/recovery
+        env:
+          ARTEMIS_EVIDENCE: evidence/capture
+        run: node scripts/verify-mobile-thrust.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-thrust-${{ matrix.variant }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
