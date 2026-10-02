@@ -5,7 +5,7 @@
 // Photometry. A galaxy is an extended source. Each one is drawn as a sum of
 // exponential components (disk + bulge for spirals, core + envelope for
 // spheroids) in its projected ellipse, normalised so the integrated display
-// flux is
+// flux before the modeled substructure / dust / display taper is
 //     gain * exposure * L / (4 pi d_A^2) * (1+z)^-4 / Omega_px,
 // the same Lsun pc^-2 sr^-1 -> display conversion (galaxyDisplayGain) the
 // volumetric Milky Way uses. Resolved, that is surface brightness
@@ -37,7 +37,8 @@ import * as THREE from "three";
 import { coarsenGalaxyWells, flowMassFromMagnitude } from '../flowScaleMath.js';
 import { MERGER } from '../universe/localGroupOrbit.js';
 import { TIDES } from '../universe/mergerTides.js';
-import { galaxySeed, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
+import { galaxySeed, galaxyNoisePixels, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
+import { galaxyScreenBounds, galaxyVisibleColumnWeight, galaxyInteriorMeterBoost, RESOLVED_VARYINGS, RESOLVED_GLSL } from "./galaxyResolved.js";
 import { K, MPC_KM } from "../constants.js";
 import { galaxyDisplayGain, galaxyVolumeMeter } from "./galaxyVolume.js";
 import { extragalacticExposure, EXT_STRETCH, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
@@ -68,6 +69,7 @@ attribute vec4 aPhot;
 attribute float aT;
 attribute float aSeed;
 ${MORPH_VARYINGS}
+${RESOLVED_VARYINGS}
 uniform vec3 uCamRel;
 uniform mat3 uWorldToView;
 uniform sampler2D uLightCone;
@@ -85,7 +87,7 @@ float cosmicTimeAtLnA(float lnA) {
 }
 uniform vec2 uDepthRange;
 #ifndef GAL_POINTS
-varying vec2 vPx;          // pixel offset from the centre along (major, minor)
+// Quads evaluate a camera ray in the fragment; no affine billboard UVs.
 #endif
 varying vec4 vAB;          // component scales in px: (a1, b1, a2, b2)
 varying vec2 vW;           // component peak display values
@@ -118,7 +120,8 @@ vec3 bvColor(float bv, float zfac) {
 void offscreen() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 #ifndef GAL_POINTS
-    vPx = vec2(0.0);
+    vCenterH=vec3(0.0,0.0,-1.0); vAxisV=vec3(0.0,0.0,1.0); vBasisV=vec3(1.0,0.0,0.0);
+    vPhysical=vec4(1.0); vFacePeak=vec2(0.0); vNdc=vec2(2.0); vRayProjection=vec4(1.0,1.0,0.0,0.0);
 #endif
     vMorph = vec4(0.0); vDiskFrame = vec3(1.0, 0.0, 1.0);
     vAB = vec4(1.0); vW = vec2(0.0); vColor = vec3(0.0); vLane = 0.0; vExt = 1.0;
@@ -144,9 +147,9 @@ void main() {
     vec2 evo = flagMerge > 0.5 ? vec2(uMwLum, 0.0) : galaxyEvolution(T, cosmicTimeAtLnA(uLnAObs + dlnA));
     if (evo.x <= 1e-12) { offscreen(); return; }
     vec3 appW = rel * (uAObs * ratio) + aDelta;       // apparent position, observer proper Mpc
-    float dMpc = length(appW);
-    if (dMpc <= 0.0) { offscreen(); return; }
-    vec3 dirV = uWorldToView * (appW / dMpc);
+    float dMpc = max(length(appW),1e-10);
+    vec3 appV = uWorldToView * appW;
+    vec3 dirV = length(appV)>1e-12 ? appV/dMpc : vec3(0.0,0.0,-1.0);
     float dScene = dMpc * uMpcScene;
     // Cheap early rejection: even as a point source (all light in the PSF core)
     // this galaxy stays below the display threshold. (Doppler brightening at
@@ -163,8 +166,14 @@ void main() {
     // ~6 Gly in scene units.
     float dopplerD;
     dirV = normalize(relApplyView(dirV, 5500.0, dopplerD));
-    float viewDepth = dScene * max(0.0, -dirV.z);
-    if (-dirV.z <= 0.0 || viewDepth < uDepthRange.x || viewDepth >= uDepthRange.y) { offscreen(); return; }
+    // The population belongs to farTierGroup, which scene.js hides during
+    // the near pass. That group owns this background light exactly once.
+    // Do not assign an extended source by its center depth: an observer at
+    // its center still sees emitting material ahead. Hardware depth testing
+    // remains enabled, so foreground objects continue to cover this light.
+#ifdef GAL_POINTS
+    if (-dirV.z<=0.0) { offscreen(); return; }
+#endif
     // --- shape: oblate body, symmetry axis n, intrinsic axis ratio q0
     // (the merging pair keeps its own shapes: the disk light the tide pulls
     // out is drawn as debris by render/mergerTidesRender.js and leaves the
@@ -225,55 +234,68 @@ void main() {
         float sc = KNEE * pow(pk / KNEE, 0.3) / pk;
         p1 *= sc; p2 *= sc;
     }
-    // --- quad covering ~4.5 scale lengths of the widest component
-    float drawD = min(dScene, uFarClamp);
-    vec3 center = dirV * drawD;
-    // Cull by the centre against the frustum with a margin for the quad:
-    // the clip vector is normalised below, which only works for quads that
-    // stay in front of the camera, so their half-size is also capped at
-    // ~0.5 rad (such a galaxy fills the view; the sprite is not the right
-    // representation any more, but it must never fold through w = 0).
-    // The quad only needs to reach where the profile drops below the display
-    // threshold: ln(peak / threshold) scale lengths, at most 4.5.
-    float rVis = clamp(log(max(p1 + p2, 1e-30) / (0.3 * uCull)), 1.2, 4.5);
-    float extA = min(rVis * max(A1, A2), 0.5 * uPxScale), extB = min(rVis * max(B1, B2), 0.5 * uPxScale);
-    vec4 clipC = projectionMatrix * vec4(center, 1.0);
-    if (clipC.w <= 0.0) { offscreen(); return; }
-    vec2 ndcC = clipC.xy / clipC.w;
-    vec2 margin = 2.0 * vec2(extA) / uViewport;
-    if (abs(ndcC.x) > 1.0 + margin.x || abs(ndcC.y) > 1.0 + margin.y) { offscreen(); return; }
+    // Conservative support in physical h units. Close or eye-plane-crossing
+    // support gets a viewport rectangle, clipped per ray in the fragment.
+    // This removes the old 0.5-radian cap whose nonzero edge made a diamond.
+    float rVis = mix(clamp(log(max(p1+p2,1e-30)/(0.3*uCull)),1.2,4.5),8.0,smoothstep(2.0,9.0,a1*q)*(1.0-flagMw));
+    float nearWeight=smoothstep(.025,.065,h*.001/dMpc)*(1.0-flagMw);
 #ifdef GAL_POINTS
-    // One vertex per galaxy: a square point covering the rotated ellipse.
-    // The major axis' screen direction goes to the fragment shader.
-    float hs = max(extA, extB);
-    // Too large for a point sprite: cap the reach (the flux is unchanged).
-    hs = min(hs, 0.5 * uMaxPointPx);
-    vec4 clipM = projectionMatrix * vec4(center + maj * (drawD / uPxScale), 1.0);
-    vec2 sd = (clipM.xy / clipM.w - ndcC) * uViewport;
-    vRot = length(sd) > 1e-9 ? normalize(sd) : vec2(1.0, 0.0);
-    vHalf = hs;
-    gl_PointSize = 2.0 * hs * uDpr;
-    gl_Position = vec4(ndcC, 0.9999, 1.0);
+    float drawD = min(dScene,uFarClamp);
+    vec3 center=dirV*drawD;
+    vec4 clipC=projectionMatrix*vec4(center,1.0);
+    if(clipC.w<=0.0){offscreen();return;}
+    vec2 ndcC=clipC.xy/clipC.w;
+    float hs=min(rVis*max(max(A1,A2),max(B1,B2)),.5*uMaxPointPx);
+    vec4 clipM=projectionMatrix*vec4(center+maj*(drawD/uPxScale),1.0);
+    vec2 sd=(clipM.xy/clipM.w-ndcC)*uViewport;
+    vRot=length(sd)>1e-9?normalize(sd):vec2(1.0,0.0);
+    vHalf=hs; gl_PointSize=2.0*hs*uDpr;
+    gl_Position=vec4(ndcC,.9999,1.0);
 #else
-    vec2 corner = position.xy;
-    vPx = corner * vec2(extA, extB);
-    float pxToScene = drawD / uPxScale;
-    vec3 p = center + (maj * vPx.x + mnr * vPx.y) * pxToScene;
-    vec4 clip = projectionMatrix * vec4(p, 1.0);
-    // Normalise the homogeneous clip vector. At these distances w ~ 1e15-1e19:
-    // z/w rounds onto (or past) the far plane in float32, and rasterisers
-    // lose the varyings' perspective-correct interpolation (1/w ~ 1e-17
-    // skewed the profile toward one corner of the quad). A galaxy's quad is
-    // small against its distance, so affine interpolation is exact enough,
-    // and as background light that never writes depth it sits just inside
-    // the far plane.
-    gl_Position = vec4(clip.xy / clip.w, 0.9999, 1.0);
+    // Work near unity rather than projecting 1e15–1e19 scene coordinates.
+    vec3 c=dirV;
+    float radius=max(rVis*max(max(A1,A2),max(B1,B2))/uPxScale,1e-7);
+    // The far taper and the near-volume support have different gates. Any
+    // active near contribution must fit its WHOLE support, even edge-on
+    // when the minor-axis morphology weight is still small.
+    if(nearWeight>0.0) radius=max(radius,8.0*mix(1.0,.7,spheroid)*h*.001/dMpc);
+    float depth=-c.z;
+    if(depth+radius<=0.0){offscreen();return;}
+    vec2 scale=vec2(projectionMatrix[0][0],projectionMatrix[1][1]);
+    vec2 offset=vec2(projectionMatrix[2][0],projectionMatrix[2][1]);
+    // Eye-plane overlap alone does NOT mean screen overlap. Cull against
+    // all four side planes before expanding support to the viewport.
+    vec4 plane=vec4(scale.x*c.x+(offset.x-1.0)*c.z,
+        -scale.x*c.x-(offset.x+1.0)*c.z,
+        scale.y*c.y+(offset.y-1.0)*c.z,
+        -scale.y*c.y-(offset.y+1.0)*c.z);
+    vec4 norms=sqrt(vec4(scale.x*scale.x,scale.x*scale.x,scale.y*scale.y,scale.y*scale.y)
+        +vec4(offset.x-1.0,offset.x+1.0,offset.y-1.0,offset.y+1.0)
+        *vec4(offset.x-1.0,offset.x+1.0,offset.y-1.0,offset.y+1.0));
+    if(any(lessThan(plane,-radius*norms))){offscreen();return;}
+    vec2 lo=vec2(-1.0),hi=vec2(1.0);
+    if(depth>radius){
+        vec2 centerNdc=scale*c.xy/depth-offset;
+        vec2 reach=scale*radius/(depth-radius)*(vec2(1.0)+abs(c.xy)/depth);
+        lo=max(lo,centerNdc-reach);hi=min(hi,centerNdc+reach);
+        if(any(greaterThanEqual(lo,hi))){offscreen();return;}
+    }
+    vRayProjection=vec4(projectionMatrix[0][0],projectionMatrix[1][1],projectionMatrix[2][0],projectionMatrix[2][1]);
+    vNdc=mix(lo,hi,position.xy*.5+.5);
+    gl_Position=vec4(vNdc,.9999,1.0);
+    vCenterH=dirV*(dMpc/max(h*.001,1e-10));
+    vAxisV=n;
+    vPhysical=vec4(q0,mix(max(q0,.65),q0,spheroid),spheroid,nearWeight);
+    vFacePeak=vec2(p1*A1*B1/max(a1*a1,1e-12),p2*A2*B2/max(a2*a2,1e-12));
 #endif
     // Stable intrinsic coordinates; changes of viewing angle do not rotate
     // the arms within their parent disk. Fine structure vanishes below PSF.
     vec3 nw = normalize(aShape.xyz);
     vec3 e1w = normalize(cross(abs(nw.z) < 0.9 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0), nw));
     vec3 e2w = cross(nw, e1w);
+#ifndef GAL_POINTS
+    vBasisV=uWorldToView*e1w;
+#endif
     vDiskFrame = vec3(dot(maj, uWorldToView * e1w), dot(maj, uWorldToView * e2w), dot(n, l));
     vMorph = vec4(aSeed, T, smoothstep(2.0, 9.0, a1 * q) * (1.0 - flagMw), morph);
     vAB = vec4(A1, B1, A2, B2);
@@ -291,10 +313,9 @@ precision highp float;
 uniform float uStretch;
 ${EXT_STRETCH_GLSL}
 ${MORPH_VARYINGS}
+${RESOLVED_VARYINGS}
+uniform float uPxScale;
 ${MORPH_GLSL}
-#ifndef GAL_POINTS
-varying vec2 vPx;
-#endif
 varying vec4 vAB;
 varying vec2 vW;
 varying vec3 vColor;
@@ -304,19 +325,38 @@ varying float vExt;
 varying vec2 vRot;
 varying float vHalf;
 #endif
+${RESOLVED_GLSL}
 void main() {
 #ifdef GAL_POINTS
     vec2 qp = (gl_PointCoord - 0.5) * vec2(2.0, -2.0) * vHalf;   // px, y up
-    vec2 vPx = vec2(dot(qp, vRot), dot(qp, vec2(-vRot.y, vRot.x)));
+    vec2 vPx=vec2(dot(qp,vRot),dot(qp,vec2(-vRot.y,vRot.x)));
+#else
+    vec3 ray=normalize(vec3((vNdc+vRayProjection.zw)/vRayProjection.xy,-1.0));
+    vec3 l=normalize(vCenterH),n=normalize(vAxisV);
+    vec3 nSky=n-dot(n,l)*l;
+    vec3 maj=length(nSky)>1e-5?normalize(cross(l,nSky)):normalize(cross(l,vec3(0.001,1.0,0.0)));
+    vec3 mnr=cross(l,maj);
+    vec2 vPx=vec2(dot(ray,maj),dot(ray,mnr))*uPxScale/max(dot(ray,l),1e-5);
 #endif
     float r1 = length(vPx / vAB.xy);
     float r2 = length(vPx / vAB.zw);
     // taper to zero at the quad edge (vExt scale lengths of the widest part)
     vec2 e = vPx / (vExt * max(vAB.xy, vAB.zw));
-    float edge = 1.0 - smoothstep(0.55, 1.0, length(e));
+    float edge = 1.0 - smoothstep(mix(.55,.75,vMorph.z), 1.0, length(e));
     float yl = vPx.y / max(0.18 * vAB.y, 0.5);
     float lane = 1.0 - vLane * exp(-yl * yl) * smoothstep(0.0, 0.6, r1);
-    vec3 c = galStructuredLight(vPx, vAB, vW, vColor, lane) * edge;
+#ifdef GAL_POINTS
+    if(edge<=0.0) discard;
+#else
+    if(vPhysical.w<=0.0 && edge<=0.0) discard;
+#endif
+    vec3 c=vec3(0.0);
+#ifndef GAL_POINTS
+    if(vPhysical.w<1.0) c=galStructuredLight(vPx,vAB,vW,vColor,lane)*edge;
+    if(vPhysical.w>0.0) c=mix(c,galResolvedLight(ray),vPhysical.w);
+#else
+    c=galStructuredLight(vPx,vAB,vW,vColor,lane)*edge;
+#endif
     float v = dot(c, vec3(0.2126, 0.7152, 0.0722));
     if (v < 1e-6) discard;
     // Keep a resolved disk's contrast instead of lifting all interarm light
@@ -341,6 +381,10 @@ function quadGeometry() {
 }
 
 function makeShared() {
+    const noise=new THREE.DataTexture(galaxyNoisePixels(),256,256,THREE.RedFormat,THREE.UnsignedByteType);
+    noise.wrapS=noise.wrapT=THREE.RepeatWrapping;
+    noise.minFilter=noise.magFilter=THREE.LinearFilter;
+    noise.generateMipmaps=false;noise.needsUpdate=true;noise.name="galaxy.sharedNoise";
     const evoTex = new THREE.DataTexture(evolutionTable(), EVOLUTION_NT, EVOLUTION_T.length, THREE.RGBAFormat, THREE.FloatType);
     evoTex.minFilter = THREE.NearestFilter; evoTex.magFilter = THREE.NearestFilter;
     evoTex.needsUpdate = true;
@@ -351,6 +395,7 @@ function makeShared() {
     return {
         uWorldToView: { value: new THREE.Matrix3() },
         uLightCone: { value: tex },
+        uGalaxyNoise: { value: noise },
         uChiMax: { value: CHI_MAX_MPC },
         uAObs: { value: 1 },
         uMpcScene: { value: MPC_SCENE },
@@ -411,9 +456,13 @@ function makeChunkMesh(c, asPoints = !c.lg) {
     mesh.userData.minMV = c.minMV ?? -30;
     mesh.userData.lg = !!c.lg;
     mesh.userData.source = c;
-    let maxScale = 0;
-    for (let i = 0; i < c.count; i++) maxScale = Math.max(maxScale, c.phot[i * 4 + 2]);
+    let maxScale = 0, maxDelta=0;
+    for (let i = 0; i < c.count; i++) {
+        maxScale=Math.max(maxScale,c.phot[i*4+2]);
+        maxDelta=Math.max(maxDelta,Math.hypot(c.delta[i*3],c.delta[i*3+1],c.delta[i*3+2]));
+    }
     mesh.userData.maxScaleKpc = maxScale;
+    mesh.userData.maxDeltaMpc = maxDelta;
     return mesh;
 }
 
@@ -541,11 +590,11 @@ function updateLocalGroup(m31NowMpc) {
 // exposure (stellarAppearance.extragalacticExposure). A resolved galaxy in
 // view overrides the field metering (see the end of meterExposure). One
 // exposure scales every galaxy, so relative brightness is exact.
-const EXPOSURE = { gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedSpan: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
+const EXPOSURE = { seen:null, gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedSpan: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.0001, max: 1e8, fresh: true };
 const _mPeak = new Float32Array(EXPOSURE.n + 512), _mFoot = new Float32Array(EXPOSURE.n + 512), _mFootOwn = new Float32Array(EXPOSURE.n + 512), _mW = new Float32Array(EXPOSURE.n + 512), _mIdx = new Uint32Array(EXPOSURE.n + 512);
 // Peak display value (at exposure 1) and pixel footprint of one galaxy.
 function galaxyPeak(MV, hKpc, d, pxScale, out) {
-    const dPc = d * 1e6;
+    const dPc = Math.max(d,1e-10) * 1e6;
     const flux = Math.pow(10, -0.4 * (MV - 4.83)) / (12.566370614 * dPc * dPc) * pxScale * pxScale * EXPOSURE.gain;
     const hPx = hKpc * 1e3 / dPc * pxScale;
     const area = Math.max(hPx * hPx * 0.5, 0.5625);
@@ -554,11 +603,18 @@ function galaxyPeak(MV, hKpc, d, pxScale, out) {
     return out;
 }
 const _pf = [0, 0];
-function inView(e, x, y, z, tanX, tanY, marginRad = 0) {
+function inView(e, x, y, z, tanX, tanY, marginRad = 0, normal=null, q=.15, bulge=.28, h=1) {
     const vx = e[0] * x + e[3] * y + e[6] * z, vy = e[1] * x + e[4] * y + e[7] * z, vz = e[2] * x + e[5] * y + e[8] * z;
-    if (vz >= 0) return false;
-    const m = marginRad * Math.hypot(vx, vy, vz);
-    return Math.abs(vx) <= -vz * tanX + m && Math.abs(vy) <= -vz * tanY + m;
+    if(normal){
+        const [nx,ny,nz]=normal;
+        const nv=[e[0]*nx+e[3]*ny+e[6]*nz,e[1]*nx+e[4]*ny+e[7]*nz,e[2]*nx+e[5]*ny+e[8]*nz];
+        return galaxyVisibleColumnWeight([vx,vy,vz],nv,h,q,bulge,[1/tanX,1/tanY,0,0]);
+    }
+    if(marginRad>0){
+        const m=marginRad*Math.max(1e-6,Math.hypot(vx,vy,vz));
+        return galaxyScreenBounds([vx,vy,vz],m,[1/tanX,1/tanY,0,0])!==null;
+    }
+    return vz<0 && Math.abs(vx)<=-vz*tanX && Math.abs(vy)<=-vz*tanY;
 }
 // Photographic metering: the level reached by the brightest brightFrac of
 // the screen's pixels, estimated from the galaxies in view (a fixed sample
@@ -571,7 +627,9 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         const n = Math.min(EXPOSURE.n, cat.count);
         EXPOSURE.sample = new Int32Array(n);
         for (let k = 0; k < n; k++) EXPOSURE.sample[k] = Math.floor((k + 0.5) * cat.count / n);
+        EXPOSURE.seen=new Int32Array(cat.count);
     }
+    EXPOSURE.seen.fill(-1);
     const e = viewRot.elements;
     const pos = cat.pos, MV = cat.MV;
     const w = cat.count / EXPOSURE.sample.length;
@@ -584,6 +642,38 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         if (!(d > 1e-4) || !inView(e, x, y, z, tanX, tanY)) continue;
         galaxyPeak(MV[i], cat.hKpc[i], d, pxScale, _pf);
         _mPeak[m] = _pf[0]; _mFoot[m] = _pf[1] * w; _mFootOwn[m] = _pf[1]; _mW[m] = 1; m++;
+        EXPOSURE.seen[i]=m-1;
+    }
+    // The stride sample can miss the very galaxy surrounding the camera.
+    // Include resolved-near sources exactly once from their current apparent
+    // light-cone positions. A cheap squared-distance bound rejects almost
+    // every entry before square roots, exponentials or projection work.
+    const aObs=state.shared.uAObs.value,lc=state.lcData;
+    const minFactor=Math.max(1e-30,aObs*Math.exp(lc[LC_N-1]));
+    for(const mesh of state.chunks){
+        if(mesh.userData.lg || m>=_mPeak.length) continue;
+        const c=mesh.userData.source;
+        const crx=camGC[0]/aObs-c.center[0],cry=camGC[1]/aObs-c.center[1],crz=camGC[2]/aObs-c.center[2];
+        const reach=(mesh.userData.maxScaleKpc*.1+mesh.userData.maxDeltaMpc)/minFactor;
+        const reach2=reach*reach;
+        for(let k=0;k<c.count && m<_mPeak.length;k++){
+            const i=c.gid[k];
+            const rx=c.unit[k*3]-crx,ry=c.unit[k*3+1]-cry,rz=c.unit[k*3+2]-crz;
+            const chi2=rx*rx+ry*ry+rz*rz;if(chi2>reach2) continue;
+            const chi=Math.sqrt(chi2),u=Math.min(LC_N-1,chi/CHI_MAX_MPC*(LC_N-1)),j=Math.floor(u),f=u-j;
+            const factor=aObs*Math.exp(lc[j]*(1-f)+lc[Math.min(j+1,LC_N-1)]*f);
+            const x=rx*factor+c.delta[k*3],y=ry*factor+c.delta[k*3+1],z=rz*factor+c.delta[k*3+2];
+            const d=Math.hypot(x,y,z),h=c.phot[k*4+2];
+            if(d>h*.1) continue;
+            const visible=inView(e,x,y,z,tanX,tanY,8*h*.001/Math.max(d,1e-6),
+                [c.shape[k*4],c.shape[k*4+1],c.shape[k*4+2]],c.shape[k*4+3],c.phot[k*4+3],h*.001);
+            if(visible<=0) continue;
+            galaxyPeak(c.phot[k*4],h,d,pxScale,_pf);
+            _pf[0]*=galaxyInteriorMeterBoost(d/Math.max(h*.001,1e-10),c.shape[k*4+3],c.phot[k*4+3]);
+            const slot=EXPOSURE.seen[i]>=0?EXPOSURE.seen[i]:m++;
+            _mPeak[slot]=_pf[0];_mFootOwn[slot]=Math.min(_pf[1],screenPx);_mFoot[slot]=visible>=1?_mFootOwn[slot]:0;_mW[slot]=visible;
+            EXPOSURE.seen[i]=slot;
+        }
     }
     const lg = state.lg;
     // The Milky Way while the volume draws it: its measured brightest pixels
@@ -605,21 +695,29 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
             if (!(wk > 0)) continue;
             const x = d3[k * 3] - camGC[0], y = d3[k * 3 + 1] - camGC[1], z = d3[k * 3 + 2] - camGC[2];
             const d = Math.hypot(x, y, z);
-            const rad = 4 * ph[k * 4 + 2] * 1e-3 / Math.max(d, 1e-6);
-            if (!(d > 1e-5) || !inView(e, x, y, z, tanX, tanY, rad)) continue;
+            const rad = 8 * ph[k * 4 + 2] * 1e-3 / Math.max(d, 1e-6);
+            const shape=lg.mesh.geometry.attributes.aShape.array;
+            const visible=inView(e,x,y,z,tanX,tanY,rad,[shape[k*4],shape[k*4+1],shape[k*4+2]],shape[k*4+3],ph[k*4+3],ph[k*4+2]*.001);
+            if (!Number.isFinite(d) || visible<=0) continue;
             galaxyPeak(ph[k * 4], ph[k * 4 + 2], d, pxScale, _pf);
-            _mPeak[m] = _pf[0]; _mFootOwn[m] = Math.min(_pf[1], screenPx); _mFoot[m] = _mFootOwn[m] * wk; _mW[m] = wk; m++;
+            const q0=lg.mesh.geometry.attributes.aShape.array[k*4+3];
+            _pf[0]*=galaxyInteriorMeterBoost(d/Math.max(ph[k*4+2]*.001,1e-10),q0,ph[k*4+3]);
+            _mPeak[m] = _pf[0]; _mFootOwn[m] = Math.min(_pf[1], screenPx); _mFoot[m] = visible>=1?_mFootOwn[m]*wk:0; _mW[m] = wk * visible; m++;
         }
     }
     if (!m) return EXPOSURE.auto;
     for (let k = 0; k < m; k++) _mIdx[k] = k;
     const idx = _mIdx.subarray(0, m).sort((a, b) => _mPeak[b] - _mPeak[a]);
     const want = EXPOSURE.brightFrac * screenPx;
-    let acc = 0, ref = _mPeak[idx[m - 1]];
-    for (let k = 0; k < m; k++) {
-        acc += _mFoot[idx[k]];
-        if (acc >= want) { ref = _mPeak[idx[k]]; break; }
+    let acc=0,ref=0;
+    for(let k=0;k<m;k++){
+        if(_mFoot[idx[k]]<=0) continue;
+        ref=_mPeak[idx[k]];acc+=_mFoot[idx[k]];
+        if(acc>=want) break;
     }
+    // Partially visible sources supply the smooth resolved constraint below,
+    // not a full central peak in the field percentile. Otherwise crossing
+    // brightFrac with a fading footprint causes a huge exposure step.
     // Resolved galaxies: when a galaxy spans more than a few tens of pixels
     // (the Milky Way seen from above its disk or from the Local Group, a
     // neighbour), the brightest such core is exposed EXPOSURE.resolvedHeadroom
@@ -739,9 +837,17 @@ export function updateGalaxyPopulation(camera, f) {
         // is reached, with hysteresis. No double-drawing or resident copy.
         if (!mesh.userData.lg) {
             const a = s.uAObs.value;
-            const quad = needsGalaxyQuads(Math.hypot(rx, ry, rz) * a,
-                (mesh.userData.radiusMpc * 1.05 + 0.5) * a, mesh.userData.maxScaleKpc,
-                f.pxScale, s.uMaxPointPx.value, !mesh.isPoints);
+            const chi=Math.hypot(rx,ry,rz), radius=mesh.userData.radiusMpc*1.05+.5;
+            // Conservative apparent-distance lower bound on the light cone.
+            // Observer-epoch distance alone under-promotes redshifted chunks.
+            const u=Math.min(LC_N-1,(chi+radius)/CHI_MAX_MPC*(LC_N-1));
+            const j=Math.floor(u), fLC=u-j;
+            const ratio=Math.exp(state.lcData[j]*(1-fLC)+state.lcData[Math.min(j+1,LC_N-1)]*fLC);
+            // Unit centers are comoving, aDelta is a proper offset. Keep a
+            // proper-radius allowance unscaled even at early emission epochs.
+            const nearest=Math.max(0,(chi-radius)*a*ratio-radius);
+            const quad = needsGalaxyQuads(nearest,0,mesh.userData.maxScaleKpc,
+                f.pxScale,s.uMaxPointPx.value,!mesh.isPoints) || s.uMaxPointPx.value<44;
             if (quad === !!mesh.isPoints) {
                 const old = mesh;
                 mesh = makeChunkMesh(old.userData.source, !quad);

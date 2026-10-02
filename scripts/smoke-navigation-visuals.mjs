@@ -24,9 +24,10 @@ n=slow.write(new Float32Array(384),new Float32Array(384),new Float32Array(128),[
 assert.equal(n,2);
 assert.equal(galaxySeed(42),galaxySeed(42));assert.notEqual(galaxySeed(42),galaxySeed(43));
 assert(needsGalaxyQuads(.1,.01,5,900,128));assert(!needsGalaxyQuads(10,.01,5,900,128));
-const band=4.5*.005*900/40;
+const band=8*.005*900/40;
 assert(!needsGalaxyQuads(band,0,5,900,128,false));assert(needsGalaxyQuads(band,0,5,900,128,true));
-// Intrinsic annulus light is redistributed, not supplemented.
+// Legacy Fourier ridge kernel has unit annular mean before the current
+// procedural attenuation/color model; this is NOT its final flux test.
 for(const arms of [2,3,4]) {
  let sum=0,min=Infinity;
  const ridge=p=>1+1.6*Math.cos(p)+.8*Math.cos(2*p)+(8/35)*Math.cos(3*p)+(1/35)*Math.cos(4*p);
@@ -49,7 +50,7 @@ assert(stretch[10*4+3]>1.5);assert(Math.abs(stretch[10*4])>.9);
 assert(Array.from(stretch).every(Number.isFinite));
 for(let i=0;i<48;i++)assert(stretch[i*4+3]>=1&&stretch[i*4+3]<=2.5);
 assert.deepEqual(sampleDebrisShapes(points,ws,graph,new Float32Array(48*4)),stretch);
-console.log('PASS bounded/fading history, jumps/rewinds/epochs, slow sampling, precision, galaxy LOD/seed/annulus flux, tidal neighbour identity and deformation');
+console.log('PASS bounded/fading history, jumps/rewinds/epochs, slow sampling, precision, galaxy LOD/seed/ridge kernel, tidal neighbour identity and deformation');
 
 // A paused display does not sample motion, but still invalidates old epochs.
 const paused = new RecentPath();

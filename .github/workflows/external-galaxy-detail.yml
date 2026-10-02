@@ -1,0 +1,125 @@
+name: External galaxy detail QA
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/*external-galax*'
+      - 'docs/external-galaxy-detail/**'
+      - '.github/workflows/external-galaxy-detail.yml'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Exact baseline revision (pull requests always use their main base SHA)
+        required: true
+        default: '9ef83ff'
+permissions:
+  contents: read
+concurrency:
+  group: external-galaxy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - name: Check source transforms, representative catalog and fixture geometry
+        run: |
+          node scripts/smoke-external-galaxy-qa.mjs
+          node scripts/smoke-external-galaxy-geometry.mjs
+          node scripts/smoke-external-galaxy-exposure.mjs
+          node scripts/capture-external-galaxies.mjs --validate
+          node scripts/smoke-galaxy-population.mjs
+          npm run build
+  capture:
+    name: ${{ matrix.variant }} / ${{ matrix.device }} / ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [before, after]
+        device: [desktop, mobile]
+        suite: [m31, zoom, catalog]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact source identities and run unchanged HEAD harness
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_ref }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          git rev-parse "$BASE_SHA" > evidence/sources/base-sha.txt
+          cp package-lock.json evidence/sources/
+          git diff "$BASE_SHA" HEAD > evidence/sources/change.diff
+          if [ "$VARIANT" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/external-base" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/external-base/node_modules"
+            echo "CAPTURE_ROOT=$RUNNER_TEMP/external-base" >> "$GITHUB_ENV"
+            echo "BASELINE=1" >> "$GITHUB_ENV"
+          else
+            echo "CAPTURE_ROOT=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+            echo "BASELINE=0" >> "$GITHUB_ENV"
+          fi
+      - name: Capture full app, live-target diagnostic and runtime assertions
+        env:
+          DEVICE: ${{ matrix.device }}
+          SUITE: ${{ matrix.suite }}
+        run: node scripts/capture-external-galaxies.mjs "$CAPTURE_ROOT" evidence/capture
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: external-${{ matrix.variant }}-${{ matrix.device }}-${{ matrix.suite }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+  compare:
+    name: Before/after evidence and review
+    needs: [contract, capture]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install numpy Pillow
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: external-*
+          path: evidence/raw
+      - name: Verify exact matched cameras and retain readable image comparison
+        run: |
+          python docs/external-galaxy-detail/test_analyze.py
+          python docs/external-galaxy-detail/analyze.py evidence/raw evidence/review --check
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: external-galaxy-review
+          path: evidence/review/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish concise QA summary
+        if: always()
+        run: cat evidence/review/summary.md >> "$GITHUB_STEP_SUMMARY"
