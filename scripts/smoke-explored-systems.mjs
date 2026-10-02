@@ -135,3 +135,13 @@ assert(G.landed && G.landed.starId === physical.starId, 'Remote exploration neve
 assert(Math.abs(G.x + eph.earthX - pos.x - localPlanet.radiusKm - .01) < .01);
 assert.strictEqual(getCachedFocusedSystem(), remote);
 console.log('Seed-mismatch camera restore and independent local orbit/landing regressions passed');
+
+// Catalog and curated representations of the SAME HIP source must resolve
+// before generation, not switch host parameters on the next child visit.
+G.t = 0;
+const alias = E.getExploredSystem('hyg:3813'); // ACHIRD, also in STARS
+assert.strictEqual(alias.hostStar, STARS.find(s => s.name === 'ACHIRD'));
+const aliasChild = P.planetFocusValue(0, alias), aliasSnapshot = parameters(alias);
+E.getExploredSystem('star:0');
+assert.equal(parameters(E.getExploredSystem(aliasChild)), aliasSnapshot);
+console.log('Curated/HYG representation precedence preserves the same system parameters');

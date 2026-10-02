@@ -372,7 +372,7 @@ function trimPinnedProcedural(keepId = "") {
 }
 
 export function activeStarById(id) {
-    for (const star of ACTIVE_STARS) if (activeId(star) === id) return star;
+    for (const star of ACTIVE_STARS) if (activeId(star) === id) return knownDuplicateFor(star) || star;
     return PINNED_PROC.get(id) || proceduralStarById(id, LAST_EVAL_T) || catalogStarById(id, LAST_EVAL_T);
 }
 
@@ -527,6 +527,9 @@ function insertNearestProcedural(star, d2, limit) {
 
 function knownDuplicateFor(star) {
     if (!star?.activeCatalog) return null;
+    const key = stableStarKey(star);
+    const exact = STARS.find(known => stableStarKey(known) === key);
+    if (exact) return exact;
     const maskKm = ACTIVE_STAR_CONFIG.realMaskPc * PC_KM;
     const mask2 = maskKm * maskKm;
     for (const known of STARS) {

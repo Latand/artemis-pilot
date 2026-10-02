@@ -133,6 +133,13 @@ export async function loadState() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
     if (!data || (data.v < 1 || data.v > 11)) { toast("No saved state · K to save one"); return false; }
+    // Catalog readiness is a preflight: no frame may see a loaded ship with
+    // the previous world while this network/index operation is pending.
+    let exploredCatalogUnavailable = false;
+    if (hygCatalogFocusId(data.exploredSystem?.hostFocus) || hygCatalogFocusId(parseSystemFocus(data.g?.focus)?.hostFocus)) {
+        try { await ensureHygCatalogLoaded(); }
+        catch { exploredCatalogUnavailable = true; }
+    }
     // The procedural galaxy is a pure function of (seed, cell coords), so the
     // seed must land before any procedural star is regenerated from a saved id.
     setSeed(data.v >= 9 && Number.isFinite(data.galaxySeed) ? (data.galaxySeed >>> 0) : DEFAULT_SEED);
@@ -157,8 +164,8 @@ export async function loadState() {
     if (data.focusProcedural?.id && restoredProc.includes(data.focusProcedural.id)) {
         G.focus = proceduralFocusValue(data.focusProcedural.id);
     }
-    if (hygCatalogFocusId(data.exploredSystem?.hostFocus) || hygCatalogFocusId(parseSystemFocus(G.focus)?.hostFocus)) await ensureHygCatalogLoaded();
-    G.focus = restoreExploredSystem(data.exploredSystem, G.focus);
+    G.focus = restoreExploredSystem(exploredCatalogUnavailable ? null : data.exploredSystem,
+        exploredCatalogUnavailable && parseSystemFocus(G.focus) ? "earth" : G.focus);
     if (!Number.isFinite(data.g.z)) G.z = 0;
     if (!Number.isFinite(data.g.vz)) G.vz = 0;
     if (!Number.isFinite(data.g.pitch)) G.pitch = 0;
@@ -216,6 +223,7 @@ export async function loadState() {
     computePrediction();
     if (G.dead) showBanner("VEHICLE LOST", G.deadReason + " · MET " + fmtMET(G.t), "R TO REBUILD SHIP");
     toast("Quickload · MET " + fmtMET(G.t) + (restoredStars.length ? " · HYG " + restoredStars.length : "") +
-        (restoredProc.length ? " · PROC " + restoredProc.length : ""));
+        (restoredProc.length ? " · PROC " + restoredProc.length : "") +
+        (exploredCatalogUnavailable ? " · Catalog host unavailable; view reset to Earth" : ""));
     return true;
 }

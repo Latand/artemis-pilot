@@ -10,6 +10,7 @@ import { curatedAbsMagV, holdCatalogRow } from "./render/catalogStars.js";
 import { dotTexture } from "./textures.js";
 import { renderQuality, scene, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
+import { getExploredHost } from "./universe/exploredSystem.js";
 import { ACTIVE_STARS, activeStarsTime } from "./universe/activeStars.js";
 import { applyTerrellToMaterial } from "./relView.js";
 import { holeRoot, makeHoleOptics, updateHoleOptics } from "./holeOptics.js";
@@ -198,13 +199,15 @@ export function buildStars() {
 const _procPos = new THREE.Vector3();
 const _lastActiveVisualSync = new THREE.Vector3();
 let activeVisualSynced = false;
-let activeVisualSyncAge = Infinity;
+let activeVisualSyncAge = Infinity, lastExploredVisualId = "";
 const activeVisualKeep = new Set();
 const activeVisualCands = [];
 function syncActiveStarVisuals(camera, dtR = 0) {
+    const exploredHost = getExploredHost();
+    const exploredId = exploredHost ? starVisualId(exploredHost) : "";
     activeVisualSyncAge += dtR;
     const moved = activeVisualSynced ? camera.position.distanceTo(_lastActiveVisualSync) : Infinity;
-    if (activeVisualSyncAge < ACTIVE_VISUAL_SYNC_S && moved < ACTIVE_VISUAL_MOVE_SYNC) return;
+    if (activeVisualSyncAge < ACTIVE_VISUAL_SYNC_S && moved < ACTIVE_VISUAL_MOVE_SYNC && exploredId === lastExploredVisualId) return;
     activeVisualKeep.clear();
     activeVisualCands.length = 0;
     for (const star of ACTIVE_STARS) {
@@ -212,6 +215,14 @@ function syncActiveStarVisuals(camera, dtR = 0) {
         _procPos.set(star.x * K, (star.z || 0) * K, -star.y * K);
         const d = camera.position.distanceTo(_procPos);
         if (d < ACTIVE_VISUAL_RADIUS || (star.formedStar && G.focus === 'neb:'+star.nebulaIndex)) activeVisualCands.push({ star, d, id: starVisualId(star) });
+    }
+    // Keep one selected dynamic host visible even after ship-centred active
+    // streaming drops it. This is render-only and stays within the same cap;
+    // it cannot add the remote host to the ship's local gravity selection.
+    if (exploredHost && (exploredHost.procedural || exploredHost.activeCatalog || exploredHost.formedStar)) {
+        const existing = activeVisualCands.find(candidate => candidate.id === exploredId);
+        if (existing) existing.d = -1;
+        else activeVisualCands.push({ star: exploredHost, d: -1, id: exploredId });
     }
     activeVisualCands.sort((a, b) => a.d - b.d);
     for (let i = 0; i < activeVisualCands.length && i < ACTIVE_VISUAL_MAX; i++) {
@@ -229,6 +240,7 @@ function syncActiveStarVisuals(camera, dtR = 0) {
     _lastActiveVisualSync.copy(camera.position);
     activeVisualSynced = true;
     activeVisualSyncAge = 0;
+    lastExploredVisualId = exploredId;
 }
 
 // All procedural active stars as one point layer, re-synced whenever the

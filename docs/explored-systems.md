@@ -10,7 +10,7 @@ Child targets carry the existing deterministic host key, followed by planet/moon
 
 Quicksave v11 gains an additive `exploredSystem` descriptor and includes a selected procedural host among restored pins. Quickload resolves the stable host identity after restoring universe seed and catalog/procedural data. A saved array position cannot replace that identity. Same-host generation is invalidated when the universe seed changes, including its rendered slots.
 
-Legacy `planet:0` / `planet:0:moon:0` saves cannot identify a host. They return to Earth unless an explicit saved context establishes ownership. They are never assigned to the star nearest the ship. The camera preference also carries the context; unavailable hosts use a safe fallback rather than a different system.
+Legacy `planet:0` / `planet:0:moon:0` saves cannot identify a host. They return to Earth unless an explicit saved context establishes ownership. They are never assigned to the star nearest the ship. The camera preference also carries the context; unavailable hosts use a safe fallback rather than a different system. Camera-only automatic startup does not wait for HYG loading and can return to Earth for a not-yet-loaded HYG host. Explicit quickload waits for that catalog before changing the ship/world; a failed fetch still restores the save with a clearly reported Earth-view fallback.
 
 Quickload cancels old autopilot/relativistic travel plans. A camera preference from another universe seed falls back to Earth rather than changing the selected body. A stale autopilot child target does not read the same-numbered body from a newly selected system. Moon targets have their own analytic state and physical radius.
 

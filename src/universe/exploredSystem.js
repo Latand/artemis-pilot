@@ -33,6 +33,7 @@ function retainedHost() {
     if (!explored || explored.galaxySeed !== getSeed()) return null;
     return hostForId(explored.starId, explored.hostFocus);
 }
+export function getExploredHost() { return retainedHost(); }
 export function serializeExploredSystem() { return explored && explored.galaxySeed === getSeed() ? { ...explored } : null; }
 
 export function getExploredSystem(focus, fallbackStar = null, simT = 0) {

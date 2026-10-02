@@ -45,7 +45,7 @@ if (process.argv.includes('--compare')) {
     longTaskBudget.passed = afterLong.totalBlockingMs <= longTaskBudget.allowedTotalBlockingMs &&
         afterLong.maximumMs <= longTaskBudget.allowedMaximumMs && afterLong.count <= longTaskBudget.allowedCount;
     const comparison = { device: base.device, baselineRevision: base.revision, candidateRevision: candidate.revision,
-        measurement: 'Median of three p95 windows; 24 individually delivered production frames/window, including GPU finish',
+        measurement: 'Median of three p95 windows; 120 individually delivered production frames/window, including GPU finish',
         scenarios, longTaskBudget,
         passesFivePercentTarget: scenarios.every(s => s.passesFivePercentTarget),
         baselineReproduced: base.reproduction?.hostDropped === true, candidatePassed: candidate.passed === true };
@@ -70,6 +70,7 @@ function once(source, token, replacement) {
 }
 function transform(source, id) {
     id = id.replaceAll('\\', '/').split('?')[0];
+    if (id.endsWith('/src/render/catalogStars.js')) return once(source, 'const start = () => loadTier0();', 'const start = () => {}; // QA: background catalog omitted; explicit HYG loading is exercised separately.');
     if (id.endsWith('/src/render/bodySurfaceMaterial.js')) return source + '\nexport const exploredSurfaceQueueState=()=>({pending:pending.size,inFlight:!!inFlight});\n';
     if (!id.endsWith('/src/main.js')) return null;
     source = once(source, 'const firstFrameT0 = perfStart();',
@@ -85,8 +86,10 @@ const main = await readFile(resolve(root, 'src/main.js'), 'utf8');
 execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(main, '/src/main.js') });
 const surfaces = await readFile(resolve(root, 'src/render/bodySurfaceMaterial.js'), 'utf8');
 execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(surfaces, '/src/render/bodySurfaceMaterial.js') });
+const catalog = await readFile(resolve(root, 'src/render/catalogStars.js'), 'utf8');
+execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(catalog, '/src/render/catalogStars.js') });
 if (process.argv.includes('--validate')) {
-    console.log(JSON.stringify({ root, baseline, device, routes: 20, hooks: 'valid', benchmarkWindows: 3, samplesPerWindow: 24 }));
+    console.log(JSON.stringify({ root, baseline, device, routes: 20, hooks: 'valid', benchmarkWindows: 3, samplesPerWindow: 120 }));
     process.exit(0);
 }
 await mkdir(out, { recursive: true });
@@ -248,10 +251,12 @@ try {
             const { cam } = exploredQA.s; if (fixture.distance !== null) cam.dist = fixture.distance;
             cam.yaw = fixture.yaw; cam.pitch = fixture.pitch; cam.distTarget = null;
         }, fixture);
-        await frames(8);
+        await frames(30);
+        await page.waitForFunction(() => { const q = exploredQA.surfaces.exploredSurfaceQueueState(); return q.pending === 0 && !q.inFlight; });
+        await frames(3);
         const result = { fixture, state: await snapshot(), runs: [] };
         for (let round = 0; round < 3; round++) {
-            const samples = await frames(24);
+            const samples = await frames(120);
             result.runs.push({ cpuMs: samples.map(s => s.cpuMs), frameAndFinishMs: samples.map(s => s.frameAndFinishMs) });
         }
         report.benchmark.push(result); await save();
@@ -309,20 +314,6 @@ try {
     }
     await phase('same-host-repeated-routes');
     await mode('observe'); await focus(`star:${first.starIndex}`); await frames(3);
-    if (!baseline) {
-        // Resolve both close-up surface maps before defining the stable-pool
-        // baseline. Deferred first-use detail is legitimate, revisiting an
-        // already warmed host must not allocate another material/texture set.
-        await page.evaluate(first => { const q = exploredQA; q.input.setFocus(q.p.planetFocusValue(first.planetIndex, first.starId)); q.s.cam.distTarget = null; }, first);
-        await frames(3);
-        await page.waitForFunction(first => exploredQA.body.systemBodyRenderState()[first.planetIndex].mesh.material.userData.surfaceDetailWidth >= 512, first);
-        await page.evaluate(first => { const q = exploredQA; q.input.setFocus(q.p.planetMoonFocusValue(first.planetIndex, first.moonIndex, first.starId)); q.s.cam.distTarget = null; }, first);
-        await frames(3);
-        await page.waitForFunction(first => exploredQA.body.systemBodyRenderState()[first.planetIndex].moons[first.moonIndex].material.userData.surfaceDetailWidth >= 512, first);
-        await focus(`star:${first.starIndex}`); await frames(3);
-        await page.waitForFunction(() => { const q = exploredQA.surfaces.exploredSurfaceQueueState(); return q.pending === 0 && !q.inFlight; });
-    }
-    const repeatedStart = await snapshot(first);
     const clickSystem = async selector => {
         const button = page.locator(selector);
         await button.scrollIntoViewIfNeeded();
@@ -337,7 +328,28 @@ try {
             check(`${selector}: real ${mobile ? 'touch' : 'desktop'} control is reachable`,
                 !!box && box.height >= 44 && box.y >= 0 && box.y + box.height <= (mobile ? 932 : 800));
         }
+        // Warm the entire real button route, including intermediate planets,
+        // not only its final planet. Settle each requested view and upload its
+        // deferred maps before defining a no-growth/no-reallocation baseline.
+        const settleWarmView = async () => {
+            for (let i = 0; i < 8; i++) {
+                await frames(24);
+                if (await page.evaluate(() => exploredQA.s.cam.distTarget === null)) break;
+            }
+            await page.waitForFunction(() => { const q = exploredQA.surfaces.exploredSurfaceQueueState(); return q.pending === 0 && !q.inFlight; });
+            await frames(3);
+        };
+        for (let p = 0; p <= first.planetIndex; p++) { await clickSystem('#exploreSystemPlanet'); await settleWarmView(); }
+        await clickSystem('#exploreSystemMoon'); await settleWarmView();
+        await page.waitForFunction(first => exploredQA.body.systemBodyRenderState()[first.planetIndex].moons[first.moonIndex].material.userData.surfaceDetailWidth >= 512, first);
+        check('Representative moon camera has completed its requested approach', await page.evaluate(() => exploredQA.s.cam.distTarget === null));
+        if (mobile) await page.locator('#explorePanelToggle').tap();
+        await capture('06-settled-moon-surface');
+        if (mobile) await page.locator('#explorePanelToggle').tap();
+        await clickSystem('#exploreSystemStar'); await settleWarmView();
     }
+    const repeatedStart = await snapshot(first);
+    report.repeatedWarmBaseline = repeatedStart;
     for (let index = 0; index < 20; index++) {
         for (let p = 0; p <= first.planetIndex; p++) {
             if (baseline) { await key('Shift+KeyF'); await frames(2); }
@@ -366,8 +378,25 @@ try {
             star.render.resources.geometries === repeatedStart.render.resources.geometries);
         check(`Repeated ${index + 1}: warmed host retains surface texture identity`,
             JSON.stringify(star.render.textures) === JSON.stringify(repeatedStart.render.textures), null, true);
+        check(`Repeated ${index + 1}: warmed GPU resources do not grow`,
+            star.render.gpu.geometries <= repeatedStart.render.gpu.geometries && star.render.gpu.textures <= repeatedStart.render.gpu.textures, null, true);
         report.repeatedRoutes.push({ fixture: first, states: { planet, moon, star } });
     }
+    await phase('warmed-switch-handler-cpu');
+    const switchSamples = [];
+    for (let i = 0; i < 20; i++) for (const target of ['planet', 'moon', 'star']) {
+        switchSamples.push(await page.evaluate(({ first, target }) => {
+            const q = exploredQA;
+            const focus = target === 'star' ? `star:${first.starIndex}` : target === 'planet' ?
+                q.p.planetFocusValue(first.planetIndex, first.starId) : q.p.planetMoonFocusValue(first.planetIndex, first.moonIndex, first.starId);
+            const start = performance.now(); q.input.setFocus(focus); const cpuMs = performance.now() - start;
+            return { target, cpuMs };
+        }, { first, target }));
+    }
+    report.switchHandlerCPU = { scope: 'Synchronous production setFocus handler only; each call is a separate browser task, with no render/GPU finish included',
+        samples: switchSamples, maximumMs: Math.max(...switchSamples.map(s => s.cpuMs)), thresholdMs: 50 };
+    check('Warmed same-host target switch handler never creates a 50ms long task', report.switchHandlerCPU.maximumMs < 50, report.switchHandlerCPU.maximumMs, true);
+    await frames(2);
     await capture('06-twenty-routes-returned');
     const resourceSamples = [...report.routes, ...report.repeatedRoutes].flatMap(r => Object.values(r.states).map(s => s.render));
     report.resourceBounds = {
@@ -377,8 +406,13 @@ try {
     };
     check('Whole scene material/object counts stay bounded across routes', resourceSamples.every(r =>
         r.scene.materials <= resourceSamples[0].scene.materials + 8 && r.scene.objects <= resourceSamples[0].scene.objects + 16));
+    // WebGL uploads are lazy: first-frame GPU counts exclude most of the
+    // already allocated fixed pool. Bound later uploads by that actual pool,
+    // and use the separately warmed repeat checks to reject continued growth.
+    const poolGeometryCapacity = Math.max(...resourceSamples.map(r => r.resources.geometries));
+    report.resourceBounds.poolGeometryCapacity = poolGeometryCapacity;
     check('GPU geometry and texture counts stay within fixed system capacity', resourceSamples.every(r =>
-        r.gpu.geometries <= resourceSamples[0].gpu.geometries + 16 && r.gpu.textures <= resourceSamples[0].gpu.textures + 136));
+        r.gpu.geometries <= resourceSamples[0].gpu.geometries + poolGeometryCapacity && r.gpu.textures <= resourceSamples[0].gpu.textures + 136));
 
     if (!baseline) {
         await phase('reload-and-migration');
@@ -397,13 +431,118 @@ try {
         const missing = structuredClone(saved); missing.g.focus = 'system:cat%3AMISSING-QA-HOST:planet:0'; missing.exploredSystem = null;
         await page.evaluate(async missing => { localStorage.setItem('artemis.quicksave.v1', JSON.stringify(missing)); await exploredQA.saves.loadState(); }, missing);
         await frames(); check('Missing host save returns safely to Earth', await page.evaluate(() => __G.focus === 'earth'));
+
+        // Actual HYG row 87 is outside the Earth ship's local active catalog.
+        // This uses the production loader and frame; no star visual is injected.
+        await phase('hyg-real-host-retention');
+        const hyg = await page.evaluate(async () => {
+            const q = exploredQA, catalog = await import('/src/universe/hygActiveCatalog.js');
+            await catalog.ensureHygCatalogLoaded(); q.input.setFocus('hyg:87');
+            const system = q.a.getCachedFocusedSystem();
+            if (!system?.planets.length) throw new Error('Real TAU PHE fixture must have a generated planet');
+            return { starId: system.starId, hostName: system.hostStar.name, hygIndex: system.hostStar.hygIndex,
+                childFocus: q.p.planetFocusValue(0, system), topologyHash: q.hash(system.planets) };
+        });
+        await frames(12);
+        await focus(hyg.childFocus); await frames(3);
+        await page.evaluate(() => {
+            const q = exploredQA, { G } = q.state;
+            q.a.refreshActiveStars(q.eph.eph.earthX + G.x, q.eph.eph.earthY + G.y, G.z, G.focus, G.t);
+            const host = q.a.getCachedFocusedSystem().hostStar;
+            const dx = q.s.cam.tgt.x - host.x * q.c.K, dy = q.s.cam.tgt.y - (host.z || 0) * q.c.K, dz = q.s.cam.tgt.z + host.y * q.c.K;
+            const distance = Math.hypot(dx, dy, dz);
+            q.s.cam.yaw = Math.atan2(dz, dx) + .17;
+            q.s.cam.pitch = Math.max(-1.4, Math.min(1.4, Math.asin(dy / distance))); q.s.cam.distTarget = null;
+        });
+        await frames(12);
+        const hygVisual = () => page.evaluate(async () => {
+            const q = exploredQA, E = await import('/src/universe/exploredSystem.js'), host = E.getExploredHost();
+            const surface = q.s.scene.getObjectByName('TAU PHE photosphere'), group = surface?.parent;
+            const point = group?.children.find(child => child.isPoints);
+            const curatedNames = new Set(q.c.STARS.map(star => star.name + ' photosphere')); let dynamicSurfaces = 0;
+            q.s.scene.traverse(object => { if (object.name.endsWith(' photosphere') && !curatedNames.has(object.name)) dynamicSurfaces++; });
+            return { focus: q.state.G.focus, starId: q.a.getCachedFocusedSystem()?.starId,
+                retainedHygIndex: host?.hygIndex, hostName: host?.name,
+                activeMember: q.a.ACTIVE_STARS.some(star => star.hygIndex === 87), gravityMember: q.a.GRAVITY_STARS.some(star => star.hygIndex === 87),
+                photosphereInScene: !!surface && group?.parent === q.s.scene, photosphereVisible: !!surface?.visible,
+                groupVisible: !!group?.visible, dynamicPoint: !!point && point.geometry.attributes.position.count === 1,
+                dynamicSurfaces, topologyHash: q.hash(q.a.getCachedFocusedSystem()?.planets), ship: q.ship() };
+        });
+        const retained = await hygVisual();
+        report.hyg = { fixture: hyg, retained, loadedThrough: 'ensureHygCatalogLoaded, real packaged HYG metadata/binary and index' };
+        check('Real HYG host has validated locator in its child key', hyg.hygIndex === 87 && hyg.hostName === 'TAU PHE' && hyg.childFocus.includes(':host:hyg%3A87:'));
+        check('HYG host leaves Earth-centred active stars', !retained.activeMember, retained);
+        check('HYG visual retention does not add remote gravity', !retained.gravityMember, retained);
+        check('Dropped HYG host retains production photosphere and dynamic point', retained.photosphereInScene && retained.groupVisible && retained.dynamicPoint, retained);
+        check('Dynamic stellar surfaces remain within the existing 48 cap', retained.dynamicSurfaces <= 48, retained.dynamicSurfaces);
+        assertPaused('HYG child retention', retained);
+        await capture('08-hyg-retained-host-and-planet');
+        await focus(`star:${first.starIndex}`); await frames(3); await focus(hyg.childFocus); await frames(12);
+        report.hyg.revisited = await hygVisual();
+        check('HYG child resolves after selecting another star', report.hyg.revisited.starId === hyg.starId && report.hyg.revisited.retainedHygIndex === 87 && report.hyg.revisited.topologyHash === hyg.topologyHash);
+        await key('KeyK');
+        const hygSave = await page.evaluate(() => JSON.parse(localStorage.getItem('artemis.quicksave.v1')));
+        check('HYG child quicksave retains catalog locator', hygSave.exploredSystem?.hostFocus === 'hyg:87' && hygSave.g.focus === hyg.childFocus);
+        report.longTasksBeforeReload.push(...await page.evaluate(() => __qaLongTasks));
+        const binaryPattern = '**/hyg-stars-v41.bin*';
+        let releaseBinary;
+        const binaryGate = new Promise(resolve => { releaseBinary = resolve; });
+        await page.route(binaryPattern, async route => { await binaryGate; await route.continue(); });
+        await page.reload({ waitUntil: 'domcontentloaded' }); await initialize(); await phase('hyg-delayed-quickload');
+        const liveState = () => page.evaluate(async () => {
+            const q = exploredQA;
+            return { ship: q.ship(), focus: q.state.G.focus, world: JSON.stringify(q.state.WORLD), ephemeris: q.hash(q.eph.snapshotEphem()),
+                seed: (await import('/src/universe/galaxy.js')).getSeed(), epoch: (await import('/src/epoch.js')).getEpochMs() };
+        });
+        const plans = await page.evaluate(async () => {
+            const ap = await import('/src/autopilot.js'), rel = await import('/src/relTravel.js');
+            ap.apTravelToFocus(() => {}); rel.relTravelToFocus(() => {});
+            return { ap: ap.AP.mode, rel: rel.REL.active };
+        });
+        check('Actual AP and REL plans are active before quickload', plans.ap === 'travel' && plans.rel, plans);
+        const beforeLoad = await liveState();
+        const requestedBinary = page.waitForRequest(request => request.url().includes('hyg-stars-v41.bin'), { timeout: 30000 });
+        try {
+            await key('KeyL'); await requestedBinary; await frames(3);
+            const duringLoad = await liveState();
+            report.hyg.delayedPreflight = { before: beforeLoad, during: duringLoad };
+            check('Delayed HYG binary leaves live G/world/seed/epoch/ephemeris unchanged', JSON.stringify(beforeLoad) === JSON.stringify(duringLoad));
+        } finally { releaseBinary(); }
+        await page.waitForFunction(async expected => {
+            const E = await import('/src/universe/exploredSystem.js');
+            return __G.focus === expected.childFocus && E.getExploredHost()?.hygIndex === 87 && exploredQA.a.getCachedFocusedSystem()?.starId === expected.starId;
+        }, hyg);
+        await page.unroute(binaryPattern); await frames(12);
+        report.hyg.reloaded = await hygVisual();
+        check('Cold-page HYG quickload restores the actual retained host and rendering', report.hyg.reloaded.retainedHygIndex === 87 && report.hyg.reloaded.photosphereInScene && report.hyg.reloaded.dynamicPoint && report.hyg.reloaded.topologyHash === hyg.topologyHash);
+        check('HYG quickload cancels active AP and REL plans', await page.evaluate(async () => {
+            const { AP } = await import('/src/autopilot.js'), { REL } = await import('/src/relTravel.js');
+            return AP.mode === 'off' && !REL.active && REL.plan === null && REL.target === null;
+        }));
+        assertPaused('HYG fresh-page quickload', report.hyg.reloaded);
+        await capture('09-hyg-fresh-page-restored');
+
+        // A failed real binary fetch must be caught by the loader, with a
+        // coherent restored save and safe Earth view rather than half a world.
+        report.longTasksBeforeReload.push(...await page.evaluate(() => __qaLongTasks));
+        await page.route(binaryPattern, route => route.fulfill({ status: 503, contentType: 'text/plain', body: 'QA catalog unavailable' }));
+        await page.reload({ waitUntil: 'domcontentloaded' }); await initialize(); await phase('hyg-failed-quickload');
+        const failedLoad = await page.evaluate(async () => {
+            const q = exploredQA, ok = await q.saves.loadState();
+            return { ok, focus: q.state.G.focus, ship: q.ship(), seed: (await import('/src/universe/galaxy.js')).getSeed() };
+        });
+        await frames(3); await page.unroute(binaryPattern); report.hyg.unavailable = failedLoad;
+        check('Unavailable HYG binary restores save with safe Earth focus', failedLoad.ok === true && failedLoad.focus === 'earth' && failedLoad.seed === hygSave.galaxySeed);
+        assertPaused('Unavailable HYG quickload', failedLoad);
     }
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
     const entries = [...(report.longTasksBeforeReload || []), ...await page.evaluate(() => __qaLongTasks)];
     delete report.longTasksBeforeReload;
     report.longTasks = { supported: await page.evaluate(() => PerformanceObserver.supportedEntryTypes.includes('longtask')), thresholdMs: 50,
         count: entries.length, totalMs: entries.reduce((n, entry) => n + entry.duration, 0), maximumMs: Math.max(0, ...entries.map(e => e.duration)),
-        benchmark: entries.filter(e => e.phase.startsWith('benchmark:')), entries };
+        benchmark: entries.filter(e => e.phase.startsWith('benchmark:')),
+        explorationRoutes: entries.filter(e => e.phase.startsWith('route:') || e.phase === 'same-host-repeated-routes'),
+        switchHandlerTasks: entries.filter(e => e.phase === 'warmed-switch-handler-cpu'), entries };
     check('Long-task observer supported', report.longTasks.supported);
     check('No horizontal overflow on full application UI', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     check('No runtime or shader errors', report.errors.length === 0, report.errors);
