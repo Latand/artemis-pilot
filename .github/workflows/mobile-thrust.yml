@@ -31,7 +31,7 @@ jobs:
             suite: recovery
             timeout: 20
           - variant: after
-            suite: soak
+            suite: all
             timeout: 60
     steps:
       - uses: actions/checkout@v4
