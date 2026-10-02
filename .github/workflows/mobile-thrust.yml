@@ -32,7 +32,9 @@ jobs:
             timeout: 20
           - variant: after
             suite: all
-            timeout: 60
+            # The full 1,200-frame SwiftShader soak can exceed an hour.
+            # Keep every frame/assertion; only the wall-clock budget changes.
+            timeout: 90
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,5 +72,39 @@ jobs:
         with:
           name: mobile-thrust-${{ matrix.variant }}-${{ matrix.suite }}
           path: evidence/
+          if-no-files-found: error
+          retention-days: 14
+
+  comparison:
+    name: Serial baseline/head thrust timing
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Prepare exact baseline
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/thrust-comparison-base" "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/thrust-comparison-base/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/thrust-comparison-base" >> "$GITHUB_ENV"
+      - name: Balanced serial OFF-path comparison
+        env:
+          ARTEMIS_EVIDENCE: evidence/comparison
+        run: node scripts/benchmark-mobile-thrust.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-thrust-comparison
+          path: evidence/comparison/
           if-no-files-found: error
           retention-days: 14
