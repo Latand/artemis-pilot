@@ -1661,7 +1661,13 @@ function noteLandedDiscovery(oi) {
 }
 
 let lastMobileFrame = -Infinity;
+// Keep the stable frame entry point used by XR and deterministic app QA.
+// A context-loss exception must not kill Three's next-frame scheduling.
 function frame() {
+    try { frameStep(); }
+    catch (error) { if (!renderContext.isLost()) throw error; }
+}
+function frameStep() {
     // Keep the welcome screen and background tabs responsive without advancing
     // physics or submitting GPU work. Drain the clock so resuming cannot jump.
     if (renderContext.isLost() || document.hidden || document.getElementById("intro").style.display !== "none") {
@@ -2628,11 +2634,4 @@ window.__AP_READY = true;
 requestEarthNightTexture(renderQuality.mobile ? 3600 : 2400);
 if (!renderQuality.mobile && new URLSearchParams(location.search).get("cockpitwarm") === "1") scheduleCockpitWarmup(4200);
 scheduleDeferredRealSkyLoad();
-// A loss in the middle of a frame can invalidate GL calls before its event.
-// Keep Three's animation scheduler alive for restoration; unrelated errors
-// still surface rather than silently hiding a broken simulation.
-function frameWithContextRecovery() {
-    try { frame(); }
-    catch (error) { if (!renderContext.isLost()) throw error; }
-}
-renderer.setAnimationLoop(frameWithContextRecovery);
+renderer.setAnimationLoop(frame);

@@ -16,7 +16,7 @@ const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',
  return s.replace(first,'G.t=0;G.paused=false;G.warp=60;resetEphem();clock.getDelta=()=>1/30;'+first)
  .replace('function frame() {','function frame() { window.__frameStarts=(window.__frameStarts||0)+1;')
  .replaceAll('    finishFramePerf(frameT0,','    window.__frameSuccess=(window.__frameSuccess||0)+1;\n    finishFramePerf(frameT0,')
- +'\nwindow.__thrustStep=()=>{lastMobileFrame=-Infinity;frame();};window.__thrustStop=()=>renderer.setAnimationLoop(null);window.__thrustStart=()=>renderer.setAnimationLoop(typeof frameWithContextRecovery==="function"?frameWithContextRecovery:frame);';
+ +'\nwindow.__thrustStep=()=>{lastMobileFrame=-Infinity;frame();};window.__thrustStop=()=>renderer.setAnimationLoop(null);window.__thrustStart=()=>renderer.setAnimationLoop(frame);';
 }}]});
 await server.listen();
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
