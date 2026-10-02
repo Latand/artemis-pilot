@@ -31,10 +31,23 @@ try{
  await page.evaluate(async()=>{const {cam}=await import('/src/scene.js');const {shipG}=await import('/src/ship.js');__G.heading=0;__G.pitch=0;__G.hold=null;__qaSpeed=0;__qaMotionPause=false;__motionFrame();cam.tgt.copy(shipG.position);cam.dist=.14;cam.yaw=.85;cam.pitch=.36;});
  const frames=async(n)=>{for(let i=0;i<n;i++)await page.evaluate(()=>__motionFrame());};
  const capture=async(name)=>{
-  await page.screenshot({path:`${out}/${name}.png`,timeout:180000});
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  const ui=await page.evaluate(mobile=>{
+   const selectors=mobile?['#mYawL','#mYawR','#mRcsL','#mRcsR','#mBoost','#mThrottle']:['#shipVisualControls button'];
+   return selectors.map(selector=>{
+    const e=document.querySelector(selector),s=getComputedStyle(e),r=e.getBoundingClientRect();
+    let opacity=1,ancestorVisible=true;const ancestors=[];
+    for(let a=e;a;a=a.parentElement){const c=getComputedStyle(a);opacity*=Number(c.opacity);ancestorVisible&&=c.display!=='none'&&c.visibility==='visible';ancestors.push({tag:a.tagName,id:a.id,opacity:c.opacity,display:c.display,visibility:c.visibility});}
+    const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+    return{selector,display:s.display,visibility:s.visibility,effectiveOpacity:opacity,ancestorVisible,hit:e===hit||e.contains(hit),inside:r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,rect:{x:r.x,y:r.y,width:r.width,height:r.height},classes:e.className,ancestors};
+   });
+  },mobile);
+  await page.screenshot({animations:'disabled',path:`${out}/${name}.png`,timeout:180000});
   const state=await page.evaluate(async()=>{const {shipVisuals}=await import('/src/shipVisuals.js');const {river}=await import('/src/river.js');const {craft,shipG}=await import('/src/ship.js');const {camera,renderer}=await import('/src/scene.js');return{speed:__qaSpeed,...shipVisuals.motion,enabled:shipVisuals.enabled,warpVisible:river.warpVisible,warpStrength:river.warpStrength,warpVertices:river.warpVertexCount,projected:shipG.position.clone().project(camera).toArray(),rotors:craft.userData.rotors.map(r=>r.rotation.y),memory:{...renderer.info.memory},drawCalls:renderer.info.render.calls,shipVisible:shipG.visible};});
   check(state.shipVisible&&state.projected.every(Number.isFinite)&&Math.abs(state.projected[0])<.1&&Math.abs(state.projected[1])<.1,`${name}: craft stays visible and centered`);
-  report.frames.push({name,...state});await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));console.log('CAPTURE',name,state);
+  report.frames.push({name,ui,...state});await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
+  check(ui.every(e=>e.ancestorVisible&&e.effectiveOpacity>.4&&e.inside&&e.hit&&e.rect.width>0&&e.rect.height>0),`${name}: actual flight controls stay visible, inside viewport and center-hit-testable`);
+  console.log('CAPTURE',name,state);
  };
  await frames(2);await capture('00-stopped-off');
  if(!mobile)check(await page.evaluate(()=>{
@@ -47,6 +60,11 @@ try{
  await page.evaluate(()=>{__qaSpeed=120;});await frames(10);await capture('02-cruise-off');
  const toggle=async()=>{if(mobile){await page.locator('#mMenuBtn').click();await page.locator('#mWarpVisual').click();await page.locator('#mMenuClose').click();}else await page.locator('[data-warp-visual]').first().click();};
  await toggle();await frames(5);await capture('03-cruise-on');
+ if(mobile)check(await page.evaluate(()=>{
+  const r=document.getElementById('warpVisualNote').getBoundingClientRect();
+  return ['mLeft','mThrottle','mWarpCtl','mTopBar','mZoomCtl'].every(id=>{const b=document.getElementById(id).getBoundingClientRect();return r.right<=b.left||r.left>=b.right||r.bottom<=b.top||r.top>=b.bottom;});
+ }),'Mobile speculative annotation clears every flight-control cluster');
+
  check(report.frames.at(-1).warpVisible&&report.frames.at(-1).warpStrength>.8,'Local speculative river samples render while moving');
  for(let i=0;i<3;i++){await frames(2);await capture(`04-spin-${i}`);}
  check(report.frames.at(-1).angle!==report.frames.at(-2).angle,'Matched-time screenshots show ring angle changes');
@@ -99,6 +117,15 @@ try{
  check(await page.evaluate(async()=>getComputedStyle(document.getElementById('shipVisualControls')).display==='none'&&getComputedStyle(document.getElementById('warpVisualNote')).display==='none'&&!(await import('/src/river.js')).river.warpVisible),'Create mode hides the warp control, annotation and speculative field');
  await page.locator('[data-ui-mode="pilot"]').click();await frames(2);
  check(await page.locator(mobile?'#mWarpVisual':'#shipVisualControls button').getAttribute('aria-pressed')==='true','Returning to Pilot retains the explicit opt-in');
+ if(mobile){
+  await page.setViewportSize({width:844,height:390});
+  await page.evaluate(async()=>{const {cam}=await import('/src/scene.js');const {shipG}=await import('/src/ship.js');(await import('/src/input.js')).setFocus('ship');cam.tgt.copy(shipG.position);cam.dist=.14;cam.distTarget=null;cam.yaw=.85;cam.pitch=.36;});
+  await frames(2);await capture('09-landscape-controls');
+  check(await page.evaluate(()=>{
+   const r=document.getElementById('warpVisualNote').getBoundingClientRect();
+   return ['mLeft','mThrottle','mWarpCtl','mTopBar','mZoomCtl'].every(id=>{const b=document.getElementById(id).getBoundingClientRect();return r.right<=b.left||r.left>=b.right||r.bottom<=b.top||r.top>=b.bottom;});
+  }),'Landscape mobile annotation clears every flight-control cluster');
+ }
  check(performancePassed,'Speculative visual adds at most 50% + 20ms full-app frame cost on CI renderer');
  check(report.errors.length===0,'No JavaScript, shader or console errors');
 }finally{await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}
