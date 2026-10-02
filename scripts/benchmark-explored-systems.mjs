@@ -40,10 +40,14 @@ function once(source, token, replacement) {
     return source.replace(token, replacement);
 }
 function fineFrameSource(source) {
-    const start = source.indexOf('function frame() {');
+    // Recovery-aware revisions keep frame() as a guarded wrapper. The
+    // measured path still calls that real wrapper; only the attribution copy
+    // instruments its underlying step, after all acceptance samples.
+    const entry = source.includes('function frameStep() {') ? 'frameStep' : 'frame';
+    const start = source.indexOf(`function ${entry}() {`);
     const end = source.indexOf('// setAnimationLoop lets WebXR', start);
     assert(start >= 0 && end > start, 'Diagnostic frame extraction markers must exist');
-    let body = source.slice(start, end).trim().replace('function frame()', 'function pairedInstrumentedFrame()');
+    let body = source.slice(start, end).trim().replace(`function ${entry}()`, 'function pairedInstrumentedFrame()');
     const statements = [
         ['belt', 'beltCursor = advanceMinorSwarm(minorSwarms.belt, minorRenderers.belt, beltCursor, Math.ceil(minorRenderers.belt.capacity / 6), minorBeltStep);'],
         ['kuiper', 'kuiperCursor = advanceMinorSwarm(minorSwarms.kuiper, minorRenderers.kuiper, kuiperCursor, Math.ceil(minorRenderers.kuiper.capacity / 6), minorKuiperStep);'],

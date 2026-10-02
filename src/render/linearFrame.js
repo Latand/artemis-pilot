@@ -1,3 +1,4 @@
+import { readRenderScissor } from "./contextLifecycle.js";
 import * as THREE from 'three';
 
 // A merging scene contains overlapping extended sources. Sum their
@@ -14,7 +15,7 @@ export function renderLinearFrame(renderer, draw) {
     if (!linearFrame.requested || renderer.getRenderTarget() || renderer.xr.isPresenting) return false;
     renderer.getCurrentViewport(viewport);
     const gl = renderer.getContext();
-    scissor.fromArray(gl.getParameter(gl.SCISSOR_BOX));
+    if (!readRenderScissor(renderer, scissor)) return true;
     const scissorTest = gl.isEnabled(gl.SCISSOR_TEST), autoClear = renderer.autoClear;
     const w = Math.max(1, Math.round(viewport.z)), h = Math.max(1, Math.round(viewport.w));
     if (!target) {
