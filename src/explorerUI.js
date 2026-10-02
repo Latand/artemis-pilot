@@ -21,6 +21,7 @@ let hooks, lastFocus = "earth", movement = null;
 const forward = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3(), delta = new THREE.Vector3();
 const $ = id => document.getElementById(id);
 const text = (id, value) => { const el=$(id); if(el && el.textContent!==value) el.textContent=value; };
+const setHidden = (id, value) => { const el=$(id); if(el && el.hidden!==value) el.hidden=value; };
 const routes = {earth:"earth",moon:"moon",sun:"sun",jupiter:3,saturn:4,proxima:"star:0"};
 
 function visit(focus) {
@@ -169,8 +170,8 @@ export function updateExplorerUI() {
     $('exploreRefocus').hidden=G.focus!=='free';
     const sys=getCachedFocusedSystem(),context=serializeExploredSystem(),child=planetMoonFocusIndex(G.focus),pi=child?.planetIndex??planetFocusIndex(G.focus);
     const ownsSystem=!!context&&sys?.starId===context.starId;
-    $('exploreSystem').hidden=!ownsSystem;
-    $('exploreSystemPlanet').hidden=!sys?.planets.length;
-    $('exploreSystemMoon').hidden=!sys?.planets[pi]?.moons?.length;
-    $('exploreSystemStar').hidden=!context?.hostFocus;
+    setHidden('exploreSystem',!ownsSystem);
+    setHidden('exploreSystemPlanet',!sys?.planets.length);
+    setHidden('exploreSystemMoon',!sys?.planets[pi]?.moons?.length);
+    setHidden('exploreSystemStar',!context?.hostFocus);
 }
