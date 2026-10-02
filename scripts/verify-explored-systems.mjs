@@ -361,6 +361,11 @@ try {
         for (const selector of ['#exploreSystemStar', '#exploreSystemPlanet']) {
             await page.locator(selector).scrollIntoViewIfNeeded();
             const box = await page.locator(selector).boundingBox();
+            if (!mobile) {
+                const dock = await page.locator('#timeDock').boundingBox();
+                check(`${selector}: system navigation is not covered by Time panel`, box && dock &&
+                    (box.x + box.width <= dock.x || dock.x + dock.width <= box.x || box.y + box.height <= dock.y || dock.y + dock.height <= box.y));
+            }
             check(`${selector}: real ${mobile ? 'touch' : 'desktop'} control is reachable`,
                 !!box && box.height >= 44 && box.y >= 0 && box.y + box.height <= (mobile ? 932 : 800));
         }

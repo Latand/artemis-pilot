@@ -161,3 +161,10 @@ body.compact-explorer #gasActions select { min-height:44px; }
 #bhSizeRail[hidden] { display:none!important; }
 
 #exploreSystem[hidden], #exploreSystem button[hidden] { display:none; }
+/* On laptop widths the centered dock crosses the system-navigation column.
+   Match the inspector's existing two-column layout while these controls show. */
+@media (min-width:1101px) and (max-width:1352px) {
+ body.mode-observe:not(.compact-explorer):not(.mode-xr):not(.mode-cabin):not(.mode-clean):has(#exploreSystem:not([hidden])) #timeDock {
+  left:auto;right:24px;transform:none;width:min(740px,calc(100vw - 350px));
+ }
+}
