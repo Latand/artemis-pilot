@@ -5,6 +5,7 @@ on:
       - 'src/ship.js'
       - 'src/shipModel.js'
       - 'scripts/*ship-*'
+      - 'scripts/smoke-saves.mjs'
       - 'docs/twin-ring-ship/**'
       - '.github/workflows/ship-appearance.yml'
 permissions:
@@ -27,11 +28,13 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - run: node scripts/smoke-ship-model.mjs && npm test && npm run smoke:physics3d && npm run smoke:saves && npm run build
+      - run: node scripts/smoke-ship-model.mjs && npm test && npm run smoke:physics3d && npm run smoke:xrperf
+      - run: npm run build
+      - run: npm run smoke:saves
   capture:
     name: Ship ${{ matrix.variant }} / ${{ matrix.device }}
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +67,7 @@ jobs:
             echo "BASE_ROOT=$RUNNER_TEMP/ship-base" >> "$GITHUB_ENV"
           fi
       - name: Full-application screenshots and runtime checks
+        timeout-minutes: 17
         env:
           DEVICE: ${{ matrix.device }}
           ARTEMIS_EVIDENCE: evidence/capture

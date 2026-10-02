@@ -7,11 +7,13 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 export function createShipModel() {
     const craft = new THREE.Group();
     craft.name = "Artemis twin-ring explorer";
+    // A restrained self-lit floor preserves the navigable silhouette on the
+    // unlit side; solar highlights still provide the directional shading.
     const materials = {
-        ceramic: new THREE.MeshPhongMaterial({ color: 0xd9e4e8, emissive: 0x1a232b, shininess: 75, specular: 0x607885 }),
-        silver: new THREE.MeshPhongMaterial({ color: 0x718897, emissive: 0x101921, shininess: 85, specular: 0x9dafb7 }),
-        graphite: new THREE.MeshPhongMaterial({ color: 0x17232e, emissive: 0x050a0e, shininess: 45, specular: 0x536b7c }),
-        copper: new THREE.MeshPhongMaterial({ color: 0xb2744d, emissive: 0x21140c, shininess: 70, specular: 0xb39577 }),
+        ceramic: new THREE.MeshPhongMaterial({ color: 0xd9e4e8, emissive: 0x6b7882, shininess: 75, specular: 0x607885 }),
+        silver: new THREE.MeshPhongMaterial({ color: 0x718897, emissive: 0x435563, shininess: 85, specular: 0x9dafb7 }),
+        graphite: new THREE.MeshPhongMaterial({ color: 0x17232e, emissive: 0x1e2b35, shininess: 45, specular: 0x536b7c }),
+        copper: new THREE.MeshPhongMaterial({ color: 0xb2744d, emissive: 0x513825, shininess: 70, specular: 0xb39577 }),
         glass: new THREE.MeshPhongMaterial({ color: 0x082938, emissive: 0x051a24, shininess: 150, specular: 0xaee5ef }),
         cyan: new THREE.MeshBasicMaterial({ color: 0x67d7e8, toneMapped: false }),
         windows: new THREE.MeshBasicMaterial({ color: 0xf4d9a0, toneMapped: false }),
@@ -65,6 +67,13 @@ export function createShipModel() {
         put("graphite", tube(1.068, .056, .018), 0, y);
         put("copper", tube(1.07, .018, .018), 0, y - .043);
         put("graphite", tube(.798, .125, .025), 0, y);
+        // Narrow panel joints break up the broad ceramic faces at close zoom.
+        for (const face of [-1, 1]) for (let i = 0; i < 8; i++) {
+            const angle = i * Math.PI / 4;
+            const seam = new THREE.BoxGeometry(.14, .004, .01);
+            seam.rotateY(-angle);
+            put("graphite", seam, Math.cos(angle) * .92, y + face * .131, Math.sin(angle) * .92);
+        }
         // Small separated segments in the inner channel, never a lens/shader.
         for (let i = 0; i < 16; i++) {
             const arc = new THREE.TorusGeometry(.763, .013, 4, 5, Math.PI * 2 / 16 * .68);
