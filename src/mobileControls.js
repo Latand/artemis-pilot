@@ -130,6 +130,7 @@ function initThrottle() {
     knob.addEventListener("pointerup", end);
     knob.addEventListener("pointercancel", end);
     knob.addEventListener("lostpointercapture", end);
+    window.addEventListener("ap:renderlost", () => { dragging = false; reset(); });
     reset();
 }
 

@@ -1,3 +1,4 @@
+import { readRenderScissor } from "./contextLifecycle.js";
 // Volumetric rendering of the Milky Way's UNRESOLVED starlight and dust.
 // Rays use the actual galactocentric observer and one shared galaxy model.
 // Point stars and this diffuse component partition the same luminosity.
@@ -664,6 +665,7 @@ function meterUpdate(now) {
 
 export function renderGalaxyVolume(renderer, camera = state.camera) {
     if (!state.enabled || !state.ready || state.opacity <= 0.001 || !state.maps) { meter.target = 1; meter.fresh = true; return; }
+    if (renderer.getContext().isContextLost()) return;
     renderer.getDrawingBufferSize(_size);
     if (camera) updateGalaxyVolume(camera, state.time, state.era, state.disrupt, state.opacity, state.oldFade, state.frameSimSec);
     ensureTargets(renderer);
@@ -672,7 +674,8 @@ export function renderGalaxyVolume(renderer, camera = state.camera) {
     const prevFace = renderer.getActiveCubeFace(), prevMip = renderer.getActiveMipmapLevel();
     const viewport = renderer.getCurrentViewport(new THREE.Vector4());
     const gl = renderer.getContext();
-    const scissor = new THREE.Vector4().fromArray(gl.getParameter(gl.SCISSOR_BOX));
+    const scissor = new THREE.Vector4();
+    if (!readRenderScissor(renderer, scissor)) return;
     const scissorTest = gl.isEnabled(gl.SCISSOR_TEST);
     const restoreTarget = () => {
         // Preserve active subviewport and Three's current-viewport cache,
@@ -775,4 +778,12 @@ export function setGalaxyVolumeEnabled(on) {
 }
 export function galaxyVolumeEnabled() {
     return state.enabled;
+}
+
+// CPU metadata cannot certify GPU render-target contents after context restore.
+export function resetGalaxyVolumeHistory() {
+    state.dirty = true; state.lastDrawn = null; state.refineRow = 0; state.mix = 0;
+    state.history = null; state.historySaved = false; state.historyUsed = false;
+    meter.pending = false; meter.fresh = true; meter.t = 0;
+    state.invalidations++;
 }

@@ -17,7 +17,7 @@ import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.
 import { loadAllMaps, dotTexture } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
-    renderQuality, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
+    renderQuality, renderContext, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
     farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
@@ -43,7 +43,7 @@ import {
     haloArrPos, haloArrAttr, haloArrow, tipHalo,
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
-import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
+import { initRiver, updateRiver, updateShells, river, warmRiverCompute, resetRiverContext } from "./river.js";
 import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt, andromedaOffsetMpc } from "./cosmic.js";
 import { initGalaxyPopulation, updateGalaxyPopulation, galaxyPopulationStatus, galaxySharedUniforms, mergerParticipants } from "./render/galaxyPopulationRender.js";
 import { initMergerTides, startMergerTides, updateMergerTides, mergerKeepAt, mergerTidesStatus } from "./render/mergerTidesRender.js";
@@ -52,7 +52,7 @@ import { stellarExposure } from "./render/stellarAppearance.js";
 import { galacticCenterScene } from "./universe/starfield.js";
 import { evolutionAt } from "./universe/galaxyEvolution.js";
 import { cosmicTimeGyr } from "./universe/cosmicExpansion.js";
-import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit, galaxyVolumeStats, galaxyVolumeExposureCap } from "./render/galaxyVolume.js";
+import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit, galaxyVolumeStats, galaxyVolumeExposureCap, resetGalaxyVolumeHistory } from "./render/galaxyVolume.js";
 import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
 import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
 import { starViewUniforms } from "./render/starPointMaterial.js";
@@ -465,6 +465,10 @@ mfdScreens.forEach((scr, i) => {
 const plPosArr = plGroups.map(g => g.position);
 const riverInitT0 = perfStart();
 initRiver();
+renderer.domElement.addEventListener("webglcontextrestored", () => {
+    resetGalaxyVolumeHistory();
+    resetRiverContext();
+});
 perfEnd("startup.initRiver", riverInitT0);
 resetEphem();
 resetShip();
@@ -1583,6 +1587,7 @@ function updateBodySurfaceLod(cosmicView, detailShed) {
 let bodyLodReady = false, bodyLodLastDist = 0, bodyLodLastFocus = null, bodyLodLastCosmic = false, bodyLodLastDetail = false;
 
 function renderFrame(showCockpit) {
+    if (renderContext.isLost()) return;
     if (VR.active) { renderVRFrame(showCockpit && VR.mode === "ship"); return; }
     const renderT0 = perfStart();
     const worldRenderT0 = perfStart();
@@ -1655,7 +1660,7 @@ let lastMobileFrame = -Infinity;
 function frame() {
     // Keep the welcome screen and background tabs responsive without advancing
     // physics or submitting GPU work. Drain the clock so resuming cannot jump.
-    if (document.hidden || document.getElementById("intro").style.display !== "none") {
+    if (renderContext.isLost() || document.hidden || document.getElementById("intro").style.display !== "none") {
         clock.getDelta();
         lastMobileFrame = -Infinity;
         return;
@@ -2619,4 +2624,11 @@ window.__AP_READY = true;
 requestEarthNightTexture(renderQuality.mobile ? 3600 : 2400);
 if (!renderQuality.mobile && new URLSearchParams(location.search).get("cockpitwarm") === "1") scheduleCockpitWarmup(4200);
 scheduleDeferredRealSkyLoad();
-renderer.setAnimationLoop(frame);
+// A loss in the middle of a frame can invalidate GL calls before its event.
+// Keep Three's animation scheduler alive for restoration; unrelated errors
+// still surface rather than silently hiding a broken simulation.
+function frameWithContextRecovery() {
+    try { frame(); }
+    catch (error) { if (!renderContext.isLost()) throw error; }
+}
+renderer.setAnimationLoop(frameWithContextRecovery);

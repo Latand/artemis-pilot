@@ -27,6 +27,7 @@ try {
  await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=ship&dist=2.6&hidehelp=1&compile=0&perf=1`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__frameSuccess>=4);
+ await page.evaluate(async()=>{(await import('/src/saves.js')).saveState();window.__savedBytes=JSON.stringify({...localStorage});});
  const capture=async name=>{await page.screenshot({path:`${out}/${name}.png`,timeout:180000});};
  const state=()=>page.evaluate(async()=>{const {renderer,camera,cam,renderQuality}=await import('/src/scene.js');const {stellarExposure}=await import('/src/render/stellarAppearance.js');const {galaxyVolumeStats}=await import('/src/render/galaxyVolume.js');return{frames:window.__frameStarts,success:window.__frameSuccess,t:__G.t,x:__G.x,y:__G.y,z:__G.z,vx:__G.vx,vy:__G.vy,vz:__G.vz,dv:__G.dvUsed,paused:__G.paused,dead:__G.dead,contextLost:renderer.getContext().isContextLost(),near:camera.near,far:camera.far,cam:camera.position.toArray(),dist:cam.dist,exposure:stellarExposure.value,quality:{...renderQuality},memory:{...renderer.info.memory},galaxy:galaxyVolumeStats(),mode:document.querySelector('#mMode')?.textContent,throttle:document.querySelector('#mThrCap')?.textContent};});
  const track=await page.locator('#mThrTrack').boundingBox();assert(track);
@@ -43,6 +44,8 @@ try {
  await page.waitForTimeout(2200);const restored=await state();report.samples.push({name:'after-restore',...restored});await capture('03-context-restored');
  if(before){check(report.errors.some(e=>/null/.test(e)&&/fromArray|galaxyVolume/.test(e)),'Baseline reproduces null WebGL query exception');check(restored.success===held.success,'Baseline animation loop stays stopped after GPU restoration');}
  else {
+  check(await page.evaluate(async()=>{const p=(await import('/src/river.js')).riverDebugReadPositions();return p?.finite&&p.nonZero>0&&p.distinct>0;}),'Cosmetic river GPU positions are rebuilt after restore');
+  check(await page.evaluate(()=>JSON.stringify({...localStorage})===window.__savedBytes),'Recovery leaves all stored save bytes unchanged');
   check(restored.success>held.success,'Animation loop renders after context restoration');check(restored.t>held.t,'Flight resumes after context restoration');check(restored.mode==='COAST','Lost throttle is released on recovery');check(!(await page.locator('#renderContextStatus').isVisible()),'Recovery status clears after restoration');
   // Continue actual app frames through forty seconds / forty simulation minutes.
   await page.evaluate(()=>__thrustStop());await page.mouse.move(track.x+track.width/2,track.y+track.height*.15);await page.mouse.down();
@@ -52,6 +55,10 @@ try {
   }
   await capture('04-sustained-thrust');await page.mouse.up();await page.evaluate(()=>__thrustStep());await capture('05-released-throttle');
   check(await page.evaluate(()=>localStorage.getItem('qa_preserve_save')==='untouched'),'Unrelated saved data is preserved');
+  // A second loss while already paused must not unpause or lose the state.
+  await page.evaluate(()=>{__G.paused=true;window.__pausedTime=__G.t;window.__loss.loseContext();});await page.waitForTimeout(300);await page.evaluate(()=>__thrustStep());
+  await page.evaluate(()=>window.__loss.restoreContext());await page.waitForFunction(async()=>!(await import('/src/scene.js')).renderer.getContext().isContextLost());await page.evaluate(()=>__thrustStep());
+  check(await page.evaluate(()=>__G.paused&&__G.t===window.__pausedTime),'Repeated GPU recovery preserves an already-paused flight');await capture('06-paused-recovery');
   check(report.errors.length===0,'No page/shader errors through thrust and GPU recovery');
  }
 } finally {await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}

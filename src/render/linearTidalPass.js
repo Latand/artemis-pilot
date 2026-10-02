@@ -1,3 +1,4 @@
+import { readRenderScissor } from "./contextLifecycle.js";
 import * as THREE from 'three';
 import { EXT_STRETCH_GLSL } from './stellarAppearance.js';
 
@@ -50,7 +51,7 @@ export class LinearTidalPass {
         const face = renderer.getActiveCubeFace(), level = renderer.getActiveMipmapLevel();
         renderer.getCurrentViewport(this.viewport);
         const gl = renderer.getContext();
-        this.scissor.fromArray(gl.getParameter(gl.SCISSOR_BOX));
+        if (!readRenderScissor(renderer, this.scissor)) return;
         const scissorTest = gl.isEnabled(gl.SCISSOR_TEST), autoClear = renderer.autoClear;
         renderer.getClearColor(this.clearColor);
         const alpha = renderer.getClearAlpha(), xr = renderer.xr.enabled;
