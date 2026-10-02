@@ -21,7 +21,7 @@ if (!url) {
   await viteServer.listen();
   const address = viteServer.httpServer?.address();
   if (!address || typeof address === "string") throw new Error("Vite server did not expose a TCP port");
-  url = `http://127.0.0.1:${address.port}/?bloom=0&hidehelp=1&tier1=0`;
+  url = `http://127.0.0.1:${address.port}/?bloom=0&hidehelp=1&tier1=0&field=0&realsky=0&galaxyvol=0&galaxies=0&river=0&compile=0`;
 }
 
 let pwModule;
@@ -54,9 +54,11 @@ function assert(ok, message, ctx) {
 try {
   await page.goto(url, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.__AP_READY && window.__G && window.__cam);
+  await page.evaluate(() => { window.__gl.renderer.setAnimationLoop(null); window.__G.paused = true; });
   await page.evaluate(() => { localStorage.clear(); localStorage.setItem("ap_introSeen", "1"); });
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.__AP_READY && window.__G && window.__cam);
+  await page.evaluate(() => { window.__gl.renderer.setAnimationLoop(null); window.__G.paused = true; });
 
   const saved = await runSaveV10(page);
   assert(saved.ok, "saveState should succeed", saved);
@@ -71,6 +73,7 @@ try {
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.__AP_READY && window.__G && window.__cam);
+  await page.evaluate(() => { window.__gl.renderer.setAnimationLoop(null); window.__G.paused = true; });
   const loaded = await runLoadAfterSaveV10(page);
   assert(loaded.ok, "loadState should succeed restoring a v10 save", loaded);
   assert(loaded.seed === TEST_SEED, "loadState should restore the saved galaxy seed before touching procedural stars", loaded);
@@ -81,6 +84,7 @@ try {
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.__AP_READY && window.__G && window.__cam);
+  await page.evaluate(() => { window.__gl.renderer.setAnimationLoop(null); window.__G.paused = true; });
   const v8 = await runV8Fallback(page);
   assert(v8.threw === null, "restoring a synthetic v8 blob should not throw", v8);
   assert(v8.ok, "restoring a synthetic v8 blob should report success", v8);
@@ -88,6 +92,7 @@ try {
 
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => window.__AP_READY && window.__G && window.__cam);
+  await page.evaluate(() => { window.__gl.renderer.setAnimationLoop(null); window.__G.paused = true; });
   const v9fwd = await runV9ForwardCompat(page);
   assert(v9fwd.threw === null, "restoring a v9 blob with unknown/future fields should not throw", v9fwd);
   assert(v9fwd.ok, "restoring a v9 blob with unknown/future fields should report success", v9fwd);

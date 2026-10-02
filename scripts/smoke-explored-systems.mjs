@@ -145,3 +145,16 @@ const aliasChild = P.planetFocusValue(0, alias), aliasSnapshot = parameters(alia
 E.getExploredSystem('star:0');
 assert.equal(parameters(E.getExploredSystem(aliasChild)), aliasSnapshot);
 console.log('Curated/HYG representation precedence preserves the same system parameters');
+
+const { serializeExplorationCamera, restoreExplorationCamera } = await import('../src/universe/explorationCamera.js');
+const camera = { dist: 12, yaw: .4, pitch: -.2, distTarget: 900, tgt: { x: 5, y: 6, z: 7, set(x,y,z){ this.x=x;this.y=y;this.z=z; } } };
+const originalOrigin = { x: 100, y: 200, z: 300 }, movedOrigin = { x: 120, y: -300, z: 900 };
+const savedCamera = serializeExplorationCamera(camera, originalOrigin);
+camera.dist = 500; camera.yaw = 1;
+assert(restoreExplorationCamera(savedCamera, camera, movedOrigin));
+assert.deepEqual(serializeExplorationCamera(camera, movedOrigin), savedCamera, 'Camera pose restores across a render-origin change');
+assert.equal(camera.distTarget, null, 'Old zoom animation cannot overwrite the restored distance');
+const validSnapshot = JSON.stringify(camera);
+assert.equal(restoreExplorationCamera({ ...savedCamera, dist: NaN }, camera, movedOrigin), false);
+assert.equal(JSON.stringify(camera), validSnapshot, 'Malformed camera preferences never partially mutate the view');
+console.log('Camera pose, free-camera world target and origin-safe restore passed');

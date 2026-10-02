@@ -1,4 +1,7 @@
 import { apOff } from "./autopilot.js";
+import { cam } from "./scene.js";
+import { getOrigin } from "./universe/renderOrigin.js";
+import { serializeExplorationCamera, restoreExplorationCamera } from "./universe/explorationCamera.js";
 import { relResetState } from "./relState.js";
 import { invalidateGasDynamics } from "./universe/gasDynamics.js";
 // Quicksave / quickload: one browser-storage slot holding the full simulation
@@ -80,6 +83,7 @@ export function saveState() {
         v: 11,
         galaxySeed: getSeed(),
         exploredSystem,
+        camera: serializeExplorationCamera(cam, getOrigin()),
         epochMs,
         g: Object.fromEntries(G_FIELDS.map(k => [k, k === "warp" && jumpActive() ? jumpSaveWarp() : G[k]])),
         focusCatalog: focusStar && focusStar.catalog === "hyg-v41-promoted"
@@ -166,6 +170,7 @@ export async function loadState() {
     }
     G.focus = restoreExploredSystem(exploredCatalogUnavailable ? null : data.exploredSystem,
         exploredCatalogUnavailable && parseSystemFocus(G.focus) ? "earth" : G.focus);
+    if (!(parseSystemFocus(data.g.focus) && G.focus === "earth")) restoreExplorationCamera(data.camera, cam, getOrigin());
     if (!Number.isFinite(data.g.z)) G.z = 0;
     if (!Number.isFinite(data.g.vz)) G.vz = 0;
     if (!Number.isFinite(data.g.pitch)) G.pitch = 0;

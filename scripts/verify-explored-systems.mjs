@@ -18,6 +18,7 @@ if (process.argv.includes('--compare')) {
     const base = JSON.parse(await readFile(baseFile, 'utf8'));
     const candidate = JSON.parse(await readFile(candidateFile, 'utf8'));
     assert.equal(base.device, candidate.device);
+    assert.deepEqual(base.preloadFlags, candidate.preloadFlags, 'Both revisions must preload the same normal body detail');
     assert.deepEqual(base.routes.map(r => r.fixture), candidate.routes.map(r => r.fixture), 'Baseline and candidate must use identical routes');
     assert.deepEqual(base.benchmark.map(x => x.fixture), candidate.benchmark.map(x => x.fixture), 'Performance camera workloads must match');
     const scenarios = candidate.benchmark.map((after, i) => {
@@ -95,6 +96,8 @@ if (process.argv.includes('--validate')) {
 await mkdir(out, { recursive: true });
 const report = {
     version: 1, revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), baseline, device,
+    preloadFlags: { earthnight: '1', clouds: '1', moonmap: '1' },
+    preloadReason: 'Load the same normally lazy Earth night/cloud and lunar photographic maps before the first frame, so background fetch/compile does not race measured windows',
     epoch: '2026-10-01T12:00:00.000Z', errors: [], warnings: [], checks: [], routes: [], repeatedRoutes: [], captures: [], benchmark: [],
     omissions: ['AT-HYG streaming', 'HYG background catalog', 'procedural background field', 'volumetric galaxy', 'galaxy population', 'gravity overlay', 'bloom'],
     identityRepairNote: 'Blank HIP records are excluded from matched fixtures because their formerly colliding host identities are intentionally repaired; real-HYG identity tests cover that change',
@@ -134,15 +137,15 @@ try {
     });
     await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ status: 200, body: '' }));
     const query = new URLSearchParams({ focus: 'earth', dist: '25', hidehelp: '1', dpr: '1', tier1: '0', realsky: '0', field: '0',
-        galaxyvol: '0', galaxies: '0', galaxy: '0', river: '0', bloom: '0', compile: '0', galadapt: '0' });
+        galaxyvol: '0', galaxies: '0', galaxy: '0', river: '0', bloom: '0', compile: '0', galadapt: '0', ...report.preloadFlags });
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?${query}`, { waitUntil: 'domcontentloaded' });
     async function initialize() {
         await page.waitForFunction(() => window.__AP_READY && window.__exploredFrame);
         return page.evaluate(async () => {
-            const [s, a, p, c, input, saves, eph, body, state, surfaces] = await Promise.all([
+            const [s, a, p, c, input, saves, eph, body, state, surfaces, bodies] = await Promise.all([
                 import('/src/scene.js'), import('/src/universe/activeStars.js'), import('/src/universe/planetarySystem.js'),
                 import('/src/constants.js'), import('/src/input.js'), import('/src/saves.js'), import('/src/ephemeris.js'),
-                import('/src/render/systemBodies.js'), import('/src/state.js'), import('/src/render/bodySurfaceMaterial.js'),
+                import('/src/render/systemBodies.js'), import('/src/state.js'), import('/src/render/bodySurfaceMaterial.js'), import('/src/bodies.js'),
             ]);
             const hash = value => {
                 const text = JSON.stringify(value); let n = 2166136261;
@@ -179,9 +182,10 @@ try {
                 return { objects: objects.size, geometries: geometries.size, materials: materials.size, textures: textures.size };
             };
             const ship = () => Object.fromEntries(['t', 'x', 'y', 'z', 'vx', 'vy', 'vz', 'heading', 'pitch', 'fuel', 'paused'].map(k => [k, state.G[k]]));
-            window.exploredQA = { s, a, p, c, input, saves, eph, body, state, surfaces, hash, resources, fixtures, nearestId, ship };
+            window.exploredQA = { s, a, p, c, input, saves, eph, body, state, surfaces, bodies, hash, resources, fixtures, nearestId, ship };
             const gl = s.renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
             return { fixtures, nearestId, ship: ship(), mobile: s.renderQuality.mobile,
+                preloadedBodyDetail: { hasNight: bodies.shaderTick.earthUniforms.uHasNight.value, hasClouds: bodies.shaderTick.earthUniforms.uHasClouds.value, moonMap: !!bodies.moon.material.map },
                 gpu: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
                 seed: (await import('/src/universe/galaxy.js')).getSeed() };
         });
@@ -189,6 +193,8 @@ try {
     const initial = await initialize(); report.initial = initial; report.browser = await browser.version();
     check('Twenty distinct deterministic routes', initial.fixtures.length === 20 && new Set(initial.fixtures.map(x => `${x.starId}/${x.planetIndex}/${x.moonIndex}`)).size === 20);
     check('Production mobile quality matches requested device', initial.mobile === mobile);
+    check('Normal Earth night/cloud and Moon maps are ready before benchmark timing', initial.preloadedBodyDetail.hasNight === 1 && initial.preloadedBodyDetail.hasClouds === 1 && initial.preloadedBodyDetail.moonMap, initial.preloadedBodyDetail);
+    assert(initial.preloadedBodyDetail.hasNight === 1 && initial.preloadedBodyDetail.hasClouds === 1 && initial.preloadedBodyDetail.moonMap, 'Normally lazy body detail must finish preloading before any measured frame');
     assert.equal(initial.fixtures.length, 20, 'The unchanged catalog/seed must supply twenty real star/planet/moon tuples');
     const phase = async name => { report.phase = name; await page.evaluate(name => { window.__qaPhase = name; }, name); };
     const frames = async (count = 2) => {
@@ -213,7 +219,7 @@ try {
         }
         return { focus: q.state.G.focus, mode: q.state.G.uiMode, starId: sys?.starId || null, hostName: sys?.hostStar?.name || null,
             topologyHash: sys ? q.hash(sys.planets) : null, ship: q.ship(), expectedPosition, cameraTargetError,
-            cam: { target: q.s.cam.tgt.toArray(), position: q.s.camera.position.toArray(), yaw: q.s.cam.yaw, pitch: q.s.cam.pitch, dist: q.s.cam.dist },
+            cam: { target: q.s.cam.tgt.toArray(), position: q.s.camera.position.toArray(), quaternion: q.s.camera.quaternion.toArray(), fov: q.s.camera.fov, yaw: q.s.cam.yaw, pitch: q.s.cam.pitch, dist: q.s.cam.dist, distTarget: q.s.cam.distTarget },
             render: { slots: slots.length, moonSlots: slots.map(slot => slot.moons.length),
                 materials: slots.map(slot => [slot.mesh.material.uuid, ...slot.moons.map(m => m.material.uuid)]),
                 textures: slots.map(slot => [slot.mesh, ...slot.moons].map(mesh => [mesh.material.map?.uuid || null, mesh.material.normalMap?.uuid || null])),
@@ -226,6 +232,18 @@ try {
         report.captures.push({ name, path: `${name}.png`, state: await snapshot() }); await save();
     };
     const assertPaused = (name, state) => check(`${name}: paused time and ship unchanged`, JSON.stringify(state.ship) === JSON.stringify(initial.ship), state.ship);
+    const readCameraControls = () => page.evaluate(() => { const { cam } = exploredQA.s; return { dist: cam.dist, yaw: cam.yaw, pitch: cam.pitch, target: cam.tgt.toArray(), distTarget: cam.distTarget }; });
+    const assertLoadedControls = (name, before, after) => {
+        const controlsMatch = ['dist', 'yaw', 'pitch'].every(key => Math.abs(before[key] - after[key]) <= Math.max(1e-10, Math.abs(before[key]) * 1e-10));
+        const targetMatch = before.target.every((value, i) => Math.abs(value - after.target[i]) <= Math.max(1e-3, Math.abs(value) * Number.EPSILON * 8));
+        check(`${name}: saved camera controls and target restore before first frame`, controlsMatch && targetMatch && after.distTarget === null, { before, after }, true);
+    };
+    const assertCameraRestored = (name, before, after) => {
+        const scalars = ['dist', 'yaw', 'pitch', 'fov'];
+        const scalarMatch = scalars.every(key => Math.abs(before[key] - after[key]) <= Math.max(1e-10, Math.abs(before[key]) * 1e-10));
+        const poseMatch = ['target', 'position', 'quaternion'].every(key => before[key].every((value, i) => Math.abs(value - after[key][i]) <= Math.max(1e-3, Math.abs(value) * Number.EPSILON * 8)));
+        check(`${name}: quickload restores camera framing and actual pose`, scalarMatch && poseMatch && before.distTarget === after.distTarget, { before, after }, true);
+    };
     const assertOwner = (name, state, fixture) => {
         check(`${name}: stable host`, state.starId === fixture.starId, { expected: fixture.starId, actual: state.starId }, true);
         check(`${name}: unchanged generated planets and moons`, state.topologyHash === fixture.topologyHash, null, true);
@@ -259,6 +277,19 @@ try {
             const samples = await frames(120);
             result.runs.push({ cpuMs: samples.map(s => s.cpuMs), frameAndFinishMs: samples.map(s => s.frameAndFinishMs) });
         }
+        // A separate instrumented pass attributes stage cost; it must never
+        // enter the raw p95 timing windows or their long-task comparison.
+        await phase(`diagnostic:${fixture.name}`);
+        await page.evaluate(() => { __PERF.setEnabled(true); __PERF.clear(); });
+        try {
+            const diagnosticFrames = await frames(20);
+            result.stageDiagnostic = await page.evaluate(() => ({
+                samples: structuredClone(__PERF.samples), last: structuredClone(__PERF.last),
+                renderInfo: { ...__PERF.renderInfo }, memory: { ...__PERF.mem },
+            }));
+            result.stageDiagnostic.frames = diagnosticFrames;
+            result.stageDiagnostic.scope = 'Twenty separately instrumented production frames, excluded from benchmark timing and p95';
+        } finally { await page.evaluate(() => __PERF.setEnabled(false)); }
         report.benchmark.push(result); await save();
     }
     await phase('baseline-reproduction');
@@ -289,8 +320,13 @@ try {
         check(`Route ${index + 1}: quicksave persists host context`, savedRecord?.exploredSystem?.starId === fixture.starId, null, true);
         const other = initial.fixtures.find(f => f.starId !== fixture.starId);
         await focus(`star:${other.starIndex}`); await frames(2);
-        await key('KeyL'); await page.waitForFunction(value => __G.focus === value, savedFocus); await frames(3);
+        await key('KeyL'); await page.waitForFunction(value => __G.focus === value, savedFocus);
+        route.cameraImmediatelyAfterLoad = await readCameraControls();
+        assertLoadedControls(`Route ${index + 1}`, route.states.moon.cam, route.cameraImmediatelyAfterLoad);
+        check(`Route ${index + 1}: save contains additive camera controls/world target`, !!savedRecord.camera && savedRecord.camera.targetWorldKm?.length === 3, null, true);
+        await frames(3);
         route.states.loaded = await snapshot(fixture); assertOwner(`Route ${index + 1} quickload`, route.states.loaded, fixture);
+        assertCameraRestored(`Route ${index + 1}`, route.states.moon.cam, route.states.loaded.cam);
         await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.down('KeyW'); await frames(2); await page.keyboard.up('KeyW');
         route.states.free = await snapshot(fixture); assertOwner(`Route ${index + 1} free camera`, route.states.free, fixture);
         check(`Route ${index + 1}: Explore movement moves only the camera`, route.states.free.focus === 'free' &&
@@ -415,15 +451,38 @@ try {
         r.gpu.geometries <= resourceSamples[0].gpu.geometries + poolGeometryCapacity && r.gpu.textures <= resourceSamples[0].gpu.textures + 136));
 
     if (!baseline) {
+        await phase('free-camera-save-roundtrip');
+        await page.evaluate(() => document.activeElement?.blur());
+        await page.keyboard.down('KeyW'); await frames(2); await page.keyboard.up('KeyW');
+        const freeBefore = await snapshot();
+        check('Free camera is detached before saving', freeBefore.focus === 'free');
+        await key('KeyK'); await focus('earth'); await frames(2);
+        check('Free camera save loads', await page.evaluate(() => exploredQA.saves.loadState()));
+        assertLoadedControls('Free camera', freeBefore.cam, await readCameraControls());
+        await frames(3);
+        report.freeCameraReload = await snapshot();
+        check('Free camera retains explored host after load', report.freeCameraReload.focus === 'free' && report.freeCameraReload.starId === freeBefore.starId);
+        assertCameraRestored('Free camera', freeBefore.cam, report.freeCameraReload.cam);
+        assertPaused('Free camera quickload', report.freeCameraReload);
         await phase('reload-and-migration');
         const fixture = initial.fixtures.at(-1);
         await page.evaluate(fixture => { const q = exploredQA; q.input.setFocus(q.p.planetMoonFocusValue(fixture.planetIndex, fixture.moonIndex, fixture.starId)); }, fixture);
-        await frames(3); await key('KeyK');
+        await frames(3);
+        await page.waitForFunction(fixture => exploredQA.body.systemBodyRenderState()[fixture.planetIndex].moons[fixture.moonIndex].material.userData.surfaceDetailWidth >= 512, fixture);
+        await frames(2);
+        const savedCamera = (await snapshot(fixture)).cam;
+        await key('KeyK');
         const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('artemis.quicksave.v1')));
         report.longTasksBeforeReload = await page.evaluate(() => __qaLongTasks);
         await page.reload({ waitUntil: 'domcontentloaded' }); await initialize();
-        await key('KeyL'); await page.waitForFunction(value => __G.focus === value, saved.g.focus); await frames(3);
+        await key('KeyL'); await page.waitForFunction(value => __G.focus === value, saved.g.focus);
+        report.cameraImmediatelyAfterReload = await readCameraControls();
+        assertLoadedControls('Fresh page child', savedCamera, report.cameraImmediatelyAfterReload);
+        await frames(3);
         report.reloaded = await snapshot(fixture); assertOwner('Fresh page quickload', report.reloaded, fixture);
+        assertCameraRestored('Fresh page child', savedCamera, report.reloaded.cam);
+        await page.waitForFunction(fixture => exploredQA.body.systemBodyRenderState()[fixture.planetIndex].moons[fixture.moonIndex].material.userData.surfaceDetailWidth >= 512, fixture);
+        await frames(3);
         await capture('07-fresh-page-child-restore');
         const legacy = structuredClone(saved); delete legacy.exploredSystem; legacy.g.focus = 'planet:0';
         await page.evaluate(async legacy => { localStorage.setItem('artemis.quicksave.v1', JSON.stringify(legacy)); await exploredQA.saves.loadState(); }, legacy);
@@ -448,11 +507,6 @@ try {
         await page.evaluate(() => {
             const q = exploredQA, { G } = q.state;
             q.a.refreshActiveStars(q.eph.eph.earthX + G.x, q.eph.eph.earthY + G.y, G.z, G.focus, G.t);
-            const host = q.a.getCachedFocusedSystem().hostStar;
-            const dx = q.s.cam.tgt.x - host.x * q.c.K, dy = q.s.cam.tgt.y - (host.z || 0) * q.c.K, dz = q.s.cam.tgt.z + host.y * q.c.K;
-            const distance = Math.hypot(dx, dy, dz);
-            q.s.cam.yaw = Math.atan2(dz, dx) + .17;
-            q.s.cam.pitch = Math.max(-1.4, Math.min(1.4, Math.asin(dy / distance))); q.s.cam.distTarget = null;
         });
         await frames(12);
         const hygVisual = () => page.evaluate(async () => {
@@ -476,10 +530,40 @@ try {
         check('Dropped HYG host retains production photosphere and dynamic point', retained.photosphereInScene && retained.groupVisible && retained.dynamicPoint, retained);
         check('Dynamic stellar surfaces remain within the existing 48 cap', retained.dynamicSurfaces <= 48, retained.dynamicSurfaces);
         assertPaused('HYG child retention', retained);
+        // Ownership/render checks above are complete before changing framing.
+        // The original outward direction put the camera on the dark side.
+        const frameHygPlanet = async () => {
+            await page.evaluate(() => {
+                const q = exploredQA, host = q.a.getCachedFocusedSystem().hostStar;
+                const dx = host.x * q.c.K - q.s.cam.tgt.x, dy = (host.z || 0) * q.c.K - q.s.cam.tgt.y, dz = -host.y * q.c.K - q.s.cam.tgt.z;
+                const distance = Math.hypot(dx, dy, dz);
+                q.s.cam.yaw = Math.atan2(dz, dx) + .6;
+                q.s.cam.pitch = Math.max(-1.4, Math.min(1.4, Math.asin(dy / distance))); q.s.cam.distTarget = null;
+            });
+            await frames(3);
+            await page.waitForFunction(() => exploredQA.body.systemBodyRenderState()[0].mesh.material.userData.surfaceDetailWidth >= 512);
+            await frames(3);
+        };
+        await frameHygPlanet();
+        report.hyg.litPlanet = await snapshot();
         await capture('08-hyg-retained-host-and-planet');
+        // Keep the child selected while framing its host: selecting hyg:87
+        // itself would force it back into ACTIVE_STARS and mask the bug.
+        await page.evaluate(() => {
+            const q = exploredQA, host = q.a.getCachedFocusedSystem().hostStar;
+            const dx = host.x * q.c.K - q.s.cam.tgt.x, dy = (host.z || 0) * q.c.K - q.s.cam.tgt.y, dz = -host.y * q.c.K - q.s.cam.tgt.z;
+            const distance = Math.hypot(dx, dy, dz);
+            q.s.cam.yaw = Math.atan2(dz, dx); q.s.cam.pitch = Math.asin(dy / distance);
+            q.s.cam.dist = distance + 12 * host.R * q.c.K; q.s.cam.distTarget = null;
+        });
+        await frames(12); report.hyg.hostFraming = await hygVisual();
+        check('Host portrait retains child selection without re-adding HYG host to active stars', report.hyg.hostFraming.focus === hyg.childFocus && !report.hyg.hostFraming.activeMember && report.hyg.hostFraming.photosphereInScene && report.hyg.hostFraming.photosphereVisible);
+        await capture('08b-hyg-retained-host-photosphere');
         await focus(`star:${first.starIndex}`); await frames(3); await focus(hyg.childFocus); await frames(12);
         report.hyg.revisited = await hygVisual();
         check('HYG child resolves after selecting another star', report.hyg.revisited.starId === hyg.starId && report.hyg.revisited.retainedHygIndex === 87 && report.hyg.revisited.topologyHash === hyg.topologyHash);
+        await frameHygPlanet();
+        const hygSavedCamera = (await snapshot()).cam;
         await key('KeyK');
         const hygSave = await page.evaluate(() => JSON.parse(localStorage.getItem('artemis.quicksave.v1')));
         check('HYG child quicksave retains catalog locator', hygSave.exploredSystem?.hostFocus === 'hyg:87' && hygSave.g.focus === hyg.childFocus);
@@ -508,11 +592,18 @@ try {
             report.hyg.delayedPreflight = { before: beforeLoad, during: duringLoad };
             check('Delayed HYG binary leaves live G/world/seed/epoch/ephemeris unchanged', JSON.stringify(beforeLoad) === JSON.stringify(duringLoad));
         } finally { releaseBinary(); }
-        await page.waitForFunction(async expected => {
-            const E = await import('/src/universe/exploredSystem.js');
-            return __G.focus === expected.childFocus && E.getExploredHost()?.hygIndex === 87 && exploredQA.a.getCachedFocusedSystem()?.starId === expected.starId;
+        // Playwright tests the predicate's immediate truthiness: an async
+        // predicate returns a truthy Promise even when it resolves false.
+        // Import first, then poll a synchronous completion condition.
+        await page.evaluate(async () => { exploredQA.explored = await import('/src/universe/exploredSystem.js'); });
+        await page.waitForFunction(expected => {
+            const q = exploredQA;
+            return q.state.G.focus === expected.childFocus && q.explored.getExploredHost()?.hygIndex === 87 && q.a.getCachedFocusedSystem()?.starId === expected.starId;
         }, hyg);
-        await page.unroute(binaryPattern); await frames(12);
+        await page.unroute(binaryPattern);
+        report.hyg.cameraImmediatelyAfterReload = await readCameraControls();
+        assertLoadedControls('HYG fresh page child', hygSavedCamera, report.hyg.cameraImmediatelyAfterReload);
+        await frames(12);
         report.hyg.reloaded = await hygVisual();
         check('Cold-page HYG quickload restores the actual retained host and rendering', report.hyg.reloaded.retainedHygIndex === 87 && report.hyg.reloaded.photosphereInScene && report.hyg.reloaded.dynamicPoint && report.hyg.reloaded.topologyHash === hyg.topologyHash);
         check('HYG quickload cancels active AP and REL plans', await page.evaluate(async () => {
@@ -520,6 +611,9 @@ try {
             return AP.mode === 'off' && !REL.active && REL.plan === null && REL.target === null;
         }));
         assertPaused('HYG fresh-page quickload', report.hyg.reloaded);
+        assertCameraRestored('HYG fresh page child', hygSavedCamera, (await snapshot()).cam);
+        await page.waitForFunction(() => exploredQA.body.systemBodyRenderState()[0].mesh.material.userData.surfaceDetailWidth >= 512);
+        await frames(3);
         await capture('09-hyg-fresh-page-restored');
 
         // A failed real binary fetch must be caught by the loader, with a
