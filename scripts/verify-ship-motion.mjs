@@ -7,6 +7,7 @@ import { createServer } from 'vite';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { verifyShipHudLayout } from './verify-ship-hud-layout.mjs';
 const mobile=process.env.DEVICE==='mobile';
 const out=resolve(process.env.ARTEMIS_EVIDENCE||`evidence/motion-${mobile?'mobile':'desktop'}`);
 await mkdir(out,{recursive:true});
@@ -50,16 +51,12 @@ try{
   console.log('CAPTURE',name,state);
  };
  await frames(2);await capture('00-stopped-off');
- if(!mobile)check(await page.evaluate(()=>{
-  const r=document.getElementById('shipVisualControls').getBoundingClientRect();
-  return ['navBall','hudTR','timeDock'].every(id=>{const b=document.getElementById(id).getBoundingClientRect();return r.right<=b.left||r.left>=b.right||r.bottom<=b.top||r.top>=b.bottom;});
- }),'Desktop warp control clears attitude, objectives and time panels');
-
  check(await page.locator('[data-warp-visual]').first().getAttribute('aria-pressed')==='false','Warp is opt-in and defaults off');
  await page.evaluate(()=>{__qaSpeed=30;});await frames(5);await capture('01-accelerating-off');
  await page.evaluate(()=>{__qaSpeed=120;});await frames(10);await capture('02-cruise-off');
  const toggle=async()=>{if(mobile){await page.locator('#mMenuBtn').click();await page.locator('#mWarpVisual').click();await page.locator('#mMenuClose').click();}else await page.locator('[data-warp-visual]').first().click();};
  await toggle();await frames(5);await capture('03-cruise-on');
+ if(mobile)check(await page.locator('#warpVisualNote').isVisible()&&!(await page.locator('#dWarpVisualNote').isVisible()),'Mobile speculative annotation stays outside the hidden desktop HUD');
  if(mobile)check(await page.evaluate(()=>{
   const r=document.getElementById('warpVisualNote').getBoundingClientRect();
   return ['mLeft','mThrottle','mWarpCtl','mTopBar','mZoomCtl'].every(id=>{const b=document.getElementById(id).getBoundingClientRect();return r.right<=b.left||r.left>=b.right||r.bottom<=b.top||r.top>=b.bottom;});
@@ -124,7 +121,7 @@ try{
  await page.evaluate(async()=>{__G.paused=true;(await import('/src/shipVisuals.js')).shipVisuals.enabled=false;});
  await toggle();await frames(1);
  await page.locator('[data-ui-mode="direct"]').click();await frames(2);
- check(await page.evaluate(async()=>getComputedStyle(document.getElementById('shipVisualControls')).display==='none'&&getComputedStyle(document.getElementById('warpVisualNote')).display==='none'&&!(await import('/src/river.js')).river.warpVisible),'Create mode hides the warp control, annotation and speculative field');
+ check(await page.evaluate(async()=>['shipVisualControls','dWarpVisualNote','warpVisualNote'].every(id=>document.getElementById(id).getClientRects().length===0)&&!(await import('/src/river.js')).river.warpVisible),'Create mode hides the warp control, both annotations and speculative field');
  await page.locator('[data-ui-mode="pilot"]').click();await frames(2);
  check(await page.locator(mobile?'#mWarpVisual':'#shipVisualControls button').getAttribute('aria-pressed')==='true','Returning to Pilot retains the explicit opt-in');
  // The explicit warp opt-in and retained CPU geometry must survive a real
@@ -162,6 +159,7 @@ try{
    return ['mLeft','mThrottle','mWarpCtl','mTopBar','mZoomCtl'].every(id=>{const b=document.getElementById(id).getBoundingClientRect();return r.right<=b.left||r.left>=b.right||r.bottom<=b.top||r.top>=b.bottom;});
   }),'Landscape mobile annotation clears every flight-control cluster');
  }
+ if(!mobile)await verifyShipHudLayout(page,{check,out,frames,report});
  check(performancePassed,'Speculative visual adds at most 50% + 20ms full-app frame cost on CI renderer');
  check(report.errors.length===0,'No JavaScript, shader or console errors');
 }finally{await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}

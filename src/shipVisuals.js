@@ -8,12 +8,13 @@ export const shipVisuals = {
 };
 export function initShipVisuals() {
     const buttons = document.querySelectorAll('[data-warp-visual]');
+    const notes = document.querySelectorAll('[data-warp-note]');
     const sync = () => {
         for (const button of buttons) {
             button.setAttribute('aria-pressed', String(shipVisuals.enabled));
             button.textContent = `Warp visual · ${shipVisuals.enabled ? 'ON' : 'OFF'}`;
         }
-        document.getElementById('warpVisualNote').hidden = !shipVisuals.enabled;
+        for (const note of notes) note.hidden = !shipVisuals.enabled;
     };
     for (const button of buttons) button.addEventListener('click', () => {
         shipVisuals.enabled = !shipVisuals.enabled;

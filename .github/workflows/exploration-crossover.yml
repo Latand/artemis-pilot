@@ -1,0 +1,60 @@
+name: Exploration mobile crossover diagnostic
+on:
+  pull_request:
+    paths:
+      - 'scripts/*exploration-crossover*'
+      - '.github/workflows/exploration-crossover.yml'
+      - 'docs/exploration-crossover/**'
+permissions:
+  contents: read
+concurrency:
+  # Never cancel or replace PR32 acceptance/soak. Every diagnostic run is kept.
+  group: exploration-crossover-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  diagnostic:
+    if: github.event.pull_request.number == 32
+    name: One-allocation AA BB AB BA diagnostic (not acceptance)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - name: Install exact failed-run dependencies and Chromium
+        run: |
+          cp scripts/exploration-crossover.package-lock.json package-lock.json
+          npm ci --ignore-scripts
+          npx playwright install --with-deps chromium
+      - name: Materialize exact application revisions
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/crossover-A" 5c304f4f9c3572bbc9c62f480a074fc5da58c729
+          git worktree add --detach "$RUNNER_TEMP/crossover-B" d84ab18c5638bb24e89fac2c00cb734a1b9988dd
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/crossover-A/node_modules"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/crossover-B/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/crossover-A" >> "$GITHUB_ENV"
+          echo "CANDIDATE_ROOT=$RUNNER_TEMP/crossover-B" >> "$GITHUB_ENV"
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/harness-sha.txt
+          uname -a > evidence/uname.txt
+          lscpu > evidence/lscpu.txt
+          npm ls --all > evidence/dependencies.txt
+      - name: Validate predeclared protocol and exact production hooks
+        run: |
+          node scripts/smoke-exploration-crossover.mjs
+          node scripts/diagnose-exploration-crossover.mjs --validate
+      - name: Collect all timing followed by all untimed parity replays
+        timeout-minutes: 50
+        run: node scripts/diagnose-exploration-crossover.mjs evidence/exploration-crossover
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: exploration-crossover-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 30
