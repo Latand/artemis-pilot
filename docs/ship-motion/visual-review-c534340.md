@@ -4,6 +4,13 @@
 
 # Motion pixel review, c534340
 
+Correction after raw-PNG audit: initial image-preview readings suggested missing
+control paint. Exact decoded control-region hashes show the controls remain
+painted; those readings were incorrect. The per-frame critiques below are
+corrected. For example, the mobile left-control crop is identical across all
+off frames, and the desktop ON-button crop is identical in frames 03 through 07.
+No app hiding behavior or lost screenshot paint is established by this set.
+
 The full-app images use a paused-world, prescribed-speed presentation fixture.
 The separate real-W-thrust replay checks actual physics equivalence. All images
 below were opened and individually inspected.
@@ -11,11 +18,11 @@ below were opened and individually inspected.
 ## Mobile (11 images)
 
 - 00-stopped-off: Complete centered twin-ring silhouette; low index plates establish the reference orientation. Touch controls and model are intact
-- 01-accelerating-off: Plates/seams advance slightly against stationary pylons; no warp field is present. Some touch controls are absent from this still; the cause is unverified and requires settled-paint / DOM-state capture checks
+- 01-accelerating-off: Plates/seams advance slightly against stationary pylons; no warp field is present. Decoded control pixels match the initial off frame; the early preview-only missing-control reading was incorrect
 - 02-cruise-off: Plate rotation is clearly visible at the upper-right edge. Fixed cyan channels, central hull and supports retain their pose
 - 03-cruise-on: Violet curves surround the craft more tightly than the rejected candidate. Curves are visibly smoother, with no disconnected segments; the disclaimer slightly overlaps a left touch-control corner and should move
 - 04-spin-0: Plates advance into the upper-left sector together. Craft remains readable among the field lines; disclaimer overlap persists
-- 04-spin-1: Plates advance along the left midline, while fixed supports remain stable. Smooth curves remain connected; some unchanged touch controls are absent from this still, with cause not yet verified
+- 04-spin-1: Plates advance along the left midline, while fixed supports remain stable. Smooth curves remain connected; decoded control pixels match the other enabled frames
 - 04-spin-2: Plates reach the lower-left sector without support intersection. Local field remains stable and bounded; disclaimer placement still needs correction
 - 05-paused: Plates and field shape match the preceding frame. No flicker, missing surfaces or disappearing field; disclaimer again touches the control corner
 - 06-braking: Violet curves fade smoothly with the lower rate, leaving the ship clear. Ring plates continue a smaller movement; no abrupt flash
@@ -32,25 +39,24 @@ Absolute timings from this renderer are not consumer-device FPS estimates.
 ## Desktop (all 11 images individually inspected)
 
 - 00-stopped-off: Full ship is centered; index plates establish rest orientation. Relocated control is visible below objectives, clear of time/attitude panels
-- 01-accelerating-off: Small plate movement is visible against fixed supports; field remains absent. Button background is less apparent in this still
-- 02-cruise-off: Plate reaches upper-right rim; no field is present. The desktop control is absent from the still despite its successful later click; settled-paint / DOM-state capture needs verification
+- 01-accelerating-off: Small plate movement is visible against fixed supports; field remains absent. The decoded button pixels match the other OFF-state frames
+- 02-cruise-off: Plate reaches upper-right rim; no field is present. The desktop control remains painted, as verified by its decoded pixel region
 - 03-cruise-on: Tighter, smoother violet curves are visible; ship remains clear. Control and disclaimer are fully visible and no longer cover telemetry
 - 04-spin-0: Both plates advance coherently to upper-left, with supports fixed. Curve extent is local and UI stays readable
-- 04-spin-1: Plates advance along left side; curves remain continuous. Control is again absent from the still while its disclaimer remains
-- 04-spin-2: Plates reach lower-left without intersecting supports. Same control-paint concern; model and field are complete
-- 05-paused: Plate and curve positions match preceding frame; control is visible again. No ship/field flicker or disappearance
+- 04-spin-1: Plates advance along left side; curves remain continuous. The control and disclaimer remain painted; the control region matches the other ON frames
+- 04-spin-2: Plates reach lower-left without intersecting supports. The decoded control region is unchanged; model and field are complete
+- 05-paused: Plate and curve positions match preceding frame; control remains visible. No ship/field flicker or disappearance
 - 06-braking: Field dims smoothly and plate motion slows; control/disclaimer remain clear of other panels
-- 07-stopped-on: Field reaches zero while ship and enabled-mode disclaimer stay visible. Control itself is absent in this still and needs paint-state verification
+- 07-stopped-on: Field reaches zero while ship and enabled-mode disclaimer stay visible. The ON control is present with the same pixels as the other enabled frames
 - 08-warp-off-again: No violet residue or disclaimer remains; ring plates have resumed motion. Desktop control is visibly OFF
 
 Desktop runtime: 27/27 assertions passed; no JS/shader errors. Thrust on/off
 state was bit-identical; maximum CPU/GPU field error 2.748e-7. Full-cycle CI
 software mean was 2846 ms off / 3701 ms on (+30.1%, within the same guard).
-Both screenshot sets show intermittent missing control paint even though
-interaction checks pass. The final capture pass must wait for two paint
-frames, disable CSS animation during screenshot, and record each relevant
-control's computed visibility and rectangle; do not infer an inactivity policy
-from these pixels alone.
+Raw-PNG control-region checks agree with successful interaction checks. The
+initial contrary readings came from preview inspection and are withdrawn.
+Settled-paint captures and explicit DOM-state diagnostics remain useful test
+coverage; they are not evidence of a product hiding defect.
 
 
 # Actual-app ship appearance review, candidate c534340
@@ -109,5 +115,5 @@ resource reuse, thrust/release and quicksave/load checks, with no console or
 shader errors. The bearing/inboard-spar split retains the silhouette and engine
 anchor while providing rotor clearance. Nearest-zoom cropping/Time-panel
 occlusion and older Pilot panel collisions remain baseline limitations. The
-separate motion review records its remaining mobile annotation and intermittent
-control-paint concerns; appearance acceptance does not supersede those gates.
+separate motion review records the remaining mobile annotation overlap. The
+preview-only missing-control concern was disproved by decoded pixel checks.

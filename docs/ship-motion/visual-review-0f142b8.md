@@ -35,7 +35,7 @@ initial shader and scene loading.
 | Frame | Individual critique |
 | --- | --- |
 | 00-stopped-off | Full craft is centered without viewport clipping; index plate starts low. Existing touch controls are legible. |
-| 01-accelerating-off | Small seam/plate advance is visible against the fixed supports. Some touch controls are absent from this still while the craft is unchanged; the cause is not established and requires settled-paint/DOM-state capture checks. |
+| 01-accelerating-off | Small seam/plate advance is visible against the fixed supports. Decoded control pixels match the initial off frame. The early preview-only missing-control reading was incorrect. |
 | 02-cruise-off | Index plate clearly moves to the upper-right sector; fixed inner cyan channel and pylons remain stationary. No field residue appears while off. |
 | 03-cruise-on | Violet field is distinct from the ship and the ordinary river palette. Its extent reaches most of the narrow screen; the kinks are too coarse at 16 segments. Disclaimer is readable above the bottom controls. |
 | 04-spin-0 | Upper-left plate movement is clear on both rims. Field bends remain connected; broad screen coverage is excessive. |

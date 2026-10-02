@@ -18,7 +18,7 @@ import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.
 import { loadAllMaps, dotTexture } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
-    renderQuality, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
+    renderQuality, renderContext, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
     farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
@@ -44,7 +44,7 @@ import {
     haloArrPos, haloArrAttr, haloArrow, tipHalo,
 } from "./trails.js";
 import { flowCtx, flowVel } from "./flowfield.js";
-import { initRiver, updateRiver, updateShells, river, warmRiverCompute } from "./river.js";
+import { initRiver, updateRiver, updateShells, river, warmRiverCompute, resetRiverContext } from "./river.js";
 import { initCosmicLayer, updateCosmicLayer, cycleCosmicScale, mergerDebugState, mergerDisruptFractionAt, andromedaOffsetMpc } from "./cosmic.js";
 import { initGalaxyPopulation, updateGalaxyPopulation, galaxyPopulationStatus, galaxySharedUniforms, mergerParticipants } from "./render/galaxyPopulationRender.js";
 import { initMergerTides, startMergerTides, updateMergerTides, mergerKeepAt, mergerTidesStatus } from "./render/mergerTidesRender.js";
@@ -53,7 +53,7 @@ import { stellarExposure } from "./render/stellarAppearance.js";
 import { galacticCenterScene } from "./universe/starfield.js";
 import { evolutionAt } from "./universe/galaxyEvolution.js";
 import { cosmicTimeGyr } from "./universe/cosmicExpansion.js";
-import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit, galaxyVolumeStats, galaxyVolumeExposureCap } from "./render/galaxyVolume.js";
+import { updateGalaxyVolume, renderGalaxyVolume, setGalaxyVolumeMagLimit, galaxyVolumeStats, galaxyVolumeExposureCap, resetGalaxyVolumeHistory } from "./render/galaxyVolume.js";
 import { initCatalogStars, updateCatalogStars, setCatalogStarsFade, refreshCatalogResiduals } from "./render/catalogStars.js";
 import { initResolvedField, updateResolvedField, resolvedFieldMagLimit, resolvedFieldStatus } from "./render/resolvedFieldStars.js";
 import { starViewUniforms } from "./render/starPointMaterial.js";
@@ -465,8 +465,17 @@ mfdScreens.forEach((scr, i) => {
     scr.material.needsUpdate = true;
 });
 const plPosArr = plGroups.map(g => g.position);
+const clock = new THREE.Clock();
 const riverInitT0 = perfStart();
 initRiver();
+window.addEventListener("ap:releaseflightinput", () => {
+    if (thrustGain) thrustGain.gain.value = 0;
+});
+renderer.domElement.addEventListener("webglcontextrestored", () => {
+    clock.getDelta();
+    resetGalaxyVolumeHistory();
+    resetRiverContext();
+});
 perfEnd("startup.initRiver", riverInitT0);
 resetEphem();
 resetShip();
@@ -1321,7 +1330,6 @@ function updateFocusVelocityVector(alpha = 1) {
 }
 
 // ============================ MAIN LOOP ============================
-const clock = new THREE.Clock();
 const earthV = new THREE.Vector3(), moonV = new THREE.Vector3(), velV = new THREE.Vector3(), upV = new THREE.Vector3(0, 1, 0), dirV = new THREE.Vector3();
 const _moonRingN = new THREE.Vector3();
 const moonBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -1585,6 +1593,7 @@ function updateBodySurfaceLod(cosmicView, detailShed) {
 let bodyLodReady = false, bodyLodLastDist = 0, bodyLodLastFocus = null, bodyLodLastCosmic = false, bodyLodLastDetail = false;
 
 function renderFrame(showCockpit) {
+    if (renderContext.isLost()) return;
     if (VR.active) { renderVRFrame(showCockpit && VR.mode === "ship"); return; }
     const renderT0 = perfStart();
     const worldRenderT0 = perfStart();
@@ -1654,10 +1663,16 @@ function noteLandedDiscovery(oi) {
 }
 
 let lastMobileFrame = -Infinity;
+// Keep the stable frame entry point used by XR and deterministic app QA.
+// A context-loss exception must not kill Three's next-frame scheduling.
 function frame() {
+    try { frameStep(); }
+    catch (error) { if (!renderContext.isLost()) throw error; }
+}
+function frameStep() {
     // Keep the welcome screen and background tabs responsive without advancing
     // physics or submitting GPU work. Drain the clock so resuming cannot jump.
-    if (document.hidden || document.getElementById("intro").style.display !== "none") {
+    if (renderContext.isLost() || document.hidden || document.getElementById("intro").style.display !== "none") {
         clock.getDelta();
         lastMobileFrame = -Infinity;
         return;

@@ -43,7 +43,7 @@ try{
    });
   },mobile);
   await page.screenshot({animations:'disabled',path:`${out}/${name}.png`,timeout:180000});
-  const state=await page.evaluate(async()=>{const {shipVisuals}=await import('/src/shipVisuals.js');const {river}=await import('/src/river.js');const {craft,shipG}=await import('/src/ship.js');const {camera,renderer}=await import('/src/scene.js');return{speed:__qaSpeed,...shipVisuals.motion,enabled:shipVisuals.enabled,warpVisible:river.warpVisible,warpStrength:river.warpStrength,warpVertices:river.warpVertexCount,projected:shipG.position.clone().project(camera).toArray(),rotors:craft.userData.rotors.map(r=>r.rotation.y),memory:{...renderer.info.memory},drawCalls:renderer.info.render.calls,shipVisible:shipG.visible};});
+  const state=await page.evaluate(async()=>{const {shipVisuals}=await import('/src/shipVisuals.js');const {river}=await import('/src/river.js');const {craft,shipG}=await import('/src/ship.js');const {camera,renderer}=await import('/src/scene.js');return{speed:window.__qaSpeed ?? Math.hypot(__G.vx,__G.vy,__G.vz),...shipVisuals.motion,enabled:shipVisuals.enabled,warpVisible:river.warpVisible,warpStrength:river.warpStrength,warpVertices:river.warpVertexCount,projected:shipG.position.clone().project(camera).toArray(),rotors:craft.userData.rotors.map(r=>r.rotation.y),memory:{...renderer.info.memory},drawCalls:renderer.info.render.calls,shipVisible:shipG.visible};});
   check(state.shipVisible&&state.projected.every(Number.isFinite)&&Math.abs(state.projected[0])<.1&&Math.abs(state.projected[1])<.1,`${name}: craft stays visible and centered`);
   report.frames.push({name,ui,...state});await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
   check(ui.every(e=>e.ancestorVisible&&e.effectiveOpacity>.4&&e.inside&&e.hit&&e.rect.width>0&&e.rect.height>0),`${name}: actual flight controls stay visible, inside viewport and center-hit-testable`);
@@ -117,10 +117,36 @@ try{
  check(await page.evaluate(async()=>getComputedStyle(document.getElementById('shipVisualControls')).display==='none'&&getComputedStyle(document.getElementById('warpVisualNote')).display==='none'&&!(await import('/src/river.js')).river.warpVisible),'Create mode hides the warp control, annotation and speculative field');
  await page.locator('[data-ui-mode="pilot"]').click();await frames(2);
  check(await page.locator(mobile?'#mWarpVisual':'#shipVisualControls button').getAttribute('aria-pressed')==='true','Returning to Pilot retains the explicit opt-in');
+ // The explicit warp opt-in and retained CPU geometry must survive a real
+ // WebGL loss/restore through the newly merged production recovery path.
+ await page.evaluate(async()=>{
+  const {renderer,cam}=await import('/src/scene.js');const {shipG,craft}=await import('/src/ship.js');const {scene}=await import('/src/scene.js');const {shipVisuals}=await import('/src/shipVisuals.js');
+  (await import('/src/input.js')).setFocus('ship');cam.tgt.copy(shipG.position);cam.dist=.14;cam.distTarget=null;cam.yaw=.85;cam.pitch=.36;
+  __G.paused=true;shipVisuals.enabled=true;
+  window.__shipLoss=renderer.getContext().getExtension('WEBGL_lose_context');if(!__shipLoss)throw Error('WEBGL_lose_context required for ship recovery QA');
+  window.__warpResourceIds=()=>{const ids=[];craft.traverse(o=>{if(o.isMesh)ids.push(o.id,o.geometry.id,o.material.id);});const layer=scene.getObjectByName('Speculative local river samples');ids.push(layer.id,layer.geometry.id,layer.material.id);return JSON.stringify(ids);};
+  window.__warpFlightSnapshot=()=>JSON.stringify(['t','x','y','z','vx','vy','vz','fuel','dvUsed','paused'].map(k=>__G[k]));
+ });
+ await frames(2);await capture('09-warp-before-context-loss');
+ const recoveryBefore=await page.evaluate(async()=>({ids:__warpResourceIds(),flight:__warpFlightSnapshot(),phase:(await import('/src/shipVisuals.js')).shipVisuals.motion.angle}));
+ await page.evaluate(()=>__shipLoss.loseContext());
+ await page.waitForFunction(async()=>(await import('/src/scene.js')).renderContext.isLost());await frames(2);
+ check(await page.evaluate(before=>__warpFlightSnapshot()===before.flight,recoveryBefore),'GPU loss holds the paused flight with warp opt-in active');
+ await page.evaluate(()=>__shipLoss.restoreContext());
+ await page.waitForFunction(async()=>{const s=await import('/src/scene.js');return !s.renderContext.isLost()&&!s.renderer.getContext().isContextLost();});
+ await frames(3);await capture('10-warp-after-context-restore');
+ const recoveryAfter=await page.evaluate(async()=>{
+  const {renderer,scene}=await import('/src/scene.js');const {craft,shipG}=await import('/src/ship.js');const {shipVisuals}=await import('/src/shipVisuals.js');const {river,riverDebugReadPositions}=await import('/src/river.js');
+  const layer=scene.getObjectByName('Speculative local river samples');let finite=true;craft.traverse(o=>{if(o.isMesh)finite&&=o.geometry.attributes.position.array.every(Number.isFinite);});finite&&=layer.geometry.attributes.position.array.every(Number.isFinite)&&layer.material.uniforms.uWarpFlow.value.toArray().every(Number.isFinite);
+  const positions=riverDebugReadPositions();return{ids:__warpResourceIds(),flight:__warpFlightSnapshot(),phase:shipVisuals.motion.angle,enabled:shipVisuals.enabled,visible:shipG.visible&&layer.visible&&river.warpVisible,finite,calls:renderer.info.render.calls,canvas:renderer.getRenderTarget()===null,riverFinite:positions?.finite&&positions.nonZero>0&&positions.distinct>0,statusHidden:document.getElementById('renderContextStatus').hidden};
+ });
+ report.recovery={before:recoveryBefore,after:recoveryAfter};
+ check(recoveryAfter.ids===recoveryBefore.ids&&recoveryAfter.flight===recoveryBefore.flight&&recoveryAfter.phase===recoveryBefore.phase,'Recovery retains ship/local-layer resource identities, paused phase and exact physical flight state');
+ check(recoveryAfter.enabled&&recoveryAfter.visible&&recoveryAfter.finite&&recoveryAfter.calls>0&&recoveryAfter.canvas&&recoveryAfter.riverFinite&&recoveryAfter.statusHidden,'Active warp layer and ordinary river render finite geometry on the recovered visible canvas');
  if(mobile){
   await page.setViewportSize({width:844,height:390});
   await page.evaluate(async()=>{const {cam}=await import('/src/scene.js');const {shipG}=await import('/src/ship.js');(await import('/src/input.js')).setFocus('ship');cam.tgt.copy(shipG.position);cam.dist=.14;cam.distTarget=null;cam.yaw=.85;cam.pitch=.36;});
-  await frames(2);await capture('09-landscape-controls');
+  await frames(2);await capture('11-landscape-controls');
   check(await page.evaluate(()=>{
    const r=document.getElementById('warpVisualNote').getBoundingClientRect();
    return ['mLeft','mThrottle','mWarpCtl','mTopBar','mZoomCtl'].every(id=>{const b=document.getElementById(id).getBoundingClientRect();return r.right<=b.left||r.left>=b.right||r.bottom<=b.top||r.top>=b.bottom;});

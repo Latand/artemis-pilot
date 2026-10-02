@@ -78,7 +78,7 @@ export const river = {
 };
 if (typeof window !== "undefined") window.__river = river;
 
-let rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines, dots, warpLines;
+let seedTex, rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines, dots, warpLines;
 const bodyVals = [], sinkVals = new Array(MAXB).fill(0), rsVals = new Array(MAXB).fill(0), holeVals = new Array(MAXB).fill(0), soiVals = new Array(MAXB).fill(0);
 const colorVals = [];
 for (let i = 0; i < MAXB; i++) bodyVals.push(new THREE.Vector4());
@@ -538,7 +538,7 @@ export function initRiver() {
         seed[i * 4 + 2] = r * rr * Math.sin(th);
         seed[i * 4 + 3] = 0; // no halo owner (see COMPUTE_FRAG)
     }
-    const seedTex = new THREE.DataTexture(seed, TEXW, TEXW, THREE.RGBAFormat, THREE.FloatType);
+    seedTex = new THREE.DataTexture(seed, TEXW, TEXW, THREE.RGBAFormat, THREE.FloatType);
     seedTex.needsUpdate = true;
     uniformsShared.uPos.value = seedTex;
 
@@ -608,9 +608,10 @@ export function initRiver() {
 export function warmRiverCompute() {
     if (!river.enabled || !rtA || !rtB || !computeScene || !computeCam) return false;
     const prevRT = renderer.getRenderTarget();
-    renderer.setRenderTarget(rtB);
-    renderer.render(computeScene, computeCam);
-    renderer.setRenderTarget(prevRT);
+    try {
+        renderer.setRenderTarget(rtB);
+        renderer.render(computeScene, computeCam);
+    } finally { renderer.setRenderTarget(prevRT); }
     const sw = rtA; rtA = rtB; rtB = sw;
     uniformsShared.uPos.value = rtA.texture;
     return true;
@@ -1118,9 +1119,10 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         river.dtAccum = 0;
         const computeT0 = performance.now();
         const prevRT = renderer.getRenderTarget();
-        renderer.setRenderTarget(rtB);
-        renderer.render(computeScene, computeCam);
-        renderer.setRenderTarget(prevRT);
+        try {
+            renderer.setRenderTarget(rtB);
+            renderer.render(computeScene, computeCam);
+        } finally { renderer.setRenderTarget(prevRT); }
         const computeMs = performance.now() - computeT0;
         river.computeMs = computeMs;
         if (renderQuality.mobile && computeMs > 24) river.computeEveryAdaptive = Math.min(4, Math.max(river.computeEveryAdaptive || 1, Math.ceil(computeMs / 18)));
@@ -1184,4 +1186,13 @@ export function updateShells(dtSim, fB) {
         const oo = fB * RIVER_VIS.SHELL_OPACITY * Math.min(1, (rOut - sh.r) / (rOut * RIVER_VIS.SHELL_FADE_IN)) * Math.min(1, (sh.r - sink) / (rOut * .041));
         sh.obj.material.opacity = Math.max(0, oo);
     }
+}
+
+// Only cosmetic GPU particles are reseeded; physical bodies and saves stay put.
+export function resetRiverContext() {
+    if (!river.enabled || !seedTex) return;
+    uniformsShared.uPos.value = seedTex;
+    uniformsShared.uRespawn.value = 1;
+    river.dtAccum = 0;
+    smoothR = 0; // force the next visible update to fill its new GPU target
 }

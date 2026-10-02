@@ -44,7 +44,9 @@ upload. The effect switches off outside its bounded near-ship range.
 - `node scripts/verify-ship-motion.mjs`: actual full-app matched time series
   on desktop/mobile, explicit paused-world speed fixtures, on/off controls,
   shader errors, stable resources, and a separate real unpaused W-thrust
-  replay whose physics state must be bit-identical on and off
+  replay whose physics state must be bit-identical on and off, plus forced GPU
+  loss/restore with warp active, retained CPU resource identities, finite
+  recovered buffers, and exact paused-flight/rotation-phase preservation
 - Existing appearance/cockpit/mode/thrust/save tests and physics, relativity,
   river, prediction regression workflows remain required
 
