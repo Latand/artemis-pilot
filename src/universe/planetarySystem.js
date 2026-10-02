@@ -18,7 +18,13 @@ export function stableStarKey(star) {
     if (star?.formedStar && star.id) return star.id;
     if (star?.procedural && star.id) return "proc:" + star.id;
     if (star?.tier1) return "t1:" + star.tier1.tileId + ":" + star.tier1.idx;
-    return "cat:" + (star?.hip ?? star?.hyg ?? star?.hygIndex ?? star?.name ?? "unknown");
+    // Catalog exports use empty strings for missing HIP IDs. Nullish fallback
+    // would give every such star the same "cat:" system and surface identity.
+    const hip = String(star?.hip ?? '').trim();
+    if (hip && Number(hip) > 0) return "cat:" + hip;
+    const hyg = star?.hyg ?? star?.hygIndex;
+    if (hyg !== undefined && hyg !== null && String(hyg).trim() !== "") return "cat:hyg:" + hyg;
+    return "cat:" + (star?.name || "unknown");
 }
 
 export function systemSeed(star) {
@@ -36,20 +42,37 @@ export function periodDaysFromA(hostMassSolar, aAU) {
     return 365.25 * Math.sqrt(Math.pow(aAU, 3) / Math.max(0.001, hostMassSolar));
 }
 
-export function planetFocusValue(index) { return "planet:" + index; }
-export function planetFocusIndex(focus) {
-    if (typeof focus !== "string") return -1;
-    const m = focus.match(/^planet:(\d+)$/);
-    const i = m ? Number(m[1]) : -1;
-    return i >= 0 && i < 8 ? i : -1;
-}
-export function planetMoonFocusValue(planetIndex, moonIndex) { return "planet:" + planetIndex + ":moon:" + moonIndex; }
-export function planetMoonFocusIndex(focus) {
+// A child target owns its host identity. The old unqualified form is parsed
+// only for migration; callers must bind it to an explicit explored context.
+export function parseSystemFocus(focus) {
     if (typeof focus !== "string") return null;
-    const m = focus.match(/^planet:(\d+):moon:(\d+)$/);
+    const m = /^(?:system:([^:]+):(?:host:([^:]+):)?)?planet:(\d+)(?::moon:(\d+))?$/.exec(focus);
     if (!m) return null;
-    const planetIndex = Number(m[1]), moonIndex = Number(m[2]);
-    return planetIndex >= 0 && planetIndex < 8 && moonIndex >= 0 && moonIndex < 6 ? { planetIndex, moonIndex } : null;
+    const planetIndex = Number(m[3]), moonIndex = m[4] === undefined ? null : Number(m[4]);
+    if (planetIndex >= 8 || (moonIndex !== null && moonIndex >= 6)) return null;
+    let starId = "", hostFocus = "";
+    try { starId = m[1] ? decodeURIComponent(m[1]) : ""; hostFocus = m[2] ? decodeURIComponent(m[2]) : ""; } catch { return null; }
+    if (m[1] && !starId) return null;
+    return { starId, planetIndex, moonIndex, ...(hostFocus ? { hostFocus } : {}) };
+}
+export function systemFocusHostId(focus) { return parseSystemFocus(focus)?.starId || ""; }
+function systemPrefix(systemOrStarId) {
+    const id = typeof systemOrStarId === "string" ? systemOrStarId : systemOrStarId?.starId;
+    const host = systemOrStarId?.hostStar;
+    const locator = host?.activeCatalog && Number.isInteger(host.hygIndex) ? "host:" + encodeURIComponent("hyg:" + host.hygIndex) + ":" : "";
+    return id ? "system:" + encodeURIComponent(id) + ":" + locator : "";
+}
+export function planetFocusValue(index, systemOrStarId) { return systemPrefix(systemOrStarId) + "planet:" + index; }
+export function planetFocusIndex(focus) {
+    const child = parseSystemFocus(focus);
+    return child && child.moonIndex === null ? child.planetIndex : -1;
+}
+export function planetMoonFocusValue(planetIndex, moonIndex, systemOrStarId) {
+    return systemPrefix(systemOrStarId) + "planet:" + planetIndex + ":moon:" + moonIndex;
+}
+export function planetMoonFocusIndex(focus) {
+    const child = parseSystemFocus(focus);
+    return child && child.moonIndex !== null ? { planetIndex: child.planetIndex, moonIndex: child.moonIndex } : null;
 }
 
 function hostFields(star) {

@@ -1,8 +1,9 @@
 import { MU_E, MU_M, MU_S, R_EARTH, R_MOON, R_SUN, PL, STARS, MAIN_A, ROT_RATE, SOI_M, AU_KM } from "./constants.js";
 import { G } from "./state.js";
 import { eph, moonState, planetVel } from "./ephemeris.js";
-import { activeStarForFocus, getCachedFocusedSystem } from "./universe/activeStars.js";
-import { planetFocusIndex, planetWorldState } from "./universe/planetarySystem.js";
+import { activeStarForFocus } from "./universe/activeStars.js";
+import { getSystemForTarget } from "./universe/exploredSystem.js";
+import { planetFocusIndex, planetMoonFocusIndex, planetWorldState, moonWorldState } from "./universe/planetarySystem.js";
 
 // Flight computer: flies the ship so the player can watch the physics, and
 // hands the stick back the instant any manual input arrives.
@@ -28,9 +29,19 @@ export function targetState(t) {
     if (t === "earth") return { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, R: R_EARTH, mu: MU_E, name: "EARTH", soi: 924000 };
     if (t === "sun") return { x: eph.sunX, y: eph.sunY, z: 0, vx: eph.sunVx, vy: eph.sunVy, vz: 0, R: R_SUN, mu: MU_S, name: "SUN", soi: 5e9 };
     const pi = planetFocusIndex(t);
-    if (pi >= 0) {
-        const sys = getCachedFocusedSystem();
-        const p = sys?.planets?.[pi];
+    const pm = planetMoonFocusIndex(t);
+    if (pi >= 0 || pm) {
+        const sys = getSystemForTarget(t);
+        const index = pm?.planetIndex ?? pi;
+        const p = sys?.planets?.[index];
+        if (pm) {
+            const moon = p?.moons?.[pm.moonIndex];
+            if (!moon || !moonWorldState(sys, index, pm.moonIndex, sys.hostStar, G.t, _pw)) return null;
+            return { x: _pw.x - eph.earthX, y: _pw.y - eph.earthY, z: _pw.z,
+                vx: _pw.vx - eph.earthVx, vy: _pw.vy - eph.earthVy, vz: _pw.vz,
+                R: moon.R, mu: moon.mu, name: moon.name,
+                soi: Math.max(moon.R * 3, moon.a * Math.pow(moon.mu / p.mu, .4)) };
+        }
         if (!p || !planetWorldState(sys, pi, sys.hostStar, G.t, _pw)) return null;
         const soi = Math.max(p.radiusKm * 3, p.a * AU_KM * Math.pow(p.mu / Math.max(1, sys.hostStar?.mu || MU_S), 0.4));
         return {

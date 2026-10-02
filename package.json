@@ -20,6 +20,7 @@
     "smoke:tier1-queryable": "node scripts/smoke-tier1-queryable.mjs",
     "smoke:catalog-tier1-est": "node scripts/smoke-catalog-tier1-est.mjs",
     "smoke:tier1-est-runtime": "node scripts/smoke-tier1-est-runtime.mjs",
+    "smoke:explored-systems": "node scripts/smoke-explored-systems.mjs",
     "smoke:planetary-systems": "node scripts/smoke-planetary-systems.mjs",
     "smoke:exoplanets": "node scripts/smoke-exoplanets.mjs",
     "smoke:local-tier": "node scripts/smoke-local-tier.mjs",

@@ -1,0 +1,88 @@
+name: Stable explored systems QA
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/*explored*'
+      - 'scripts/smoke-planetary-systems.mjs'
+      - '.github/workflows/explored-systems.yml'
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Exact pre-change baseline revision
+        required: true
+        default: '848f476'
+permissions:
+  contents: read
+concurrency:
+  group: explored-systems-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  full-app:
+    name: Explored systems ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact baseline and shared harness
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || inputs.base_ref }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/explored-base" "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/explored-base/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/explored-base" >> "$GITHUB_ENV"
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          git -C "$RUNNER_TEMP/explored-base" rev-parse HEAD > evidence/sources/base-sha.txt
+          cp package-lock.json scripts/verify-explored-systems.mjs evidence/sources/
+      - name: Validate hooks against both production revisions
+        run: |
+          node scripts/verify-explored-systems.mjs --validate
+          BASE_ROOT= node scripts/verify-explored-systems.mjs --validate
+      - name: Core, ownership, generator, exoplanet and actual browser save checks
+        if: matrix.device == 'desktop'
+        run: |
+          npm test
+          npm run smoke:explored-systems
+          npm run smoke:planetary-systems
+          npm run smoke:exoplanets
+          npm run smoke:saves
+          npm run build
+      - name: Reproduce original full-app host drop and measure baseline
+        if: ${{ !cancelled() }}
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: node scripts/verify-explored-systems.mjs . evidence/explored/before-${{ matrix.device }}
+      - name: Verify twenty routes, saved ownership, camera independence and resource bounds
+        if: ${{ !cancelled() }}
+        env:
+          BASE_ROOT: ''
+          DEVICE: ${{ matrix.device }}
+        run: node scripts/verify-explored-systems.mjs . evidence/explored/after-${{ matrix.device }}
+      - name: Require matched full-app p95 within five percent
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/verify-explored-systems.mjs --compare
+          evidence/explored/before-${{ matrix.device }}/report.json
+          evidence/explored/after-${{ matrix.device }}/report.json
+          evidence/explored/comparison-${{ matrix.device }}.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: explored-systems-${{ matrix.device }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

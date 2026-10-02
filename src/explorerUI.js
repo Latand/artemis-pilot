@@ -11,7 +11,8 @@ import { cam, camera } from "./scene.js";
 import { onModeChange, setUiMode, isXrPresenting } from "./uiMode.js";
 import { sunStateAt } from "./universe/sunEvolution.js";
 import { activeStarForFocus, getCachedFocusedSystem } from "./universe/activeStars.js";
-import { planetFocusIndex } from "./universe/planetarySystem.js";
+import { serializeExploredSystem, getSystemForTarget } from "./universe/exploredSystem.js";
+import { planetFocusIndex, planetMoonFocusIndex, planetFocusValue, planetMoonFocusValue } from "./universe/planetarySystem.js";
 import { bodyFactRows, basisDescription } from "./universe/bodyFacts.js";
 import { bhMassLabel } from "./blackholes.js";
 import { fmtDist } from "./format.js";
@@ -46,6 +47,17 @@ export function initExplorerUI(options) {
     $('evClose').addEventListener('click',()=>{if(G.uiMode==='observe') $('exploreEvents').focus();});
     window.addEventListener('keydown',e=>{if(e.key==='Escape'&&e.target.closest?.('#evPanel')) $('exploreEvents').focus();});
     $('exploreGravity').addEventListener('click',()=>{G.gr=!G.gr;updateExplorerUI();});
+    $('exploreSystemStar').addEventListener('click',()=>{const host=serializeExploredSystem()?.hostFocus;if(host)visit(host);});
+    $('exploreSystemPlanet').addEventListener('click',()=>{
+        const sys=getCachedFocusedSystem();if(!sys?.planets.length)return;
+        const i=planetMoonFocusIndex(G.focus)?.planetIndex??planetFocusIndex(G.focus);
+        visit(planetFocusValue((i+1)%sys.planets.length,sys));
+    });
+    $('exploreSystemMoon').addEventListener('click',()=>{
+        const sys=getSystemForTarget(G.focus),moon=planetMoonFocusIndex(G.focus),i=moon?.planetIndex??planetFocusIndex(G.focus);
+        const count=sys?.planets[i]?.moons?.length||0;
+        if(count)visit(planetMoonFocusValue(i,((moon?.moonIndex??-1)+1)%count,sys));
+    });
     $('exploreRefocus').addEventListener('click',()=>visit(lastFocus));
     $('exploreScale').addEventListener('click',()=>{visit('sun');cam.distTarget=LY_SCENE*100000;});
     $('exploreHelp').addEventListener('click',hooks.toggleHelp);
@@ -111,8 +123,10 @@ function selectedBody() {
     const mi=moonFocusIndex(G.focus);if(mi>=0)return {name:MOONS[mi].name,kind:'Moon',R:MOONS[mi].R,basis:'measured'};
     const si=/^star:(\d+)$/.exec(String(G.focus));if(si&&STARS[+si[1]]){const st=STARS[+si[1]];return {...st,R:st.bh?null:st.R,kind:st.bh?'Black hole':'Catalog star',star:st.bh?null:st,rs:st.rs,bhMass:st.bh?bhMassLabel(st.rs):null,basis:st.bh?'modeled':'measured'};}
     const active=activeStarForFocus(G.focus);if(active)return {...active,kind:'Stellar destination',star:active,basis:active.estimated||active.procedural?'modeled':'measured'};
-    const pi=planetFocusIndex(G.focus),p=getCachedFocusedSystem()?.planets?.[pi];
-    if(p)return {name:p.name,kind:'Planetary system',R:p.radiusKm,basis:p.catalog?'measured':'modeled'};
+    const childMoon=planetMoonFocusIndex(G.focus),pi=childMoon?.planetIndex??planetFocusIndex(G.focus),sys=getSystemForTarget(G.focus),p=sys?.planets?.[pi];
+    const satellite=childMoon&&p?.moons?.[childMoon.moonIndex];
+    if(satellite)return {name:satellite.name,kind:'Moon of '+(p.name||'P'+(pi+1))+' · '+sys.hostStar.name,R:satellite.R,mu:satellite.mu,basis:'modeled'};
+    if(p)return {name:p.name||'P'+(pi+1),kind:'Planet · '+sys.hostStar.name,R:p.radiusKm,mu:p.mu,basis:p.real?'measured':'modeled'};
     return null;
 }
 
@@ -153,4 +167,10 @@ export function updateExplorerUI() {
         : 'Time pulses illustrate net attraction toward nearby masses. They are not object trajectories.');
     if($('exploreGravity').getAttribute('aria-pressed')!==String(G.gr)) $('exploreGravity').setAttribute('aria-pressed',String(G.gr));
     $('exploreRefocus').hidden=G.focus!=='free';
+    const sys=getCachedFocusedSystem(),context=serializeExploredSystem(),child=planetMoonFocusIndex(G.focus),pi=child?.planetIndex??planetFocusIndex(G.focus);
+    const ownsSystem=!!context&&sys?.starId===context.starId;
+    $('exploreSystem').hidden=!ownsSystem;
+    $('exploreSystemPlanet').hidden=!sys?.planets.length;
+    $('exploreSystemMoon').hidden=!sys?.planets[pi]?.moons?.length;
+    $('exploreSystemStar').hidden=!context?.hostFocus;
 }

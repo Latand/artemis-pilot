@@ -1,3 +1,5 @@
+import { apOff } from "./autopilot.js";
+import { relResetState } from "./relState.js";
 import { invalidateGasDynamics } from "./universe/gasDynamics.js";
 // Quicksave / quickload: one browser-storage slot holding the full simulation
 // state — ship, world flags, the live n-body ephemeris, and every black hole.
@@ -16,6 +18,9 @@ import {
     hygCatalogFocusId, hygCatalogFocusValue, proceduralFocusId, proceduralFocusValue,
     restorePinnedProceduralStars, serializePinnedProceduralStars,
 } from "./universe/activeStars.js";
+import { parseSystemFocus } from "./universe/planetarySystem.js";
+import { serializeExploredSystem, restoreExploredSystem } from "./universe/exploredSystem.js";
+import { ensureHygCatalogLoaded } from "./universe/hygActiveCatalog.js";
 import { getSeed, setSeed } from "./universe/galaxy.js";
 import { getEpochMs, setEpochMs } from "./epoch.js";
 import { cancelTimeJump, jumpActive, jumpSaveWarp } from "./timeCtl.js";
@@ -65,13 +70,16 @@ export function saveState() {
     const ephSt = snapshotEphem();
     const focusMatch = typeof G.focus === "string" && G.focus.match(/^star:(\d+)$/);
     const focusStar = focusMatch ? STARS[Number(focusMatch[1])] : null;
+    const exploredSystem = serializeExploredSystem();
     const focusProcId = proceduralFocusId(G.focus);
+    const exploredProcId = proceduralFocusId(exploredSystem?.hostFocus);
     const focusHygId = hygCatalogFocusId(G.focus);
-    const procStars = Array.from(new Set(serializePinnedProceduralStars().concat(focusProcId ? [focusProcId] : [])));
+    const procStars = Array.from(new Set(serializePinnedProceduralStars().concat(focusProcId ? [focusProcId] : [], exploredProcId ? [exploredProcId.endsWith(":B") ? exploredProcId.slice(0, -2) : exploredProcId] : [])));
     const epochMs = readEpochMs();
     const data = {
         v: 11,
         galaxySeed: getSeed(),
+        exploredSystem,
         epochMs,
         g: Object.fromEntries(G_FIELDS.map(k => [k, k === "warp" && jumpActive() ? jumpSaveWarp() : G[k]])),
         focusCatalog: focusStar && focusStar.catalog === "hyg-v41-promoted"
@@ -133,6 +141,8 @@ export async function loadState() {
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     // Saves restore wall-time values directly; loading cancels any jump in flight. ap_uiMode stays a device preference outside the save format.
     cancelTimeJump("quickload");
+    apOff();
+    relResetState();
     Object.assign(G, data.g);
     if (data.v >= 10 && data.log) restoreLog(data.log);
     else restoreLog(null);
@@ -147,6 +157,8 @@ export async function loadState() {
     if (data.focusProcedural?.id && restoredProc.includes(data.focusProcedural.id)) {
         G.focus = proceduralFocusValue(data.focusProcedural.id);
     }
+    if (hygCatalogFocusId(data.exploredSystem?.hostFocus) || hygCatalogFocusId(parseSystemFocus(G.focus)?.hostFocus)) await ensureHygCatalogLoaded();
+    G.focus = restoreExploredSystem(data.exploredSystem, G.focus);
     if (!Number.isFinite(data.g.z)) G.z = 0;
     if (!Number.isFinite(data.g.vz)) G.vz = 0;
     if (!Number.isFinite(data.g.pitch)) G.pitch = 0;

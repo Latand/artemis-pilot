@@ -159,3 +159,5 @@ body.compact-explorer #gasActions select { min-height:44px; }
 #gasRelease:disabled { opacity:.4;cursor:not-allowed; }
 
 #bhSizeRail[hidden] { display:none!important; }
+
+#exploreSystem[hidden], #exploreSystem button[hidden] { display:none; }
