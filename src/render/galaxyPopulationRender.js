@@ -38,7 +38,7 @@ import { coarsenGalaxyWells, flowMassFromMagnitude } from '../flowScaleMath.js';
 import { MERGER } from '../universe/localGroupOrbit.js';
 import { TIDES } from '../universe/mergerTides.js';
 import { galaxySeed, galaxyNoisePixels, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
-import { RESOLVED_VARYINGS, RESOLVED_GLSL } from "./galaxyResolved.js";
+import { galaxyScreenBounds, RESOLVED_VARYINGS, RESOLVED_GLSL } from "./galaxyResolved.js";
 import { K, MPC_KM } from "../constants.js";
 import { galaxyDisplayGain, galaxyVolumeMeter } from "./galaxyVolume.js";
 import { extragalacticExposure, EXT_STRETCH, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
@@ -121,7 +121,7 @@ void offscreen() {
     gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
 #ifndef GAL_POINTS
     vCenterH=vec3(0.0,0.0,-1.0); vAxisV=vec3(0.0,0.0,1.0); vBasisV=vec3(1.0,0.0,0.0);
-    vPhysical=vec4(1.0); vFacePeak=vec2(0.0); vNdc=vec2(2.0);
+    vPhysical=vec4(1.0); vFacePeak=vec2(0.0); vNdc=vec2(2.0); vRayProjection=vec4(1.0,1.0,0.0,0.0);
 #endif
     vMorph = vec4(0.0); vDiskFrame = vec3(1.0, 0.0, 1.0);
     vAB = vec4(1.0); vW = vec2(0.0); vColor = vec3(0.0); vLane = 0.0; vExt = 1.0;
@@ -166,10 +166,11 @@ void main() {
     // ~6 Gly in scene units.
     float dopplerD;
     dirV = normalize(relApplyView(dirV, 5500.0, dopplerD));
-    // Exactly ONE tier owns a galaxy, including support crossing the eye.
-    // Testing support overlap in both passes would double additive light.
-    float viewDepth = dScene * max(0.001, -dirV.z);
-    if (viewDepth < uDepthRange.x || viewDepth >= uDepthRange.y) { offscreen(); return; }
+    // The population belongs to farTierGroup, which scene.js hides during
+    // the near pass. That group owns this background light exactly once.
+    // Do not assign an extended source by its center depth: an observer at
+    // its center still sees emitting material ahead. Hardware depth testing
+    // remains enabled, so foreground objects continue to cover this light.
 #ifdef GAL_POINTS
     if (-dirV.z<=0.0) { offscreen(); return; }
 #endif
@@ -237,6 +238,7 @@ void main() {
     // support gets a viewport rectangle, clipped per ray in the fragment.
     // This removes the old 0.5-radian cap whose nonzero edge made a diamond.
     float rVis = mix(clamp(log(max(p1+p2,1e-30)/(0.3*uCull)),1.2,4.5),8.0,smoothstep(2.0,9.0,a1*q)*(1.0-flagMw));
+    float nearWeight=smoothstep(.025,.065,h*.001/dMpc)*(1.0-flagMw);
 #ifdef GAL_POINTS
     float drawD = min(dScene,uFarClamp);
     vec3 center=dirV*drawD;
@@ -253,23 +255,37 @@ void main() {
     // Work near unity rather than projecting 1e15–1e19 scene coordinates.
     vec3 c=dirV;
     float radius=max(rVis*max(max(A1,A2),max(B1,B2))/uPxScale,1e-7);
+    // The far taper and the near-volume support have different gates. Any
+    // active near contribution must fit its WHOLE support, even edge-on
+    // when the minor-axis morphology weight is still small.
+    if(nearWeight>0.0) radius=max(radius,8.0*mix(1.0,.7,spheroid)*h*.001/dMpc);
     float depth=-c.z;
     if(depth+radius<=0.0){offscreen();return;}
+    vec2 scale=vec2(projectionMatrix[0][0],projectionMatrix[1][1]);
+    vec2 offset=vec2(projectionMatrix[2][0],projectionMatrix[2][1]);
+    // Eye-plane overlap alone does NOT mean screen overlap. Cull against
+    // all four side planes before expanding support to the viewport.
+    vec4 plane=vec4(scale.x*c.x+(offset.x-1.0)*c.z,
+        -scale.x*c.x-(offset.x+1.0)*c.z,
+        scale.y*c.y+(offset.y-1.0)*c.z,
+        -scale.y*c.y-(offset.y+1.0)*c.z);
+    vec4 norms=sqrt(vec4(scale.x*scale.x,scale.x*scale.x,scale.y*scale.y,scale.y*scale.y)
+        +vec4(offset.x-1.0,offset.x+1.0,offset.y-1.0,offset.y+1.0)
+        *vec4(offset.x-1.0,offset.x+1.0,offset.y-1.0,offset.y+1.0));
+    if(any(lessThan(plane,-radius*norms))){offscreen();return;}
     vec2 lo=vec2(-1.0),hi=vec2(1.0);
     if(depth>radius){
-        vec2 scale=vec2(projectionMatrix[0][0],projectionMatrix[1][1]);
-        vec2 offset=vec2(projectionMatrix[2][0],projectionMatrix[2][1]);
         vec2 centerNdc=scale*c.xy/depth-offset;
         vec2 reach=scale*radius/(depth-radius)*(vec2(1.0)+abs(c.xy)/depth);
         lo=max(lo,centerNdc-reach);hi=min(hi,centerNdc+reach);
         if(any(greaterThanEqual(lo,hi))){offscreen();return;}
     }
+    vRayProjection=vec4(projectionMatrix[0][0],projectionMatrix[1][1],projectionMatrix[2][0],projectionMatrix[2][1]);
     vNdc=mix(lo,hi,position.xy*.5+.5);
     gl_Position=vec4(vNdc,.9999,1.0);
     vCenterH=dirV*(dMpc/max(h*.001,1e-10));
     vAxisV=n;
-    vPhysical=vec4(q0,mix(max(q0,.65),q0,spheroid),spheroid,
-        smoothstep(.025,.065,h*.001/dMpc)*(1.0-flagMw));
+    vPhysical=vec4(q0,mix(max(q0,.65),q0,spheroid),spheroid,nearWeight);
     vFacePeak=vec2(p1*A1*B1/max(a1*a1,1e-12),p2*A2*B2/max(a2*a2,1e-12));
 #endif
     // Stable intrinsic coordinates; changes of viewing angle do not rotate
@@ -298,7 +314,6 @@ uniform float uStretch;
 ${EXT_STRETCH_GLSL}
 ${MORPH_VARYINGS}
 ${RESOLVED_VARYINGS}
-uniform vec4 uRayProjection;
 uniform float uPxScale;
 ${MORPH_GLSL}
 varying vec4 vAB;
@@ -316,7 +331,7 @@ void main() {
     vec2 qp = (gl_PointCoord - 0.5) * vec2(2.0, -2.0) * vHalf;   // px, y up
     vec2 vPx=vec2(dot(qp,vRot),dot(qp,vec2(-vRot.y,vRot.x)));
 #else
-    vec3 ray=normalize(vec3((vNdc+uRayProjection.zw)/uRayProjection.xy,-1.0));
+    vec3 ray=normalize(vec3((vNdc+vRayProjection.zw)/vRayProjection.xy,-1.0));
     vec3 l=normalize(vCenterH),n=normalize(vAxisV);
     vec3 nSky=n-dot(n,l)*l;
     vec3 maj=length(nSky)>1e-5?normalize(cross(l,nSky)):normalize(cross(l,vec3(0.001,1.0,0.0)));
@@ -379,7 +394,6 @@ function makeShared() {
     state.lcTex = tex;
     return {
         uWorldToView: { value: new THREE.Matrix3() },
-        uRayProjection: { value: new THREE.Vector4(1,1,0,0) },
         uLightCone: { value: tex },
         uGalaxyNoise: { value: noise },
         uChiMax: { value: CHI_MAX_MPC },
@@ -442,9 +456,13 @@ function makeChunkMesh(c, asPoints = !c.lg) {
     mesh.userData.minMV = c.minMV ?? -30;
     mesh.userData.lg = !!c.lg;
     mesh.userData.source = c;
-    let maxScale = 0;
-    for (let i = 0; i < c.count; i++) maxScale = Math.max(maxScale, c.phot[i * 4 + 2]);
+    let maxScale = 0, maxDelta=0;
+    for (let i = 0; i < c.count; i++) {
+        maxScale=Math.max(maxScale,c.phot[i*4+2]);
+        maxDelta=Math.max(maxDelta,Math.hypot(c.delta[i*3],c.delta[i*3+1],c.delta[i*3+2]));
+    }
     mesh.userData.maxScaleKpc = maxScale;
+    mesh.userData.maxDeltaMpc = maxDelta;
     return mesh;
 }
 
@@ -572,11 +590,11 @@ function updateLocalGroup(m31NowMpc) {
 // exposure (stellarAppearance.extragalacticExposure). A resolved galaxy in
 // view overrides the field metering (see the end of meterExposure). One
 // exposure scales every galaxy, so relative brightness is exact.
-const EXPOSURE = { gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedSpan: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
+const EXPOSURE = { seen:null, serial:0, gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedSpan: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
 const _mPeak = new Float32Array(EXPOSURE.n + 512), _mFoot = new Float32Array(EXPOSURE.n + 512), _mFootOwn = new Float32Array(EXPOSURE.n + 512), _mW = new Float32Array(EXPOSURE.n + 512), _mIdx = new Uint32Array(EXPOSURE.n + 512);
 // Peak display value (at exposure 1) and pixel footprint of one galaxy.
 function galaxyPeak(MV, hKpc, d, pxScale, out) {
-    const dPc = d * 1e6;
+    const dPc = Math.max(d,1e-10) * 1e6;
     const flux = Math.pow(10, -0.4 * (MV - 4.83)) / (12.566370614 * dPc * dPc) * pxScale * pxScale * EXPOSURE.gain;
     const hPx = hKpc * 1e3 / dPc * pxScale;
     const area = Math.max(hPx * hPx * 0.5, 0.5625);
@@ -587,9 +605,11 @@ function galaxyPeak(MV, hKpc, d, pxScale, out) {
 const _pf = [0, 0];
 function inView(e, x, y, z, tanX, tanY, marginRad = 0) {
     const vx = e[0] * x + e[3] * y + e[6] * z, vy = e[1] * x + e[4] * y + e[7] * z, vz = e[2] * x + e[5] * y + e[8] * z;
-    if (vz >= 0) return false;
-    const m = marginRad * Math.hypot(vx, vy, vz);
-    return Math.abs(vx) <= -vz * tanX + m && Math.abs(vy) <= -vz * tanY + m;
+    if(marginRad>0){
+        const m=marginRad*Math.max(1e-6,Math.hypot(vx,vy,vz));
+        return galaxyScreenBounds([vx,vy,vz],m,[1/tanX,1/tanY,0,0])!==null;
+    }
+    return vz<0 && Math.abs(vx)<=-vz*tanX && Math.abs(vy)<=-vz*tanY;
 }
 // Photographic metering: the level reached by the brightest brightFrac of
 // the screen's pixels, estimated from the galaxies in view (a fixed sample
@@ -602,7 +622,10 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         const n = Math.min(EXPOSURE.n, cat.count);
         EXPOSURE.sample = new Int32Array(n);
         for (let k = 0; k < n; k++) EXPOSURE.sample[k] = Math.floor((k + 0.5) * cat.count / n);
+        EXPOSURE.seen=new Uint32Array(cat.count);
     }
+    EXPOSURE.serial=(EXPOSURE.serial+1)>>>0;
+    if(!EXPOSURE.serial){EXPOSURE.seen.fill(0);EXPOSURE.serial=1;}
     const e = viewRot.elements;
     const pos = cat.pos, MV = cat.MV;
     const w = cat.count / EXPOSURE.sample.length;
@@ -615,6 +638,33 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         if (!(d > 1e-4) || !inView(e, x, y, z, tanX, tanY)) continue;
         galaxyPeak(MV[i], cat.hKpc[i], d, pxScale, _pf);
         _mPeak[m] = _pf[0]; _mFoot[m] = _pf[1] * w; _mFootOwn[m] = _pf[1]; _mW[m] = 1; m++;
+        EXPOSURE.seen[i]=EXPOSURE.serial;
+    }
+    // The stride sample can miss the very galaxy surrounding the camera.
+    // Include resolved-near sources exactly once from their current apparent
+    // light-cone positions. A cheap squared-distance bound rejects almost
+    // every entry before square roots, exponentials or projection work.
+    const aObs=state.shared.uAObs.value,lc=state.lcData;
+    const minFactor=Math.max(1e-30,aObs*Math.exp(lc[LC_N-1]));
+    for(const mesh of state.chunks){
+        if(mesh.userData.lg || m>=_mPeak.length) continue;
+        const c=mesh.userData.source;
+        const crx=camGC[0]/aObs-c.center[0],cry=camGC[1]/aObs-c.center[1],crz=camGC[2]/aObs-c.center[2];
+        const reach=(mesh.userData.maxScaleKpc*.1+mesh.userData.maxDeltaMpc)/minFactor;
+        const reach2=reach*reach;
+        for(let k=0;k<c.count && m<_mPeak.length;k++){
+            const i=c.gid[k];if(EXPOSURE.seen[i]===EXPOSURE.serial) continue;
+            const rx=c.unit[k*3]-crx,ry=c.unit[k*3+1]-cry,rz=c.unit[k*3+2]-crz;
+            const chi2=rx*rx+ry*ry+rz*rz;if(chi2>reach2) continue;
+            const chi=Math.sqrt(chi2),u=Math.min(LC_N-1,chi/CHI_MAX_MPC*(LC_N-1)),j=Math.floor(u),f=u-j;
+            const factor=aObs*Math.exp(lc[j]*(1-f)+lc[Math.min(j+1,LC_N-1)]*f);
+            const x=rx*factor+c.delta[k*3],y=ry*factor+c.delta[k*3+1],z=rz*factor+c.delta[k*3+2];
+            const d=Math.hypot(x,y,z),h=c.phot[k*4+2];
+            if(d>h*.1 || !inView(e,x,y,z,tanX,tanY,8*h*.001/Math.max(d,1e-6))) continue;
+            galaxyPeak(c.phot[k*4],h,d,pxScale,_pf);
+            _mPeak[m]=_pf[0];_mFootOwn[m]=Math.min(_pf[1],screenPx);_mFoot[m]=_mFootOwn[m];_mW[m]=1;m++;
+            EXPOSURE.seen[i]=EXPOSURE.serial;
+        }
     }
     const lg = state.lg;
     // The Milky Way while the volume draws it: its measured brightest pixels
@@ -636,8 +686,8 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
             if (!(wk > 0)) continue;
             const x = d3[k * 3] - camGC[0], y = d3[k * 3 + 1] - camGC[1], z = d3[k * 3 + 2] - camGC[2];
             const d = Math.hypot(x, y, z);
-            const rad = 4 * ph[k * 4 + 2] * 1e-3 / Math.max(d, 1e-6);
-            if (!(d > 1e-5) || !inView(e, x, y, z, tanX, tanY, rad)) continue;
+            const rad = 8 * ph[k * 4 + 2] * 1e-3 / Math.max(d, 1e-6);
+            if (!Number.isFinite(d) || !inView(e, x, y, z, tanX, tanY, rad)) continue;
             galaxyPeak(ph[k * 4], ph[k * 4 + 2], d, pxScale, _pf);
             _mPeak[m] = _pf[0]; _mFootOwn[m] = Math.min(_pf[1], screenPx); _mFoot[m] = _mFootOwn[m] * wk; _mW[m] = wk; m++;
         }
@@ -709,8 +759,6 @@ export function updateGalaxyPopulation(camera, f) {
         R(2, 0), -R(2, 2), R(2, 1),
     );
     s.uWorldToView.value.copy(_v);
-    const proj=camera.projectionMatrix.elements;
-    s.uRayProjection.value.set(proj[0],proj[5],proj[8],proj[9]);
     s.uPxScale.value = f.pxScale;
     if (f.viewport) s.uViewport.value.set(f.viewport[0], f.viewport[1]);
     if (f.dpr) s.uDpr.value = f.dpr;

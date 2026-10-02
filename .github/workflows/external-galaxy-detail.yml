@@ -34,6 +34,7 @@ jobs:
         run: |
           node scripts/smoke-external-galaxy-qa.mjs
           node scripts/smoke-external-galaxy-geometry.mjs
+          node scripts/smoke-external-galaxy-exposure.mjs
           node scripts/capture-external-galaxies.mjs --validate
           node scripts/smoke-galaxy-population.mjs
           npm run build

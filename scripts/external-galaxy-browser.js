@@ -9,7 +9,8 @@ import { mergerTidesStatus } from '/src/render/mergerTidesRender.js';
 import { renderLinearFrame } from '/src/render/linearFrame.js';
 const MPC = K * MPC_KM;
 const GYR_S = 1e9 * 31557600;
-const state = { test: null, gid: null, desired: null, shaderErrors: [] };
+const LY = MPC / 3.2615637771674e6;
+const state = { test: null, gid: null, desired: null, shaderErrors: [], normalExposure: new Map() };
 const mark = name => console.log('EXTERNAL_QA_PHASE ' + JSON.stringify({ name, browserMs: Math.round(performance.now()),
     programs: s.renderer.info.programs?.length || 0, geometries: s.renderer.info.memory.geometries,
     textures: s.renderer.info.memory.textures }));
@@ -52,7 +53,10 @@ function positionCamera(test, record) {
     const { center, normal: n, u, v, scale: h } = record;
     let eye, aim;
     const distance = test.distanceKpc ? test.distanceKpc * .001 * MPC : test.height * h;
-    if (test.view === 'catalog') {
+    if (test.view === 'exactcenter' || test.view === 'nearcenterbehind') {
+        eye = center.clone().addScaledVector(u, (test.offsetLy || 0) * LY);
+        aim = eye.clone().addScaledVector(u, h);
+    } else if (test.view === 'catalog') {
         eye = center.clone().addScaledVector(center.clone().negate().normalize(), distance); aim = center.clone();
     } else if (test.view === 'edge') {
         eye = center.clone().addScaledVector(u, distance).addScaledVector(n, .04 * h); aim = center.clone();
@@ -80,10 +84,26 @@ export function prepare(test) {
     mark('prepare-initial-state'); frame();
     mark('prepare-first-camera'); positionCamera(test, targetRecord()); frame();
     mark('prepare-refine-camera'); positionCamera(test, targetRecord());
+    state.centerPlacement = null;
+    if (test.view === 'exactcenter' || test.view === 'nearcenterbehind') {
+        const trace = [];
+        for (let i = 0; i < 6; i++) {
+            mark('prepare-center-convergence-' + i);
+            const before = targetRecord(); positionCamera(test, before); frame();
+            const after = targetRecord();
+            const shiftLy = after.center.distanceTo(before.center) / LY;
+            trace.push({ iteration: i, centerShiftLy: shiftLy, actualOffsetLy: s.camera.position.distanceTo(after.center) / LY });
+            if (shiftLy < 1e-7) break;
+        }
+        // Final placement uses the actual live attribute row, not the catalog
+        // or an approximate requested center. capture() measures it again.
+        positionCamera(test, targetRecord()); state.centerPlacement = trace;
+    }
     population.externalGalaxyQaResetMeter();
     const r = targetRecord(); state.gid = r.gid;
     return { name: test.target, id: r.gid, type: r.type, provenance: r.provenance, scaleKpc: r.scale / MPC * 1000,
-        normalScene: r.normal.toArray(), catalogCenterScene: r.center.toArray(), requestedCamera: state.desired, epochSeconds: G.t };
+        normalScene: r.normal.toArray(), catalogCenterScene: r.center.toArray(), requestedCamera: state.desired, epochSeconds: G.t,
+        requestedCenterOffsetLy: test.offsetLy ?? null, centerPlacement: state.centerPlacement };
 }
 export function epochReady() { const status = mergerTidesStatus(); if (status.error) throw new Error(status.error); return !status.started || status.ready; }
 export function frame() {
@@ -114,7 +134,11 @@ function geometryCoverage(r) {
     // Independent conservative ellipsoid/ray geometry. It says only whether
     // luminous support can overlap the screen, not what morphology must be.
     for (let y = -4; y <= 4; y++) for (let x = -4; x <= 4; x++) {
-        const ray = new THREE.Vector3(x / 4 * .95, y / 4 * .95, .5).unproject(camera).sub(camera.position).normalize();
+        // Form a direction without adding a near-plane offset to the huge
+        // extragalactic observer position (that subtraction can become zero).
+        const p = camera.projectionMatrix.elements;
+        const ray = new THREE.Vector3((x / 4 * .95 + p[8]) / p[0], (y / 4 * .95 + p[9]) / p[5], -1)
+            .applyQuaternion(camera.quaternion).normalize();
         const d = coords(ray), a = d.lengthSq(), b = 2 * o.dot(d), c = o.lengthSq() - 6.5 ** 2, disc = b * b - 4 * a * c;
         if (disc >= 0 && (-b + Math.sqrt(disc)) / (2 * a) > 0) intersecting++; total++;
     }
@@ -138,10 +162,23 @@ function targetDiagnostic(record) {
     mesh.frustumCulled = false; const scene = new THREE.Scene(); scene.add(mesh);
     const near = s.camera.near, far = s.camera.far, depth = original.material.uniforms.uDepthRange.value.clone();
     const autoClear = s.renderer.autoClear;
+    const savedProjection = s.camera.projectionMatrix.clone(), savedProjectionInverse = s.camera.projectionMatrixInverse.clone();
     try {
         // The external galaxy lives in the production far tier. With no
         // foreground or other background hooks, this isolates its pixels.
         s.camera.near = Math.max(near, s.TIER_SPLIT_UNITS); s.camera.updateProjectionMatrix();
+        const offset = state.test.projectionOffset || [0, 0];
+        if (state.test.projectionOffset) {
+            // Only this live-material diagnostic draw is asymmetric. Leave
+            // population update uniforms untouched to catch a stale main-eye
+            // ray projection. This is not a headset/VR integration claim.
+            s.camera.projectionMatrix.elements[8] += offset[0];
+            s.camera.projectionMatrix.elements[9] += offset[1];
+            s.camera.projectionMatrixInverse.copy(s.camera.projectionMatrix).invert();
+        }
+        const projection = { kind: state.test.projectionOffset ? 'per-draw asymmetric diagnostic; not headset QA' : 'production symmetric draw',
+            offset: [...offset], matrix: s.camera.projectionMatrix.toArray(),
+            targetCenterNdc: record.center.clone().project(s.camera).toArray() };
         original.material.uniforms.uDepthRange.value.set(s.camera.near, 1e38);
         s.renderer.setRenderTarget(null); s.renderer.autoClear = true;
         const draw = () => s.renderer.render(scene, s.camera);
@@ -152,10 +189,10 @@ function targetDiagnostic(record) {
         mark('target-png-read');
         const png = s.renderer.domElement.toDataURL('image/png');
         mark('target-pixel-read'); const stats = pixels(); mark('target-diagnostic-done');
-        return { png, pixels: stats };
+        return { png, pixels: stats, projection };
     } finally {
         original.material.uniforms.uDepthRange.value.copy(depth);
-        s.camera.near = near; s.camera.far = far; s.camera.updateProjectionMatrix(); s.renderer.autoClear = autoClear; geometry.dispose();
+        s.camera.near = near; s.camera.far = far; s.camera.projectionMatrix.copy(savedProjection); s.camera.projectionMatrixInverse.copy(savedProjectionInverse); s.renderer.autoClear = autoClear; geometry.dispose();
     }
 }
 export function capture() {
@@ -169,9 +206,19 @@ export function capture() {
         if (typeof u.value === 'number') uniforms[name] = u.value;
         else if (u.value?.isVector2 || u.value?.isVector3) uniforms[name] = u.value.toArray();
     }
+    const gain = uniforms.uGainExposure;
+    if (state.test.name.endsWith('-normal') && !state.test.epochGyr && Number.isFinite(gain) && gain > 0) {
+        state.normalExposure.set(state.test.target, { gain, case: state.test.name });
+    }
+    const reference = state.normalExposure.get(state.test.target);
+    const exposureComparison = { currentGain: gain, normalGain: reference?.gain ?? null,
+        referenceCase: reference?.case ?? null, ratio: reference?.gain > 0 ? gain / reference.gain : null,
+        boundedNearCase: ['behind', 'exactcenter', 'nearcenterbehind'].includes(state.test.view), maxRatio: 4 };
     const camera = { position: s.camera.position.toArray(), quaternion: s.camera.quaternion.toArray(), near: s.camera.near,
         far: s.camera.far, fov: s.camera.fov, aspect: s.camera.aspect };
     const unresolved = state.test.height >= 1000;
+    const actualCenterOffsetLy = s.camera.position.distanceTo(record.center) / LY;
+    const centerFixture = ['exactcenter', 'nearcenterbehind'].includes(state.test.view);
     const assertions = {
         fixedEpoch: G.paused && G.t === (state.test.epochGyr || 0) * GYR_S,
         intendedCamera: s.camera.position.distanceTo(v3(state.desired.eye)) < Math.max(1, record.scale * 1e-7),
@@ -179,16 +226,22 @@ export function capture() {
         targetBuilt: record.mesh.geometry && record.mesh.visible && record.gid === state.gid,
         catalogProvenance: record.provenance === 1 || record.provenance === 2,
         noWebGLError: !errors.length, noShaderError: !state.shaderErrors.length,
+        intendedDiagnosticProjection: !state.test.projectionOffset || (diagnostic.projection.matrix[8] === state.test.projectionOffset[0] && diagnostic.projection.matrix[9] === state.test.projectionOffset[1]),
         targetPixelsPresent: diagnostic.pixels.nonblackFraction > (unresolved ? 0 : .0001),
-        behindFixtureActuallyBehind: state.test.view !== 'behind' || coverage.centerBehind,
+        behindFixtureActuallyBehind: !['behind', 'nearcenterbehind'].includes(state.test.view) || coverage.centerBehind,
+        exactCenterPosition: state.test.view !== 'exactcenter' || actualCenterOffsetLy < 1e-6,
+        nearCenterPosition: state.test.view !== 'nearcenterbehind' || Math.abs(actualCenterOffsetLy - state.test.offsetLy) < 1e-5,
+        centerFixtureSeesLight: !centerFixture || (coverage.conservativeSupportRayFraction > .9 && diagnostic.pixels.nonblackFraction > .005),
+        boundedNearExposure: !exposureComparison.boundedNearCase || (Number.isFinite(exposureComparison.ratio) && exposureComparison.ratio <= exposureComparison.maxRatio),
         offAxisFixtureActuallyOffAxis: state.test.view !== 'offaxis' || coverage.centerOutside,
         supportSurvivesCenterCull: !['behind', 'offaxis'].includes(state.test.view) ||
             (coverage.conservativeSupportRayFraction > .05 && diagnostic.pixels.nonblackFraction > .005),
     };
-    return { png, targetPng: diagnostic.png, assertions, pixels: appPixels, targetPixels: diagnostic.pixels, coverage,
+    return { png, targetPng: diagnostic.png, assertions, pixels: appPixels, targetPixels: diagnostic.pixels, targetProjection: diagnostic.projection, coverage,
         state: { target: state.test.target, type: record.type, provenance: record.provenance, time: G.t, camera,
             actualCenterScene: record.center.toArray(), distanceScaleLengths: s.camera.position.distanceTo(record.center) / record.scale,
-            scaleKpc: record.scale / MPC * 1000, normal: record.normal.toArray(), axialRatio: record.q,
+            scaleKpc: record.scale / MPC * 1000, actualCenterOffsetLy, requestedCenterOffsetLy: state.test.offsetLy ?? null,
+            centerPlacement: state.centerPlacement, exposureComparison, normal: record.normal.toArray(), axialRatio: record.q,
             targetChunkRepresentation: record.mesh.isPoints ? 'points' : 'quads', chunkInstances: record.mesh.geometry.attributes.aT.count,
             population: population.galaxyPopulationStatus(), tides: mergerTidesStatus(), uniforms, mobile: s.renderQuality.mobile,
             render: { ...s.renderer.info.render }, memory: { ...s.renderer.info.memory } },

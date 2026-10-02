@@ -91,8 +91,15 @@ def analyze(raw, output):
                 if not check['matched']: failures.append(f'{device}/{suite}/{name}: unmatched camera or epoch')
                 result = {'device': device, 'suite': suite, 'name': name, 'camera': check,
                           'before_assertions': before[name]['assertions'], 'after_assertions': after[name]['assertions'],
-                          'before_coverage': before[name]['coverage'], 'after_coverage': after[name]['coverage']}
+                          'before_coverage': before[name]['coverage'], 'after_coverage': after[name]['coverage'],
+                          'projection_diagnostic': after[name]['test'].get('diagnostic'),
+                          'before_target_projection': before[name].get('targetProjection'),
+                          'after_target_projection': after[name].get('targetProjection'),
+                          'before_exposure_comparison': before[name]['state'].get('exposureComparison'),
+                          'after_exposure_comparison': after[name]['state'].get('exposureComparison')}
                 section.append(f'<h3>{html.escape(name)}</h3>')
+                if result['projection_diagnostic']:
+                    section.append('<p>' + html.escape(result['projection_diagnostic']) + '. Full-app image remains the normal camera; only the target image uses the recorded asymmetric per-draw projection.</p>')
                 for suffix, key in [('', 'app'), ('-target', 'target')]:
                     paths = []
                     section.append(f'<div class="kind">{key}: full resolution, no image edits</div><div class="pair">')

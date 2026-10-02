@@ -20,7 +20,10 @@ export function galaxyNoisePixels(size = 256) {
 export function needsGalaxyQuads(distanceMpc, radiusMpc, maxScaleKpc, pxScale, maxPointPx, wasQuad = false) {
     const nearest = Math.max(1e-6, distanceMpc - radiusMpc);
     const reachPx = 8 * maxScaleKpc * 0.001 / nearest * pxScale;
-    return reachPx > Math.max(1, maxPointPx) * (wasQuad ? 0.25 : 0.4);
+    // Promote before the ray-volume blend can begin at .025 radians, even
+    // on a wide-point device. Hysteresis also covers this angular criterion.
+    return reachPx > Math.max(1, maxPointPx) * (wasQuad ? 0.25 : 0.4)
+        || maxScaleKpc*.001/nearest > (wasQuad ? .018 : .022);
 }
 
 export const MORPH_VARYINGS = /* glsl */`

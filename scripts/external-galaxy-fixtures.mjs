@@ -7,6 +7,9 @@ export function externalGalaxyCases(suite = 'all') {
         { name: 'm31-edge-on', view: 'edge', height: 8, roll: .37 },
         { name: 'm31-off-axis', view: 'offaxis', height: 2.2, aim: 3.1, roll: .61 },
         { name: 'm31-center-behind', view: 'behind', height: .12, radius: 1.8 },
+        { name: 'm31-exact-center', view: 'exactcenter', offsetLy: 0 },
+        { name: 'm31-near-center-behind', view: 'nearcenterbehind', offsetLy: .35 },
+        { name: 'm31-asymmetric-projection', view: 'face', height: 300, projectionOffset: [.12, .03], diagnostic: 'per-draw asymmetric projection; not headset QA' },
         { name: 'm31-user-epoch', view: 'catalog', distanceKpc: 455 / 3.261563777, epochGyr: EPOCH_GYR },
     ].map(t => ({ ...t, suite: 'm31', target: 'Andromeda' }));
     const zoom = [80, 24, 8, 3, 1, .25, .04].map(height => ({ name: `m31-zoom-${String(height).replace('.', 'p')}h`,

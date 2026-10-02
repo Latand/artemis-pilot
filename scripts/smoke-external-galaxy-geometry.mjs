@@ -137,3 +137,16 @@ const noise=galaxyNoisePixels();
 assert.equal(noise.byteLength,65536);assert.deepEqual(noise,galaxyNoisePixels());
 const mean=noise.reduce((a,b)=>a+b,0)/noise.length;assert(mean>126&&mean<129);
 console.log('PASS shared deterministic 64 KiB morphology noise budget');
+
+const { needsGalaxyQuads } = await import('../src/render/galaxyMorphology.js');
+assert(needsGalaxyQuads(1,0,24,200,256),'Volume handoff must already use quads before .025 rad');
+assert(needsGalaxyQuads(1,0,20,200,256,true),'Angular LOD hysteresis retains close quads');
+console.log('PASS quad promotion precedes all near-volume blends');
+
+// Eye-plane-crossing is common for distant galaxies at 90 degrees from the
+// camera, but almost all such tiny supports miss the viewport completely.
+for(const z of [-.002,0,.002]) for(const axis of [0,1]) for(const sign of [-1,1]){
+ const c=[0,0,z];c[axis]=sign;assert.equal(galaxyScreenBounds(c,.006,[1.4,2.2,.12,.03]),null);
+}
+assert.deepEqual(galaxyScreenBounds([0,0,0],1,[1.4,2.2,.12,.03]),[-1,-1,1,1]);
+console.log('PASS horizon sources are culled before fullscreen fallback; inside sources remain covered');

@@ -27,8 +27,9 @@ Uncapped conservative screen rectangles replace close rotated billboards.
 A galaxy whose support crosses the observer plane covers the viewport, then
 its forward-ray light decides which pixels are visible. Its center may leave
 the screen or pass behind the observer without erasing visible material.
-Exactly one depth tier owns each source; a support overlap does not draw it
-twice. Nearby non-Local-Group chunks switch to quads before the hardware point
+The existing far-tier group owns each source once; center distance cannot
+erase its emitting material around an observer, and depth testing still lets
+foreground objects cover it. A support overlap does not draw it twice. Nearby non-Local-Group chunks switch to quads before the hardware point
 limit, using the same 8-scale-length support and a conservative apparent
 light-cone distance.
 
@@ -74,10 +75,31 @@ reviewed before this draft is called visually complete.
 
 ### Browser-driven performance revision
 
-The first browser captures exposed minute-long shader setup in Chromium
-SwiftShader, despite 6–7 ms settled frames in one desktop view. Repeated
-arithmetic noise graphs and duplicated line-of-sight detail calls were
-replaced by one shared deterministic scalar field and footprint averaging.
-The capture harness now records submission/finish/setup phases separately.
-The browser watchdog remains unchanged; successful screenshots and current
-head reports, not the isolated Mesa diagnostic, are the acceptance evidence.
+The first full-browser run spent minutes in whole-frame readback. The initial
+6–7 ms `gl.finish` measurements did not include that pending work and must not
+be presented as frame performance. Phase instrumentation separated app
+readback from the fast single-source diagnostic. The conservative support
+fallback had allowed tiny, entirely off-screen galaxies near the eye plane to
+cover the whole viewport. Four side-frustum-plane sphere tests now reject
+these sources before fullscreen fallback. The compact shared noise field and
+empty-fragment fast paths also reduce work without changing zoom identity.
+
+The watchdog is unchanged. Successful complete browser captures, actual
+readback timing and exact-head CI remain required acceptance evidence.
+
+### Independent-review edge cases
+
+Ray reconstruction now uses the draw-time projection matrix through a vertex
+varying, including asymmetric/per-eye projections. The background population's
+far-tier group owns its light even at its exact center; physical center depth
+cannot reject an entire surrounding galaxy. Raster support includes the whole
+near model whenever that blend is nonzero, independent of the far-profile
+minor-axis detail gate. Tests include exact/near centers and an asymmetric
+per-draw projection diagnostic; this is not a physical-headset certification.
+
+The exposure meter uses visible extended support even when a galaxy's center
+is behind the camera or coincident with it. Nearby non-Local-Group sources
+also bypass the coarse population sampling stride, at their current apparent
+positions. A squared-distance bound limits extra work. The regression suite
+checks bounded near-view gain against the same target's normal-view exposure;
+visibility alone is not acceptance if a source becomes washed out.

@@ -28,6 +28,13 @@ export function gaussianRayColumn(origin, direction, q, scale = 1) {
 export function galaxyScreenBounds(center, radius, projection = [1,1,0,0]) {
     const [x,y,z] = center, [sx,sy,ox,oy] = projection, depth = -z;
     if (depth + radius <= 0) return null;
+    // A sphere crossing the eye plane can still be entirely outside a SIDE
+    // plane. Reject it before a fullscreen fallback: far horizon galaxies
+    // otherwise create thousands of invisible fullscreen layers.
+    for(const [distance,norm] of [
+        [sx*x+(ox-1)*z,Math.hypot(sx,ox-1)],[-sx*x-(ox+1)*z,Math.hypot(sx,ox+1)],
+        [sy*y+(oy-1)*z,Math.hypot(sy,oy-1)],[-sy*y-(oy+1)*z,Math.hypot(sy,oy+1)],
+    ]) if(distance < -radius*norm) return null;
     if (depth <= radius) return [-1,-1,1,1];
     const nx = sx*x/depth-ox, ny = sy*y/depth-oy;
     const rx = sx*radius/(depth-radius)*(1+Math.abs(x)/depth);
@@ -41,6 +48,7 @@ varying vec3 vCenterH, vAxisV, vBasisV;
 varying vec4 vPhysical; // intrinsic flattening, bulge flattening, spheroid, near weight
 varying vec2 vFacePeak;
 varying vec2 vNdc;
+varying vec4 vRayProjection;
 #endif
 `;
 export const RESOLVED_GLSL = /* glsl */`

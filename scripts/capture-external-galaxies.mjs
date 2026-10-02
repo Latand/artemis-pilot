@@ -19,6 +19,11 @@ assert(['desktop', 'mobile'].includes(device));
 const pattern = process.env.CASE_PATTERN ? new RegExp(process.env.CASE_PATTERN) : null;
 const tests = externalGalaxyCases(suite).filter(t => !pattern || pattern.test(t.name));
 assert(tests.length);
+// A narrowed near-center diagnostic still needs its actual present-day meter
+// reference; never waive the exposure check just because CASE_PATTERN is set.
+if (tests.some(t => ['behind', 'exactcenter', 'nearcenterbehind'].includes(t.view)) && !tests.some(t => t.name === 'm31-normal')) {
+    tests.unshift(externalGalaxyCases('m31').find(t => t.name === 'm31-normal'));
+}
 const scripts = dirname(fileURLToPath(import.meta.url));
 const browserSource = await readFile(resolve(scripts, 'external-galaxy-browser.js'), 'utf8');
 for (const file of ['src/main.js', 'src/render/galaxyPopulationRender.js', 'src/render/catalogStars.js']) {
