@@ -1,0 +1,69 @@
+name: Explored-system software-GPU null control
+on:
+  push:
+    branches: [qa/explored-systems-null-control]
+permissions:
+  contents: read
+concurrency:
+  group: explored-systems-null-control
+  cancel-in-progress: false
+jobs:
+  same-code-desktop:
+    if: github.event.created == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CONTROL_SHA: 5bdc64edc9e129b3ad710e50577173c297721c0d
+      DEVICE: desktop
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.3
+      - name: Restore the exact recorded dependency lock before detaching app source
+        run: |
+          cp qa/explored-null-control-package-lock.json "$RUNNER_TEMP/null-control-package-lock.json"
+          cp .github/workflows/explored-systems-null-control.yml "$RUNNER_TEMP/null-control-workflow.yml"
+          echo '34071ac4e81a9690f2f3dbe91bb69b180adb87dc9d51c5bc90572c7e8e772d5e  qa/explored-null-control-package-lock.json' | sha256sum --check
+          git checkout --detach "$CONTROL_SHA"
+          cp "$RUNNER_TEMP/null-control-package-lock.json" package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Verify frozen toolchain versions
+        run: |
+          node -e "const a=require('node:assert/strict');a.equal(process.version,'v22.23.3');a.equal(require('playwright/package.json').version,'1.63.0');a.equal(require('vite/package.json').version,'5.4.21')"
+      - run: npx playwright install --with-deps chromium
+      - name: Prove both labels use identical frozen application code
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/null-control-A" "$CONTROL_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/null-control-A/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/null-control-A" >> "$GITHUB_ENV"
+          test "$(git rev-parse HEAD)" = "$CONTROL_SHA"
+          test "$(git -C "$RUNNER_TEMP/null-control-A" rev-parse HEAD)" = "$CONTROL_SHA"
+          test "$(git rev-parse HEAD^{tree})" = "$(git -C "$RUNNER_TEMP/null-control-A" rev-parse HEAD^{tree})"
+          mkdir -p evidence/sources
+          git rev-parse HEAD HEAD^{tree} > evidence/sources/label-B.txt
+          git -C "$RUNNER_TEMP/null-control-A" rev-parse HEAD HEAD^{tree} > evidence/sources/label-A.txt
+          cp scripts/benchmark-explored-systems.mjs package-lock.json evidence/sources/
+          cp "$RUNNER_TEMP/null-control-workflow.yml" evidence/sources/
+          node --version > evidence/sources/node-version.txt
+          npm --version > evidence/sources/npm-version.txt
+          printf '%s\n' 'One predeclared same-code A/A experiment, not a replacement PR acceptance run. Both labels are frozen PR30 head 5bdc64e. Same protocol, seed, orders, counts, browser flags and gates; no removed sample or repeat-until-green.' > evidence/sources/purpose.txt
+      - name: Validate the unchanged benchmark hooks
+        run: node scripts/benchmark-explored-systems.mjs --validate
+      - name: Run exactly one fixed same-code experiment
+        run: node scripts/benchmark-explored-systems.mjs . evidence/null-desktop
+      - name: Verify the actual measured browser and same-code identities
+        if: always()
+        run: |
+          node -e "const a=require('node:assert/strict');const r=require('./evidence/null-desktop/report.json');a.equal(r.browser,'153.0.8010.12');a.equal(r.candidateRevision,process.env.CONTROL_SHA);a.equal(r.baselineRevision,process.env.CONTROL_SHA)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: explored-system-null-control-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
