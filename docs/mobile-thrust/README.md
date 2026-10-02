@@ -5,7 +5,7 @@
 The supplied iPhone screenshot shows the Pilot UI in an in-app Safari sheet,
 1 min/s simulation time, a BURN HUD, a spring-returned COAST throttle, a SHIP
 HTML label, and no 3D world. It does not expose the browser console or prove
-why its GPU context became unavailable.
+whether its GPU context became unavailable.
 
 ## Supported failure path
 
