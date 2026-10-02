@@ -63,7 +63,7 @@ export function createShipModel() {
     for (const y of [-.61, .48]) {
         put("ceramic", lathe(ringProfile, 64), 0, y);
         put("graphite", tube(1.068, .056, .018), 0, y);
-        put("copper", tube(1.057, .018, .015), 0, y - .072);
+        put("copper", tube(1.07, .018, .018), 0, y - .043);
         put("graphite", tube(.798, .125, .025), 0, y);
         // Small separated segments in the inner channel, never a lens/shader.
         for (let i = 0; i < 16; i++) {

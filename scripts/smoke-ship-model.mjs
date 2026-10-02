@@ -7,6 +7,7 @@ assert.equal(model.name, 'Artemis twin-ring explorer');
 assert.equal(model.userData.design, 'speculative-twin-ring');
 assert.equal(model.children.length, 7, 'One bounded batch for each material');
 const bounds = new THREE.Box3().setFromObject(model);
+assert(Math.abs(bounds.min.y + 1.05) < .065, 'Aft extremity stays attached to existing exhaust anchor');
 assert(bounds.min.y > -1.06 && bounds.max.y > 1.3 && bounds.max.y < 1.5, 'Nose +Y and tail retain orientation / exhaust offset contract');
 assert(Math.abs(bounds.max.x + bounds.min.x) < 1e-6 && Math.abs(bounds.max.z + bounds.min.z) < 1e-6, 'Rings are centered on the hull axis');
 assert(bounds.max.x < 1.1 && bounds.max.z < 1.1, 'Ship remains within the existing adaptive-size footprint');

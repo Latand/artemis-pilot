@@ -21,7 +21,10 @@ warp mechanics, new thrust, changed flight controls or different collision physi
 - Geometry lives in `src/shipModel.js`; the only integration in `src/ship.js`
   replaces its former mesh construction with `createShipModel()`.
 - Seven opaque, material-batched meshes, 8,612 triangles, 244,984 bytes of
-  vertex/index arrays. No textures, new lights, custom shaders or per-frame work.
+  vertex/index arrays. The prior exterior had 17 meshes, 11 materials, 2,074
+  triangles and 79,324 geometry bytes: this spends an extra ~162 KiB and
+  6,538 triangles while reducing draw calls by 10. No textures, new lights,
+  custom shaders or per-frame work.
   Every construction creates independently owned disposable resources;
   temporary geometry is disposed after merging.
 
@@ -36,8 +39,10 @@ ownership/disposal and the nose/tail/scale contracts.
 rendering, sky layers and UI. No scene layers are omitted. Only wall-clock
 simulation advancement and the animation loop are replaced by paused,
 deterministic frame stepping. An identical harness runs against the base tree.
-It captures three-quarter, side, rear and normal flight-scale views and verifies
-cockpit transitions, observe/pilot visibility and runtime errors. Pixel images
+It captures dorsal/ventral three-quarter, side, rear, closest-zoom and normal
+flight-scale views and verifies
+repeated cockpit transitions, stable mesh/geometry/material identities,
+observe/pilot visibility, conventional W thrust/release and runtime errors. Pixel images
 are unmodified full-app screenshots, not design mockups or isolated render scenes.
 
 The GitHub Actions `Twin-ring ship appearance` workflow preserves exact base

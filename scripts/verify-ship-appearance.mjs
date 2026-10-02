@@ -29,14 +29,23 @@ try {
  await page.evaluate(async()=>{const {cam}=await import('/src/scene.js');const {shipG}=await import('/src/ship.js');__G.heading=0;__G.pitch=0;__G.hold=null;__shipFrame();cam.tgt.copy(shipG.position);});
  const frames=async(n=2)=>{for(let i=0;i<n;i++)await page.evaluate(()=>__shipFrame());};
  const capture=async(name,dist,yaw,pitch)=>{await page.evaluate(async({dist,yaw,pitch})=>{const {cam}=await import('/src/scene.js');cam.dist=dist;cam.distTarget=null;cam.yaw=yaw;cam.pitch=pitch;},{dist,yaw,pitch});await frames(3);await page.screenshot({path:`${out}/${name}.png`,timeout:180000});const state=await page.evaluate(async()=>{const {cam,renderer,renderQuality}=await import('/src/scene.js');const {craft,shipG}=await import('/src/ship.js');let meshes=0,triangles=0,bytes=0;const geoms=new Set(),mats=new Set();craft.traverse(o=>{if(!o.isMesh)return;meshes++;mats.add(o.material);geoms.add(o.geometry);triangles+=(o.geometry.index?.count||o.geometry.attributes.position.count)/3;});for(const g of geoms){bytes+=g.index?.array.byteLength||0;for(const a of Object.values(g.attributes))bytes+=a.array.byteLength;}return{cam:{dist:cam.dist,yaw:cam.yaw,pitch:cam.pitch},visible:shipG.visible,scale:craft.scale.x,meshes,materials:mats.size,triangles,bytes,renderQuality:{...renderQuality},memory:{...renderer.info.memory}};});report.frames.push({name,...state});await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));console.log('CAPTURE',name,state);};
- await capture('three-quarter',.12,-.85,.36);
+ await capture('three-quarter',.12,.85,.36);
+ await capture('underside',.12,-.85,.36);
  await capture('side',.12,-Math.PI/2,.05);
  await capture('rear',.12,Math.PI-.65,.28);
- await capture('flight-scale',2.6,-.85,.36);
+ await capture('flight-scale',2.6,.85,.36);
+ await capture('close-inspection',.05,.85,.36);
+ const resources=await page.evaluate(async()=>{const {craft}=await import('/src/ship.js');return craft.children.map(o=>[o.id,o.geometry.id,o.material.id]);});
  check(await page.evaluate(async()=> (await import('/src/ship.js')).shipG.visible),'Pilot exterior is visible');
  await page.keyboard.press('j');await frames();check(await page.evaluate(()=>__G.cabin),'Cockpit toggles on');check(await page.evaluate(async()=>!(await import('/src/ship.js')).shipG.visible),'Exterior is hidden in cockpit');
  await page.keyboard.press('j');await frames();check(await page.evaluate(async()=>!__G.cabin&&(await import('/src/ship.js')).shipG.visible),'Cockpit toggles back without losing exterior');
  await page.locator('[data-ui-mode="observe"]').click();await frames();check(await page.evaluate(async()=>!(await import('/src/ship.js')).shipG.visible),'Observe mode hides ship');
  await page.locator('[data-ui-mode="pilot"]').click();await frames();check(await page.evaluate(async()=> (await import('/src/ship.js')).shipG.visible),'Returning to pilot restores ship');
+ for(let i=0;i<3;i++) {await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.press('j');await frames();await page.keyboard.press('j');await frames();}
+ check(await page.evaluate(async resources=>JSON.stringify((await import('/src/ship.js')).craft.children.map(o=>[o.id,o.geometry.id,o.material.id]))===JSON.stringify(resources),resources),'Repeated cockpit transitions reuse exact mesh, geometry and material resources');
+ await page.evaluate(()=>{document.activeElement?.blur();__G.paused=false;__G.warp=1;});await page.keyboard.down('w');await frames(2);
+ check(await page.evaluate(async()=>{const {flame,exhaust}=await import('/src/ship.js');return flame.visible&&exhaust.visible&&__G.dvUsed>0;}),'Real W thrust activates existing flame, particles and physics');
+ await capture('conventional-thrust',.12,.85,.36);
+ await page.keyboard.up('w');await frames();check(await page.evaluate(async()=>!(await import('/src/ship.js')).flame.visible),'Releasing W turns off the flame');await page.evaluate(()=>{__G.paused=true;});
  check(report.errors.length===0,'No JavaScript, shader or console errors');
 } finally { await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close(); }
