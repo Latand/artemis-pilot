@@ -17,13 +17,22 @@ concurrency:
   cancel-in-progress: true
 jobs:
   capture:
-    name: GPU recovery ${{ matrix.variant }}
+    name: GPU ${{ matrix.variant }} / ${{ matrix.suite }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
       matrix:
-        variant: [before, after]
+        include:
+          - variant: before
+            suite: recovery
+            timeout: 20
+          - variant: after
+            suite: recovery
+            timeout: 20
+          - variant: after
+            suite: soak
+            timeout: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,11 +63,12 @@ jobs:
       - name: Actual-app thrust and forced loss/recovery
         env:
           ARTEMIS_EVIDENCE: evidence/capture
+          THRUST_SUITE: ${{ matrix.suite }}
         run: node scripts/verify-mobile-thrust.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mobile-thrust-${{ matrix.variant }}
+          name: mobile-thrust-${{ matrix.variant }}-${{ matrix.suite }}
           path: evidence/
           if-no-files-found: error
           retention-days: 14

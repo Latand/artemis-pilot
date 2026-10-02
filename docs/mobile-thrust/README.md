@@ -50,7 +50,11 @@ Local tests:
 
 GitHub Actions additionally runs the exact base and candidate through Chromium
 with a 430×932 touch/mobile viewport, device DPR3 (application DPR cap retained),
-native app animation callbacks and real mobile throttle controls. It captures
+native app animation callbacks and real mobile throttle controls. Recovery and
+1,200-frame sustained-thrust suites run independently; the software-rendered
+soak has a 60-minute runner budget after the initial 25-minute run reached
+600 valid frames without an app error. Coverage and app quality are unchanged.
+It captures
 before/lost/restored views, then steps 1,200 real application frames at 1/30 s,
 checks finite state throughout, and exercises paused/repeated recovery, a
 mid-offscreen-render thrown loss, and optional composer rendering.

@@ -8,8 +8,10 @@ import { resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 const root=resolve(process.env.BASE_ROOT||'.'), before=!!process.env.BASE_ROOT;
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/mobile-thrust');
+const suite=process.env.THRUST_SUITE||'all';
+assert(['all','recovery','soak'].includes(suite),'Known mobile QA suite');
 await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),before,errors:[],checks:[],samples:[],limitations:['Chromium/SwiftShader mobile viewport; not physical iPhone Safari.','GPU loss is explicitly injected; original device trigger is unknown.']};
+const report={revision:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),before,suite,errors:[],checks:[],samples:[],limitations:['Chromium/SwiftShader mobile viewport; not physical iPhone Safari.','GPU loss is explicitly injected; original device trigger is unknown.']};
 const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);};
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'mobile-thrust-qa',enforce:'pre',transform(s,id){if(!id.split('?')[0].endsWith('/src/main.js'))return;
  const first='const firstFrameT0 = perfStart();';assert.equal(s.split(first).length,2);
@@ -47,6 +49,7 @@ try {
   check(await page.evaluate(async()=>{const p=(await import('/src/river.js')).riverDebugReadPositions();return p?.finite&&p.nonZero>0&&p.distinct>0;}),'Cosmetic river GPU positions are rebuilt after restore');
   check(await page.evaluate(()=>localStorage.getItem('artemis.quicksave.v1')===window.__savedBytes&&window.__savedBytes?.length>100),'Recovery leaves stored quicksave bytes unchanged');
   check(restored.success>held.success,'Animation loop renders after context restoration');check(restored.t>held.t,'Flight resumes after context restoration');check(restored.mode==='COAST','Lost throttle is released on recovery');check(!(await page.locator('#renderContextStatus').isVisible()),'Recovery status clears after restoration');
+  if(suite!=='recovery') {
   // Continue actual app frames through forty seconds / forty simulation minutes.
   await page.evaluate(()=>__thrustStop());await page.mouse.move(track.x+track.width/2,track.y+track.height*.15);await page.mouse.down();
   for(let i=0;i<1200;i++){
@@ -55,6 +58,9 @@ try {
   }
   await capture('04-sustained-thrust');await page.mouse.up();await page.evaluate(()=>__thrustStep());await capture('05-released-throttle');
   check(await page.evaluate(()=>localStorage.getItem('qa_preserve_save')==='untouched'),'Unrelated saved data is preserved');
+  }
+  if(suite!=='soak') {
+  await page.evaluate(()=>__thrustStop());
   // A second loss while already paused must not unpause or lose the state.
   await page.evaluate(()=>{__G.paused=true;window.__pausedTime=__G.t;window.__loss.loseContext();});await page.waitForTimeout(300);await page.evaluate(()=>__thrustStep());
   await page.evaluate(()=>window.__loss.restoreContext());await page.waitForFunction(async()=>!(await import('/src/scene.js')).renderer.getContext().isContextLost());await page.evaluate(()=>__thrustStep());
@@ -67,6 +73,7 @@ try {
   // Mobile normally gates bloom; exercise its optional composer as well.
   await page.evaluate(async()=>{const s=await import('/src/scene.js');await s.ensurePostProcessing();s.composer.render();});
   check(report.errors.length===0,'Healthy optional bloom/composer path still renders');
+  }
   check(report.errors.length===0,'No page/shader errors through thrust and GPU recovery');
  }
 } finally {await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}
