@@ -463,6 +463,7 @@ mfdScreens.forEach((scr, i) => {
     scr.material.needsUpdate = true;
 });
 const plPosArr = plGroups.map(g => g.position);
+const clock = new THREE.Clock();
 const riverInitT0 = perfStart();
 initRiver();
 window.addEventListener("ap:releaseflightinput", () => {
@@ -1327,7 +1328,6 @@ function updateFocusVelocityVector(alpha = 1) {
 }
 
 // ============================ MAIN LOOP ============================
-const clock = new THREE.Clock();
 const earthV = new THREE.Vector3(), moonV = new THREE.Vector3(), velV = new THREE.Vector3(), upV = new THREE.Vector3(0, 1, 0), dirV = new THREE.Vector3();
 const _moonRingN = new THREE.Vector3();
 const moonBeacon = new THREE.Sprite(new THREE.SpriteMaterial({

@@ -18,3 +18,18 @@ box=null;assert.equal(readRenderScissor(renderer,vector),false,'Mid-query loss n
 for(let i=0;i<3;i++){lost=true;canvas.dispatchEvent(new Event('webglcontextlost',{cancelable:true}));lost=false;canvas.dispatchEvent(new Event('webglcontextrestored'));}
 assert.equal(holds,4);assert.equal(restores,4);assert.equal(context.losses,4);assert.equal(context.restores,4);
 console.log('PASS: context loss polling/event ordering, null GL query race, repeated recovery');
+// Exercise the installed Three scheduler, not a lookalike event loop: an
+// exception before WebGLAnimation's final requestAnimationFrame kills it.
+const { WebGLAnimation } = await import('../node_modules/three/src/renderers/webgl/WebGLAnimation.js');
+function schedulerHarness(callback) {
+    let pending=null, requests=0;
+    const animation=WebGLAnimation();
+    animation.setContext({requestAnimationFrame(fn){pending=fn;return ++requests;},cancelAnimationFrame(){pending=null;}});
+    animation.setAnimationLoop(callback);animation.start();
+    return { tick(){const fn=pending;pending=null;fn(0,null);},hasNext:()=>!!pending,requests:()=>requests };
+}
+const baseline=schedulerHarness(()=>new Vector4().fromArray(null));
+assert.throws(()=>baseline.tick(),TypeError);assert.equal(baseline.hasNext(),false,'Baseline null-GL-query exception permanently stops Three frame scheduling');
+const guarded=schedulerHarness(()=>{if(!readRenderScissor(renderer,vector))return;});
+guarded.tick();assert.equal(guarded.hasNext(),true,'Lost-context query guard preserves the next animation frame');
+console.log('PASS: installed Three scheduler reproduces baseline stop and guard survives');
