@@ -56,13 +56,14 @@ jobs:
       - name: Core, ownership, generator, exoplanet and actual browser save checks
         if: matrix.device == 'desktop'
         run: |
+          node scripts/smoke-explored-baseline-routing.mjs
           npm test
           npm run smoke:explored-systems
           npm run smoke:planetary-systems
           npm run smoke:exoplanets
           npm run smoke:saves
           npm run build
-      - name: Reproduce original full-app host drop and measure baseline
+      - name: Verify baseline behavior and measure matched views
         if: ${{ !cancelled() }}
         env:
           DEVICE: ${{ matrix.device }}

@@ -6,6 +6,7 @@
 // --compare BASE_REPORT CANDIDATE_REPORT OUTPUT compares matched full-app p95.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
@@ -49,10 +50,18 @@ if (process.argv.includes('--compare')) {
         measurement: 'Median of three p95 windows; 120 individually delivered production frames/window, including GPU finish',
         scenarios, longTaskBudget,
         passesFivePercentTarget: scenarios.every(s => s.passesFivePercentTarget),
-        baselineReproduced: base.reproduction?.hostDropped === true, candidatePassed: candidate.passed === true };
+        // Older archived reports predate the capability marker and intentionally
+        // exercised the broken pre-fix baseline. Preserve that interpretation.
+        baselineExpectedHostDrop: base.expectHostDrop ?? true,
+        baselineReproduced: base.reproduction?.hostDropped === true, baselinePassed: base.passed === true,
+        candidatePassed: candidate.passed === true };
     await writeFile(destination, JSON.stringify(comparison, null, 2) + '\n');
     console.log(JSON.stringify(comparison, null, 2));
-    assert(comparison.baselineReproduced, 'Baseline must reproduce the real host-drop bug');
+    if (comparison.baselineExpectedHostDrop) assert(comparison.baselineReproduced, 'Pre-fix baseline must reproduce the real host-drop bug');
+    else {
+        assert(!comparison.baselineReproduced, 'Fixed baseline must retain its selected host');
+        assert(comparison.baselinePassed, 'Fixed baseline must pass the full functional verification');
+    }
     assert(comparison.candidatePassed, 'Candidate functional verification must pass');
     assert(comparison.passesFivePercentTarget, 'Matched full-app p95 exceeded the 5% regression target');
     assert(comparison.longTaskBudget.passed, 'Matched main-thread long tasks exceeded the explicit blocking-time/count/maximum budget');
@@ -62,6 +71,10 @@ if (process.argv.includes('--compare')) {
 const args = process.argv.slice(2).filter(a => !a.startsWith('--'));
 const root = resolve(process.env.BASE_ROOT || args[0] || '.');
 const baseline = !!process.env.BASE_ROOT || process.env.BASELINE === '1';
+// Baseline identifies the comparison side, not the expected product behavior.
+// Fixed baselines run every positive route/assertion, just like candidates.
+// Candidates never receive the historical pre-fix assertion exemptions.
+const expectHostDrop = baseline && !existsSync(resolve(root, 'src/universe/exploredSystem.js'));
 const device = process.env.DEVICE || 'desktop', mobile = device === 'mobile';
 assert(['desktop', 'mobile'].includes(device), 'DEVICE must be desktop or mobile');
 const out = resolve(args[1] || process.env.ARTEMIS_EVIDENCE || `evidence/explored/${baseline ? 'before' : 'after'}-${device}`);
@@ -90,12 +103,12 @@ execFileSync(process.execPath, ['--input-type=module', '--check'], { input: tran
 const catalog = await readFile(resolve(root, 'src/render/catalogStars.js'), 'utf8');
 execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(catalog, '/src/render/catalogStars.js') });
 if (process.argv.includes('--validate')) {
-    console.log(JSON.stringify({ root, baseline, device, routes: 20, hooks: 'valid', benchmarkWindows: 3, samplesPerWindow: 120 }));
+    console.log(JSON.stringify({ root, baseline, expectHostDrop, device, routes: 20, hooks: 'valid', benchmarkWindows: 3, samplesPerWindow: 120 }));
     process.exit(0);
 }
 await mkdir(out, { recursive: true });
 const report = {
-    version: 1, revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), baseline, device,
+    version: 1, revision: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), baseline, expectHostDrop, device,
     preloadFlags: { earthnight: '1', clouds: '1', moonmap: '1' },
     preloadReason: 'Load the same normally lazy Earth night/cloud and lunar photographic maps before the first frame, so background fetch/compile does not race measured windows',
     epoch: '2026-10-01T12:00:00.000Z', errors: [], warnings: [], checks: [], routes: [], repeatedRoutes: [], captures: [], benchmark: [],
@@ -107,7 +120,7 @@ const report = {
 const save = () => writeFile(resolve(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
 const check = (name, pass, details = null, candidateOnly = false) => {
     report.checks.push({ name, pass: !!pass, candidateOnly, ...(details ? { details } : {}) });
-    if (!pass && !(baseline && candidateOnly)) console.error('CHECK FAILED', name, details || '');
+    if (!pass && !(expectHostDrop && candidateOnly)) console.error('CHECK FAILED', name, details || '');
 };
 let server, browser, page;
 try {
@@ -256,7 +269,7 @@ try {
     };
 
     // Benchmark equivalent views before the failure/recovery routes. Only
-    // star/solar focus is used here because the baseline child path is broken:
+    // star/solar focus is used here because pre-fix baseline child paths are broken:
     // comparing its wrong planet to the corrected planet would be misleading.
     const benchmarkFixtures = [
         { name: 'earth-near', focus: 'earth', distance: 25, yaw: -.4, pitch: .45 },
@@ -298,7 +311,7 @@ try {
     await key('Shift+KeyF'); await frames(3);
     const after = await snapshot(first); await capture('02-shift-f-planet');
     report.reproduction = { fixture: first, nearestId: initial.nearestId, before, after, hostDropped: before.starId !== after.starId };
-    if (baseline) check('Baseline reproduces host drop to ship-nearest system', report.reproduction.hostDropped && after.starId === initial.nearestId, report.reproduction);
+    if (expectHostDrop) check('Baseline reproduces host drop to ship-nearest system', report.reproduction.hostDropped && after.starId === initial.nearestId, report.reproduction);
     else assertOwner('Shift+F reproduction', after, first);
 
     for (const [index, fixture] of initial.fixtures.entries()) {
@@ -356,7 +369,7 @@ try {
         if (mobile) await button.tap(); else await button.click();
         await page.evaluate(() => document.activeElement?.blur()); await frames(2);
     };
-    if (!baseline) {
+    if (!expectHostDrop) {
         if (mobile) await page.locator('#explorePanelToggle').tap();
         for (const selector of ['#exploreSystemStar', '#exploreSystemPlanet']) {
             await page.locator(selector).scrollIntoViewIfNeeded();
@@ -393,11 +406,11 @@ try {
     report.repeatedWarmBaseline = repeatedStart;
     for (let index = 0; index < 20; index++) {
         for (let p = 0; p <= first.planetIndex; p++) {
-            if (baseline) { await key('Shift+KeyF'); await frames(2); }
+            if (expectHostDrop) { await key('Shift+KeyF'); await frames(2); }
             else await clickSystem('#exploreSystemPlanet');
         }
         const planet = await snapshot(first); assertOwner(`Repeated ${index + 1} planet`, planet, first);
-        if (baseline) {
+        if (expectHostDrop) {
             await page.evaluate(first => { const q = exploredQA; q.input.setFocus(q.p.planetMoonFocusValue(first.planetIndex, first.moonIndex, first.starId)); }, first);
             await frames(2);
         } else {
@@ -409,7 +422,7 @@ try {
             }
         }
         const moon = await snapshot(first); assertOwner(`Repeated ${index + 1} moon`, moon, first);
-        if (baseline) { await focus(`star:${first.starIndex}`); await frames(2); }
+        if (expectHostDrop) { await focus(`star:${first.starIndex}`); await frames(2); }
         else await clickSystem('#exploreSystemStar');
         const star = await snapshot(first); assertOwner(`Repeated ${index + 1} star`, star, first);
         check(`Repeated ${index + 1}: same host retains material identity`,
@@ -455,7 +468,7 @@ try {
     check('GPU geometry and texture counts stay within fixed system capacity', resourceSamples.every(r =>
         r.gpu.geometries <= resourceSamples[0].gpu.geometries + poolGeometryCapacity && r.gpu.textures <= resourceSamples[0].gpu.textures + 136));
 
-    if (!baseline) {
+    if (!expectHostDrop) {
         await phase('free-camera-save-roundtrip');
         await page.evaluate(() => document.activeElement?.blur());
         await page.keyboard.down('KeyW'); await frames(2); await page.keyboard.up('KeyW');
@@ -646,7 +659,7 @@ try {
     check('No horizontal overflow on full application UI', await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
     check('No runtime or shader errors', report.errors.length === 0, report.errors);
     report.complete = report.routes.length === 20 && report.repeatedRoutes.length === 20;
-    report.passed = report.complete && !report.errors.length && report.checks.every(c => c.pass || (baseline && c.candidateOnly));
+    report.passed = report.complete && !report.errors.length && report.checks.every(c => c.pass || (expectHostDrop && c.candidateOnly));
     if (!report.passed) process.exitCode = 1;
 } catch (error) {
     report.errors.push({ phase: report.phase || 'startup', message: error.stack || String(error) }); report.passed = false; process.exitCode = 1;

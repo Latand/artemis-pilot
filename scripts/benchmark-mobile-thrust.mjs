@@ -77,7 +77,18 @@ try {
  const profile=r=>{let prior=r.measurementStart.galaxy.renders;return r.frames.map(f=>{const delta=f.galaxyRenders-prior;prior=f.galaxyRenders;return JSON.stringify([f.quality,f.computeEvery,f.skippedCompute,f.riverDrawCount,f.sourceCount,f.texW,delta,f.galaxyReady,f.galaxyScale]);});};
  const referenceProfile=profile(first);
  const workComparisons=report.runs.map(r=>({index:r.index,variant:r.variant,matchedWorkFrames:profile(r).filter((s,i)=>s===referenceProfile[i]).length,galaxyRenders:r.final.galaxy.renders-r.measurementStart.galaxy.renders}));
- const confounded=workComparisons.some(r=>r.matchedWorkFrames!==report.measuredFrames);
- report.summary={...means,wholeAppOffPathRatio:means.head/means.base,deltaMs:means.head-means.base,workComparisons,confounded,interpretation:confounded?'Adaptive work differs; do not treat this ratio as isolated ship-model cost.':'Recorded work profiles match; this is whole-app OFF-path timing, not isolated draw-call causality.'};
+ const profileConfounded=workComparisons.some(r=>r.matchedWorkFrames!==report.measuredFrames);
+ // The selected profile is not the whole renderer. Async catalog/body assets
+ // may still add point draws or geometries even after galaxy maps are ready.
+ const rendererWorkComparisons=report.runs.map(r=>({index:r.index,variant:r.variant,
+  differingPointFrames:r.frames.filter((f,i)=>f.points!==first.frames[i].points).length,
+  differingLineFrames:r.frames.filter((f,i)=>f.lines!==first.frames[i].lines).length,
+  meanCallDelta:r.frames.reduce((s,f,i)=>s+f.calls-first.frames[i].calls,0)/r.frames.length,
+  meanTriangleDelta:r.frames.reduce((s,f,i)=>s+f.triangles-first.frames[i].triangles,0)/r.frames.length,
+  geometryGrowth:r.final.memory.geometries-r.measurementStart.memory.geometries,
+  textureGrowth:r.final.memory.textures-r.measurementStart.memory.textures}));
+ const rendererWorkConfounded=rendererWorkComparisons.some(r=>r.differingPointFrames||r.differingLineFrames||r.geometryGrowth||r.textureGrowth);
+ const confounded=profileConfounded||rendererWorkConfounded;
+ report.summary={...means,wholeAppOffPathRatio:means.head/means.base,deltaMs:means.head-means.base,workComparisons,rendererWorkComparisons,profileConfounded,rendererWorkConfounded,confounded,interpretation:confounded?'Renderer workload/resources differ; use only a qualified whole-app comparison, not isolated ship-model cost or a speedup claim.':'Recorded work profiles match; this is whole-app OFF-path timing, not isolated draw-call causality.'};
  console.log('BALANCED OFF-PATH COMPARISON',report.summary);
 } finally {await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();}
