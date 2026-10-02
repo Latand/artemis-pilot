@@ -42,6 +42,18 @@ export function galaxyScreenBounds(center, radius, projection = [1,1,0,0]) {
     const result = [Math.max(-1,nx-rx),Math.max(-1,ny-ry),Math.min(1,nx+rx),Math.min(1,ny+ry)];
     return result[0] >= result[2] || result[1] >= result[3] ? null : result;
 }
+// Conservative smooth-column exposure bound when the observer is inside
+// the luminous core. The ordinary whole-galaxy meter cannot use its distant
+// disk-average peak for a bulge covering the entire sky. Display only.
+export function galaxyInteriorMeterBoost(distanceH, q0, bulge) {
+    const q=Math.max(.025,q0),spheroid=bulge>=.985;
+    const s1=spheroid?.7:1,s2=spheroid?.1:.12;
+    const w1=spheroid?.65:1-bulge,w2=spheroid?.35:bulge,q2=spheroid?q:Math.max(q,.65);
+    const fullColumnBound=.5*(w1/(s1*s1*q)+w2/(s2*s2*q2));
+    const t=Math.max(0,Math.min(1,(distanceH-.2)/.8)),inside=1-t*t*(3-2*t);
+    return 1+Math.max(0,fullColumnBound-1)*inside;
+}
+
 export const RESOLVED_VARYINGS = /* glsl */`
 #ifndef GAL_POINTS
 varying vec3 vCenterH, vAxisV, vBasisV;

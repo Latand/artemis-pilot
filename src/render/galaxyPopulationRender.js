@@ -38,7 +38,7 @@ import { coarsenGalaxyWells, flowMassFromMagnitude } from '../flowScaleMath.js';
 import { MERGER } from '../universe/localGroupOrbit.js';
 import { TIDES } from '../universe/mergerTides.js';
 import { galaxySeed, galaxyNoisePixels, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
-import { galaxyScreenBounds, RESOLVED_VARYINGS, RESOLVED_GLSL } from "./galaxyResolved.js";
+import { galaxyScreenBounds, galaxyInteriorMeterBoost, RESOLVED_VARYINGS, RESOLVED_GLSL } from "./galaxyResolved.js";
 import { K, MPC_KM } from "../constants.js";
 import { galaxyDisplayGain, galaxyVolumeMeter } from "./galaxyVolume.js";
 import { extragalacticExposure, EXT_STRETCH, EXT_STRETCH_GLSL } from "./stellarAppearance.js";
@@ -590,7 +590,7 @@ function updateLocalGroup(m31NowMpc) {
 // exposure (stellarAppearance.extragalacticExposure). A resolved galaxy in
 // view overrides the field metering (see the end of meterExposure). One
 // exposure scales every galaxy, so relative brightness is exact.
-const EXPOSURE = { seen:null, serial:0, gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedSpan: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
+const EXPOSURE = { seen:null, gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedSpan: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
 const _mPeak = new Float32Array(EXPOSURE.n + 512), _mFoot = new Float32Array(EXPOSURE.n + 512), _mFootOwn = new Float32Array(EXPOSURE.n + 512), _mW = new Float32Array(EXPOSURE.n + 512), _mIdx = new Uint32Array(EXPOSURE.n + 512);
 // Peak display value (at exposure 1) and pixel footprint of one galaxy.
 function galaxyPeak(MV, hKpc, d, pxScale, out) {
@@ -622,10 +622,9 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         const n = Math.min(EXPOSURE.n, cat.count);
         EXPOSURE.sample = new Int32Array(n);
         for (let k = 0; k < n; k++) EXPOSURE.sample[k] = Math.floor((k + 0.5) * cat.count / n);
-        EXPOSURE.seen=new Uint32Array(cat.count);
+        EXPOSURE.seen=new Int32Array(cat.count);
     }
-    EXPOSURE.serial=(EXPOSURE.serial+1)>>>0;
-    if(!EXPOSURE.serial){EXPOSURE.seen.fill(0);EXPOSURE.serial=1;}
+    EXPOSURE.seen.fill(-1);
     const e = viewRot.elements;
     const pos = cat.pos, MV = cat.MV;
     const w = cat.count / EXPOSURE.sample.length;
@@ -638,7 +637,7 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         if (!(d > 1e-4) || !inView(e, x, y, z, tanX, tanY)) continue;
         galaxyPeak(MV[i], cat.hKpc[i], d, pxScale, _pf);
         _mPeak[m] = _pf[0]; _mFoot[m] = _pf[1] * w; _mFootOwn[m] = _pf[1]; _mW[m] = 1; m++;
-        EXPOSURE.seen[i]=EXPOSURE.serial;
+        EXPOSURE.seen[i]=m-1;
     }
     // The stride sample can miss the very galaxy surrounding the camera.
     // Include resolved-near sources exactly once from their current apparent
@@ -653,7 +652,7 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
         const reach=(mesh.userData.maxScaleKpc*.1+mesh.userData.maxDeltaMpc)/minFactor;
         const reach2=reach*reach;
         for(let k=0;k<c.count && m<_mPeak.length;k++){
-            const i=c.gid[k];if(EXPOSURE.seen[i]===EXPOSURE.serial) continue;
+            const i=c.gid[k];
             const rx=c.unit[k*3]-crx,ry=c.unit[k*3+1]-cry,rz=c.unit[k*3+2]-crz;
             const chi2=rx*rx+ry*ry+rz*rz;if(chi2>reach2) continue;
             const chi=Math.sqrt(chi2),u=Math.min(LC_N-1,chi/CHI_MAX_MPC*(LC_N-1)),j=Math.floor(u),f=u-j;
@@ -662,8 +661,10 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
             const d=Math.hypot(x,y,z),h=c.phot[k*4+2];
             if(d>h*.1 || !inView(e,x,y,z,tanX,tanY,8*h*.001/Math.max(d,1e-6))) continue;
             galaxyPeak(c.phot[k*4],h,d,pxScale,_pf);
-            _mPeak[m]=_pf[0];_mFootOwn[m]=Math.min(_pf[1],screenPx);_mFoot[m]=_mFootOwn[m];_mW[m]=1;m++;
-            EXPOSURE.seen[i]=EXPOSURE.serial;
+            _pf[0]*=galaxyInteriorMeterBoost(d/Math.max(h*.001,1e-10),c.shape[k*4+3],c.phot[k*4+3]);
+            const slot=EXPOSURE.seen[i]>=0?EXPOSURE.seen[i]:m++;
+            _mPeak[slot]=_pf[0];_mFootOwn[slot]=Math.min(_pf[1],screenPx);_mFoot[slot]=_mFootOwn[slot];_mW[slot]=1;
+            EXPOSURE.seen[i]=slot;
         }
     }
     const lg = state.lg;
@@ -689,6 +690,8 @@ function meterExposure(camGC, viewRot, pxScale, tanX, tanY, screenPx) {
             const rad = 8 * ph[k * 4 + 2] * 1e-3 / Math.max(d, 1e-6);
             if (!Number.isFinite(d) || !inView(e, x, y, z, tanX, tanY, rad)) continue;
             galaxyPeak(ph[k * 4], ph[k * 4 + 2], d, pxScale, _pf);
+            const q0=lg.mesh.geometry.attributes.aShape.array[k*4+3];
+            _pf[0]*=galaxyInteriorMeterBoost(d/Math.max(ph[k*4+2]*.001,1e-10),q0,ph[k*4+3]);
             _mPeak[m] = _pf[0]; _mFootOwn[m] = Math.min(_pf[1], screenPx); _mFoot[m] = _mFootOwn[m] * wk; _mW[m] = wk; m++;
         }
     }

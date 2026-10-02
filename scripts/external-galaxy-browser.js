@@ -232,6 +232,7 @@ export function capture() {
         exactCenterPosition: state.test.view !== 'exactcenter' || actualCenterOffsetLy < 1e-6,
         nearCenterPosition: state.test.view !== 'nearcenterbehind' || Math.abs(actualCenterOffsetLy - state.test.offsetLy) < 1e-5,
         centerFixtureSeesLight: !centerFixture || (coverage.conservativeSupportRayFraction > .9 && diagnostic.pixels.nonblackFraction > .005),
+        centerMeanLumaBounded: !centerFixture || diagnostic.pixels.meanLuma < 215,
         boundedNearExposure: !exposureComparison.boundedNearCase || (Number.isFinite(exposureComparison.ratio) && exposureComparison.ratio <= exposureComparison.maxRatio),
         offAxisFixtureActuallyOffAxis: state.test.view !== 'offaxis' || coverage.centerOutside,
         supportSurvivesCenterCull: !['behind', 'offaxis'].includes(state.test.view) ||
@@ -241,7 +242,7 @@ export function capture() {
         state: { target: state.test.target, type: record.type, provenance: record.provenance, time: G.t, camera,
             actualCenterScene: record.center.toArray(), distanceScaleLengths: s.camera.position.distanceTo(record.center) / record.scale,
             scaleKpc: record.scale / MPC * 1000, actualCenterOffsetLy, requestedCenterOffsetLy: state.test.offsetLy ?? null,
-            centerPlacement: state.centerPlacement, exposureComparison, normal: record.normal.toArray(), axialRatio: record.q,
+            centerPlacement: state.centerPlacement, centerMeanLumaLimit: centerFixture ? 215 : null, exposureComparison, normal: record.normal.toArray(), axialRatio: record.q,
             targetChunkRepresentation: record.mesh.isPoints ? 'points' : 'quads', chunkInstances: record.mesh.geometry.attributes.aT.count,
             population: population.galaxyPopulationStatus(), tides: mergerTidesStatus(), uniforms, mobile: s.renderQuality.mobile,
             render: { ...s.renderer.info.render }, memory: { ...s.renderer.info.memory } },

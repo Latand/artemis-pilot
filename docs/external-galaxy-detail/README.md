@@ -103,3 +103,8 @@ also bypass the coarse population sampling stride, at their current apparent
 positions. A squared-distance bound limits extra work. The regression suite
 checks bounded near-view gain against the same target's normal-view exposure;
 visibility alone is not acceptance if a source becomes washed out.
+
+Inside the luminous core the meter uses a smooth-column upper bound from the
+same disk/bulge scales and flattening, instead of the distant disk-average
+peak. This display-only adaptation prevents an exact-center sky from washing
+out. It blends back to the exterior meter within one scale length.
