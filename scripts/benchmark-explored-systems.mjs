@@ -5,6 +5,7 @@
 // --validate checks test-only hooks for both revisions without a browser.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { resolve } from 'node:path';
@@ -38,6 +39,27 @@ function once(source, token, replacement) {
     assert.equal(source.split(token).length, 2, `Paired benchmark hook changed: ${token}`);
     return source.replace(token, replacement);
 }
+function fineFrameSource(source) {
+    const start = source.indexOf('function frame() {');
+    const end = source.indexOf('// setAnimationLoop lets WebXR', start);
+    assert(start >= 0 && end > start, 'Diagnostic frame extraction markers must exist');
+    let body = source.slice(start, end).trim().replace('function frame()', 'function pairedInstrumentedFrame()');
+    const statements = [
+        ['belt', 'beltCursor = advanceMinorSwarm(minorSwarms.belt, minorRenderers.belt, beltCursor, Math.ceil(minorRenderers.belt.capacity / 6), minorBeltStep);'],
+        ['kuiper', 'kuiperCursor = advanceMinorSwarm(minorSwarms.kuiper, minorRenderers.kuiper, kuiperCursor, Math.ceil(minorRenderers.kuiper.capacity / 6), minorKuiperStep);'],
+        ['curated.propagate', 'propagateInto(minorSwarms.curated, G.t, minorRenderers.curated.worldKm, minorSunWorld, 0, minorRenderers.curated.capacity, minorCuratedStep);'],
+        ['curated.upload', 'uploadMinorResiduals(minorRenderers.curated, 0, minorRenderers.curated.capacity);'],
+        ['systemRender', 'updateSystemRender(focusedSystem, G.t, camera, G.focus);'],
+        ['minorVisibility', 'setMinorVisible(cam.dist / K / AU_KM);'],
+    ];
+    for (const [name, statement] of statements) body = once(body, statement,
+        `${name === 'belt' ? 'perfEnd("qa.bodies.beforeMinor", sceneBodiesT0);' : ''}{const qaStart=perfStart();${statement}perfEnd("qa.${name}",qaStart);}`);
+    body = once(body, 'for (let i = 0; i < minorTailPairs.length; i++) {',
+        'const qaTailsStart=perfStart();for (let i = 0; i < minorTailPairs.length; i++) {');
+    body = once(body, 'updateCometTail(minorTailPairs[i], minorTailBody, minorSunWorld, minorTailBody);\n        }',
+        'updateCometTail(minorTailPairs[i], minorTailBody, minorSunWorld, minorTailBody);\n        }perfEnd("qa.cometTails",qaTailsStart);');
+    return body;
+}
 function transform(source, id) {
     id = id.replaceAll('\\', '/').split('?')[0];
     if (id.endsWith('/src/render/catalogStars.js')) return once(source, 'const start = () => loadTier0();',
@@ -47,29 +69,52 @@ function transform(source, id) {
     source = once(source, 'const firstFrameT0 = perfStart();',
         'G.t=0;G.paused=true;G.warp=1;resetEphem();clock.getDelta=()=>1/60;\nconst firstFrameT0 = perfStart();');
     source = once(source, 'renderer.setAnimationLoop(frame);', '// QA: frames delivered explicitly and serially.');
+    // The measured production frame is untouched. Its diagnostic copy is
+    // compiled only after the Earth acceptance windows, never before them.
+    const fine = fineFrameSource(source);
     return source + `\nwindow.__pairedFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;
         const start=performance.now();frame();const cpu=performance.now()-start;renderer.getContext().finish();
-        return {cpuMs:cpu,frameAndFinishMs:performance.now()-start,frameNo};};\n`;
+        return {cpuMs:cpu,frameAndFinishMs:performance.now()-start,frameNo};};
+let pairedFineFrame=null;
+window.__pairedFineFrame=()=>{pairedFineFrame ||= eval(${JSON.stringify('(')} + ${JSON.stringify(fine)} + ${JSON.stringify(')')});
+    clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;const start=performance.now();pairedFineFrame();renderer.getContext().finish();
+    return {frameAndFinishMs:performance.now()-start,frameNo};};
+window.__pairedWorkload=()=>({frameNo,beltCursor,kuiperCursor,nearVisualReady,nearFieldCadence:cam.dist>LY_SCENE*.2?'cosmic':'every-frame',
+    mobile:renderQuality.mobile,loadShed:renderQuality.loadShed,warp:G.warp,gr:G.gr,uiMode:G.uiMode,
+    minor:Object.fromEntries(['belt','kuiper','curated','oort'].map(k=>[k,{capacity:minorRenderers[k].capacity,elementCount:minorSwarms[k].length/6,
+        first:Array.from(minorSwarms[k].slice(0,12)),last:Array.from(minorSwarms[k].slice(-12))}]))});\n`;
 }
 for (const tree of [baselineRoot, root]) for (const path of ['src/main.js', 'src/render/catalogStars.js', 'src/render/bodySurfaceMaterial.js']) {
     const source = await readFile(resolve(tree, path), 'utf8');
     execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(source, '/' + path) });
+    if (path === 'src/main.js') execFileSync(process.execPath, ['--input-type=module', '--check'], { input: '(' + fineFrameSource(source) + ')' });
 }
 if (process.argv.includes('--validate')) {
     console.log(JSON.stringify({ hooks: 'valid', device, fixtures, orders, warmupFrames, samplesPerBlock })); process.exit(0);
 }
 await mkdir(out, { recursive: true });
-const report = { version: 1, device, baselineRevision: revision(baselineRoot), candidateRevision: revision(root),
+const sourceHashes = {};
+for (const [label, tree] of [['A', baselineRoot], ['B', root]]) {
+    sourceHashes[label] = {};
+    for (const path of ['src/universe/minorBodies.js', 'src/universe/renderOrigin.js', 'src/moons.js'])
+        sourceHashes[label][path] = createHash('sha256').update(await readFile(resolve(tree, path))).digest('hex');
+    const mainSource = await readFile(resolve(tree, 'src/main.js'), 'utf8');
+    const start = mainSource.indexOf('const sceneBodiesT0 = perfStart();'), end = mainSource.indexOf('const sceneFocusT0 = perfStart();', start);
+    sourceHashes[label]['main.sceneBodies'] = createHash('sha256').update(mainSource.slice(start, end)).digest('hex');
+}
+
+const report = { version: 3, device, sourceHashes,
+    fixedDiagnosticExperiment: 'After all Earth timing trials:20 fine-substage frames and one120-frame CDP CPU profile of the unchanged production frame per revision, excluded from acceptance samples', baselineRevision: revision(baselineRoot), candidateRevision: revision(root),
     epoch: '2026-10-01T12:00:00.000Z', query, viewport, deviceScaleFactor: 1, browserArgs, warmupFrames, samplesPerBlock, orders,
     hardware: { platform: os.platform(), release: os.release(), arch: os.arch(), logicalCPUs: os.cpus().length,
         cpuModels: [...new Set(os.cpus().map(cpu => cpu.model))], totalMemoryBytes: os.totalmem(), node: process.version },
     authority: 'Paired trials are the performance acceptance measurement because the sequential independent-browser timings confound revision with machine-time drift. Sequential raw reports and their comparison remain available as diagnostics; they are not deleted or relabeled as passing',
     scheduling: 'Both pages disable background timer/render throttling, have no automatic render loop, and are foregrounded before each measured block. The other page executes no application frames',
-    method: 'One Chromium instance; two actual full-app pages; serial alternating ABBA/BAAB blocks; each measured frame is its own browser task including GPU finish',
+    method: 'One Chromium instance; two actual full-app pages; serial alternating ABBA/BAAB blocks; each measured frame is delivered by a normal setTimeout browser task including GPU finish, never directly in a DevTools evaluation task',
     gate: 'For each fixture, median of all five paired trial p95 ratios must be <=1.05. Every trial is mandatory, no outlier removal, replacement trials or selective reruns',
     limitations: 'CI headless Chromium/SwiftShader, not physical desktop/mobile hardware; matched app view with declared unrelated layers disabled',
     omissions: ['AT-HYG streaming', 'background HYG layer', 'procedural background field', 'volumetric galaxy', 'galaxy population', 'gravity overlay', 'bloom'],
-    errors: [], scenarios: [], pages: {}, passed: false };
+    errors: [], scenarios: [], pages: {}, workerEvents: [], passed: false };
 const save = () => writeFile(resolve(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
 let browser;
 const servers = [], caches = [], pages = {};
@@ -78,7 +123,12 @@ async function activate(page) {
     return performance.now() - start;
 }
 async function frame(page) {
-    const start = performance.now(); const sample = await page.evaluate(() => __pairedFrame());
+    const start = performance.now();
+    const sample = await page.evaluate(() => new Promise((resolve, reject) => {
+        // DevTools evaluation work is not reliably exposed to Long Tasks.
+        // Deliver production work on the browser's normal timer task queue.
+        setTimeout(() => { try { resolve(__pairedFrame()); } catch (error) { reject(error); } }, 0);
+    }));
     sample.roundTripMs = performance.now() - start;
     sample.protocolAndSchedulingMs = Math.max(0, sample.roundTripMs - sample.frameAndFinishMs);
     return sample;
@@ -95,7 +145,11 @@ async function frames(page, count) {
 async function state(page) {
     return page.evaluate(() => {
         const q = pairedQA, { cam, camera, renderer } = q.scene;
-        return { focus: q.G.focus, t: q.G.t, paused: q.G.paused,
+        const geometries = new Set(), materials = new Set(); let objects = 0;
+        q.scene.scene.traverse(object => { objects++; if (object.geometry) geometries.add(object.geometry.uuid);
+            for (const material of (Array.isArray(object.material) ? object.material : [object.material]).filter(Boolean)) materials.add(material.uuid); });
+        return { sceneObjects: { objects, geometries: geometries.size, materials: materials.size }, focus: q.G.focus, t: q.G.t, paused: q.G.paused, seed: q.galaxy.getSeed(), epoch: q.epoch.getEpochMs(), workload: __pairedWorkload(),
+            background: { galaxy: q.galaxyRender.galaxyPopulationStatus(), volume: q.volume.galaxyVolumeStats(), tides: q.tides.mergerTidesStatus(), field: q.field.resolvedFieldStatus(), surfaceQueue: q.surfaces.pairedSurfaceQueue() },
             ship: [q.G.x, q.G.y, q.G.z, q.G.vx, q.G.vy, q.G.vz],
             camera: { distance: cam.dist, yaw: cam.yaw, pitch: cam.pitch, target: cam.tgt.toArray(), position: camera.position.toArray(), quaternion: camera.quaternion.toArray(), fov: camera.fov },
             render: { ...renderer.info.memory, programs: renderer.info.programs.length },
@@ -125,6 +179,10 @@ try {
             }
         });
         const page = await context.newPage(); pages[label] = page; page.setDefaultTimeout(120000);
+        page.on('worker', worker => {
+            report.workerEvents.push({ label, event: 'created', url: worker.url(), nodeTime: performance.now() });
+            worker.on('close', () => report.workerEvents.push({ label, event: 'closed', url: worker.url(), nodeTime: performance.now() }));
+        });
         page.on('pageerror', error => report.errors.push({ label, message: error.stack || error.message }));
         page.on('console', message => { if (message.type() === 'error' && /THREE|Shader|GL_INVALID|WebGL/i.test(message.text())) report.errors.push({ label, message: message.text() }); });
         await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ status: 200, body: '' }));
@@ -133,20 +191,39 @@ try {
         report.pages[label] = await page.evaluate(async () => {
             const [scene, input, state, surfaces, bodies] = await Promise.all([import('/src/scene.js'), import('/src/input.js'),
                 import('/src/state.js'), import('/src/render/bodySurfaceMaterial.js'), import('/src/bodies.js')]);
-            window.pairedQA = { scene, input, G: state.G, surfaces, bodies };
+            const [galaxy, epoch, galaxyRender, volume, tides, field] = await Promise.all([
+                import('/src/universe/galaxy.js'), import('/src/epoch.js'), import('/src/render/galaxyPopulationRender.js'),
+                import('/src/render/galaxyVolume.js'), import('/src/render/mergerTidesRender.js'), import('/src/render/resolvedFieldStars.js'),
+            ]);
+            window.pairedQA = { scene, input, G: state.G, surfaces, bodies, galaxy, epoch, galaxyRender, volume, tides, field };
             const gl = scene.renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
             return { mobile: scene.renderQuality.mobile, gpu: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
                 longTaskSupported: PerformanceObserver.supportedEntryTypes.includes('longtask') };
         });
         assert.equal(report.pages[label].mobile, mobile, 'Production device quality must match request');
         assert(report.pages[label].longTaskSupported, 'Long-task observation must be supported for the acceptance gate');
+        await activate(page);
+        const probe = await page.evaluate(() => new Promise(resolve => setTimeout(() => {
+            const start = performance.now(); while (performance.now() - start < 80) { /* deliberate one-time observer probe */ }
+            resolve({ start, end: performance.now() });
+        }, 0)));
+        await page.waitForFunction(probe => {
+            for (const entry of __pairedObserver.takeRecords()) __pairedLongTasks.push({ startTime: entry.startTime, duration: entry.duration });
+            return __pairedLongTasks.some(entry => Math.min(entry.startTime + entry.duration, probe.end) - Math.max(entry.startTime, probe.start) >= 70);
+        }, probe, { timeout: 10000 });
+        report.pages[label].observerProbe = await page.evaluate(probe => {
+            const observed = __pairedLongTasks.filter(entry => Math.min(entry.startTime + entry.duration, probe.end) - Math.max(entry.startTime, probe.start) >= 70);
+            __pairedObserver.takeRecords(); __pairedLongTasks.length = 0;
+            return { ...probe, deliberateBusyMs: 80, minimumObservedMs: 70, observed, passed: observed.length > 0, clearedBeforeWarmup: true };
+        }, probe);
+        assert(report.pages[label].observerProbe.passed, 'The actual timer-task observer probe must pass; unsupported zero counts are never accepted');
         const initial = await state(page);
         assert.deepEqual(initial.maps, { night: 1, clouds: 1, moon: true }, 'Normal detail must preload before timing');
         report.pages[label].initial = initial; await save();
     }
     assert.equal(report.pages.A.gpu, report.pages.B.gpu, 'Both pages must share the same renderer implementation');
     for (const fixture of fixtures) {
-        const scenario = { fixture, warmup: {}, trials: [], diagnostics: {} }; report.scenarios.push(scenario);
+        const scenario = { fixture, warmup: {}, trials: [], diagnostics: {}, loadAverageBefore: os.loadavg() }; report.scenarios.push(scenario);
         for (const label of ['A', 'B']) {
             const page = pages[label]; await activate(page);
             await page.evaluate(fixture => {
@@ -159,6 +236,9 @@ try {
             scenario.warmup[label].push(...await frames(page, 4));
         }
         scenario.before = { A: await state(pages.A), B: await state(pages.B) };
+        scenario.activeWorkersBefore = Object.fromEntries(['A', 'B'].map(label => [label, pages[label].workers().map(worker => worker.url())]));
+        assert.equal(scenario.before.A.seed, scenario.before.B.seed); assert.equal(scenario.before.A.epoch, scenario.before.B.epoch);
+        assert.deepEqual(scenario.before.A.workload, scenario.before.B.workload, 'Exact seed, minor-swarm records, capacities and frame cadence must match');
         assert.deepEqual(scenario.before.A.camera, scenario.before.B.camera, `${fixture.name}: matched camera pose`);
         assert.deepEqual(scenario.before.A.ship, scenario.before.B.ship, `${fixture.name}: matched paused ship`);
         assert.deepEqual(scenario.before.A.maps, scenario.before.B.maps, `${fixture.name}: matched preloaded maps`);
@@ -169,7 +249,7 @@ try {
                 const startTime = await page.evaluate(() => performance.now());
                 const samples = await frames(page, samplesPerBlock);
                 const endTime = await page.evaluate(() => performance.now());
-                const block = { index: blockIndex + 1, label, activationMs, startTime, endTime, samples,
+                const block = { index: blockIndex + 1, label, activationMs, loadAverage: os.loadavg(), startTime, endTime, samples,
                     frame: summarize(samples.map(s => s.frameAndFinishMs)), cpu: summarize(samples.map(s => s.cpuMs)),
                     protocolAndScheduling: summarize(samples.map(s => s.protocolAndSchedulingMs)), roundTrip: summarize(samples.map(s => s.roundTripMs)) };
                 trial.blocks.push(block); await save();
@@ -216,6 +296,48 @@ try {
             } finally { await page.evaluate(() => { __PERF.setEnabled(false); window.__pairedUIObserver?.disconnect(); }); }
             if (label === 'B') assert.equal(scenario.diagnostics.B.systemControlHiddenWrites.length, 0,
                 `${fixture.name}: steady-state system-control subtree must receive no hidden-attribute writes in twenty production frames`);
+            if (fixture.name === 'earth-near') {
+                const diagnostic = scenario.diagnostics[label];
+                diagnostic.activeWorkers = page.workers().map(worker => worker.url());
+                await page.evaluate(() => { __PERF.setEnabled(true); __PERF.clear(); });
+                try {
+                    diagnostic.fineFrames = [];
+                    for (let i = 0; i < 20; i++) diagnostic.fineFrames.push(await page.evaluate(() => new Promise((resolve, reject) => setTimeout(() => {
+                        try {
+                            const frame = __pairedFineFrame();
+                            resolve({ ...frame, stages: Object.fromEntries(Object.entries(__PERF.last).filter(([name]) => name.startsWith('qa.'))) });
+                        } catch (error) { reject(error); }
+                    }, 0))));
+                    diagnostic.fineStages = await page.evaluate(() => structuredClone(__PERF.samples));
+                    diagnostic.workload = await state(page);
+                } finally { await page.evaluate(() => __PERF.setEnabled(false)); }
+                if (process.env.PAIRED_CPU_PROFILE !== '0') {
+                    const session = await page.context().newCDPSession(page);
+                    const browserSession = await browser.newBrowserCDPSession();
+                    const processBefore = await browserSession.send('SystemInfo.getProcessInfo');
+                    await session.send('Profiler.enable'); await session.send('Profiler.setSamplingInterval', { interval: 1000 });
+                    await session.send('Performance.enable');
+                    const before = await session.send('Performance.getMetrics');
+                    await session.send('Profiler.start');
+                    diagnostic.profileFrames = await frames(page, 120);
+                    const { profile } = await session.send('Profiler.stop');
+                    const after = await session.send('Performance.getMetrics');
+                    const processAfter = await browserSession.send('SystemInfo.getProcessInfo');
+                    await browserSession.detach();
+                    const file = `${device}-earth-${label}.cpuprofile`;
+                    await writeFile(resolve(out, file), JSON.stringify(profile));
+                    const byId = new Map(profile.nodes.map(node => [node.id, node])), selfMicros = new Map();
+                    for (let i = 0; i < (profile.samples || []).length; i++) {
+                        const id = profile.samples[i]; selfMicros.set(id, (selfMicros.get(id) || 0) + (profile.timeDeltas?.[i] || 0));
+                    }
+                    diagnostic.cpuProfile = { file, sampleIntervalUs: 1000, frames: 120,
+                        topSelfTime: [...selfMicros].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([id, microseconds]) => ({ microseconds, ...byId.get(id)?.callFrame })),
+                        metricsBefore: before.metrics, metricsAfter: after.metrics,
+                        processCPU: processAfter.processInfo.map(process => ({ ...process, cpuDeltaSeconds: process.cpuTime - (processBefore.processInfo.find(before => before.id === process.id)?.cpuTime || 0) })),
+                        processAttributionNote: 'CPU deltas for all Chromium process types, including GPU, over the same120-frame profile window; only this page is manually rendering' };
+                    await session.send('Profiler.disable'); await session.detach();
+                }
+            }
         }
         await save();
     }
