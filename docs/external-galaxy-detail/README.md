@@ -13,7 +13,9 @@ failure modes. This was independent of gravity or the galaxy's physical size.
 
 Every external population entry uses the same deterministic structure path:
 measured Local Volume/2MRS galaxies and the labeled statistical completion.
-Small sources retain the inexpensive PSF/profile path. Larger sources retain
+Small sources retain the inexpensive PSF/profile path. One shared 64 KiB
+scalar noise texture keeps the detail shader compact; it is not a galaxy
+image and is not replaced at zoom. Larger sources retain
 intrinsic-coordinate spiral branches, patchy dust, unresolved star-forming
 associations and color variation, filtered by each pixel's footprint. Irregular
 systems use asymmetric complexes; spheroids stay smooth rather than gaining
@@ -69,3 +71,13 @@ The target diagnostic makes clipping and center-behind errors visible without
 other galaxies masking them. See its generated reports for omissions, poses,
 exposure, assertions, timings and source revisions. Screenshots must be
 reviewed before this draft is called visually complete.
+
+### Browser-driven performance revision
+
+The first browser captures exposed minute-long shader setup in Chromium
+SwiftShader, despite 6–7 ms settled frames in one desktop view. Repeated
+arithmetic noise graphs and duplicated line-of-sight detail calls were
+replaced by one shared deterministic scalar field and footprint averaging.
+The capture harness now records submission/finish/setup phases separately.
+The browser watchdog remains unchanged; successful screenshots and current
+head reports, not the isolated Mesa diagnostic, are the acceptance evidence.

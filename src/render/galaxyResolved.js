@@ -68,32 +68,21 @@ vec3 galResolvedLight(vec3 ray) {
     float s1 = mix(1.0,.7,vPhysical.z), s2 = mix(.12,.1,vPhysical.z);
     vec2 diskSample=galGaussian(o,d,q,s1);
     float disk=diskSample.x,bulge=galGaussian(o,d,q2,s2).x;
+    if(vFacePeak.x*disk+vFacePeak.y*bulge<1e-7) return vec3(0.0);
     // Analytic first moment of the forward ray, not a plane intersection.
     // Inside the disk this still samples material AHEAD of the observer.
     vec3 p=o+diskSample.y*d;
     float footprint = max(length(dFdx(p.xy)),length(dFdy(p.xy)));
     float inclination=abs(d.z);
-    vec3 structure=galDiskLight(p.xy/s1,footprint/s1,vColor,inclination);
-    // A thin face-on column has one resolved local patch. Long in-plane rays
-    // sample several intrinsic patches, instead of painting one centroid's
-    // blue arm across the whole integrated column like a projected sheet.
-    if(inclination<.5){
-        float spread=.8*s1/sqrt(dot(d.xy,d.xy)+d.z*d.z/(q*q));
-        vec3 front=o+max(0.0,diskSample.y-spread)*d;
-        vec3 back=o+(diskSample.y+spread)*d;
-        vec3 along=.5*structure+.25*galDiskLight(front.xy/s1,footprint/s1,vColor,inclination)
-            +.25*galDiskLight(back.xy/s1,footprint/s1,vColor,inclination);
-        structure=mix(structure,along,1.0-smoothstep(.2,.5,inclination));
-    }
+    // Long, almost in-plane sightlines average substructure over depth.
+    // Broaden its footprint rather than cloning the expensive detail shader
+    // for several LOS samples (which stalls some browser shader compilers).
+    float materialFootprint=max(footprint/s1,.12*(1.0-smoothstep(.15,.5,inclination)));
+    vec3 structure=galDiskLight(p.xy/s1,materialFootprint,vColor,inclination);
     // Nearby rays keep a continuous finite-thickness dust band. As in the
     // old display model, this attenuates this galaxy's light only.
     float edge = 1.0-smoothstep(6.0,8.0,length(p/(s1*vec3(1.0,1.0,max(q,.15)))));
-    float lane=galDustBand(p,footprint,q);
-    if(inclination<.5){
-        float spread=.7*s1/sqrt(dot(d.xy,d.xy)+d.z*d.z/(q*q));
-        lane=.5*lane+.25*galDustBand(o+max(0.0,diskSample.y-spread)*d,footprint,q)
-            +.25*galDustBand(o+(diskSample.y+spread)*d,footprint,q);
-    }
+    float lane=galDustBand(p,max(footprint,.08*(1.0-inclination)),q);
     float dust=mix(1.0,lane,(1.0-vPhysical.z)*(1.0-smoothstep(.15,.55,inclination)));
     vec3 coreColor = galUnitLuma(vColor*vec3(1.08,1.0,.88));
     return edge * (vFacePeak.x*disk*structure*mix(1.0,dust,.75)

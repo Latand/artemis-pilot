@@ -37,7 +37,7 @@ import * as THREE from "three";
 import { coarsenGalaxyWells, flowMassFromMagnitude } from '../flowScaleMath.js';
 import { MERGER } from '../universe/localGroupOrbit.js';
 import { TIDES } from '../universe/mergerTides.js';
-import { galaxySeed, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
+import { galaxySeed, galaxyNoisePixels, needsGalaxyQuads, MORPH_VARYINGS, MORPH_GLSL } from "./galaxyMorphology.js";
 import { RESOLVED_VARYINGS, RESOLVED_GLSL } from "./galaxyResolved.js";
 import { K, MPC_KM } from "../constants.js";
 import { galaxyDisplayGain, galaxyVolumeMeter } from "./galaxyVolume.js";
@@ -330,6 +330,11 @@ void main() {
     float edge = 1.0 - smoothstep(mix(.55,.75,vMorph.z), 1.0, length(e));
     float yl = vPx.y / max(0.18 * vAB.y, 0.5);
     float lane = 1.0 - vLane * exp(-yl * yl) * smoothstep(0.0, 0.6, r1);
+#ifdef GAL_POINTS
+    if(edge<=0.0) discard;
+#else
+    if(vPhysical.w<=0.0 && edge<=0.0) discard;
+#endif
     vec3 c=vec3(0.0);
 #ifndef GAL_POINTS
     if(vPhysical.w<1.0) c=galStructuredLight(vPx,vAB,vW,vColor,lane)*edge;
@@ -361,6 +366,10 @@ function quadGeometry() {
 }
 
 function makeShared() {
+    const noise=new THREE.DataTexture(galaxyNoisePixels(),256,256,THREE.RedFormat,THREE.UnsignedByteType);
+    noise.wrapS=noise.wrapT=THREE.RepeatWrapping;
+    noise.minFilter=noise.magFilter=THREE.LinearFilter;
+    noise.generateMipmaps=false;noise.needsUpdate=true;noise.name="galaxy.sharedNoise";
     const evoTex = new THREE.DataTexture(evolutionTable(), EVOLUTION_NT, EVOLUTION_T.length, THREE.RGBAFormat, THREE.FloatType);
     evoTex.minFilter = THREE.NearestFilter; evoTex.magFilter = THREE.NearestFilter;
     evoTex.needsUpdate = true;
@@ -372,6 +381,7 @@ function makeShared() {
         uWorldToView: { value: new THREE.Matrix3() },
         uRayProjection: { value: new THREE.Vector4(1,1,0,0) },
         uLightCone: { value: tex },
+        uGalaxyNoise: { value: noise },
         uChiMax: { value: CHI_MAX_MPC },
         uAObs: { value: 1 },
         uMpcScene: { value: MPC_SCENE },

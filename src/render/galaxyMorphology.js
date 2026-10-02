@@ -9,6 +9,14 @@ export function galaxySeed(id) {
     return ((x ^ (x >>> 15)) >>> 0) / 4294967296;
 }
 
+// One shared 64 KiB repeatable scalar field replaces large repeated arithmetic
+// noise graphs in every shader. It is not a per-galaxy image or zoom LOD.
+export function galaxyNoisePixels(size = 256) {
+    const pixels=new Uint8Array(size*size);
+    for(let i=0;i<pixels.length;i++) pixels[i]=Math.floor(galaxySeed(i+17713)*256);
+    return pixels;
+}
+
 export function needsGalaxyQuads(distanceMpc, radiusMpc, maxScaleKpc, pxScale, maxPointPx, wasQuad = false) {
     const nearest = Math.max(1e-6, distanceMpc - radiusMpc);
     const reachPx = 8 * maxScaleKpc * 0.001 / nearest * pxScale;
@@ -28,10 +36,10 @@ float galHash(vec2 p) {
     p3 += dot(p3,p3.yzx+33.33);
     return fract((p3.x+p3.y)*p3.z);
 }
+uniform sampler2D uGalaxyNoise;
 float galNoise(vec2 p) {
-    vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
-    return mix(mix(galHash(i),galHash(i+vec2(1,0)),f.x),
-        mix(galHash(i+vec2(0,1)),galHash(i+vec2(1,1)),f.x),f.y);
+    vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);
+    return texture2D(uGalaxyNoise,(i+f+.5)/256.0).r;
 }
 float galFilteredNoise(vec2 p,float frequency,float footprint) {
     float keep=1.0-smoothstep(.25,1.2,frequency*footprint);
@@ -63,7 +71,10 @@ float galAssociations(vec2 p,float footprint,float frequency) {
 }
 vec3 galUnitLuma(vec3 c) { return c/max(dot(c,vec3(.2126,.7152,.0722)),1e-5); }
 vec3 galDiskLight(vec2 p,float footprint,vec3 color,float inclination) {
-    float r=length(p), theta=r>1e-5?atan(p.y,p.x):0.0;
+    float r=length(p);
+    if(vMorph.z<=0.0) return color;
+    if(r<=.16 || r>=7.0) return galUnitLuma(color*mix(vec3(1.0),vec3(1.07,1.0,.89),vMorph.z));
+    float theta=atan(p.y,p.x);
     float seed=vMorph.x*6.283185307, T=vMorph.y;
     float disk=step(.5,T)*(1.0-step(8.5,T)), irregular=step(8.5,T);
     vec2 seedOffset=vec2(37.0*vMorph.x,71.0*vMorph.x);

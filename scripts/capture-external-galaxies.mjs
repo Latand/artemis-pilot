@@ -35,8 +35,12 @@ const revision = execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encodi
 const report = { version: 1, root, revision, device, suite, baseline, expectedCases: tests.map(t => t.name),
     omissions: ['Milky Way volume', 'resolved stellar field', 'HYG background catalog', 'legacy cosmic fallback'],
     productionPaths: ['full application frame', 'real galaxy catalog worker', 'population shader and morphology', 'point/quad LOD', 'camera and depth tiers', 'production exposure meter', 'merger evolution and tides'],
-    frames: [], errors: [], warnings: [], failedRequests: [], failedChecks: [], completed: false };
+    frames: [], errors: [], warnings: [], failedRequests: [], failedChecks: [], phases: [], completed: false };
 const save = () => writeFile(resolve(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
+const phase = async name => {
+    const event = { case: report.currentCase || 'startup', source: 'node', name, utc: new Date().toISOString(), elapsedMs: Math.round(performance.now()) };
+    report.capturePhase = name; report.phases.push(event); console.log('QA PHASE', JSON.stringify(event)); await save();
+};
 let server, browser;
 // Hard process bound also terminates a stuck WebGL driver, for which ordinary
 // Playwright locator timeouts cannot interrupt a pending page.evaluate.
@@ -45,6 +49,7 @@ const watchdog = setTimeout(() => {
     void save().finally(() => process.exit(124));
 }, 8 * 60_000);
 try {
+    await phase('server-create');
     server = await createServer({ root, configFile: false, logLevel: 'error', server: { host: '127.0.0.1', port: 0, hmr: false },
         plugins: [{ name: 'external-galaxy-qa-only', enforce: 'pre',
             resolveId(id) { if (id === 'virtual:galaxy-preview') return '\0no-qa-preview'; if (id === '/__external_galaxy_qa__.js') return '\0external-qa'; },
@@ -52,6 +57,7 @@ try {
             transform: transformExternalGalaxySource,
         }] });
     await server.listen();
+    await phase('browser-launch');
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined,
         args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
     const mobile = device === 'mobile';
@@ -62,23 +68,35 @@ try {
     const page = await context.newPage(); page.setDefaultTimeout(60_000);
     page.on('pageerror', e => report.errors.push({ case: report.currentCase || 'startup', kind: 'javascript', message: e.stack || e.message }));
     page.on('console', m => { const message = m.text();
+        if (message.startsWith('EXTERNAL_QA_PHASE ')) {
+            const event = { ...JSON.parse(message.slice('EXTERNAL_QA_PHASE '.length)), case: report.currentCase || 'startup', source: 'browser', utc: new Date().toISOString() };
+            report.browserPhase = event.name; report.phases.push(event); console.log('QA PHASE', JSON.stringify(event));
+        }
         if (m.type() === 'error') report.errors.push({ case: report.currentCase || 'startup', kind: 'console', message });
         if (m.type() === 'warning' && /WebGL|GL_INVALID|shader|texture|worker failed/i.test(message)) report.warnings.push({ case: report.currentCase || 'startup', message });
     });
     page.on('requestfailed', r => report.failedRequests.push({ url: r.url(), message: r.failure()?.errorText }));
+    await phase('page-navigation');
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&dpr=1&tier1=0&realsky=0&field=0&galaxyvol=0&galaxy=0&galadapt=0&river=0&lens=0&bloom=0&compile=0&focus=earth&dist=25`, { waitUntil: 'domcontentloaded' });
+    await phase('app-and-catalog-ready');
     await page.waitForFunction(() => window.__AP_READY && window.__externalGalaxyApp && window.__galaxyStatus?.().ready);
+    await phase('qa-initialize');
     report.renderer = await page.evaluate(async () => { window.externalQA = await import('/__external_galaxy_qa__.js'); return externalQA.initialize(); });
     assert.equal(report.renderer.mobile, mobile, 'Mobile production quality path mismatch');
     report.browser = await browser.version(); await save();
     for (const test of tests) {
         report.currentCase = test.name; const start = performance.now();
         try {
+            await phase('fixture-prepare');
             const fixture = await page.evaluate(test => externalQA.prepare(test), test);
+            await phase('epoch-ready');
             if (test.epochGyr > 1) await page.waitForFunction(() => externalQA.epochReady(), null, { timeout: 60_000 });
+            await phase('steady-frames');
             const costs = [];
             for (let i = 0; i < 2; i++) costs.push(await page.evaluate(() => externalQA.frame()));
+            await phase('capture-app-and-target');
             const result = await page.evaluate(() => externalQA.capture());
+            await phase('write-pngs');
             await writeFile(resolve(out, `${test.name}.png`), Buffer.from(result.png.split(',')[1], 'base64'));
             await writeFile(resolve(out, `${test.name}-target.png`), Buffer.from(result.targetPng.split(',')[1], 'base64'));
             delete result.png; delete result.targetPng;
@@ -86,7 +104,8 @@ try {
             report.failedChecks.push(...failed.map(check => ({ case: test.name, check })));
             report.frames.push({ name: test.name, test, fixture, ...result, frameAndFinishMs: costs, totalMs: performance.now() - start });
             // Includes app UI/context, before the diagnostic-only capture.
-            if (report.frames.length === 1) { await page.evaluate(() => externalQA.frame()); await page.screenshot({ path: resolve(out, `${test.name}-ui.png`) }); }
+            if (report.frames.length === 1) { await phase('context-ui-frame'); await page.evaluate(() => externalQA.frame()); await phase('context-ui-screenshot'); await page.screenshot({ path: resolve(out, `${test.name}-ui.png`) }); }
+            await phase('case-complete');
             console.log(`CAPTURE ${device}/${suite}/${test.name}: ${failed.length ? 'FAIL ' + failed.join(',') : 'PASS'} ${Math.round(performance.now() - start)}ms`);
         } catch (e) { report.errors.push({ case: test.name, kind: 'capture', message: e.stack || String(e) }); console.error(e); }
         await save();

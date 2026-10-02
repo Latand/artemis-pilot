@@ -10,6 +10,9 @@ import { renderLinearFrame } from '/src/render/linearFrame.js';
 const MPC = K * MPC_KM;
 const GYR_S = 1e9 * 31557600;
 const state = { test: null, gid: null, desired: null, shaderErrors: [] };
+const mark = name => console.log('EXTERNAL_QA_PHASE ' + JSON.stringify({ name, browserMs: Math.round(performance.now()),
+    programs: s.renderer.info.programs?.length || 0, geometries: s.renderer.info.memory.geometries,
+    textures: s.renderer.info.memory.textures }));
 const demand = (pass, message) => { if (!pass) throw new Error(message); };
 const v3 = a => new THREE.Vector3(...a);
 const axisMap = p => new THREE.Vector3(p[0], p[2], -p[1]);
@@ -74,14 +77,20 @@ export function prepare(test) {
     // A state frame first positions M31 at this epoch, then the next updates
     // its retarded position at the new observer. A second placement absorbs
     // that small shift; both revisions receive the same cadence.
-    frame(); positionCamera(test, targetRecord()); frame(); positionCamera(test, targetRecord());
+    mark('prepare-initial-state'); frame();
+    mark('prepare-first-camera'); positionCamera(test, targetRecord()); frame();
+    mark('prepare-refine-camera'); positionCamera(test, targetRecord());
     population.externalGalaxyQaResetMeter();
     const r = targetRecord(); state.gid = r.gid;
     return { name: test.target, id: r.gid, type: r.type, provenance: r.provenance, scaleKpc: r.scale / MPC * 1000,
         normalScene: r.normal.toArray(), catalogCenterScene: r.center.toArray(), requestedCamera: state.desired, epochSeconds: G.t };
 }
 export function epochReady() { const status = mergerTidesStatus(); if (status.error) throw new Error(status.error); return !status.started || status.ready; }
-export function frame() { const start = performance.now(); window.__externalGalaxyApp.frame(); s.renderer.getContext().finish(); return performance.now() - start; }
+export function frame() {
+    mark('app-frame-start'); const start = performance.now(); window.__externalGalaxyApp.frame();
+    mark('app-frame-submitted'); s.renderer.getContext().finish(); const elapsed = performance.now() - start;
+    mark('app-frame-finished'); return elapsed;
+}
 function pixels() {
     const gl = s.renderer.getContext(), w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
     const data = new Uint8Array(w * h * 4); gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, data);
@@ -116,6 +125,7 @@ function geometryCoverage(r) {
 function targetDiagnostic(record) {
     // A copy of only the actual live instance's attribute row. Material and
     // every uniform are the exact objects just used by the full app.
+    mark('target-geometry-copy');
     const original = record.mesh, geometry = original.geometry.clone(), index = record.index;
     for (const [name, attribute] of Object.entries(original.geometry.attributes)) {
         if (!name.startsWith('a') && !(original.isPoints && name === 'position')) continue;
@@ -135,9 +145,14 @@ function targetDiagnostic(record) {
         original.material.uniforms.uDepthRange.value.set(s.camera.near, 1e38);
         s.renderer.setRenderTarget(null); s.renderer.autoClear = true;
         const draw = () => s.renderer.render(scene, s.camera);
+        mark('target-draw-start');
         if (!renderLinearFrame(s.renderer, draw)) draw();
+        mark('target-draw-submitted');
         s.renderer.getContext().finish();
-        return { png: s.renderer.domElement.toDataURL('image/png'), pixels: pixels() };
+        mark('target-png-read');
+        const png = s.renderer.domElement.toDataURL('image/png');
+        mark('target-pixel-read'); const stats = pixels(); mark('target-diagnostic-done');
+        return { png, pixels: stats };
     } finally {
         original.material.uniforms.uDepthRange.value.copy(depth);
         s.camera.near = near; s.camera.far = far; s.camera.updateProjectionMatrix(); s.renderer.autoClear = autoClear; geometry.dispose();
@@ -145,7 +160,8 @@ function targetDiagnostic(record) {
 }
 export function capture() {
     frame(); const record = targetRecord(), gl = s.renderer.getContext(); s.camera.updateMatrixWorld();
-    const png = s.renderer.domElement.toDataURL('image/png'), appPixels = pixels();
+    mark('app-png-read'); const png = s.renderer.domElement.toDataURL('image/png');
+    mark('app-pixel-read'); const appPixels = pixels(); mark('app-pixels-done');
     const coverage = geometryCoverage(record), diagnostic = targetDiagnostic(record), errors = [];
     for (let i = 0; i < 16; i++) { const error = gl.getError(); if (!error) break; errors.push(error); }
     const material = record.mesh.material, uniforms = {};

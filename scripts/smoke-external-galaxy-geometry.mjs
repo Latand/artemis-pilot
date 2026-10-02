@@ -129,3 +129,11 @@ assert.equal(galaxyScreenBounds([0,0,2],1),null,'Fully behind-eye support is cul
 assert.equal(galaxyScreenBounds([30,0,-10],1),null,'Fully offscreen support is culled');
 assert(containedSamples>10000);
 console.log(`PASS external galaxy Gaussian flux/profile, independent ray quadrature (max relative ${worstQuadratureRelative.toExponential(2)}), inside/edge-on/far/scale invariance, and ${containedSamples} conservative projected sphere samples`);
+
+// The shared deterministic noise is bounded to one small texture, not one
+// image per galaxy or per zoom level.
+const { galaxyNoisePixels } = await import('../src/render/galaxyMorphology.js');
+const noise=galaxyNoisePixels();
+assert.equal(noise.byteLength,65536);assert.deepEqual(noise,galaxyNoisePixels());
+const mean=noise.reduce((a,b)=>a+b,0)/noise.length;assert(mean>126&&mean<129);
+console.log('PASS shared deterministic 64 KiB morphology noise budget');
