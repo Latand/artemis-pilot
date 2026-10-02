@@ -15,16 +15,18 @@ dead craft settle toward rest.
 panel and the mobile flight systems menu. A persistent violet label and Help
 copy identify it as speculative. It requires the gravity river to be enabled
 and the exterior craft to be visible. This is a bounded local deformation of
-the **drawn** river, plus a fixed set of extra local samples of that same
-source field so the effect remains visible at craft-inspection scale. Violet
+a fixed set of extra local samples of the river source field so the effect remains visible at craft-inspection scale. Violet
 separates these samples from the ordinary gravitational flow. The artistic
 bow compression, aft extension and side twist are not a metric solution,
 propulsion model or claimed physically realizable warp drive.
 
-Turning it off immediately sets its drawing strength to zero. Source field,
+Turning it off immediately sets its drawing strength to zero. The ordinary
+river draw shader remains unchanged; only the violet local samples deform.
+A single CPU sample uses the same prepared source table, softening, dark-energy
+blend and rest-frame subtraction. Source field,
 GPU particle advection, ship forces, trajectory predictions, time control,
 relTravel and observer relView are untouched. The extra samples have one
-optional draw call, 600 vertices desktop / 272 mobile, no textures or render
+optional draw call, 792 vertices desktop / 528 mobile, no textures or render
 targets. The fixed inner bearing carries the cyan channel; it and the inward-set
 spars stay radially clear of the rims for their full 360° sweep. The craft has 13 opaque material batches, seven shared materials,
 9,020 triangles and 273,544 bytes of geometry (versus 7 batches, 8,996

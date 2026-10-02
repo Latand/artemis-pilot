@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 // A compact-support art deformation, not a metric, force or advection term.
-// Used ONLY by draw vertex shaders. No texture feedback receives this result.
+// Used ONLY by the local-sample draw vertex shader. No texture feedback receives this result.
 export const WARP_DRAW_GLSL = /* glsl */`
 uniform vec3 uWarpShip, uWarpAxis;
 uniform float uWarpRadius, uWarpStrength, uWarpPhase;
@@ -23,8 +23,8 @@ vec3 warpDrawPosition(vec3 p) {
 // The normal river volume can span millions of visible hull radii. These
 // bounded extra samples expose its local direction at craft-inspection scale
 // without changing the particles, their source field, or its compute pass.
-export function createWarpRiverLayer(uniforms, flowGLSL, mobile) {
-    const streams = mobile ? 16 : 24, segments = mobile ? 16 : 24;
+export function createWarpRiverLayer(uniforms, mobile) {
+    const streams = mobile ? 16 : 24, segments = 32;
     const positions = new Float32Array(streams * (segments + 1) * 3);
     const indices = new Uint16Array(streams * segments * 2);
     for (let i = 0; i < streams; i++) {
@@ -48,12 +48,12 @@ export function createWarpRiverLayer(uniforms, flowGLSL, mobile) {
     const material = new THREE.ShaderMaterial({
         uniforms,
         vertexShader: /* glsl */`
-            ${flowGLSL}
             ${WARP_DRAW_GLSL}
+            uniform vec3 uWarpFlow;
             varying float vInk;
             void main() {
                 // Same source field and moving frame as the surrounding river.
-                vec3 flow = flowField(uWarpShip);
+                vec3 flow = uWarpFlow;
                 float speed = length(flow);
                 vec3 axis = speed > 1e-10 ? flow / speed : uWarpAxis;
                 vec3 reference = abs(axis.y) < .9 ? vec3(0,1,0) : vec3(1,0,0);
@@ -77,4 +77,38 @@ export function createWarpRiverLayer(uniforms, flowGLSL, mobile) {
     layer.renderOrder = 1;
     layer.visible = false;
     return layer;
+}
+
+// One display-only sample of river.js FLOW_GLSL, using its already prepared
+// center-relative source table. This avoids repeating an identical source loop
+// at every local vertex. Keep softening, attraction direction, DE blend and
+// rest-frame subtraction synchronized with that existing shader.
+export function sampleWarpRiverFlow(uniforms, out) {
+    const u = uniforms, p = u.uWarpShip.value, origin = u.uOrigin.value;
+    const visualBH = Math.min(Math.max(u.uRadius.value * .0008, .45), 64);
+    let vx=0, vy=0, vz=0, px=0, py=0, pz=0;
+    for (let i=0; i<u.uNB.value; i++) {
+        const body=u.uBody.value[i], sink=u.uSink.value[i], hole=u.uHole.value[i];
+        if (!(body.w > 0)) continue;
+        const core=sink+(Math.max(sink,visualBH)-sink)*hole;
+        const soft=sink*.5+(Math.max(sink*.5,core*.35)-sink*.5)*hole;
+        const dx=p.x-body.x, dy=p.y-body.y, dz=p.z-body.z;
+        const r=Math.max(soft,Math.hypot(dx,dy,dz),1e-12);
+        const speed=body.w/Math.sqrt(r)/r, pull=body.w*body.w/r/r/r;
+        vx-=dx*speed; vy-=dy*speed; vz-=dz*speed;
+        px-=dx*pull; py-=dy*pull; pz-=dz*pull;
+    }
+    const de=u.uDE.value;
+    const ex=(p.x-origin.x)*de, ey=(p.y-origin.y)*de, ez=(p.z-origin.z)*de;
+    vx+=ex; vy+=ey; vz+=ez;
+    const raw=Math.hypot(vx,vy,vz), pull=Math.hypot(px,py,pz);
+    if (raw>=1e-12 && pull>=1e-18) {
+        const t=Math.max(0,Math.min(1,(Math.hypot(ex,ey,ez)/raw-.45)/(.92-.45)));
+        const blend=t*t*(3-2*t), k=raw/pull;
+        vx=px*k+(vx-px*k)*blend; vy=py*k+(vy-py*k)*blend; vz=pz*k+(vz-pz*k)*blend;
+    }
+    const frame=u.uFrameVel.value, w=u.uFrameW.value;
+    vx-=frame.x*w; vy-=frame.y*w; vz-=frame.z*w;
+    if (!Number.isFinite(vx+vy+vz)) return out.set(0,0,0);
+    return out.set(vx,vy,vz);
 }

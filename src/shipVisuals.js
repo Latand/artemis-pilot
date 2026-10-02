@@ -28,7 +28,7 @@ export function updateShipVisuals(craft, position, direction, scale, speedKmS, d
     for (const rotor of craft.userData.rotors) rotor.rotation.y = s.motion.angle;
     s.x = position.x; s.y = position.y; s.z = position.z;
     s.dx = direction.x; s.dy = direction.y; s.dz = direction.z;
-    s.radius = Math.min(16, Math.max(.06, scale * 5));
+    s.radius = Math.min(10, Math.max(.036, scale * 3));
     s.visible = visible;
     s.strength = s.enabled && visible ? s.motion.level : 0;
 }

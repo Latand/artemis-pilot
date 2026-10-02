@@ -28,7 +28,7 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts
       - run: node scripts/smoke-ship-model.mjs && node scripts/smoke-ship-motion.mjs
-      - run: npm test && npm run smoke:physics3d && npm run smoke:xrperf && npm run smoke:reltravel && npm run smoke:relview && npm run smoke:gravity-inspector
+      - run: npm test && npm run smoke:science-copy && npm run smoke:river-visual && npm run smoke:physics3d && npm run smoke:xrperf && npm run smoke:reltravel && npm run smoke:relview && npm run smoke:gravity-inspector
       - run: npm run build
   capture:
     name: Motion ${{ matrix.device }}

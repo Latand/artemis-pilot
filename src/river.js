@@ -1,5 +1,5 @@
 import { shipVisuals } from "./shipVisuals.js";
-import { WARP_DRAW_GLSL, createWarpRiverLayer } from "./warpRiver.js";
+import { createWarpRiverLayer, sampleWarpRiverFlow } from "./warpRiver.js";
 import * as THREE from "three";
 import { largeScaleFlowBlend } from './flowScaleMath.js';
 import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, SOI_E, SOI_M, SUN_RADIUS } from "./constants.js";
@@ -88,6 +88,7 @@ const plColors = PL.map(p => new THREE.Color(p.color));
 const C2 = C_LIGHT * C_LIGHT;
 const rsScene = mu => 2 * mu / C2 * K;
 const uniformsShared = {
+    uWarpFlow: { value: new THREE.Vector3() },
     uWarpShip: { value: new THREE.Vector3() },
     uWarpAxis: { value: new THREE.Vector3(0, 1, 0) },
     uWarpRadius: { value: 1 },
@@ -306,7 +307,6 @@ attribute float aSeg;
 varying vec3 vColor;
 varying float vAlong, vPhase;
 ${FLOW_GLSL}
-${WARP_DRAW_GLSL}
 void main() {
     vec3 p = texture2D(uPos, ref).xyz - uCenterShift;
     vec3 v = flowField(p);
@@ -480,7 +480,7 @@ void main() {
     vAlong = segT;
     vPhase = ph + uPhase * kq;
     gl_PointSize = (2.2 + tVis * 1.6) * uPixelRatio;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(warpDrawPosition(pos), 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
 
 const LINE_FRAG = /* glsl */`
@@ -598,7 +598,7 @@ export function initRiver() {
     scene.add(dots);
     // The river fades before its camera-relative volume reaches the far
     // tier. Avoid executing these expensive vertex shaders there a second time.
-    warpLines = createWarpRiverLayer(uniformsShared, FLOW_GLSL, renderQuality.mobile);
+    warpLines = createWarpRiverLayer(uniformsShared, renderQuality.mobile);
     scene.add(warpLines);
     river.warpVertexCount = warpLines.geometry.attributes.position.count;
     registerNearTierOnly(lines, dots, warpLines);
@@ -1083,6 +1083,13 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         riverVRefCy = smoothCenter.y;
         riverVRefCz = smoothCenter.z;
         riverVRefR = smoothR;
+    }
+    if (warpLines.visible) {
+        const flow = uniformsShared.uWarpFlow.value;
+        sampleWarpRiverFlow(uniformsShared, flow);
+        const length = Math.hypot(flow.x, flow.y, flow.z);
+        if (length > 1e-12 && Number.isFinite(length)) flow.set(flow.x / length, flow.y / length, flow.z / length);
+        else flow.copy(uniformsShared.uWarpAxis.value);
     }
     river.vRefRefreshed = vRefDue;
     river.vRefCadence = vRefCadence;

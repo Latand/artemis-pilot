@@ -2253,7 +2253,7 @@ function frame() {
     prevVelAngleVis = velAngle;
     const directionVisualActive = (G.uiMode !== "observe" || VR.active) && G.warp <= 600 && headingRate < 7 && velAngleRate < 7;
     craft.scale.setScalar(cs);
-    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible && G.gr);
+    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible && G.gr && G.uiMode === "pilot");
     dot.scale.setScalar(cd * .014);
     dot.material.opacity = G.dead ? 0 : (cd > 4 ? 1 : Math.max(0, (cd - 1.2) / 2.8));
     updateHeadingArrow(oriX, oriY, oriZ, dirV, cd, directionVisualActive && !G.dead && !cosmicView && !cabinActive, directionAlpha);
