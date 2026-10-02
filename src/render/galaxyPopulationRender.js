@@ -5,7 +5,7 @@
 // Photometry. A galaxy is an extended source. Each one is drawn as a sum of
 // exponential components (disk + bulge for spirals, core + envelope for
 // spheroids) in its projected ellipse, normalised so the integrated display
-// flux is
+// flux before the modeled substructure / dust / display taper is
 //     gain * exposure * L / (4 pi d_A^2) * (1+z)^-4 / Omega_px,
 // the same Lsun pc^-2 sr^-1 -> display conversion (galaxyDisplayGain) the
 // volumetric Milky Way uses. Resolved, that is surface brightness
@@ -768,7 +768,9 @@ export function updateGalaxyPopulation(camera, f) {
             const u=Math.min(LC_N-1,(chi+radius)/CHI_MAX_MPC*(LC_N-1));
             const j=Math.floor(u), fLC=u-j;
             const ratio=Math.exp(state.lcData[j]*(1-fLC)+state.lcData[Math.min(j+1,LC_N-1)]*fLC);
-            const nearest=Math.max(0,chi-radius)*a*ratio;
+            // Unit centers are comoving, aDelta is a proper offset. Keep a
+            // proper-radius allowance unscaled even at early emission epochs.
+            const nearest=Math.max(0,(chi-radius)*a*ratio-radius);
             const quad = needsGalaxyQuads(nearest,0,mesh.userData.maxScaleKpc,
                 f.pxScale,s.uMaxPointPx.value,!mesh.isPoints) || s.uMaxPointPx.value<44;
             if (quad === !!mesh.isPoints) {

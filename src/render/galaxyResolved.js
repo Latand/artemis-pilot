@@ -72,11 +72,29 @@ vec3 galResolvedLight(vec3 ray) {
     // Inside the disk this still samples material AHEAD of the observer.
     vec3 p=o+diskSample.y*d;
     float footprint = max(length(dFdx(p.xy)),length(dFdy(p.xy)));
-    vec3 structure = galDiskLight(p.xy/s1, footprint/s1, vColor, abs(dot(n,ray)));
+    float inclination=abs(d.z);
+    vec3 structure=galDiskLight(p.xy/s1,footprint/s1,vColor,inclination);
+    // A thin face-on column has one resolved local patch. Long in-plane rays
+    // sample several intrinsic patches, instead of painting one centroid's
+    // blue arm across the whole integrated column like a projected sheet.
+    if(inclination<.5){
+        float spread=.8*s1/sqrt(dot(d.xy,d.xy)+d.z*d.z/(q*q));
+        vec3 front=o+max(0.0,diskSample.y-spread)*d;
+        vec3 back=o+(diskSample.y+spread)*d;
+        vec3 along=.5*structure+.25*galDiskLight(front.xy/s1,footprint/s1,vColor,inclination)
+            +.25*galDiskLight(back.xy/s1,footprint/s1,vColor,inclination);
+        structure=mix(structure,along,1.0-smoothstep(.2,.5,inclination));
+    }
     // Nearby rays keep a continuous finite-thickness dust band. As in the
     // old display model, this attenuates this galaxy's light only.
     float edge = 1.0-smoothstep(6.0,8.0,length(p/(s1*vec3(1.0,1.0,max(q,.15)))));
-    float dust = mix(1.0,galDustBand(p,footprint,q),(1.0-vPhysical.z)*(1.0-smoothstep(.15,.55,abs(d.z))));
+    float lane=galDustBand(p,footprint,q);
+    if(inclination<.5){
+        float spread=.7*s1/sqrt(dot(d.xy,d.xy)+d.z*d.z/(q*q));
+        lane=.5*lane+.25*galDustBand(o+max(0.0,diskSample.y-spread)*d,footprint,q)
+            +.25*galDustBand(o+(diskSample.y+spread)*d,footprint,q);
+    }
+    float dust=mix(1.0,lane,(1.0-vPhysical.z)*(1.0-smoothstep(.15,.55,inclination)));
     vec3 coreColor = galUnitLuma(vColor*vec3(1.08,1.0,.88));
     return edge * (vFacePeak.x*disk*structure*mix(1.0,dust,.75)
         + vFacePeak.y*bulge*coreColor*mix(1.0,dust,.55));
