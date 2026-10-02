@@ -26,6 +26,8 @@ for(const local of [true,false]){
     const front=meter(eye,view([0,0,-1]),575,.67,.45,768*512);
     const away=meter(eye,view([0,0,1]),575,.67,.45,768*512);
     const exact=meter(center,view([1,0,0]),575,.67,.45,768*512);
+    const exposureFloor=Number(source.match(/const EXPOSURE =[^\n]*min: ([\d.e-]+)/)[1]);
+    assert(exposureFloor<front,'The display floor must permit the requested core exposure');
     assert(Number.isFinite(front)&&front>0);assert(Math.abs(away/front-1)<1e-9);assert(Math.abs(exact/front-1)<1e-9);
     const middle=center.map((x,i)=>x+(i===2?.00305:0));
     const middleFront=meter(middle,view([0,0,-1]),575,.67,.45,768*512);

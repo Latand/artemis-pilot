@@ -590,7 +590,7 @@ function updateLocalGroup(m31NowMpc) {
 // exposure (stellarAppearance.extragalacticExposure). A resolved galaxy in
 // view overrides the field metering (see the end of meterExposure). One
 // exposure scales every galaxy, so relative brightness is exact.
-const EXPOSURE = { seen:null, gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedSpan: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.05, max: 1e8, fresh: true };
+const EXPOSURE = { seen:null, gain: galaxyDisplayGain(900), sample: null, n: 12000, every: 8, target: 0.9, brightFrac: 0.002, resolvedPx: 30, resolvedSpan: 30, resolvedHeadroom: 1.2, tau: 0.6, value: 1, auto: 1, frame: 0, t: 0, min: 0.0001, max: 1e8, fresh: true };
 const _mPeak = new Float32Array(EXPOSURE.n + 512), _mFoot = new Float32Array(EXPOSURE.n + 512), _mFootOwn = new Float32Array(EXPOSURE.n + 512), _mW = new Float32Array(EXPOSURE.n + 512), _mIdx = new Uint32Array(EXPOSURE.n + 512);
 // Peak display value (at exposure 1) and pixel footprint of one galaxy.
 function galaxyPeak(MV, hKpc, d, pxScale, out) {

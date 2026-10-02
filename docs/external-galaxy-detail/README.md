@@ -108,3 +108,6 @@ Inside the luminous core the meter uses a smooth-column upper bound from the
 same disk/bulge scales and flattening, instead of the distant disk-average
 peak. This display-only adaptation prevents an exact-center sky from washing
 out. It blends back to the exterior meter within one scale length.
+The old automatic exposure floor of 0.05 also had to be lowered to 0.0001 so
+this core adaptation can take effect. Screenshot luminance is checked after
+the actual renderer and display mapping, not only at the meter output.
