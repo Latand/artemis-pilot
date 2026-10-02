@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { renderLinearFrame } from "./render/linearFrame.js";
-import { G } from "./state.js";
+import { G, keys } from "./state.js";
+import { bindContextLifecycle } from "./render/contextLifecycle.js";
 import { CAM_DIST_MAX, K, LY_SCENE } from "./constants.js";
 import { tierDepthRange } from "./render/tierDepth.js";
 import { eph } from "./ephemeris.js";
@@ -53,6 +54,31 @@ renderer.setClearColor(0x000000, 1);
 renderer.domElement.style.display = "block";
 renderer.domElement.style.touchAction = "none";
 cvHost.appendChild(renderer.domElement);
+const contextStatus = document.createElement("div");
+contextStatus.id = "renderContextStatus";
+contextStatus.setAttribute("role", "status");
+contextStatus.hidden = true;
+contextStatus.textContent = "Graphics interrupted. Flight is held here while the display recovers.";
+Object.assign(contextStatus.style, { position: "fixed", left: "8%", right: "8%", top: "46%", padding: "18px", border: "1px solid #70818c", borderRadius: "12px", background: "#0b141fee", color: "#e9eff5", textAlign: "center", zIndex: "1000", pointerEvents: "none" });
+cvHost.appendChild(contextStatus);
+function releaseFlightInput() {
+    keys.clear();
+    G.thrustMain = G.thrustLat = 0;
+    G.boost = false;
+    window.dispatchEvent(new Event("ap:releaseflightinput"));
+}
+export const renderContext = bindContextLifecycle(renderer, {
+    onLost() { releaseFlightInput(); contextStatus.hidden = false; },
+    onRestored() {
+        // Three retains its CPU-side target reference when rebuilding GL.
+        // A loss during any offscreen pass must resume on the visible canvas.
+        renderer.setRenderTarget(null);
+        renderer.autoClear = true;
+        releaseFlightInput();
+        contextStatus.hidden = true;
+    },
+});
+window.__renderContext = renderContext;
 
 export const scene = new THREE.Scene();
 export const camera = new THREE.PerspectiveCamera(48, 1, .02, CAM_DIST_MAX * 1.35);
@@ -115,46 +141,49 @@ export function renderSceneTiered(rendererArg, sceneArg, cameraArg) {
     if (renderLinearFrame(rendererArg, () => renderSceneTiered(rendererArg, sceneArg, cameraArg))) return;
     const savedNear = cameraArg.near, savedFar = cameraArg.far;
     const directAutoClear = rendererArg.autoClear;
-    if (backgroundHooks.length) {
-        // Clear once up front, paint the background, then let the far pass
-        // draw over it without clearing colour again.
-        if (directAutoClear) rendererArg.clear(true, true, true);
-        rendererArg.autoClear = false;
-        for (let i = 0; i < backgroundHooks.length; i++) backgroundHooks[i](rendererArg, cameraArg);
-        rendererArg.clearDepth();
-    }
     tierSavedVis.length = 0;
-    for (let i = 0; i < nearTierOnly.length; i++) {
-        tierSavedVis.push(nearTierOnly[i].visible);
-        nearTierOnly[i].visible = false;
+    for (const object of nearTierOnly) tierSavedVis.push(object.visible);
+    const savedFarVisible = farTierGroup.visible;
+    try {
+        if (backgroundHooks.length) {
+            // Clear once up front, paint the background, then let the far pass
+            // draw over it without clearing colour again.
+            if (directAutoClear) rendererArg.clear(true, true, true);
+            rendererArg.autoClear = false;
+            for (let i = 0; i < backgroundHooks.length; i++) backgroundHooks[i](rendererArg, cameraArg);
+            rendererArg.clearDepth();
+        }
+        for (let i = 0; i < nearTierOnly.length; i++) {
+            nearTierOnly[i].visible = false;
+        }
+        farTierGroup.visible = true;
+        cameraArg.near = Math.min(savedFar, Math.max(savedNear, TIER_SPLIT_UNITS));
+        cameraArg.far = savedFar;
+        cameraArg.updateProjectionMatrix();
+        tierDepthRange.value.set(cameraArg.near, 1e38);
+        rendererArg.render(sceneArg, cameraArg);
+        for (let i = 0; i < nearTierOnly.length; i++) nearTierOnly[i].visible = tierSavedVis[i];
+        farTierGroup.visible = false;
+        // autoClear defaults to true, so an un-flagged second render() call would
+        // clear pass 1's color buffer right back to black before drawing the
+        // near tier on top of it -- same guard the existing cockpit-overlay pass
+        // already uses (see renderFrame in main.js).
+        rendererArg.autoClear = false;
+        rendererArg.clearDepth();
+        cameraArg.near = savedNear;
+        cameraArg.far = Math.min(savedFar, TIER_SPLIT_UNITS);
+        cameraArg.updateProjectionMatrix();
+        tierDepthRange.value.set(0, cameraArg.far);
+        rendererArg.render(sceneArg, cameraArg);
+    } finally {
+        for (let i = 0; i < nearTierOnly.length; i++) nearTierOnly[i].visible = tierSavedVis[i];
+        tierDepthRange.value.set(0, 1e38);
+        farTierGroup.visible = savedFarVisible;
+        cameraArg.near = savedNear;
+        cameraArg.far = savedFar;
+        cameraArg.updateProjectionMatrix();
+        rendererArg.autoClear = directAutoClear;
     }
-    farTierGroup.visible = true;
-    cameraArg.near = Math.min(savedFar, Math.max(savedNear, TIER_SPLIT_UNITS));
-    cameraArg.far = savedFar;
-    cameraArg.updateProjectionMatrix();
-    tierDepthRange.value.set(cameraArg.near, 1e38);
-    rendererArg.render(sceneArg, cameraArg);
-    for (let i = 0; i < nearTierOnly.length; i++) nearTierOnly[i].visible = tierSavedVis[i];
-    farTierGroup.visible = false;
-    // autoClear defaults to true, so an un-flagged second render() call would
-    // clear pass 1's color buffer right back to black before drawing the
-    // near tier on top of it -- same guard the existing cockpit-overlay pass
-    // already uses (see renderFrame in main.js).
-    const oldAutoClear = rendererArg.autoClear;
-    rendererArg.autoClear = false;
-    rendererArg.clearDepth();
-    cameraArg.near = savedNear;
-    cameraArg.far = Math.min(savedFar, TIER_SPLIT_UNITS);
-    cameraArg.updateProjectionMatrix();
-    tierDepthRange.value.set(0, cameraArg.far);
-    rendererArg.render(sceneArg, cameraArg);
-    tierDepthRange.value.set(0, 1e38);
-    rendererArg.autoClear = oldAutoClear;
-    farTierGroup.visible = true;
-    cameraArg.near = savedNear;
-    cameraArg.far = savedFar;
-    cameraArg.updateProjectionMatrix();
-    rendererArg.autoClear = directAutoClear;
 }
 
 // ---- post-processing: bloom / lensing ----
