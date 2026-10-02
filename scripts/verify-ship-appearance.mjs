@@ -38,20 +38,20 @@ try {
  await page.evaluate(async()=> (await import('/src/cinematic.js')).setCleanRender(true));
  await capture('fitted-close-clean',mobile?.09:.065,.85,.36);
  await page.evaluate(async()=> (await import('/src/cinematic.js')).setCleanRender(false));
- const resources=await page.evaluate(async()=>{const {craft}=await import('/src/ship.js');return craft.children.map(o=>[o.id,o.geometry.id,o.material.id]);});
+ const resources=await page.evaluate(async()=>{const {craft}=await import('/src/ship.js');return (()=>{const a=[];craft.traverse(o=>{if(o.isMesh)a.push([o.id,o.geometry.id,o.material.id]);});return a;})();});
  check(await page.evaluate(async()=> (await import('/src/ship.js')).shipG.visible),'Pilot exterior is visible');
  await page.keyboard.press('j');await frames();check(await page.evaluate(()=>__G.cabin),'Cockpit toggles on');check(await page.evaluate(async()=>!(await import('/src/ship.js')).shipG.visible),'Exterior is hidden in cockpit');
  await page.keyboard.press('j');await frames();check(await page.evaluate(async()=>!__G.cabin&&(await import('/src/ship.js')).shipG.visible),'Cockpit toggles back without losing exterior');
  await page.locator('[data-ui-mode="observe"]').click();await frames();check(await page.evaluate(async()=>!(await import('/src/ship.js')).shipG.visible),'Observe mode hides ship');
  await page.locator('[data-ui-mode="pilot"]').click();await frames();check(await page.evaluate(async()=> (await import('/src/ship.js')).shipG.visible),'Returning to pilot restores ship');
  for(let i=0;i<3;i++) {await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.press('j');await frames();await page.keyboard.press('j');await frames();}
- check(await page.evaluate(async resources=>JSON.stringify((await import('/src/ship.js')).craft.children.map(o=>[o.id,o.geometry.id,o.material.id]))===JSON.stringify(resources),resources),'Repeated cockpit transitions reuse exact mesh, geometry and material resources');
+ check(await page.evaluate(async resources=>{const {craft}=await import('/src/ship.js');const a=[];craft.traverse(o=>{if(o.isMesh)a.push([o.id,o.geometry.id,o.material.id]);});return JSON.stringify(a)===JSON.stringify(resources);},resources),'Repeated cockpit transitions reuse exact mesh, geometry and material resources');
  await page.evaluate(async()=>{document.activeElement?.blur();(await import('/src/input.js')).setFocus('ship');__G.paused=false;__G.warp=1;});await page.keyboard.down('w');await frames(2);
  check(await page.evaluate(async()=>{const {flame,exhaust}=await import('/src/ship.js');return flame.visible&&exhaust.visible&&__G.dvUsed>0;}),'Real W thrust activates existing flame, particles and physics');
  await capture('conventional-thrust',.12,.85,.36);
  await page.keyboard.up('w');await frames();check(await page.evaluate(async()=>!(await import('/src/ship.js')).flame.visible),'Releasing W turns off the flame');await page.evaluate(()=>{__G.paused=true;});
  const saved=await page.evaluate(async()=>{const saves=await import('/src/saves.js');const before={heading:__G.heading,pitch:__G.pitch,x:__G.x,y:__G.y,z:__G.z};const ok=saves.saveState();__G.heading+=.5;const loaded=await saves.loadState();__G.paused=true;return{ok,loaded,unchanged:Object.entries(before).every(([k,v])=>__G[k]===v)};});
  check(saved.ok&&saved.loaded&&saved.unchanged,'Quicksave/load round trip preserves the existing flight state');await frames();
- check(await page.evaluate(async resources=>JSON.stringify((await import('/src/ship.js')).craft.children.map(o=>[o.id,o.geometry.id,o.material.id]))===JSON.stringify(resources),resources),'Quicksave/load does not rebuild exterior resources');
+ check(await page.evaluate(async resources=>{const {craft}=await import('/src/ship.js');const a=[];craft.traverse(o=>{if(o.isMesh)a.push([o.id,o.geometry.id,o.material.id]);});return JSON.stringify(a)===JSON.stringify(resources);},resources),'Quicksave/load does not rebuild exterior resources');
  check(report.errors.length===0,'No JavaScript, shader or console errors');
 } finally { await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close(); }

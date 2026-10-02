@@ -80,6 +80,8 @@
         <div class="qcRow"><span class="qcLab">WARP</span><button id="dWarpDown" class="qcBtn" type="button" aria-label="Slow time">≪</button><button id="dWarpUp" class="qcBtn" type="button" aria-label="Speed time">≫</button></div>
       </div>
 
+      <button class="warpVisualControl" data-warp-visual type="button" aria-pressed="false" title="Speculative visual only. No propulsion or gravity changes. Requires river view.">Warp visual · OFF</button>
+
       <div class="gauge">
         <div class="gauge__label">PROPELLANT <span id="fuelTxt"></span></div>
         <div id="fuelBar"><div id="fuelFill"></div></div>
@@ -94,6 +96,7 @@
       </div>
     </div>
 
+    <div id="warpVisualNote" hidden>SPECULATIVE WARP VISUAL · river view only<br>No propulsion or gravity changes</div>
     <div id="hoverTip"></div>
     <div id="cosmicScale">COSMIC SCALE</div>
 
@@ -336,6 +339,7 @@
         </div>
         <div class="help__note">
           <p>Planet and Moon motion comes from Solar System ephemerides advanced by KDK or velocity-Verlet integration; the sim hands off to analytic osculating Kepler orbits at high warp so planets stay on their tracks. RK4 advances your ship from all Solar System bodies and player-placed holes, plus a capped, priority-ranked subset of nearby stellar sources. A separate RK4 path advances player-placed holes from Solar System bodies, gravitational debris, and other placed holes. Deep-time events such as galaxy passages and stellar eras follow reduced-order equations: simplified models with fixed parameters.</p>
+          <p>The optional violet warp visual is a speculative, ship-local deformation of the displayed river, not a spacetime solution or propulsion system. Ring rotation follows HUD speed with a capped real-time rate; pause freezes it. It does not alter forces, predictions or relativistic travel.</p>
           <p>The spacetime river is a velocity-field visualization, an honest picture of the pulls around you. Player-placed holes use the Paczynski-Wiita pseudo-Newtonian approximation. Catalog and special-object black holes, including SGR A*, use the capped active-star Newtonian field. Limited 1PN corrections cover weak-field motion near the Sun. Collisions are classified between simple spheres, with no melting or fragments. Only the Sun evolves as a star, changing its appearance and contact radius. Merger energy loss is bookkeeping; the engine carries no gravitational waveforms.</p>
           <p>Galaxy-scale views skip galaxy-wide N-body integration, and the Milky Way and Andromeda dates play one modeled scenario whose real outcome stays uncertain. Shift+O toggles the modeled NFW dark-matter halo; its applied strength is under physics review and currently changes little inside the galactic disk. Drag to orbit the camera; scroll to zoom. You can land on the rocky planets. Aim for the Moon, capture orbit, land, and come home, or dive into something dark.</p>
         </div>
@@ -424,6 +428,7 @@
             <button id="mCatalog" class="mMItem" type="button"><b>★</b><i>STAR CATALOG</i></button>
             <button id="mPredict" class="mMItem mTgl" type="button"><b>P</b><i>PREDICT</i></button>
             <button id="mRiver" class="mMItem mTgl" type="button"><b>G</b><i>RIVER</i></button>
+            <button id="mWarpVisual" class="warpVisualControl" data-warp-visual type="button" aria-pressed="false">Warp visual · OFF</button>
             <button id="mConst" class="mMItem mTgl" type="button"><b>✦</b><i>GUIDES</i></button>
             <button id="mAuto" class="mMItem" type="button"><b>➤</b><i>AUTOPILOT</i></button>
             <button id="mApOff" class="mMItem" type="button"><b>⊘</b><i>AP OFF</i></button>

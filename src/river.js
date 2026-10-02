@@ -1,3 +1,5 @@
+import { shipVisuals } from "./shipVisuals.js";
+import { WARP_DRAW_GLSL, createWarpRiverLayer } from "./warpRiver.js";
 import * as THREE from "three";
 import { largeScaleFlowBlend } from './flowScaleMath.js';
 import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, R_EARTH, R_MOON, SOI_E, SOI_M, SUN_RADIUS } from "./constants.js";
@@ -76,7 +78,7 @@ export const river = {
 };
 if (typeof window !== "undefined") window.__river = river;
 
-let rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines, dots;
+let rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines, dots, warpLines;
 const bodyVals = [], sinkVals = new Array(MAXB).fill(0), rsVals = new Array(MAXB).fill(0), holeVals = new Array(MAXB).fill(0), soiVals = new Array(MAXB).fill(0);
 const colorVals = [];
 for (let i = 0; i < MAXB; i++) bodyVals.push(new THREE.Vector4());
@@ -86,6 +88,11 @@ const plColors = PL.map(p => new THREE.Color(p.color));
 const C2 = C_LIGHT * C_LIGHT;
 const rsScene = mu => 2 * mu / C2 * K;
 const uniformsShared = {
+    uWarpShip: { value: new THREE.Vector3() },
+    uWarpAxis: { value: new THREE.Vector3(0, 1, 0) },
+    uWarpRadius: { value: 1 },
+    uWarpStrength: { value: 0 },
+    uWarpPhase: { value: 0 },
     uStyle: { value: 1 },
     uPixelRatio: { value: 1 },
     uPos: { value: null },
@@ -299,6 +306,7 @@ attribute float aSeg;
 varying vec3 vColor;
 varying float vAlong, vPhase;
 ${FLOW_GLSL}
+${WARP_DRAW_GLSL}
 void main() {
     vec3 p = texture2D(uPos, ref).xyz - uCenterShift;
     vec3 v = flowField(p);
@@ -472,7 +480,7 @@ void main() {
     vAlong = segT;
     vPhase = ph + uPhase * kq;
     gl_PointSize = (2.2 + tVis * 1.6) * uPixelRatio;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(warpDrawPosition(pos), 1.0);
 }`;
 
 const LINE_FRAG = /* glsl */`
@@ -590,7 +598,10 @@ export function initRiver() {
     scene.add(dots);
     // The river fades before its camera-relative volume reaches the far
     // tier. Avoid executing these expensive vertex shaders there a second time.
-    registerNearTierOnly(lines, dots);
+    warpLines = createWarpRiverLayer(uniformsShared, FLOW_GLSL, renderQuality.mobile);
+    scene.add(warpLines);
+    river.warpVertexCount = warpLines.geometry.attributes.position.count;
+    registerNearTierOnly(lines, dots, warpLines);
     river.enabled = true;
 }
 
@@ -740,6 +751,9 @@ function refreshRiverStarPick(smoothCenter, smoothR, localFocus, renderShed) {
 export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0) {
     river.dtVis = dtSim;
     if (!river.enabled) return;
+    warpLines.visible = false;
+    river.warpVisible = false;
+    uniformsShared.uWarpStrength.value = 0;
     river.frame++;
     shellAnchorLive = false;
     const riverFocusT0 = PERF.enabled ? performance.now() : 0;
@@ -874,6 +888,23 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     dots.position.copy(smoothCenter);
     lines.position.copy(smoothCenter);
     lines.updateMatrixWorld();
+    // CPU float64 subtraction before float32 upload, exactly like river bodies.
+    // Disabled/out-of-range modes do not touch compute or particle history.
+    const sv = shipVisuals;
+    const wx = sv.x - smoothCenter.x, wy = sv.y - smoothCenter.y, wz = sv.z - smoothCenter.z;
+    const warpNear = Number.isFinite(wx + wy + wz) && Math.hypot(wx, wy, wz) < smoothR * 2 &&
+        Math.hypot(camera.position.x - sv.x, camera.position.y - sv.y, camera.position.z - sv.z) < sv.radius * 30;
+    if (sv.strength > 0 && warpNear) {
+        uniformsShared.uWarpShip.value.set(wx, wy, wz);
+        uniformsShared.uWarpAxis.value.set(sv.dx, sv.dy, sv.dz);
+        uniformsShared.uWarpRadius.value = sv.radius;
+        uniformsShared.uWarpStrength.value = sv.strength;
+        uniformsShared.uWarpPhase.value = sv.motion.angle;
+        warpLines.position.copy(smoothCenter);
+        warpLines.visible = true;
+        river.warpVisible = true;
+    }
+    river.warpStrength = uniformsShared.uWarpStrength.value;
     // Everything handed to the GPU below is expressed relative to smoothCenter
     // (float64 on the CPU) rather than in absolute scene coordinates, so it
     // stays small and float32-precise regardless of how far smoothCenter has

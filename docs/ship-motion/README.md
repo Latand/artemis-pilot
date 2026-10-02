@@ -1,0 +1,49 @@
+# Speed-linked rings and optional speculative river visual
+
+Both exterior annuli rotate about the hull's local +Y axis; the hull, radial
+supports and longitudinal spars stay fixed. Panel seams and one asymmetric
+copper index plate per rim make the movement readable. Rate rises with the
+HUD's Earth-relative speed (an artistic convention, not thrust or an inertial
+frame claim), saturates at 1.4 rad/s (13.4 rpm) at 120 km/s, and eases down
+when the speed falls. Exact exponential integration keeps constant-speed
+motion equal at 30, 60 and 144 fps. Real elapsed time drives the cosmetic
+motor, not accelerated simulation time. Pause freezes it; reverse time does
+not reverse the motor. A long suspended frame is capped at 0.25 s. Landed or
+dead craft settle toward rest.
+
+“Warp visual” is a separate default-off, session-only opt-in in Pilot's
+panel and the mobile flight systems menu. A persistent violet label and Help
+copy identify it as speculative. It requires the gravity river to be enabled
+and the exterior craft to be visible. This is a bounded local deformation of
+the **drawn** river, plus a fixed set of extra local samples of that same
+source field so the effect remains visible at craft-inspection scale. Violet
+separates these samples from the ordinary gravitational flow. The artistic
+bow compression, aft extension and side twist are not a metric solution,
+propulsion model or claimed physically realizable warp drive.
+
+Turning it off immediately sets its drawing strength to zero. Source field,
+GPU particle advection, ship forces, trajectory predictions, time control,
+relTravel and observer relView are untouched. The extra samples have one
+optional draw call, 600 vertices desktop / 272 mobile, no textures or render
+targets. The craft has 15 opaque material batches, seven shared materials,
+9,020 triangles and 273,544 bytes of geometry (versus 7 batches, 8,996
+triangles and 271,864 bytes before animation). All buffers are created once.
+Positions use the river's existing CPU-float64-relative frame before GPU
+upload. The effect switches off outside its bounded near-ship range.
+
+## Verification
+
+- `node scripts/smoke-ship-model.mjs`: orientation, silhouette/engine anchors,
+  normal directions, ray visibility, deterministic geometry and resource cap
+- `node scripts/smoke-ship-motion.mjs`: 30/60/144 fps, acceleration/brake/stop,
+  pause, sign/nonfinite/huge inputs, static hull transforms, bounded resources,
+  and draw-only shader isolation
+- `node scripts/verify-ship-motion.mjs`: actual full-app matched time series
+  on desktop/mobile, explicit paused-world speed fixtures, on/off controls,
+  shader errors, stable resources, and a separate real unpaused W-thrust
+  replay whose physics state must be bit-identical on and off
+- Existing appearance/cockpit/mode/thrust/save tests and physics, relativity,
+  river, prediction regression workflows remain required
+
+Local Chromium cannot launch in the cloud executor's socket sandbox.
+Actual-app rendering runs in the repository's GitHub Actions workflow.
