@@ -8,13 +8,15 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 const baseRoot=resolve(process.env.BASE_ROOT||'');
 assert(process.env.BASE_ROOT,'An exact baseline worktree is required');
 const headRoot=resolve('.'), out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/thrust-comparison');
 await mkdir(out,{recursive:true});
+const propulsionModelsMatch=existsSync(resolve(baseRoot,'src/curvatureDrive.js'))===existsSync(resolve(headRoot,'src/curvatureDrive.js'));
 const sha=root=>execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim();
-const report={synchronization:'Reused typed-array readPixels from the production canvas; finishMs is flush overhead only.',baseline:sha(baseRoot),head:sha(headRoot),order:['base','head','head','base'],thrustWarmFrames:48,measuredFrames:48,runs:[],errors:[],limitations:['Sequential Chromium/SwiftShader CI comparison, not physical-device FPS.','No context loss is injected here; the unchanged 1,200-frame recovery/soak suite is a separate gate.','This diagnostic reports the OFF-path cost of the whole ship change, not an isolated causal estimate of draw calls.']};
+const report={propulsionModelsMatch,synchronization:'Reused typed-array readPixels from the production canvas; finishMs is flush overhead only.',baseline:sha(baseRoot),head:sha(headRoot),order:['base','head','head','base'],thrustWarmFrames:48,measuredFrames:48,runs:[],errors:[],limitations:['Sequential Chromium/SwiftShader CI comparison, not physical-device FPS.','No context loss is injected here; the unchanged 1,200-frame recovery/soak suite is a separate gate.','This diagnostic reports the OFF-path cost of the whole ship change, not an isolated causal estimate of draw calls.']};
 const browser=await chromium.launch({args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try {
  for(const [index,variant] of report.order.entries()) {
@@ -40,11 +42,14 @@ try {
    const step=()=>page.evaluate(()=>new Promise((resolve,reject)=>setTimeout(()=>{try{resolve(__timedThrustFrame());}catch(e){reject(e);}},0)));
    const gpuStatus=()=>page.evaluate(async()=>{const {renderer}=await import('/src/scene.js');const gl=renderer.getContext();return{contextLost:gl.isContextLost(),error:gl.getError(),canvas:renderer.getRenderTarget()===null};});
    const initial=await snapshot();
-   if(variant==='head')assert(await page.evaluate(async()=>!(await import('/src/shipVisuals.js')).shipVisuals.enabled),'Head visual remains OFF');
+   // Compare the explicitly hidden guide path on both versions, independent
+   // of their shipped default. This changes presentation only.
+   await page.evaluate(async()=>{(await import('/src/shipVisuals.js')).shipVisuals.enabled=false;});
+   assert(await page.evaluate(async()=>!(await import('/src/shipVisuals.js')).shipVisuals.enabled),'Guide is explicitly OFF for comparison');
    const track=await page.locator('#mThrTrack').boundingBox();assert(track);
    await page.mouse.move(track.x+track.width/2,track.y+track.height*.15);await page.mouse.down();
    await page.evaluate(()=>{__G.paused=false;});
-   // Warm a full cadence cycle, including exhaust/flame, under actual thrust.
+   // Warm a full cadence cycle under actual propulsion input.
    for(let i=0;i<report.thrustWarmFrames;i++)await step();
    const measurementStart=await snapshot();
    assert(measurementStart.galaxy.mapsReady&&measurementStart.galaxy.coverageReady,'Galaxy resources warmed before comparison');
@@ -66,10 +71,25 @@ try {
  }
  const first=report.runs[0];
  assert(report.runs.every(r=>JSON.stringify(r.initial.flight)===JSON.stringify(first.initial.flight)),'Matched initial physical state');
- assert(report.runs.every(r=>JSON.stringify(r.measurementStart.flight)===JSON.stringify(first.measurementStart.flight)),'Matched post-thrust-warmup physical state');
- assert(report.runs.every(r=>JSON.stringify(r.final.flight)===JSON.stringify(first.final.flight)),'Bit-identical final thrust state');
+ // Repeated executions of each model must remain bit-identical. A deliberate
+ // change from instantaneous thrust to an engaging field has different
+ // physical endpoints; report it as a timing confound, never as mesh cost.
+ for(const variant of ['base','head']) {
+  const runs=report.runs.filter(r=>r.variant===variant), reference=runs[0];
+  assert(runs.every(r=>JSON.stringify(r.measurementStart.flight)===JSON.stringify(reference.measurementStart.flight)),`${variant}: deterministic post-command warmup`);
+  assert(runs.every(r=>JSON.stringify(r.final.flight)===JSON.stringify(reference.final.flight)),`${variant}: bit-identical repeated final command state`);
+  assert(runs.every(r=>JSON.stringify(r.final.camera)===JSON.stringify(reference.final.camera)),`${variant}: repeated camera state`);
+ }
+ if(propulsionModelsMatch){
+  assert(report.runs.every(r=>JSON.stringify(r.measurementStart.flight)===JSON.stringify(first.measurementStart.flight)),'Matched post-thrust-warmup physical state');
+  assert(report.runs.every(r=>JSON.stringify(r.final.flight)===JSON.stringify(first.final.flight)),'Bit-identical final thrust state');
+ } else {
+  const head=report.runs.find(r=>r.variant==='head');
+  report.intentionalModelDelta=Object.fromEntries(['x','y','z','vx','vy','vz','dvUsed'].map(k=>[k,head.final.flight[k]-first.final.flight[k]]));
+ }
  assert(report.runs.every(r=>JSON.stringify(r.initial.quality)===JSON.stringify(first.initial.quality)&&JSON.stringify(r.final.quality)===JSON.stringify(first.final.quality)),'Matched production quality settings');
- assert(report.runs.every(r=>JSON.stringify(r.initial.camera)===JSON.stringify(first.initial.camera)&&JSON.stringify(r.final.camera)===JSON.stringify(first.final.camera)),'Matched production camera');
+ assert(report.runs.every(r=>JSON.stringify(r.initial.camera)===JSON.stringify(first.initial.camera)), 'Matched initial production camera');
+ if(propulsionModelsMatch)assert(report.runs.every(r=>JSON.stringify(r.final.camera)===JSON.stringify(first.final.camera)),'Matched final production camera');
  assert.equal(report.errors.length,0,'No browser/shader errors');
  const means=Object.fromEntries(['base','head'].map(v=>[v,report.runs.filter(r=>r.variant===v).reduce((s,r)=>s+r.meanMs,0)/2]));
  // Wall-clock refresh can change work even with identical physical endpoints.
@@ -88,7 +108,7 @@ try {
   geometryGrowth:r.final.memory.geometries-r.measurementStart.memory.geometries,
   textureGrowth:r.final.memory.textures-r.measurementStart.memory.textures}));
  const rendererWorkConfounded=rendererWorkComparisons.some(r=>r.differingPointFrames||r.differingLineFrames||r.geometryGrowth||r.textureGrowth);
- const confounded=profileConfounded||rendererWorkConfounded;
- report.summary={...means,wholeAppOffPathRatio:means.head/means.base,deltaMs:means.head-means.base,workComparisons,rendererWorkComparisons,profileConfounded,rendererWorkConfounded,confounded,interpretation:confounded?'Renderer workload/resources differ; use only a qualified whole-app comparison, not isolated ship-model cost or a speedup claim.':'Recorded work profiles match; this is whole-app OFF-path timing, not isolated draw-call causality.'};
+ const confounded=!propulsionModelsMatch||profileConfounded||rendererWorkConfounded;
+ report.summary={...means,wholeAppOffPathRatio:means.head/means.base,deltaMs:means.head-means.base,workComparisons,rendererWorkComparisons,profileConfounded,rendererWorkConfounded,confounded,interpretation:confounded?'Propulsion model or renderer workload/resources differ; use only a qualified whole-app comparison, not isolated ship-model cost or a speedup claim.':'Recorded work profiles match; this is whole-app OFF-path timing, not isolated draw-call causality.'};
  console.log('BALANCED OFF-PATH COMPARISON',report.summary);
 } finally {await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();}
