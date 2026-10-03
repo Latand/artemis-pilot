@@ -37,7 +37,7 @@ try {
    for(let i=0;i<4;i++)window.__catalogFrame();
    const st=c.STARS[0],sys=e.getExploredSystem('star:0',null,state.G.t),body=p.planetWorldState(sys,0,st,state.G.t,{});
    const point=s.scene.children.find(x=>x.name==='curated destinations'),slot=c.STARS.filter(x=>!x.bh).indexOf(st),v=point.geometry.attributes.position.array;
-   return {years,star:[st.x,st.y,st.z],epoch:st.epochPosition,source:a.ACTIVE_STARS.includes(st),gravitySelected:a.GRAVITY_STARS.includes(st),systemId:sys.starId,planets:JSON.stringify(sys.planets),body:[body.x,body.y,body.z],point:[(v[slot*3]+point.position.x)/c.K,-(v[slot*3+2]+point.position.z)/c.K,(v[slot*3+1]+point.position.y)/c.K],labels:[...document.querySelectorAll('.starLabel')].filter(x=>getComputedStyle(x).display!=='none').map(x=>({text:x.textContent,left:x.style.left,top:x.style.top})),drawCalls:s.renderer.info.render.calls};
+   return {years,star:[st.x,st.y,st.z],epoch:st.epochPosition,source:a.ACTIVE_STARS.includes(st),gravitySelected:a.GRAVITY_STARS.includes(st),systemId:sys.starId,planets:JSON.stringify(sys.planets),body:[body.x,body.y,body.z],point:[(v[slot*3]+point.position.x)/c.K,-(v[slot*3+2]+point.position.z)/c.K,(v[slot*3+1]+point.position.y)/c.K],labels:[...document.querySelectorAll('.starLbl')].filter(x=>getComputedStyle(x).display!=='none').map(x=>({text:x.textContent,left:x.style.left,top:x.style.top})),drawCalls:s.renderer.info.render.calls};
   },{years,focus,distLy});
   await page.screenshot({path:resolve(out,name+'.png')});report.frames.push({name,...row});await writeFile(resolve(out,'report.json'),JSON.stringify(report,null,2));return row;
  };
@@ -47,6 +47,7 @@ try {
  const far=await run('04-541-myr-selected-host',541101036,'star:0',.00015);
  await run('05-reverse-one-myr',-1e6);
  const restored=await run('06-return-epoch',0);
+ check('Epoch view contains named labels',zero.labels.length>0,zero.labels);
  check('Epoch replay exact',JSON.stringify(zero.star)===JSON.stringify(restored.star));
  check('Selected system stable over 541 Myr',zero.systemId===far.systemId&&zero.planets===far.planets);
  check('Named stars visibly leave epoch coordinates',report.frames.slice(1,5).every(f=>Math.hypot(...f.star.map((x,i)=>x-zero.star[i]))>3e13));

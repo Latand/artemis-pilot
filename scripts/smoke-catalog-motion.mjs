@@ -79,6 +79,7 @@ for (const [index, name] of [[70664,'PROXIMA'],[71454,'ALPHA CEN A'],[71451,'ALP
         A.refreshActiveStars(0,0,0,'hyg:'+index,t,2*MYR);
         assert.strictEqual(A.activeStarForFocus('hyg:'+index),STARS.find(s=>s.name===name),'Catalog aliases resolve the same curated source after dispersion');
         assert(!A.ACTIVE_STARS.some(s=>s.activeCatalog&&s.hygIndex===index),'No separately seeded active twin survives');
+        assert(A.GRAVITY_STARS.includes(STARS.find(s=>s.name===name)),'A selected catalog alias retains curated gravity priority');
     }
 }
 A.refreshActiveStars(0,0,0,'hyg:117953',0);

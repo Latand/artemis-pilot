@@ -622,9 +622,11 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
     const lite = Math.abs(frameAdvanceSec) > ACTIVE_STAR_CONFIG.decorrelatedFrameSec;
     const hStats = hygCatalogStats();
     if (sameFastRefresh(wx, wy, wz, focus, hStats, simT) && FAST_REFRESH.lite === lite) return activeStarStats();
-    const forcedIndex = focusStarIndex(focus);
+    let forcedIndex = focusStarIndex(focus);
     const forcedProcId = proceduralFocusId(focus);
     const forcedCatalogId = hygCatalogFocusId(focus);
+    const forcedCatalog = forcedCatalogId ? catalogStarById(forcedCatalogId, simT) : null;
+    if (forcedCatalog && STARS.includes(forcedCatalog)) forcedIndex = STARS.indexOf(forcedCatalog);
     const sun = sunAt(simT);
     const gal = worldKmToGalFromInto(wx, wy, wz, sun.x, sun.y, sun.z, SHIP_GAL);
     const refreshKey = [
@@ -663,7 +665,6 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
     if (forcedIndex >= 0 && forcedIndex < STARS.length) pushActive(STARS[forcedIndex], "known:" + forcedIndex, "known");
     for (let i = 0; i < STARS.length; i++) if (STARS[i].bh) pushActive(STARS[i], "known:" + i, "known");
     if (forcedCatalogId) {
-        const forcedCatalog = catalogStarById(forcedCatalogId, simT);
         if (forcedCatalog) pushActive(forcedCatalog, activeId(forcedCatalog), forcedCatalog.activeCatalog ? "catalog" : "known");
     }
     if (forcedProcId) {
