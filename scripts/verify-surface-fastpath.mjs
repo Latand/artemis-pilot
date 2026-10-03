@@ -10,6 +10,7 @@ import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { boundedDiagnostic } from './qa-bounded-diagnostic.mjs';
+import { coldExactPrograms, oneActiveExposureProgram } from './surface-fastpath-policy.mjs';
 
 const args = process.argv.slice(2).filter(arg => !arg.startsWith('--'));
 const root = resolve(args[0] || '.'), out = resolve(args[1] || 'evidence/surface-fastpath');
@@ -88,6 +89,7 @@ async function state() {
             return { materialId: material.id, version: material.version, programId: properties.currentProgram?.id ?? null,
                 programCacheKey: properties.currentProgram?.cacheKey ?? null,
                 cachedProgramIds: [...(properties.programs?.values() || [])].map(program => program.id).sort((a, b) => a - b),
+                cachedPrograms: [...(properties.programs?.values() || [])].map(program => ({id:program.id,key:program.cacheKey})).sort((a,b)=>a.id-b.id),
                 variant: !!material.defines?.SURFACE_ROTATION_EXPOSURE, turns: exposure?.turns.value ?? null,
                 visible: mesh.visible, slots: (exposure?.slots || []).map(slot => ({ ready: !!slot.texture,
                     textureId: slot.texture?.uuid ?? null, size: slot.size.value.toArray(), uploaded: !!slot.texture && !!renderer.properties.get(slot.texture).__webglTexture })) };
@@ -182,7 +184,9 @@ try {
     report.beforePreparation = await state();
     check(report.beforePreparation.maps.day && report.beforePreparation.maps.night === 1 && report.beforePreparation.maps.clouds === 1, 'real Earth day/night/cloud maps are loaded');
     check(!report.beforePreparation.earth.variant && !report.beforePreparation.clouds.variant, 'fresh context has only exact Earth/cloud variants');
-    check(report.beforePreparation.earth.cachedProgramIds.length === 1 && report.beforePreparation.clouds.cachedProgramIds.length === 1, 'both materials acquired exactly one initial program');
+    // Loading an alpha map or changing renderer lighting features may leave
+    // historical exact programs. Cold means no averaged variant was compiled.
+    check(coldExactPrograms(report.beforePreparation.earth) && coldExactPrograms(report.beforePreparation.clouds), 'both materials have only exact initial programs and a valid current program');
     check(report.beforePreparation.preparation.built === 0, 'no exposure prefixes were prepared before the diagnostic');
     check(await screenshot('00-paused-before-preparation'), 'initial paused screenshot saved');
 
@@ -214,7 +218,7 @@ try {
     await save(); check(await screenshot('01-first-active-cold'), 'cold active screenshot saved');
     await block('first-active-cached');
     const activeReady = await state(); report.activeReady = activeReady;
-    check(activeReady.earth.cachedProgramIds.length === 2 && activeReady.clouds.cachedProgramIds.length === 2, 'both materials retain exactly two exposure programs');
+    check(oneActiveExposureProgram(report.beforePreparation.earth, activeReady.earth) && oneActiveExposureProgram(report.beforePreparation.clouds, activeReady.clouds), 'each material adds only one averaged program for the same renderer features');
     const targetResources = snapshot => JSON.stringify([snapshot.earth.slots, snapshot.clouds.slots]);
     const targetResourcesAfterFirstActive = targetResources(activeReady);
     report.nonTargetResourceChanges = [];
