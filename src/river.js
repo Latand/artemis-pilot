@@ -59,6 +59,7 @@ const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX;
 
 export const river = {
     enabled: false,
+    sourceRelativeHalos: true,
     radius: 22,
     count: NPART,
     drawCount: NPART,
@@ -222,11 +223,15 @@ void main() {
     // frame's center by subtracting the frame-to-frame shift (computed in
     // float64 on the CPU, where large-magnitude drift is lossless).
     vec4 stored = texture2D(uPos, vUv);
-    vec3 p = stored.xyz - uCenterShift;
     // w: the source whose halo spawned this streak (index + 1; 0 = ambient)
     float owner = stored.w;
     int own = int(owner + 0.5) - 1;
     bool halo = own >= 0 && own < uSinkNB && uBody[own].w > 0.0;
+    // Owned samples are offsets from the CURRENT source, even on frames
+    // skipped by the compute cadence. Ambient samples retain their own
+    // float64 camera-relative origin. Sampling support is not a material
+    // trail: translating it with its mass keeps the live field co-located.
+    vec3 p = halo ? stored.xyz + uBody[own].xyz : stored.xyz - uCenterShift;
     // Stable per-texel strata follow a smoothly varying view-weighted CDF.
     // Reassign immediately when a source enters/leaves its stratum, rather
     // than waiting seconds for random death to repopulate a visible halo.
@@ -294,7 +299,8 @@ void main() {
                 p = uBody[i].xyz + d / max(r, 1e-6) * (sink * (1.2 + 2.0 * h2));
         }
     }
-    gl_FragColor = vec4(p, owner);
+    int finalOwner = int(owner + 0.5) - 1;
+    gl_FragColor = vec4(finalOwner >= 0 ? p - uBody[finalOwner].xyz : p, owner);
 }`;
 
 const LINE_VERT = /* glsl */`
@@ -309,7 +315,8 @@ varying float vAlong, vPhase;
 ${FLOW_GLSL}
 void main() {
     vec4 stored = texture2D(uPos, ref);
-    vec3 p = stored.xyz - uCenterShift;
+    int own = int(stored.w + 0.5) - 1;
+    vec3 p = own >= 0 && own < uSinkNB ? stored.xyz + uBody[own].xyz : stored.xyz - uCenterShift;
     vec3 v = flowField(p);
     float spd = max(length(v), 1e-12);
     vec3 vDir = v / spd;
@@ -337,7 +344,6 @@ void main() {
     // fades: volume edge, camera proximity, sink proximity
     // (p is already relative to the river's own center — see uCenterShift)
     float fade = clamp(1.0 - (length(p) - uRadius * 0.52) / (uRadius * 0.48), 0.0, 1.0);
-    int own = int(stored.w + 0.5) - 1;
     if (own >= 0 && own < uSinkNB) {
         // Fade before recycling, in the same source-relative support used
         // by the compute pass. Crossing the ambient edge cannot blink a halo.
@@ -806,7 +812,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         const cand = 0.95 * (1 - smooth01(Math.max(8, sink * 1.5), Math.max(90, sink * 34), clear)); surfaceProx = Math.max(surfaceProx, 1 - smooth01(sink * 0.25, sink * 1.2, clear)); if (cand > localFocus) { localFocus = cand; frameKind = 3; frameIdx = i; }
     }
     for (let i = 0; i < BH.n; i++) {
-        bhRiverPos.set(earthV.x + BH.sx[i], earthV.y, earthV.z + BH.sz[i]);
+        bhRiverPos.set(earthV.x + BH.sx[i], BH.sy[i], earthV.z + BH.sz[i]);
         const sink = Math.max(BH.sinkS[i], .45);
         const clear = Math.max(0, camera.position.distanceTo(bhRiverPos) - sink);
         const cand = 0.97 * (1 - smooth01(Math.max(16, sink * 3), Math.max(220, sink * 120), clear)); if (cand > localFocus) { localFocus = cand; frameKind = 4; frameIdx = i; }
@@ -820,7 +826,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     if (frameKind === 1) { fvx += eph.moonVx; fvy += eph.moonVy; fvz += eph.moonVz; }
     else if (frameKind === 2) { fvx += eph.sunVx; fvy += eph.sunVy; fvz += eph.sunVz; }
     else if (frameKind === 3) { fvx += eph.plVx[frameIdx]; fvy += eph.plVy[frameIdx]; fvz += eph.plVz[frameIdx]; }
-    else if (frameKind === 4) { fvx += BH.vx[frameIdx]; fvy += BH.vy[frameIdx]; }
+    else if (frameKind === 4) { fvx += BH.vx[frameIdx]; fvy += BH.vy[frameIdx]; fvz += BH.vz[frameIdx]; }
     else if (frameKind === -1) {
         // no body dominates: ship focus gives the first-person "carried by
         // the river" frame, fading out toward the survey view (planeBias→1)
@@ -973,7 +979,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     }
     let nb = 3 + PL.length;
     for (let i = 0; i < BH.n && nb < MAXB; i++, nb++) {
-        bodyVals[nb].set(earthV.x + BH.sx[i] - smoothCenter.x, earthV.y - smoothCenter.y, earthV.z + BH.sz[i] - smoothCenter.z, BH.c[i] * Math.max(.08, BH.obsT[i] || 1));
+        bodyVals[nb].set(earthV.x + BH.sx[i] - smoothCenter.x, BH.sy[i] - smoothCenter.y, earthV.z + BH.sz[i] - smoothCenter.z, BH.c[i] * Math.max(.08, BH.obsT[i] || 1));
         sinkVals[nb] = BH.sinkS[i];
         rsVals[nb] = BH.rs[i] * K;
         holeVals[nb] = 1;
@@ -1039,7 +1045,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     haloCameraInverse.copy(camera.quaternion).invert();
     const haloEase = 1 - Math.exp(-8 * Math.max(0, dtReal));
     const tanHalfFov = Math.tan(camera.fov * Math.PI / 360);
-    let haloTotal = 0;
+    let haloTotal = 0, haloCoverageChanged = false;
     for (let i = 0; i < nb; i++) {
         haloViewPos.copy(bodyVals[i]).sub(uniformsShared.uCam.value);
         const d = haloViewPos.length();
@@ -1053,6 +1059,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
             d, Math.hypot(bodyVals[i].x, bodyVals[i].y, bodyVals[i].z), reach, tanHalfFov, camera.aspect) : 0;
         // Hard zero is reserved for nonrenderable/precision-unsafe sources.
         // Visible viewport boundaries themselves have a generous smooth band.
+        if (Math.abs(h.y - weight) > 1e-6) haloCoverageChanged = true;
         h.y = weight;
         haloTotal += Math.sqrt(Math.max(0, bodyVals[i].w)) * h.y;
         h.z = haloTotal;
@@ -1142,8 +1149,8 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // advection; respawning means it does not promise exact historical replay.
     if (dtVis === 0 || Math.sign(dtVis) !== Math.sign(river.dtAccum)) river.dtAccum = 0;
     river.dtAccum += dtVis;
-    const shouldCompute = (dtVis !== 0 || respawn > .001) &&
-        (computeEvery <= 1 || river.frame % computeEvery === 0 || respawn > .08);
+    const shouldCompute = (dtVis !== 0 || respawn > .001 || haloCoverageChanged) &&
+        (computeEvery <= 1 || river.frame % computeEvery === 0 || respawn > .08 || haloCoverageChanged);
     river.skippedCompute = !shouldCompute;
     refreshElapsed += Math.max(0, Math.min(dtReal, 0.1));
     if (shouldCompute) {

@@ -20,17 +20,30 @@ export function coverageRead(){
  renderer.readRenderTargetPixels(rtA,0,0,TEXW,1,px);
  const haloRadius=uniformsShared.uHalo?.value[2].x??smoothR;
  const sink=sinkVals[2],reach=Math.min(Math.max(sink*30,haloRadius*.02),Math.max(haloRadius*.22,sink*2));
- let owned=0,visible=0,finite=true,edgeSum=0;
+ let owned=0,visible=0,finite=true,edgeSum=0,ambient=0,local=0;
  for(let i=0;i<TEXW;i++){
-  const x=px[i*4]-(smoothCenter.x-textureCenter.x),y=px[i*4+1]-(smoothCenter.y-textureCenter.y),z=px[i*4+2]-(smoothCenter.z-textureCenter.z);
+  const owner=Math.round(px[i*4+3])-1;
+  const anchor=river.sourceRelativeHalos&&owner>=0?bodyVals[owner]:null;
+  const x=px[i*4]+(anchor?anchor.x:-(smoothCenter.x-textureCenter.x)),y=px[i*4+1]+(anchor?anchor.y:-(smoothCenter.y-textureCenter.y)),z=px[i*4+2]+(anchor?anchor.z:-(smoothCenter.z-textureCenter.z));
   finite&&=Number.isFinite(x+y+z);
+  if(owner<0)ambient++;if(Math.hypot(x,y,z)<smoothR*1.1)local++;
   if(Math.round(px[i*4+3])!==3)continue;
   owned++;
   let fade=Math.max(0,Math.min(1,1-(Math.hypot(x,y,z)-smoothR*.52)/(smoothR*.48)));
   if(uniformsShared.uHalo){const t=Math.min(1,Math.max(0,(Math.hypot(x-bodyVals[2].x,y-bodyVals[2].y,z-bodyVals[2].z)/reach-.8)/.45));fade=1-t*t*(3-2*t);}
   edgeSum+=fade;if(fade>.25)visible++;
  }
- return {finite,owned,visible,edgeSum,ratio:Math.hypot(bodyVals[2].x,bodyVals[2].y,bodyVals[2].z)/smoothR,haloRadius,reach,radius:smoothR,count:river.count,drawCount:river.drawCount,dt:river.dtVis,skipped:river.skippedCompute,phase:uniformsShared.uPhase.value};
+ return {finite,owned,visible,edgeSum,ambient,local,ratio:Math.hypot(bodyVals[2].x,bodyVals[2].y,bodyVals[2].z)/smoothR,haloRadius,reach,radius:smoothR,count:river.count,drawCount:river.drawCount,dt:river.dtVis,skipped:river.skippedCompute,phase:uniformsShared.uPhase.value};
+}
+export function coverageSourceRead(index){
+ const px=new Float32Array(TEXW*TEXW*4);renderer.readRenderTargetPixels(rtA,0,0,TEXW,TEXW,px);
+ let count=0,maxOffset=0;const sum=[0,0,0];
+ for(let i=0;i<TEXW*TEXW;i++)if(Math.round(px[i*4+3])-1===index){
+  count++;const q=[px[i*4],px[i*4+1],px[i*4+2]];
+  if(!river.sourceRelativeHalos){q[0]-=bodyVals[index].x;q[1]-=bodyVals[index].y;q[2]-=bodyVals[index].z;}
+  for(let j=0;j<3;j++)sum[j]+=q[j];maxOffset=Math.max(maxOffset,Math.hypot(...q));
+ }
+ return {count,maxOffset,centroid:sum.map(x=>x/Math.max(1,count)),source:[bodyVals[index].x+smoothCenter.x,bodyVals[index].y+smoothCenter.y,bodyVals[index].z+smoothCenter.z],frameVelocity:uniformsShared.uFrameVel.value.toArray(),skipped:river.skippedCompute};
 }
 `;
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'solar-coverage-qa',enforce:'pre',transform(source,id){
@@ -88,6 +101,38 @@ try{
   for(const warp of modes){const group=frames.filter(f=>f.warp===warp);check(group.every(f=>warp===0||f.dt===0||Math.sign(f.dt)===Math.sign(warp)),`${warp}: advection follows requested time direction`);}
   const resources=frames.slice(50).map(f=>f.memory);
   check(resources.every(r=>r.textures===resources[0].textures&&r.geometries===resources[0].geometries),'no resource growth while crossing');
+ }
+ if(!baseline){
+  // A displaced camera must not reserve most of its slots for invisible,
+  // float32-quantized solar sources. Inspect actual local/ambient texels.
+  report.far=await page.evaluate(async()=>{const{G}=await import('/src/state.js');const{cam}=await import('/src/scene.js');G.focus='free';G.paused=true;cam.tgt.set(1e16,1e16,1e16);cam.dist=1e4;cam.distTarget=null;window.__coverageFrame();return(await import('/src/river.js')).coverageRead();});
+  check(report.far.finite&&report.far.ambient>=(mobile?96:124)*.95&&report.far.local>=(mobile?96:124)*.95,'far invisible sources release local sampling slots');
+  for(const [focus,dist]of [['earth',15],['moon',8]]){
+   await page.evaluate(async({focus,dist})=>{const{G}=await import('/src/state.js');const{cam}=await import('/src/scene.js');G.focus=focus;G.paused=true;cam.dist=dist;cam.distTarget=null;cam.yaw=-.4;cam.pitch=.5;}, {focus,dist});
+   for(let j=0;j<24;j++)await page.evaluate(()=>window.__coverageFrame());
+   await page.screenshot({path:`${out}/near-${focus}.png`,timeout:180000});
+  }
+  // Move a real rendered BH through 3D positions while the display compute
+  // skips frames. Stored halo offsets must follow the mesh on every draw.
+  report.blackHole=await page.evaluate(async()=>{
+   const st=await import('/src/state.js'),bh=await import('/src/blackholes.js'),s=await import('/src/scene.js'),r=await import('/src/river.js'),b=await import('/src/bodies.js'),{PL,K}=await import('/src/constants.js');
+   bh.clearBlackHoles();bh.addBlackHole(200000,0,30,1,2,true,null,0,0,300000,3);st.G.focus='free';st.G.paused=true;
+   const earth=b.earthG.position.clone();const expected=s.cam.tgt.clone();
+   const update=()=>{expected.set(earth.x+st.BH.sx[0],st.BH.sy[0],earth.z+st.BH.sz[0]);s.cam.tgt.copy(expected);s.cam.dist=40;s.cam.yaw=Math.PI/2;s.cam.pitch=0;s.applyCamera();bh.updateBHVisuals(1/60,earth.x,earth.z);r.updateRiver(1,1,earth,b.moon.position,b.sunCore.position,b.plGroups.map(p=>p.position),1/60);};
+   update();for(let i=0;i<20;i++)update();
+   const wasMobile=s.renderQuality.mobile;s.renderQuality.mobile=true;s.renderQuality.loadShed=2;
+   const samples=[];
+   for(let i=0;i<8;i++){
+    st.BH.z[0]+=2000;st.BH.sy[0]=st.BH.z[0]*K;st.BH.x[0]+=1000;st.BH.sx[0]=st.BH.x[0]*K;
+    r.river.computeEveryAdaptive=4;r.river.frame=0;update();s.renderSceneTiered(s.renderer,s.scene,s.camera);
+    samples.push({...r.coverageSourceRead(3+PL.length),expected:expected.toArray(),mesh:bh.BH_META[0].g.position.toArray()});
+   }
+   s.renderQuality.mobile=wasMobile;s.renderQuality.loadShed=0;return samples;
+  });
+  check(report.blackHole.every(f=>f.count>20&&f.source.every((x,i)=>Math.abs(x-f.mesh[i])<1e-6)&&f.mesh.every((x,i)=>Math.abs(x-f.expected[i])<1e-6)),'moving 3D BH field, halo source and mesh stay co-located');
+  check(report.blackHole.some(f=>f.skipped),'BH alignment covers retained/skipped compute frames');
+  check(report.blackHole.every(f=>f.maxOffset<100),'owned BH samples remain local instead of leaving a stale displaced well');
+  await page.screenshot({path:`${out}/moving-black-hole.png`,timeout:180000});
  }
  check(report.errors.length===0,'no shader/runtime errors');
 }finally{await save();await browser?.close();await server.close();}
