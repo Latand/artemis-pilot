@@ -14,7 +14,7 @@ The registry uses the existing measured M31 direction/distance, disk orientation
 
 M31's first local population follows a prescribed 250 Myr rigid disk rotation at the common coordinate clock. It is a bounded deterministic illustration, **not differential disk dynamics or mutual stellar gravity**. Stars do not reseed when a camera changes scale or crosses a time bucket. The distant diffuse galaxy renderer retains its established past-light-cone convention; local physical stars use coordinate-time locations, matching the existing local-star convention. No claim of a fully solved stellar light cone is made.
 
-Generated planet parameters and surface identities are the existing deterministic per-host generator. Sparse, timestamped velocity-impulse residuals have a versioned journal/checkpoint hook and quicksave restoration. This hook is a piecewise-linear perturbation of the prescribed trajectory; it does not implement gravitational backreaction. There is no new intervention UI in this slice. The journal is limited to 4,096 events and rejects overflow rather than silently losing history.
+Generated planet parameters and surface identities are the existing deterministic per-host generator. Sparse, timestamped velocity-impulse residuals have a versioned journal/checkpoint hook and quicksave restoration. This hook is a piecewise-linear perturbation of the prescribed trajectory; it does not implement gravitational backreaction. There is no new intervention UI in this slice. The journal is limited to 4,096 events across at most 64 edited stars and rejects overflow rather than silently losing history.
 
 ## Exposure and scope
 
@@ -24,7 +24,7 @@ The existing diffuse M31 model remains the large-scale envelope. This slice does
 
 ## Budgets and verification
 
-A query touches at most 125 birth cells, 80 candidate stars per cell, and returns at most 420 stars. The LRU caches hold at most 256 cells and 2,048 star records; GPU capacity is fixed at 420. Promotion removes the identical star from the separate camera point layer before the active point/photosphere path draws it. Physical gravity retains the existing 64-source cap; it is not a mutual interaction island.
+An ordinary query touches at most 125 birth cells, 80 candidate stars per cell, and returns at most 420 stars. Up to 64 edited-star exceptions are materialized once per journal revision and remain discoverable even after ejection outside the disk. These exception records are bounded independently. The LRU caches hold at most 256 cells and 2,048 star records; GPU capacity is fixed at 420. Promotion removes the identical star from the separate camera point layer before the active point/photosphere path draws it. Physical gravity retains the existing 64-source cap; it is not a mutual interaction island.
 
 `npm run smoke:galaxy-travel` checks registry orientation/distance, stable IDs and system parameters under time reversal and cache eviction, exact-clock publication, independent ship discovery, bounded memory, seed separation and journal/save-shaped replay. `npm run verify:galaxy-travel` runs the real UI controls and captures departure, intergalactic transit, M31 entry, manual free flight, point selection, photosphere, planet, return and quickload. The latter reports production-frame CPU times and records a video. Hardware performance and the target of no transition stall over 50 ms require measured final-revision evidence; compilation stalls are not disguised by raising that threshold.
 

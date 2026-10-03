@@ -15,7 +15,12 @@ export function systemAnchor(system, planetIndex, moonIndex, t) {
     return { origin: new THREE.Vector3(host.x * K, host.z * K, -host.y * K),
         offset: new THREE.Vector3(offset.x * K, offset.z * K, -offset.y * K) };
 }
-export function publishSystemCameraAnchor(camera, system, focus, t) {
+export function prepareSystemCameraAnchor(cam, system, focus, t) {
+    if (focus === 'free') return cam.preciseTarget || null;
     const moon = planetMoonFocusIndex(focus), planet = moon?.planetIndex ?? planetFocusIndex(focus);
-    camera.userData.systemAnchor = planet >= 0 ? systemAnchor(system, planet, moon?.moonIndex, t) : null;
+    const host = system?.hostStar;
+    cam.preciseTarget = planet >= 0 ? systemAnchor(system, planet, moon?.moonIndex, t)
+        : focus === 'proc:' + host?.id && host?.galaxyId
+            ? { origin: new THREE.Vector3(host.x * K, host.z * K, -host.y * K), offset: new THREE.Vector3() } : null;
+    return cam.preciseTarget;
 }

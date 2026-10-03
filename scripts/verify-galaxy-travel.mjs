@@ -29,10 +29,13 @@ try {
             import('/src/universe/exploredSystem.js'), import('/src/universe/galaxyRegistry.js'), import('/src/universe/planetarySystem.js'), import('/node_modules/three/build/three.module.js')]);
         window.qa={scene,state,field,active,systems,registry,P,THREE};
     });
+    // Clicking noninteractive inspector text releases button focus through
+    // the real UI, preserving accessible Space/Enter button activation.
+    const releaseKeys = async () => page.locator('#exploreObject').click();
     const frames = async n => { for (let i=0;i<n;i++) report.cpuMs.push(await page.evaluate(() => window.__travelFrame())); };
     const snapshot = async name => {
         const state = await page.evaluate(() => ({ focus: qa.state.G.focus, time: qa.state.G.t, ship:[qa.state.G.x,qa.state.G.y,qa.state.G.z],
-            camera:qa.scene.camera.position.toArray(),distance:qa.scene.cam.dist,goal:qa.scene.cam.distTarget,
+            camera:qa.scene.camera.position.toArray(),anchor:qa.scene.cam.preciseTarget ? {origin:qa.scene.cam.preciseTarget.origin.toArray(),offset:qa.scene.cam.preciseTarget.offset.toArray()}:null,distance:qa.scene.cam.dist,goal:qa.scene.cam.distTarget,
             star:qa.systems.getExploredHost()?.id,system:qa.systems.getExploredSystem(qa.state.G.focus)?.starId,
             rows:qa.field.foreignCameraStars().length, overview:qa.state.G.cosmicOverview,
             points:qa.scene.scene.children.find(o=>o.name==='persistent Andromeda stars')?.geometry.drawRange.count,
@@ -44,7 +47,13 @@ try {
     await page.locator('#exploreAndromeda').click();
     const launch=await page.evaluate(()=>({camera:qa.scene.camera.position.toArray(),focus:qa.state.G.focus}));
     assert.deepEqual(launch.camera,initial.camera,'Destination action never teleports the observer');
-    await frames(4);await snapshot('02-mw-exit');
+    const aimed=await page.evaluate(()=>({from:qa.scene.cam.dist,to:qa.scene.cam.distTarget}));
+    await frames(1);
+    const firstCamera=await page.evaluate(()=>qa.scene.camera.position.toArray());
+    const displacement=Math.hypot(...firstCamera.map((v,i)=>v-initial.camera[i]));
+    const expected=Math.abs(aimed.to-aimed.from)*4/30;
+    assert(Math.abs(displacement-expected)<Math.max(8,expected*1e-10),'First rendered approach frame follows continuous production zoom, without a target snap');
+    await frames(3);await snapshot('02-mw-exit');
     await frames(2);await snapshot('03-intergalactic');
     await page.locator('#exploreTravelStop').click();const stopped=await page.evaluate(()=>qa.scene.cam.dist);await frames(3);
     assert.equal(await page.evaluate(()=>qa.scene.cam.dist),stopped,'Stop cancels the ordinary approach controller');
@@ -53,7 +62,7 @@ try {
     await frames(90);await snapshot('05-local-star-field');
     await page.locator('#exploreTravelStop').click();await frames(2);
     const manualBefore=await page.evaluate(()=>qa.field.foreignCameraStars().map(s=>s.id));
-    await page.keyboard.down('w');await frames(3);await page.keyboard.up('w');await frames(2);
+    await releaseKeys();await page.keyboard.down('w');await frames(3);await page.keyboard.up('w');await frames(2);
     const manual=await snapshot('05b-manual-free-camera');assert.equal(manual.focus,'free');
     const manualAfter=await page.evaluate(()=>qa.field.foreignCameraStars().map(s=>s.id));
     assert(manualAfter.some(id=>manualBefore.includes(id)),'Manual free flight uses the same persistent population');
@@ -71,10 +80,15 @@ try {
     assert.equal(surface.star,candidate.id);
     await page.locator('#exploreSystemPlanet').click();await frames(80);const planet=await snapshot('08-planet');
     assert(planet.focus.startsWith('system:'));assert.equal(planet.star,candidate.id);
-    await page.keyboard.press('k');await frames(2);
+    const preciseBefore=await page.evaluate(()=>qa.scene.cam.preciseTarget.offset.toArray());
+    await releaseKeys();await page.keyboard.down('w');await frames(6);await page.keyboard.up('w');await frames(2);
+    const planetFree=await snapshot('08b-planet-free-camera');assert.equal(planetFree.focus,'free');
+    assert(planetFree.anchor&&Math.hypot(...planetFree.anchor.offset.map((v,i)=>v-preciseBefore[i]))>.01,'WASD moves a local residual at planet scale');
+    await page.locator('#exploreSystemPlanet').click();await frames(60);
+    await releaseKeys();await page.keyboard.press('k');await frames(2);
     await page.locator('#exploreMilkyWayReturn').click();await frames(30);const returned=await snapshot('09-return-milky-way');
     assert(returned.distance>1e10);assert.equal(returned.time,initial.time);
-    await page.keyboard.press('l');await frames(6);const reload=await snapshot('10-reloaded-same-planet');
+    await releaseKeys();await page.keyboard.press('l');await frames(6);const reload=await snapshot('10-reloaded-same-planet');
     assert.equal(reload.focus,planet.focus);assert.equal(reload.star,candidate.id);assert.equal(reload.time,initial.time);
     assert.deepEqual(reload.ship,initial.ship);assert.deepEqual(report.errors,[]);
     report.passed=true;report.transitionCpuMaximumMs=Math.max(...report.cpuMs.slice(5));await save();

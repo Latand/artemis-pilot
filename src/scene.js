@@ -1,3 +1,4 @@
+import { moveExplorationTarget } from './universe/explorationCamera.js';
 import * as THREE from "three";
 import { renderLinearFrame } from "./render/linearFrame.js";
 import { G, keys } from "./state.js";
@@ -312,6 +313,7 @@ export function applyCamera() {
     camera.position.copy(cam.tgt).add(preciseOrbit.offset);
     preciseOrbit.worldPosition.copy(camera.position);
     camera.userData.preciseOrbit = preciseOrbit;
+    camera.userData.systemAnchor = cam.preciseTarget || null;
     // Derive the orientation before adding a tiny orbit offset to a galactic
     // coordinate. Otherwise even double-precision lookAt can snap by degrees
     // around a stellar-mass horizon thousands of light-years from the Sun.
@@ -346,9 +348,9 @@ function panBy(dx, dy) {
     const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
     const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
     // right = (sy, 0, -cy), camera-up = (-sp·cy, cp, -sp·sy)
-    cam.tgt.x += (-sy * dx - sp * cy * dy) * k;
-    cam.tgt.y += cp * dy * k;
-    cam.tgt.z += (cy * dx - sp * sy * dy) * k;
+    tmpV.set(-sy * dx - sp * cy * dy, cp * dy, cy * dx - sp * sy * dy);
+    moveExplorationTarget(cam, tmpV, k);
+    cam.distTarget = null;
     G.focus = "free";
 }
 function shipScenePoint(out = grabShip) {

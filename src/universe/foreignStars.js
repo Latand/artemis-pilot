@@ -7,18 +7,19 @@ import { getSeed } from './galaxy.js';
 import { hashInts, makeRNG, samplePoisson } from './prng.js';
 import { sampleIMFMass, synthStar } from './stellar.js';
 import { galaxyById, galaxyLocalPc, galaxyWorldKm } from './galaxyRegistry.js';
-import { journalRevision, journalStarIds, starResidualKm } from './universeJournal.js';
+import { JOURNAL_LIMITS, journalRevision, journalStarIds, starResidualKm } from './universeJournal.js';
 
 export const FOREIGN_LIMITS = Object.freeze({ cellPc: 8, radiusPc: 12, cellsPerQuery: 125, starsPerCell: 80, starsPerQuery: 420, cachedCells: 256, cachedStars: 2048 });
-const cells = new Map(), stars = new Map();
+const cells = new Map(), stars = new Map(), exceptions = new Map();
+let exceptionRevision = -1;
 const PERIOD = 250e6 * 31557600;
 let lastSeed;
-function checkSeed() { const seed = getSeed(); if (seed !== lastSeed) { cells.clear(); stars.clear(); lastSeed = seed; } return seed; }
+function checkSeed() { const seed = getSeed(); if (seed !== lastSeed) { cells.clear(); stars.clear(); exceptions.clear(); exceptionRevision = -1; lastSeed = seed; } return seed; }
 function trim(cache, limit) { while (cache.size > limit) cache.delete(cache.keys().next().value); }
 function rotation(p, t) { const a = (t % PERIOD) / PERIOD * Math.PI * 2, c = Math.cos(a), s = Math.sin(a); return [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]; }
 function cellRecords(cx, cy, cz) {
     const seed = checkSeed(), key = `${cx},${cy},${cz}`;
-    if (cells.has(key)) return cells.get(key);
+    if (cells.has(key)) { const cached = cells.get(key); cells.delete(key); cells.set(key, cached); return cached; }
     const g = galaxyById('m31'), size = FOREIGN_LIMITS.cellPc;
     const r = Math.hypot((cx + .5) * size, (cy + .5) * size), z = Math.abs((cz + .5) * size);
     const density = r < g.radiusPc ? .08 * Math.exp((10000 - r) / g.scalePc - z / g.heightPc) : 0;
@@ -64,22 +65,34 @@ export function foreignStarById(id, t = 0) {
             flowC: .001 * Math.sqrt(2 * MU_S * source.mass / 1000), flowSink: radius * K };
         stars.set(id, star); trim(stars, FOREIGN_LIMITS.cachedStars);
     }
+    stars.delete(id); stars.set(id, star);
     return updateForeignStar(star, t);
 }
 export function sampleForeignStars(world, t = 0, limit = FOREIGN_LIMITS.starsPerQuery) {
-    const p = galaxyLocalPc('m31', world, t), g = galaxyById('m31');
-    if (Math.hypot(p[0], p[1]) > g.radiusPc + FOREIGN_LIMITS.radiusPc || Math.abs(p[2]) > 6 * g.heightPc) return [];
-    const birth = rotation(p, -t), size = FOREIGN_LIMITS.cellPc, radius = FOREIGN_LIMITS.radiusPc;
-    const c = birth.map(v => Math.floor(v / size));
-    const ids = new Set(journalStarIds()), ranked = [];
-    for (let x = c[0] - 2; x <= c[0] + 2; x++) for (let y = c[1] - 2; y <= c[1] + 2; y++) for (let z = c[2] - 2; z <= c[2] + 2; z++)
-        for (const source of cellRecords(x, y, z)) if (Math.hypot(...source.local.map((v, i) => v - birth[i])) <= radius) ids.add(source.id);
-    for (const id of ids) {
-        const s = foreignStarById(id, t); if (!s) continue;
-        const d2 = (s.x - world[0]) ** 2 + (s.y - world[1]) ** 2 + (s.z - world[2]) ** 2;
-        if (d2 <= (radius * PC_KM) ** 2) ranked.push({ s, d2 });
+    checkSeed();
+    // Edited stars may leave the disk. Materialize at most 64 exceptions once
+    // per journal revision, then retain their source records independently of
+    // the ordinary LRU. Normal queries never scan 4,096 birth cells.
+    if (exceptionRevision !== journalRevision()) {
+        exceptions.clear();
+        for (const id of journalStarIds()) { const star = foreignStarById(id, t); if (star) exceptions.set(id, star); }
+        exceptionRevision = journalRevision();
     }
+    const p = galaxyLocalPc('m31', world, t), g = galaxyById('m31'), radius = FOREIGN_LIMITS.radiusPc;
+    const inside = Math.hypot(p[0], p[1]) <= g.radiusPc + radius && Math.abs(p[2]) <= 6 * g.heightPc;
+    const ids = new Set(), ranked = [];
+    if (inside) {
+        const birth = rotation(p, -t), size = FOREIGN_LIMITS.cellPc, c = birth.map(v => Math.floor(v / size));
+        for (let x = c[0] - 2; x <= c[0] + 2; x++) for (let y = c[1] - 2; y <= c[1] + 2; y++) for (let z = c[2] - 2; z <= c[2] + 2; z++)
+            for (const source of cellRecords(x, y, z)) if (Math.hypot(...source.local.map((v, i) => v - birth[i])) <= radius) ids.add(source.id);
+    }
+    const add = star => {
+        const d2 = (star.x - world[0]) ** 2 + (star.y - world[1]) ** 2 + (star.z - world[2]) ** 2;
+        if (d2 <= (radius * PC_KM) ** 2) ranked.push({ s: star, d2 });
+    };
+    for (const star of exceptions.values()) { updateForeignStar(star, t); add(star); ids.delete(star.id); }
+    for (const id of ids) { const star = foreignStarById(id, t); if (star) add(star); }
     ranked.sort((a, b) => a.d2 - b.d2 || a.s.id.localeCompare(b.s.id));
     return ranked.slice(0, Math.min(limit, FOREIGN_LIMITS.starsPerQuery)).map(row => row.s);
 }
-export function foreignProviderStats() { return { cells: cells.size, stars: stars.size, ...FOREIGN_LIMITS }; }
+export function foreignProviderStats() { return { cells: cells.size, stars: stars.size, editedStars: exceptions.size, editedStarLimit: JOURNAL_LIMITS.stars, ...FOREIGN_LIMITS }; }

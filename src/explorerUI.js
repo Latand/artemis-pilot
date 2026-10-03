@@ -1,3 +1,4 @@
+import { moveExplorationTarget } from './universe/explorationCamera.js';
 import { initGalaxyTravel } from './galaxyTravel.js';
 import { initGravityInspector, closeGravityInspector } from './gravityInspector.js';
 import { largeFlowStatus } from './render/largeScaleFlow.js';
@@ -100,7 +101,7 @@ export function moveExplorerCamera(dt) {
     right.setFromMatrixColumn(camera.matrixWorld,0);up.setFromMatrixColumn(camera.matrixWorld,1);
     delta.copy(forward).multiplyScalar(z).addScaledVector(right,x).addScaledVector(up,y).normalize();
     const speed=Math.max(.03,cam.dist)*Math.min(dt,.06)*(keys.has('ShiftLeft')||keys.has('ShiftRight')?2.5:.65);
-    cam.tgt.addScaledVector(delta,speed);cam.distTarget=null;G.focus='free';
+    moveExplorationTarget(cam,delta,speed);cam.distTarget=null;G.focus='free';
 }
 
 // Alongside the display name this carries the raw records the fact rows are

@@ -1,4 +1,5 @@
-import { publishSystemCameraAnchor } from './render/systemPrecision.js';
+import { aimExplorationCamera } from './universe/cameraNavigation.js';
+import { prepareSystemCameraAnchor, systemAnchor } from './render/systemPrecision.js';
 import { galaxyFocusPosition } from './galaxyTravel.js';
 import { initForeignStarField, updateForeignStarField, foreignCameraStars } from './render/foreignStarField.js';
 import { initShipVisuals, updateShipVisuals } from "./shipVisuals.js";
@@ -390,8 +391,16 @@ function installCameraPersistence() {
     window.addEventListener("beforeunload", saveCam);
 }
 
+function observerHasStellarDetail() {
+    // An independent free camera may approach a photosphere while its orbit
+    // target stays light-years away. Detail follows the observer, not cam.dist.
+    const x = camera.position.x / K, y = -camera.position.z / K, z = camera.position.y / K;
+    const close = star => Math.hypot(star.x - x, star.y - y, (star.z || 0) - z) < LY_KM * .2;
+    return ACTIVE_STARS.some(close) || foreignCameraStars().some(close);
+}
+
 function primeStartupBodyLod() {
-    const cosmicView = cam.dist > LY_SCENE * .2;
+    const cosmicView = cam.dist > LY_SCENE * .2 && !observerHasStellarDetail();
     const detailShed = renderQuality.mobile || G.warp > 600;
     const distantShipView = detailShed && G.focus === "ship" && cam.dist > 1000;
     if (!cosmicView && !distantShipView) return { cosmicView, detailShed, primed: false };
@@ -736,11 +745,23 @@ function velocityForTarget(target, out) {
 // smooth fly-in: keep the focus glide, but animate the zoom distance toward the
 // framing distance setFocus() chose, so picking a body approaches it instead of
 // snapping. Used by taps and the navigator.
+function reaimForeignTarget(focus, goal) {
+    const star = activeStarForFocus(focus);
+    const moon = planetMoonFocusIndex(focus), planet = moon?.planetIndex ?? planetFocusIndex(focus);
+    const system = planet >= 0 ? getExploredSystem(focus, null, G.t) : null;
+    const anchor = star?.galaxyId
+        ? { origin: new THREE.Vector3(star.x * K, star.z * K, -star.y * K), offset: new THREE.Vector3() }
+        : systemAnchor(system, planet, moon?.moonIndex, G.t);
+    if (!anchor) return false;
+    aimExplorationCamera(cam, camera, anchor, goal);
+    return true;
+}
 function flyFocus(fv) {
     const from = cam.dist;
     setFocus(fv);
     unlockBodyPrediction();
     const to = cam.dist;
+    if (reaimForeignTarget(fv, to)) return;
     cam.dist = from;
     cam.distTarget = to;
 }
@@ -753,6 +774,7 @@ function focusTarget(target, approach = false) {
     else if (approach) { setFocus(target === BODY_EARTH ? "earth" : target === BODY_MOON ? "moon" : target === BODY_SUN ? "sun" : target); unlockBodyPrediction(); }
     else focusAndLockBody(target, target === BODY_EARTH ? "earth" : target === BODY_MOON ? "moon" : target === BODY_SUN ? "sun" : target);
     const to = cam.dist;
+    if (reaimForeignTarget(G.focus, to)) return;
     if (to !== from) { cam.dist = from; cam.distTarget = to; }
 }
 function focusNearestSurvivor() {
@@ -1772,7 +1794,7 @@ function frameStep() {
     const oi = orbitInfo();
     perfEnd("frame.physics", physicsT0, PERF.enabled ? { advanced, warp: G.warp, dtR, rawDtR, dtRCap } : null);
     sampleTimeDock();
-    const cosmicView = cam.dist > LY_SCENE * .2;
+    const cosmicView = cam.dist > LY_SCENE * .2 && !observerHasStellarDetail();
     const cosmicLod = cam.dist > LY_SCENE * 800000 ? 3 : cam.dist > LY_SCENE * 20000 ? 2 : cosmicView ? 1 : 0;
     const pixelLoadShed = renderQuality.mobile ? (G.warp > 600 && G.gr ? 2 : 1) :
         G.warp > 86400 && G.gr && cam.dist < LY_SCENE * .2 ? 1 : 0;
@@ -2028,8 +2050,10 @@ function frameStep() {
         camera.lookAt(cabinLook);
     } else if (cinematic.isPlaying()) {
         cinematic.tick(dtR);
-    } else applyCamera();
-    publishSystemCameraAnchor(camera, focusedSystem, G.focus, G.t);
+    } else {
+        prepareSystemCameraAnchor(cam, focusedSystem, G.focus, G.t);
+        applyCamera();
+    }
     updateSystemRender(focusedSystem, G.t, camera, G.focus);
     updateRelView(camera);
     perfEnd("scene.camera", sceneCameraT0, PERF.enabled ? { cabin: cabinActive, vr: VR.active, focus: String(G.focus) } : null);

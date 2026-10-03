@@ -1,3 +1,4 @@
+import { journalRevision } from './universeJournal.js';
 import { foreignStarById, isForeignStarId, updateForeignStar, sampleForeignStars } from './foreignStars.js';
 import { catalogIdentityKeys } from "./catalogIdentity.js";
 import { catalogEvalTime, catalogMotionFor, updateCatalogStar } from "./catalogMotion.js";
@@ -50,6 +51,8 @@ let FORMATION_SIGNATURE = "";
 // The evaluation time of the latest refresh: "now" for the active layer.
 export function activeStarsTime() { return LAST_EVAL_T; }
 export function activeStarsExactTime() { return FORMATION_TIME; }
+export function activeForeignStarsTime() { return ACTIVE_STARS.some(star => star.galaxyId) ? FORMATION_TIME : 0; }
+export function activeForeignStarsStamp() { return ACTIVE_STARS.some(star => star.galaxyId) ? FORMATION_TIME + ":" + journalRevision() : ""; }
 
 // Where galaxy.js's local tier supplies every procedural star (galactocentric
 // pc of the ship at the last full refresh, and the sampled radius). The
@@ -97,6 +100,18 @@ export const GRAVITY_STARS = [];
 const ACTIVE_IDS = new Set();
 const GRAVITY_IDS = new Set();
 const PINNED_PROC = new Map();
+let GENERATED_SEED = getSeed();
+function forgetStaleGeneratedSources() {
+    const seed = getSeed();
+    if (GENERATED_SEED === seed) return;
+    GENERATED_SEED = seed;
+    for (const [id, star] of PINNED_PROC) if (star.generatedSeed !== seed) PINNED_PROC.delete(id);
+    for (const list of [ACTIVE_STARS, GRAVITY_STARS]) {
+        for (let i = list.length - 1; i >= 0; i--) if (list[i].procedural && list[i].generatedSeed !== seed) list.splice(i, 1);
+    }
+    ACTIVE_REFRESH_KEY = ''; GRAVITY_REFRESH_KEY = ''; FAST_REFRESH.seed = undefined;
+    NEIGHBOURHOOD.valid = false;
+}
 const PROC_CACHE = { key: "", stars: [] };
 const PROC_NEAREST = [];
 const PROC_POOL = [];
@@ -344,6 +359,7 @@ export function proceduralStarById(id, simT = LAST_EVAL_T) {
 }
 
 export function pinProceduralStarById(id, simT = LAST_EVAL_T) {
+    forgetStaleGeneratedSources();
     const cached = PINNED_PROC.get(id);
     if (cached) {
         PINNED_PROC.delete(id);
@@ -376,6 +392,7 @@ function trimPinnedProcedural(keepId = "") {
 }
 
 export function activeStarById(id) {
+    forgetStaleGeneratedSources();
     for (const star of ACTIVE_STARS) if (activeId(star) === id) return knownDuplicateFor(star) || star;
     return PINNED_PROC.get(id) || proceduralStarById(id, LAST_EVAL_T) || catalogStarById(id, LAST_EVAL_T);
 }
@@ -610,6 +627,7 @@ function rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalo
 // sim time the caller's frame covers; past ACTIVE_STAR_CONFIG
 // .decorrelatedFrameSec only the nearest decorrelatedRadiusPc is sampled.
 export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0, frameAdvanceSec = 0) {
+    forgetStaleGeneratedSources();
     syncGalacticFrame(simT);
     FORMATION_TIME = simT;
     // A reverse slice starting exactly at birth belongs to the pre-birth side.
@@ -776,6 +794,7 @@ export function restorePinnedProceduralStars(ids = []) {
 // Camera/cosmic cadence may defer rediscovery, never the time of objects
 // already published. At most the existing active-object budget is touched.
 registerActivePositionPublisher((t, exactT) => {
+    forgetStaleGeneratedSources();
     FORMATION_TIME = exactT;
     // Foreign objects use the exact common coordinate clock even between
     // catalog cadence buckets. Spatial discovery may still be throttled.

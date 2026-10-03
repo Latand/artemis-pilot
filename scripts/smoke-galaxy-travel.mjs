@@ -52,3 +52,53 @@ const seed = getSeed(); setSeed(seed + 1); assert.equal(F.foreignStarById(id), n
 assert.equal(F.foreignStarById(id, 0).id, id);
 assert.equal(JSON.stringify(G), ship, 'Camera/system exploration leaves clock and ship untouched');
 console.log(JSON.stringify({ pass: true, coldQueryMs: coldMs, sampledStars: rows.length, persistentStar: id, planets: system.planets.length, limits: F.foreignProviderStats() }, null, 2));
+
+// Review regressions: stale seed pins, ejected bodies, sub-bucket publication,
+// and real kilometre-scale free-camera residuals at an M31 planet.
+J.restoreUniverseJournal(null); A.refreshActiveStars(...world, focus, 0);
+setSeed(seed + 1); A.refreshActiveStars(...world, 'free', 0);
+assert(!A.ACTIVE_STARS.some(s => s.id === id)); assert(!A.GRAVITY_STARS.some(s => s.id === id));
+assert.equal(A.activeStarForFocus(focus), null);
+setSeed(seed); A.refreshActiveStars(...world, 'free', 0); E.restoreExploredSystem(null, 'free');
+const initialForeignTime = A.activeForeignStarsTime(); syncGalacticFrame(1e8);
+assert.notEqual(A.activeForeignStarsTime(), initialForeignTime); assert.equal(A.activeStarsTime(), 0);
+syncGalacticFrame(-1e8); assert.equal(A.activeForeignStarsTime(), -1e8); syncGalacticFrame(0);
+const normal = GALAXIES.find(g => g.id === 'm31').frame.n;
+J.recordStarImpulse(id, 0, normal.map(v => v * 300));
+const ejectedSave = JSON.parse(JSON.stringify(J.serializeUniverseJournal()));
+for (const t of [5e14, 0, -1e8, 5e14]) {
+    const ejected = F.foreignStarById(id, t), position = [ejected.x, ejected.y, ejected.z];
+    assert(F.sampleForeignStars(position, t).some(s => s.id === id), 'Edited star stays discoverable outside disk and through reverse');
+    J.restoreUniverseJournal(null); assert(J.restoreUniverseJournal(ejectedSave));
+    assert(F.sampleForeignStars(position, t).some(s => s.id === id), 'Edited-star discovery survives journal restore');
+}
+J.restoreUniverseJournal(null);
+const { Vector3, PerspectiveCamera } = await import('three');
+const { systemAnchor, prepareSystemCameraAnchor } = await import('../src/render/systemPrecision.js');
+const { moveExplorationTarget, serializeExplorationCamera, restoreExplorationCamera } = await import('../src/universe/explorationCamera.js');
+const { aimExplorationCamera } = await import('../src/universe/cameraNavigation.js');
+const selected = F.foreignStarById(id, 0), sys = P.generateSystem(selected); sys.hostStar = selected;
+const eye = new PerspectiveCamera(), anchor = systemAnchor(sys, 0, null, 0);
+const cam = { tgt: anchor.origin.clone().add(anchor.offset), dist: sys.planets[0].radiusKm * .001 * 3, yaw: 0, pitch: 0, preciseTarget: anchor };
+eye.position.copy(cam.tgt).add(new Vector3(cam.dist, 0, 0));
+eye.userData.systemAnchor = anchor;
+eye.userData.preciseOrbit = { offset: new Vector3(cam.dist, 0, 0), worldPosition: eye.position.clone() };
+const before = anchor.offset.clone(), step = cam.dist / 30 * .65;
+moveExplorationTarget(cam, new Vector3(1, 0, 0), step); prepareSystemCameraAnchor(cam, sys, 'free', 0);
+assertClose(cam.preciseTarget.offset.x - before.x, step, 1e-6);
+const record = JSON.parse(JSON.stringify(serializeExplorationCamera(cam, { x: 0, y: 0, z: 0 })));
+const loadedCam = { tgt: new Vector3() }; assert(restoreExplorationCamera(record, loadedCam, { x: 0, y: 0, z: 0 }));
+assert(loadedCam.preciseTarget.offset.distanceTo(cam.preciseTarget.offset) < 1e-6);
+const toStar = { origin: anchor.origin.clone(), offset: new Vector3() };
+const observerBefore = anchor.offset.clone().add(eye.userData.preciseOrbit.offset);
+aimExplorationCamera(cam, eye, toStar, 100);
+const recreated = new Vector3(Math.cos(cam.pitch)*Math.cos(cam.yaw),Math.sin(cam.pitch),Math.cos(cam.pitch)*Math.sin(cam.yaw)).multiplyScalar(cam.dist);
+assert(recreated.distanceTo(observerBefore) < 1e-6, 'Planet-to-host re-aim preserves the split observer position');
+console.log('review regressions passed: seed cleanup, exact foreign time, ejection/save/reverse, split free movement and camera re-aim');
+
+A.refreshActiveStars(...world, 'free', 0); syncGalacticFrame(0);
+const beforeJournalStamp = A.activeForeignStarsStamp();
+J.recordStarImpulse(id, -1e7, [300, 0, 0]); syncGalacticFrame(0);
+assert.notEqual(A.activeForeignStarsStamp(), beforeJournalStamp, 'Same-clock journal changes invalidate held foreign points');
+J.restoreUniverseJournal(null); syncGalacticFrame(0);
+assert.notEqual(A.activeForeignStarsStamp(), beforeJournalStamp, 'Same-clock restore publishes a new visual revision');

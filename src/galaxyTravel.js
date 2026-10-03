@@ -1,3 +1,5 @@
+import { Vector3 } from 'three';
+import { aimExplorationCamera } from './universe/cameraNavigation.js';
 // A focus/zoom convenience, using the ordinary camera controller. Moving with
 // WASD, wheel zoom and clicks remain authoritative. No simulation-clock writes,
 // ship teleport, private animation loop or generated tour-only population.
@@ -19,12 +21,8 @@ export function approachGalaxy(id) {
     if (!target) return false;
     // Re-aim without moving the camera: distance/yaw/pitch encode precisely
     // its current observer position relative to the new target.
-    const delta = camera.position.clone().sub(target), distance = delta.length();
     G.focus = 'galaxy:' + id; G.cosmicOverview = false;
-    cam.tgt.copy(target); cam.dist = Math.max(.03, distance);
-    cam.yaw = Math.atan2(delta.z, delta.x);
-    cam.pitch = Math.asin(Math.max(-1, Math.min(1, delta.y / Math.max(distance, 1e-30))));
-    cam.distTarget = id === 'm31' ? LY_SCENE * 5 : LY_SCENE * 120000;
+    aimExplorationCamera(cam, camera, { origin: target, offset: new Vector3() }, id === 'm31' ? LY_SCENE * 5 : LY_SCENE * 120000);
     return true;
 }
 export function initGalaxyTravel() {
