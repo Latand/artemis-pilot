@@ -1,6 +1,6 @@
 // Diagnostic equivalence excludes only the proposed display gain.
 export function comparableRadianceFrame(frame) {
-  const { textureBase64, pixel, png, ...state } = frame;
+  const { textureBase64, pixel, png, gainState, ...state } = frame;
   return {
     ...state,
     sources: state.sources.map(({ inkGain, ...source }) => source),

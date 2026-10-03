@@ -5,7 +5,7 @@ on:
 permissions:
   contents: read
 jobs:
-  paired-transient:
+  paired-mobile-transient:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -16,16 +16,112 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-river-radiance.mjs && node scripts/smoke-river-radiance-qa.mjs
+      - run: node scripts/smoke-river-radiance.mjs && node scripts/smoke-river-radiance-qa.mjs && node scripts/smoke-river-radiance-lifecycle.mjs
       - run: npx playwright install --with-deps chromium
       - name: Compare the fixed baseline and reviewed candidate
         run: |
           git worktree add --detach ../radiance-baseline 09863eedda25eef36d79e9cf88daa4ff3e377875
           ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-baseline/node_modules
-          node scripts/verify-river-radiance.mjs ../radiance-baseline . evidence/river-radiance
+          DEVICE=mobile node scripts/verify-river-radiance.mjs ../radiance-baseline . evidence/river-radiance
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: paired-owner-radiance
+          name: paired-owner-radiance-mobile
           path: evidence/river-radiance
+          retention-days: 14
+  paired-lifecycle:
+    name: Source and GPU lifecycle ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-river-radiance-lifecycle.mjs && node scripts/smoke-context-recovery-qa.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise actual source replacement and native context restoration
+        env:
+          DEVICE: ${{ matrix.device }}
+          RADIANCE_SUITE: lifecycle
+        run: |
+          git worktree add --detach ../radiance-baseline 09863eedda25eef36d79e9cf88daa4ff3e377875
+          ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-baseline/node_modules
+          node scripts/verify-river-radiance.mjs ../radiance-baseline . evidence/river-lifecycle
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paired-owner-lifecycle-${{ matrix.device }}
+          path: evidence/river-lifecycle
+          retention-days: 14
+  paired-performance:
+    name: Full normal-entry performance ${{ matrix.device }} ${{ matrix.fixture }}
+    needs: [paired-mobile-transient, paired-lifecycle]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        fixture: [proxima, sun, black-hole]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-river-radiance-paired.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve every paired trial on the exact baseline and candidate
+        env:
+          DEVICE: ${{ matrix.device }}
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          git worktree add --detach ../radiance-baseline 09863eedda25eef36d79e9cf88daa4ff3e377875
+          ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-baseline/node_modules
+          BASE_ROOT="$GITHUB_WORKSPACE/../radiance-baseline" node scripts/benchmark-river-radiance.mjs . evidence/paired
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-performance-${{ matrix.device }}-${{ matrix.fixture }}
+          path: evidence/paired
+          retention-days: 14
+  aggregate-performance:
+    name: Require complete performance gate ${{ matrix.device }}
+    needs: paired-performance
+    if: always()
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: radiance-performance-${{ matrix.device }}-*
+          path: evidence/shards
+      - name: Recompute all three p95 gates and one device-wide long-task budget
+        run: >-
+          node scripts/aggregate-river-radiance-paired.mjs ${{ matrix.device }} evidence/aggregate.json
+          evidence/shards/radiance-performance-${{ matrix.device }}-proxima/report.json
+          evidence/shards/radiance-performance-${{ matrix.device }}-sun/report.json
+          evidence/shards/radiance-performance-${{ matrix.device }}-black-hole/report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-performance-complete-${{ matrix.device }}
+          path: evidence/
           retention-days: 14
