@@ -64,6 +64,7 @@ try {
   const rows=objects.map(o=>({id:o.id,name:o.name,type:o.type,geometry:o.geometry?.type,material:o.material?.type,color:o.material?.color?.getHexString(),opacity:o.material?.opacity,position:o.getWorldPosition(qa.s.camera.position.clone()).toArray(),scale:o.scale.toArray(),radius:o.geometry?.boundingSphere?.radius}));
   objects.forEach(o=>o.visible=false);window.__catalogRedraw();return rows;
  });
+ check('Lunar beacon does not leak into cosmic return',!report.returnMeshInventory.some(o=>o.name==='Moon selection beacon'));
  await page.screenshot({path:resolve(out,'diagnostic-return-without-meshes.png')});
  await page.evaluate(()=>{window.__catalogDiagnosticObjects.forEach(o=>o.visible=true);window.__catalogRedraw();});
  const precision=await page.evaluate(async()=>{
@@ -76,9 +77,10 @@ try {
   gl.attachShader(program,shader(gl.FRAGMENT_SHADER,'#version 300 es\nprecision highp float;out vec4 color;void main(){color=vec4(1);}'));
   gl.transformFeedbackVaryings(program,['computed'],gl.INTERLEAVED_ATTRIBS);gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(program));gl.useProgram(program);
   const records=stars.map(s=>m.catalogMotionFor(s));
-  for(const [name,values] of [['position',records.flatMap(x=>[x.x*c.K,x.z*c.K,-x.y*c.K])],['catalogOrbit',records.flatMap(x=>[x.xp,x.yp,x.zp])]]){
-   gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(values),gl.STATIC_DRAW);const a=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,3,gl.FLOAT,false,0,0);
+  for(const [name,values] of [['position',records.flatMap(x=>[x.x*c.K,x.z*c.K,-x.y*c.K])],['catalogOrbit',records.flatMap(x=>[x.xp,x.yp,x.zp,x.omega*m.CATALOG_MYR_S])]]){
+   gl.bindBuffer(gl.ARRAY_BUFFER,gl.createBuffer());gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(values),gl.STATIC_DRAW);const a=gl.getAttribLocation(program,name);gl.enableVertexAttribArray(a);gl.vertexAttribPointer(a,name==='catalogOrbit'?4:3,gl.FLOAT,false,0,0);
   }
+  gl.bindTransformFeedback(gl.TRANSFORM_FEEDBACK,gl.createTransformFeedback());
   const result=gl.createBuffer();gl.bindBuffer(gl.TRANSFORM_FEEDBACK_BUFFER,result);gl.bufferData(gl.TRANSFORM_FEEDBACK_BUFFER,records.length*12,gl.DYNAMIC_READ);gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER,0,result);
   const rows=[];
   for(const years of [0,1e6,541101036,-541101036,1e9]){
@@ -86,7 +88,7 @@ try {
    gl.uniform1f(gl.getUniformLocation(program,'uCatalogMyr'),m.catalogMotionUniforms.uCatalogMyr.value);gl.uniform3fv(gl.getUniformLocation(program,'uCatalogSunDelta'),m.catalogMotionUniforms.uCatalogSunDelta.value);gl.uniform3fv(gl.getUniformLocation(program,'uCatalogOriginPc'),[0,0,0]);
    gl.enable(gl.RASTERIZER_DISCARD);gl.beginTransformFeedback(gl.POINTS);gl.drawArrays(gl.POINTS,0,records.length);gl.endTransformFeedback();gl.disable(gl.RASTERIZER_DISCARD);
    const data=new Float32Array(records.length*3);gl.getBufferSubData(gl.TRANSFORM_FEEDBACK_BUFFER,0,data);
-   let maxErrorPc=0;records.forEach((r,i)=>{const p=m.catalogPositionAt(r,time);maxErrorPc=Math.max(maxErrorPc,Math.hypot(data[i*3]-p[0]/c.PC_KM,-data[i*3+2]-p[1]/c.PC_KM,data[i*3+1]-p[2]/c.PC_KM));});rows.push({years,maxErrorPc});
+   let maxErrorPc=0,worst=null;records.forEach((r,i)=>{const p=m.catalogPositionAt(r,time),gpu=[data[i*3],-data[i*3+2],data[i*3+1]],cpu=p.map(x=>x/c.PC_KM),error=Math.hypot(...gpu.map((x,k)=>x-cpu[k]));if(error>maxErrorPc){maxErrorPc=error;worst={name:stars[i].name,cpu,gpu,orbit:[r.xp,r.yp,r.zp,r.omega*m.CATALOG_MYR_S]};}});rows.push({years,maxErrorPc,worst});
   }
   gl.getExtension('WEBGL_lose_context')?.loseContext();return rows;
  });report.gpuPrecision=precision;
