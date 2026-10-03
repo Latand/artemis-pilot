@@ -20,6 +20,10 @@ const SGR = STARS.find(s => s.name === "SGR A*") || null;
 const SGR_EPOCH = SGR ? [SGR.x, SGR.y, SGR.z] : null;
 const _shift = [0, 0, 0];
 let SYNC_T = 0;
+let publishActivePositions = null;
+// Separates cheap bounded position publication from costly neighbourhood
+// discovery. Avoids a galacticClock -> activeStars module cycle.
+export function registerActivePositionPublisher(publish) { publishActivePositions = publish; }
 
 // Publish the Sun anchor, central hole and bounded destination table. The
 // table shares the active layer's cadence; the Sun/nucleus retain exact time.
@@ -56,6 +60,7 @@ export function syncGalacticFrame(simT) {
             }
         }
     }
+    publishActivePositions?.(catalogT, t);
     SYNC_T = t;
     return SUN_NOW;
 }

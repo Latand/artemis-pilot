@@ -35,10 +35,16 @@ The full HYG and both AT-HYG point layers evaluate the same algebra in a shared
 GPU kernel, with three extra floats per point (12 bytes), rather than scanning
 millions of stars on the CPU per frame. This adds approximately 30 MB for the
 2.37-million-star AT-HYG base plus HYG background, in addition to any estimated
-AT-HYG supplement. A small named buffer follows the canonical CPU objects.
+AT-HYG supplement. A small named buffer follows the canonical CPU objects. Both named and active
+point buffers use observer-relative residuals, independent of the optional
+global-rebase setting, to preserve local photosphere alignment after kpc travel.
 Active HYG rows and the explored HYG host use the existing bounded active-point
 pool with CPU positions; the matching background row is hidden. A photosphere
-handoff therefore never revives a frozen epoch twin. Float32 far-field GPU
+handoff therefore never revives a frozen epoch twin. Curated/HYG duplicate
+resolution uses immutable epoch coordinates and explicit aliases, so divergent
+fallback velocities cannot switch a selected system's identity. A bounded
+active-position publisher runs even when cosmic-frame cadence defers more
+expensive neighbourhood discovery. Float32 far-field GPU
 positions are approximations; the browser test measures their deviation from
 the canonical float64 model through ±541 Myr and +1 Gyr.
 

@@ -109,6 +109,7 @@ export const CATALOG_MOTION_GLSL = /* glsl */`
 attribute vec3 catalogOrbit;
 uniform float uCatalogMyr;
 uniform vec3 uCatalogSunDelta, uCatalogOriginPc;
+float catalogSq(float x) { return x*x; }
 vec3 catalogMotion(vec3 p) {
     if (uCatalogMyr == 0.0) return p;
     vec3 w = vec3(p.x,-p.z,p.y) / ${(PC_KM * .001).toFixed(6)} + uCatalogOriginPc;
@@ -117,14 +118,14 @@ vec3 catalogMotion(vec3 p) {
     float vc = rk < 5.0 ? 234.406*rk/5.0 : 229.0 - 1.7*(min(rk,25.0)-8.18);
     float om = vc/safeR * ${(CATALOG_MYR_S / PC_KM).toFixed(15)};
     float a = sqrt(2.0)*om*uCatalogMyr;
-    float cm1 = -2.0*pow(sin(a*.5),2.0), sk = sin(a);
+    float cm1 = -2.0*catalogSq(sin(a*.5)), sk = sin(a);
     float dr = catalogOrbit.x*cm1 - catalogOrbit.y*sk;
     float theta = om*uCatalogMyr - sqrt(2.0)/(r-catalogOrbit.x)*(catalogOrbit.x*sk+catalogOrbit.y*cm1);
-    float sa=sin(theta), ca1=-2.0*pow(sin(theta*.5),2.0);
+    float sa=sin(theta), ca1=-2.0*catalogSq(sin(theta*.5));
     vec2 delta=vec2(g.x*ca1-g.y*sa,g.x*sa+g.y*ca1);
     delta += dr/max(r,1e-12)*vec2(g.x*(ca1+1.0)-g.y*sa,g.x*sa+g.y*(ca1+1.0));
     float nu = ${(CATALOG_NU_S * CATALOG_MYR_S).toFixed(15)}*uCatalogMyr;
-    vec3 d=vec3(delta,g.z*(-2.0*pow(sin(nu*.5),2.0))+catalogOrbit.z*sin(nu))-uCatalogSunDelta;
+    vec3 d=vec3(delta,g.z*(-2.0*catalogSq(sin(nu*.5)))+catalogOrbit.z*sin(nu))-uCatalogSunDelta;
     vec3 e=vec3(-d.x,d.y,d.z);
     vec3 wd=vec3(${dot(W2G.map(r=>r[0]), 'e')},${dot(W2G.map(r=>r[1]), 'e')},${dot(W2G.map(r=>r[2]), 'e')});
     return p + vec3(wd.x,wd.z,-wd.y)*${(PC_KM * .001).toFixed(6)};

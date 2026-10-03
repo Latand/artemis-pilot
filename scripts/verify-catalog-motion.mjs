@@ -37,7 +37,7 @@ try {
    for(let i=0;i<4;i++)window.__catalogFrame();
    const st=c.STARS[0],sys=e.getExploredSystem('star:0',null,state.G.t),body=p.planetWorldState(sys,0,st,state.G.t,{});
    const point=s.scene.children.find(x=>x.name==='curated destinations'),slot=c.STARS.filter(x=>!x.bh).indexOf(st),v=point.geometry.attributes.position.array;
-   return {years,star:[st.x,st.y,st.z],epoch:st.epochPosition,source:a.ACTIVE_STARS.includes(st),gravitySelected:a.GRAVITY_STARS.includes(st),systemId:sys.starId,planets:JSON.stringify(sys.planets),body:[body.x,body.y,body.z],point:[v[slot*3]/c.K,-v[slot*3+2]/c.K,v[slot*3+1]/c.K],labels:[...document.querySelectorAll('.starLabel')].filter(x=>getComputedStyle(x).display!=='none').map(x=>({text:x.textContent,left:x.style.left,top:x.style.top})),drawCalls:s.renderer.info.render.calls};
+   return {years,star:[st.x,st.y,st.z],epoch:st.epochPosition,source:a.ACTIVE_STARS.includes(st),gravitySelected:a.GRAVITY_STARS.includes(st),systemId:sys.starId,planets:JSON.stringify(sys.planets),body:[body.x,body.y,body.z],point:[(v[slot*3]+point.position.x)/c.K,-(v[slot*3+2]+point.position.z)/c.K,(v[slot*3+1]+point.position.y)/c.K],labels:[...document.querySelectorAll('.starLabel')].filter(x=>getComputedStyle(x).display!=='none').map(x=>({text:x.textContent,left:x.style.left,top:x.style.top})),drawCalls:s.renderer.info.render.calls};
   },{years,focus,distLy});
   await page.screenshot({path:resolve(out,name+'.png')});report.frames.push({name,...row});await writeFile(resolve(out,'report.json'),JSON.stringify(report,null,2));return row;
  };

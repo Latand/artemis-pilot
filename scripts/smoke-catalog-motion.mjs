@@ -10,7 +10,7 @@ const H = await import('../src/universe/hygActiveCatalog.js');
 const P = await import('../src/universe/planetarySystem.js');
 const E = await import('../src/universe/exploredSystem.js');
 const R = await import('../src/render/catalogStars.js');
-const { Group } = await import('three');
+const { Group, PerspectiveCamera, Vector3, Matrix4 } = await import('three');
 const { STARS, PC_KM, SEC_YEAR, K } = C;
 const MYR = SEC_YEAR * 1e6;
 const xyz = s => [s.x, s.y, s.z];
@@ -50,9 +50,46 @@ for (const years of [0, 1e6, 10e6, 541101036, 1e9, -1e6, -541101036, 1e6, 0]) {
 assert.deepEqual(STARS.map(xyz),epoch,'Epoch state restored bit for bit');
 for (const i of [0,1,4,6,12,18,25]) assert(dist(epoch[i],history.get(1e6)[i])>PC_KM,'Named stars move by pc over Myr');
 assert.equal(E.restoreExploredSystem(saved,child),child,'Saved child identity still resolves');
+for (const years of [1e6, 541101036, -541101036, 1e9]) {
+    F.syncGalacticFrame(years * SEC_YEAR);
+    const camera = new PerspectiveCamera(48,1,.02,1e25);
+    camera.position.set(star.x*K,star.z*K+10*C.AU_KM*K,-star.y*K);
+    camera.lookAt(star.x*K,star.z*K,-star.y*K);camera.updateMatrixWorld();
+    R.updateCatalogStars(camera.position.x/K,-camera.position.z/K,camera.position.y/K);
+    parent.updateMatrixWorld();
+    const layer=parent.children.find(x=>x.name==='curated destinations'),attr=layer.geometry.attributes.position;
+    const modelView=new Matrix4().multiplyMatrices(camera.matrixWorldInverse,layer.matrixWorld);
+    modelView.fromArray(Array.from(modelView.elements,Math.fround));
+    const slot=STARS.filter(x=>!x.bh).indexOf(star);
+    const view=new Vector3().fromBufferAttribute(attr,slot).applyMatrix4(modelView);
+    assert(Math.abs(view.z + 10*C.AU_KM*K)<10,'Close-host point depth stays within 10,000 km at kpc galactic position');
+    const hostView = new Matrix4().multiplyMatrices(camera.matrixWorldInverse,new Matrix4().makeTranslation(star.x*K,star.z*K,-star.y*K));
+    const meshView = new Vector3(Math.fround(hostView.elements[12]),Math.fround(hostView.elements[13]),Math.fround(hostView.elements[14]));
+    assert(view.distanceTo(meshView)<10,'Point/photosphere alignment survives float32 GPU upload');
+}
+
 const meta=JSON.parse(readFileSync(new URL('../public/data/hyg-stars-v41.json',import.meta.url),'utf8'));
 const bin=readFileSync(new URL('../public/data/hyg-stars-v41.bin',import.meta.url));
-H.registerHygCatalog(meta,new Float32Array(bin.buffer,bin.byteOffset,bin.byteLength/4));
+const values = new Float32Array(bin.buffer,bin.byteOffset,bin.byteLength/4);
+const { ensureWorldFrameRecords } = await import('../src/universe/coords.js');
+ensureWorldFrameRecords(meta, values, meta.stride || 10, 0, 1, 2);
+H.registerHygCatalog(meta,values);
+for (const [index, name] of [[70664,'PROXIMA'],[71454,'ALPHA CEN A'],[71451,'ALPHA CEN B'],[32262,'SIRIUS A'],[8086,'TAU CETI']]) {
+    for (const t of [MYR,541101036*SEC_YEAR,-MYR]) {
+        A.refreshActiveStars(0,0,0,'hyg:'+index,t,2*MYR);
+        assert.strictEqual(A.activeStarForFocus('hyg:'+index),STARS.find(s=>s.name===name),'Catalog aliases resolve the same curated source after dispersion');
+        assert(!A.ACTIVE_STARS.some(s=>s.activeCatalog&&s.hygIndex===index),'No separately seeded active twin survives');
+    }
+}
+A.refreshActiveStars(0,0,0,'hyg:117953',0);
+const retained=A.activeStarForFocus('hyg:117953');
+for(const t of [MYR,541101036*SEC_YEAR,-MYR,0]) {
+    F.syncGalacticFrame(t); // production cosmic-frame path: no rediscovery
+    assert.equal(A.activeStarsTime(),M.catalogEvalTime(t));
+    assert.strictEqual(A.activeStarForFocus('hyg:117953'),retained);
+    const expected=H.hygStarByIndex(117953,M.catalogEvalTime(t));
+    assert(dist(xyz(retained),xyz(expected))<PC_KM*1e-8,'Throttled refresh cannot leave held active rows at an older epoch');
+}
 const { starFromCatalogRecord, serializePromotedCatalogStars, restorePromotedCatalogStars }=await import('../src/catalogSearch.js');
 const index=117953,row=meta.labels.find(r=>r[0]===index),vals=new Float32Array(bin.buffer,bin.byteOffset,bin.byteLength/4);
 const promoted=starFromCatalogRecord(meta,vals,index,row); C.addRuntimeStar(promoted);

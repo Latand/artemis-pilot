@@ -2064,7 +2064,7 @@ function frameStep() {
         // leaves every star the catalogs hold to them.
         setTier1Fade(1);
         setCatalogStarsFade(1);
-        updateCatalogStars();
+        updateCatalogStars(camWorldKmX, camWorldKmY, camWorldKmZ);
         starViewUniforms.uPxScale.value = viewportSize.pxScale;
         const fieldEra = eraModulation(G.t);
         const t1s = tier1Stats();

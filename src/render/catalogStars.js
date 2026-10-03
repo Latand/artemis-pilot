@@ -20,9 +20,10 @@ import * as THREE from "three";
 import { K, PC_KM, STARS } from "../constants.js";
 import { loadHygCatalogData } from "../universe/catalogData.js";
 import { registerHygCatalog } from "../universe/hygActiveCatalog.js";
+import { catalogIdentityKeys } from "../universe/catalogIdentity.js";
 import { catalogMotionFor, createCatalogMotion, catalogEvalTime, setCatalogMotionTime } from "../universe/catalogMotion.js";
 import { galacticFrameTime } from "../universe/galacticClock.js";
-import { getOrigin, worldToResidualArr } from "../universe/renderOrigin.js";
+import { getOrigin } from "../universe/renderOrigin.js";
 import { makeStarPointMaterial } from "./starPointMaterial.js";
 import { linearStarColor } from "./stellarAppearance.js";
 import { CURATED_PHOTOMETRY } from "./curatedPhotometry.js";
@@ -90,11 +91,13 @@ function setColor(arr, i, teff) {
 }
 
 function placeAtOrigin(layer) {
-    const o = getOrigin();
+    const o = layer.anchor || getOrigin();
     layer.mesh.position.set(o.x * K, o.z * K, -o.y * K);
     const pos = layer.geometry.attributes.position;
     for (let i = 0; i < layer.count; i++) {
-        worldToResidualArr(layer.worldKm[i * 3], layer.worldKm[i * 3 + 1], layer.worldKm[i * 3 + 2], pos.array, i * 3, K);
+        pos.array[i * 3] = (layer.worldKm[i * 3] - o.x) * K;
+        pos.array[i * 3 + 1] = (layer.worldKm[i * 3 + 2] - o.z) * K;
+        pos.array[i * 3 + 2] = -(layer.worldKm[i * 3 + 1] - o.y) * K;
     }
     pos.needsUpdate = true;
 }
@@ -142,6 +145,7 @@ async function loadTier0() {
         const iAbs = fi("absMag", -1), iLum = fi("lumSolar", -1), iTemp = fi("tempK", -1), iRad = fi("radiusSolar", -1);
         const count = Math.floor(vals.length / stride);
         // Curated twins (world pc, same frame as the rotated catalog values).
+        const knownKeys = new Set(STARS.flatMap(catalogIdentityKeys));
         const sup = [];
         for (const s of STARS) if (!s.bh) { const p = catalogMotionFor(s); sup.push(p.x / PC_KM, p.y / PC_KM, p.z / PC_KM); }
         const layer = makeLayer(count, true, true);
@@ -174,7 +178,7 @@ async function loadTier0() {
             g.radiusKm.array[i] = iRad >= 0 && vals[j + iRad] > 0 ? vals[j + iRad] * 696340 : 0;
             setColor(g.color.array, i, teff);
             // The Sun's own row (distance 0) is drawn by bodies.js.
-            let hide = !(dPc > 1e-6);
+            let hide = !(dPc > 1e-6) || catalogIdentityKeys({name:row?.[1],hip:row?.[2],hd:row?.[3],hr:row?.[4]}).some(key => knownKeys.has(key));
             for (let k = 0; !hide && k < sup.length; k += 3) {
                 const dx = x - sup[k], dy = y - sup[k + 1], dz = z - sup[k + 2];
                 if (dx * dx + dy * dy + dz * dz <= r2) hide = true;
@@ -212,7 +216,7 @@ export function initCatalogStars(parent) {
 
 // Small named buffer follows the authoritative runtime objects. The large
 // catalog moves in the shader from the same immutable epochs and parameters.
-export function updateCatalogStars() {
+export function updateCatalogStars(observerX, observerY, observerZ) {
     setCatalogMotionTime(catalogEvalTime(galacticFrameTime()), getOrigin());
     if (!state.parent) return;
     if (state.named && state.named.starsLen !== STARS.length) {
@@ -221,7 +225,13 @@ export function updateCatalogStars() {
     }
     const layer = state.named;
     const t = catalogEvalTime(galacticFrameTime());
-    if (layer && layer.evalT !== t) {
+    const old = layer?.anchor;
+    const observer = Number.isFinite(observerX) && Number.isFinite(observerY) && Number.isFinite(observerZ);
+    const moved = observer && (!old || old.x !== observerX || old.y !== observerY || old.z !== observerZ);
+    if (layer && (layer.evalT !== t || moved)) {
+        // A local residual stays precise even when the host has travelled kpc.
+        // This small point layer does not depend on the optional global rebase.
+        if (observer) { layer.anchor ||= {}; Object.assign(layer.anchor, { x: observerX, y: observerY, z: observerZ }); }
         for (let i = 0; i < layer.rows.length; i++) {
             const s = layer.rows[i];
             layer.worldKm[i * 3] = s.x; layer.worldKm[i * 3 + 1] = s.y; layer.worldKm[i * 3 + 2] = s.z || 0;

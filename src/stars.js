@@ -8,7 +8,7 @@ import { teffToRGB, bvToTeff, absMagVFromL } from "./render/viewBrightness.js";
 import { makeStarPointMaterial, starPointAlpha } from "./render/starPointMaterial.js";
 import { curatedAbsMagV, holdCatalogRow } from "./render/catalogStars.js";
 import { dotTexture } from "./textures.js";
-import { renderQuality, scene, viewportSize } from "./scene.js";
+import { renderQuality, scene, camera, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
 import { getExploredHost } from "./universe/exploredSystem.js";
 import { ACTIVE_STARS, activeStarsTime } from "./universe/activeStars.js";
@@ -252,7 +252,10 @@ export function syncActiveProceduralPoints() {
     if (explored?.activeCatalog && !pointStars.some(s => s.id === explored.id)) pointStars.push(explored);
     const n0 = pointStars.length;
     const sig = (explored?.id || "") + ":" + activeStarsTime() + ":" + n0 + ":" + (n0 ? pointStars[0].id || pointStars[0].name : "") + ":" + (n0 ? pointStars[n0 - 1].id || pointStars[n0 - 1].name : "");
-    if (sig === activeProc.sig) return;
+    if (sig === activeProc.sig) {
+        if (activeProc.mesh && !activeProc.mesh.position.equals(camera.position)) placeActivePoints(pointStars);
+        return;
+    }
     activeProc.sig = sig;
     let n = 0;
     const nextRows = new Set();
@@ -283,13 +286,10 @@ export function syncActiveProceduralPoints() {
         scene.add(activeProc.mesh);
     }
     const a = activeProc.mesh.geometry.attributes;
-    let i = 0, cx = 0, cy = 0, cz = 0;
+    let i = 0;
     for (const s of pointStars) {
         if ((!s.procedural && !s.activeCatalog) || s.bh) continue;
-        if (i === 0) { cx = s.x; cy = s.y; cz = s.z || 0; }
-        a.position.array[i * 3] = (s.x - cx) * K;
-        a.position.array[i * 3 + 1] = ((s.z || 0) - cz) * K;
-        a.position.array[i * 3 + 2] = -(s.y - cy) * K;
+
         const teff = s.tempK || 5800;
         const m = activeAbsMagV(s, teff);
         a.absMag.array[i] = Number.isFinite(m) ? m : 99;
@@ -299,9 +299,24 @@ export function syncActiveProceduralPoints() {
         a.color.array[i * 3] = _ptColor.r; a.color.array[i * 3 + 1] = _ptColor.g; a.color.array[i * 3 + 2] = _ptColor.b;
         i++;
     }
-    activeProc.mesh.position.set(cx * K, cz * K, -cy * K);
+    placeActivePoints(pointStars);
     activeProc.mesh.geometry.setDrawRange(0, i);
     for (const key of ["position", "color", "absMag", "teffK", "radiusKm"]) a[key].needsUpdate = true;
+}
+
+function placeActivePoints(stars) {
+    const attr = activeProc.mesh.geometry.attributes.position;
+    const cx = camera.position.x / K, cy = -camera.position.z / K, cz = camera.position.y / K;
+    let i = 0;
+    for (const s of stars) {
+        if ((!s.procedural && !s.activeCatalog) || s.bh) continue;
+        attr.array[i * 3] = (s.x - cx) * K;
+        attr.array[i * 3 + 1] = ((s.z || 0) - cz) * K;
+        attr.array[i * 3 + 2] = -(s.y - cy) * K;
+        i++;
+    }
+    activeProc.mesh.position.copy(camera.position);
+    attr.needsUpdate = true;
 }
 
 // A black hole's own light and its sky beacon: a fixed-angle marker that
