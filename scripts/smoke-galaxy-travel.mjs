@@ -102,3 +102,30 @@ J.recordStarImpulse(id, -1e7, [300, 0, 0]); syncGalacticFrame(0);
 assert.notEqual(A.activeForeignStarsStamp(), beforeJournalStamp, 'Same-clock journal changes invalidate held foreign points');
 J.restoreUniverseJournal(null); syncGalacticFrame(0);
 assert.notEqual(A.activeForeignStarsStamp(), beforeJournalStamp, 'Same-clock restore publishes a new visual revision');
+
+const { Matrix4, Frustum, SphereGeometry, Mesh, MeshBasicMaterial } = await import('three');
+const { bindSystemObjectAnchor } = await import('../src/render/systemPrecision.js');
+const { stabilizeBodyMaterial } = await import('../src/render/relativeBodyFrame.js');
+let falseNegatives = 0;
+for (const radius of [.002, .02, .2, 4]) for (let angle = 0; angle < 100; angle++) {
+    const center = new Vector3(1.7661896067001516e16, 1.3394680470280366e16, -9.65007723058525e15);
+    const camera = new PerspectiveCamera(48, 1, .02, 1e25), distance = Math.max(.25, 9 * radius);
+    const yaw = angle * 2 * Math.PI / 100, pitch = .7 * Math.sin(angle);
+    const offset = new Vector3(Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)).multiplyScalar(distance);
+    camera.position.copy(center).add(offset);
+    camera.quaternion.setFromRotationMatrix(new Matrix4().lookAt(offset, new Vector3(), camera.up)); camera.updateMatrixWorld();
+    camera.userData.preciseOrbit = { offset, worldPosition: camera.position.clone() };
+    camera.userData.systemAnchor = { origin: center, offset: new Vector3() };
+    const object = new Mesh(new SphereGeometry(1), stabilizeBodyMaterial(new MeshBasicMaterial()));
+    object.position.copy(center); object.scale.setScalar(radius); object.updateMatrixWorld();
+    const frustum = new Frustum().setFromProjectionMatrix(new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    if (radius < 1 && !frustum.intersectsObject(object)) falseNegatives++;
+    bindSystemObjectAnchor(object, { origin: center, offset: new Vector3() });
+    assert.equal(object.frustumCulled, false, 'Foreign body survives broad phase until accurate GPU clipping');
+    object.material.onBeforeRender(null, null, camera, object.geometry, object, null);
+    assertClose(object.modelViewMatrix.elements[14], -distance, 1e-8);
+    bindSystemObjectAnchor(object, null); assert.equal(object.frustumCulled, true, 'Ordinary systems retain their existing frustum culling');
+    object.geometry.dispose(); object.material.dispose();
+}
+assert(falseNegatives > 100, 'Control reproduces rounded global frustum rejection across oblique views');
+console.log('400 tiny foreign body frustum/model-view checks passed; control false-negatives:', falseNegatives);

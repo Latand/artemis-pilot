@@ -24,3 +24,12 @@ export function prepareSystemCameraAnchor(cam, system, focus, t) {
             ? { origin: new THREE.Vector3(host.x * K, host.z * K, -host.y * K), offset: new THREE.Vector3() } : null;
     return cam.preciseTarget;
 }
+
+export function bindSystemObjectAnchor(object, anchor) {
+    object.userData.systemAnchor = anchor;
+    // Three's CPU frustum test sees rounded global transforms before the
+    // material repairs model-view translation. Tiny foreign bodies can be
+    // rejected there even when centered. The bounded system gate still owns
+    // visibility; GPU clipping uses the corrected local model-view matrix.
+    object.frustumCulled = !anchor;
+}
