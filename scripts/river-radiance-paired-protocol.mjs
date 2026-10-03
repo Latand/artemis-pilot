@@ -1,6 +1,9 @@
 // Acceptance contract shared by the full-layer runner and pure negative tests.
 import assert from 'node:assert/strict';
 import { healthyRadianceFrame } from './river-radiance-qa.mjs';
+import { runLimits,validatePhases } from './river-radiance-run-budget.mjs';
+import { validateFullPreparation } from './river-radiance-full-preparation.mjs';
+import { volumeRefinementReady,validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
 
 export const protocol = Object.freeze({
   baseline: '09863eedda25eef36d79e9cf88daa4ff3e377875',
@@ -53,11 +56,19 @@ export function trialSummary(trial) {
   return { A, B, ratio: B.p95 / A.p95, regressionPercent: (B.p95 / A.p95 - 1) * 100 };
 }
 export function scenarioSummary(scenario) {
+  validatePhases(scenario.phases);
+  const size=scenario.pages.A.mobile?[430,932]:[1200,800];
+  validateFullPreparation(scenario.preparation,size);
   assert.deepEqual(scenario.trials.map(t => t.order), protocol.orders, 'All five predeclared trials are mandatory');
   for (const label of ['A', 'B']) {
     assert.equal(scenario.warmup[label].length, protocol.warmupFrames, 'Keep all 120 warmup frames');
     scenario.warmup[label].forEach(validateSample);
     const all = [...scenario.warmup[label], ...scenario.trials.flatMap(t => t.blocks.filter(b => b.label === label).flatMap(b => b.samples))];
+    const prepared=[...scenario.preparation.nativeWarmup[label],...scenario.preparation.refinement[label]].at(-1);
+    assert.equal(all[0].frameNo,prepared.frameNo+1,'No hidden frame between preparation and synchronous warmup');
+    let previous=scenario.preparation.refinement.after[label],last=previous.observedAtMs;
+    for(const sample of all){assert(volumeRefinementReady(sample.volumeProgress,size),'Measured acceptance requires full history use');
+      last=validateRefinementAdvance(previous,sample.volumeProgress,last,size);previous=sample.volumeProgress;}
     for (let i = 1; i < all.length; i++) assert.equal(all[i].frameNo, all[i - 1].frameNo + 1, 'Frame continuity also crosses trial and warmup boundaries');
   }
   const ratios = scenario.trials.map(trial => trialSummary(trial).ratio);
@@ -112,6 +123,8 @@ export function assertHealthyState(s, mobile, subject) {
   assert((!s.layers.tides.started || s.layers.tides.ready) && !s.layers.tides.error);
   assert(s.layers.field.enabled && s.layers.field.idle && s.layers.field.stars > 0);
   assert(s.layers.volume.enabled && s.layers.volume.mapsReady && s.layers.volume.coverageReady && !s.layers.volume.mapError);
+  assert.deepEqual(s.layers.volume.res,mobile?[430,932]:[1200,800]);
+  assert(s.layers.volume.draft===false&&s.layers.volume.historyReady&&s.layers.volume.historyUsed,'Prepared full-resolution history required');
   assert(s.layers.galaxy.enabled && s.layers.galaxy.ready && !s.layers.galaxy.building && !s.layers.galaxy.error && s.layers.galaxy.galaxies > 0);
   assert.equal(s.post.bloom, false, 'Default production bloom policy is preserved; neither device requests optional bloom');
 }
@@ -121,6 +134,7 @@ export function aggregateReports(reports, device, expectedCandidateRevision) {
   assert(['desktop', 'mobile'].includes(device));
   const scenarios = [];
   for (const report of reports) {
+    assert.deepEqual(report.runLimits,runLimits,'Same explicit phase budgets are mandatory');
     assert.equal(report.device, device, 'Device shards cannot be mixed');
     assert.deepEqual(report.protocol, protocol, 'No protocol changes between shards');
     assert.deepEqual(report.sources, reports[0].sources, 'Exact same source identities across shards');
@@ -152,6 +166,13 @@ export function aggregateReports(reports, device, expectedCandidateRevision) {
         for (let i = 0; i < 2; i++) assertMatchedState(trial.blocks.filter(b => b.label === 'A')[i].after, trial.blocks.filter(b => b.label === 'B')[i].after);
       }
       const longTasks = {};
+      for(const label of ['A','B']){
+        assertHealthyState(scenario.prepared[label],device==='mobile',scenario.fixture.subject);
+        const preparedLast=[...scenario.preparation.nativeWarmup[label],...scenario.preparation.refinement[label]].at(-1);
+        assert.equal(scenario.prepared[label].workload.frameNo,preparedLast.frameNo);
+        assert.equal(scenario.before[label].workload.frameNo,scenario.warmup[label].at(-1).frameNo);
+      }
+      assertMatchedState(scenario.prepared.A,scenario.prepared.B);
       for (const label of ['A', 'B']) {
         const ranges = scenario.trials.flatMap(t => t.blocks.filter(b => b.label === label).map(b => ({ start: b.startTime, end: b.endTime })));
         assert(ranges.every(range => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start));

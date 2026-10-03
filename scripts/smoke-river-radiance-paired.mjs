@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import { protocol, summarize, trialSummary, scenarioSummary, summarizeLongTasks, longTaskBudget,
   assertMatchedState, assertHealthyState, aggregateReports } from './river-radiance-paired-protocol.mjs';
 import { transform, initializeDocument, initializeQA, readiness, readState } from './river-radiance-paired-browser.mjs';
+import { runLimits } from './river-radiance-run-budget.mjs';
 let tests = 0;
 const test = (name, fn) => { fn(); tests++; console.log('ok', name); };
 const digest = 'a'.repeat(64);
@@ -22,22 +23,35 @@ function state(subject = 'sun') {
       tier1: { initialized: true, tilesLoaded: 960, totalTiles: 12288, starsLoaded: 100000, pending: 0, tileErrors: 0, residualDirtyGroups: 0 },
       catalogRows: { updates: 120, remaining: 0, tiles: Array.from({ length: 960 }, (_, i) => i), rows: 100000, hash: digest },
       tides: { started: false, ready: false, error: null }, field: { enabled: true, idle: true, stars: 350000 },
-      volume: { enabled: true, mapsReady: true, coverageReady: true, mapError: null },
+      volume: { enabled: true, mapsReady: true, coverageReady: true, mapError: null, res:[1200,800], draft:false,historyReady:true,historyUsed:true },
       galaxy: { enabled: true, ready: true, building: false, error: null, galaxies: 40000 } }, post: { bloom: false, composer: false } };
 }
 function sample(frameNo, ratio = 1) {
-  return { frameNo, gpuSynchronized:true, cpuMs: 4 * ratio, finishMs: 0, readbackMs: 6 * ratio, frameAndFinishMs: 10 * ratio,
+  return { frameNo, volumeProgress:volume(frameNo), gpuSynchronized:true, cpuMs: 4 * ratio, finishMs: 0, readbackMs: 6 * ratio, frameAndFinishMs: 10 * ratio,
     roundTripMs: 11 * ratio, protocolAndSchedulingMs: ratio,
     gpu: { contextLost: false, losses: 0, restores: 0, error: 0, defaultFramebuffer: true },
     river: { enabled: true, visible: true, count: 15376, drawCount: 15376, computeEvery: 1, frame: frameNo },
     quality: { mobile: false, dpr: 1 } };
 }
+function volume(frameNo){return {fullSize:[1200,800],enabled:true,opacity:1,refineRow:800,mix:1,historyReady:true,historySaved:true,historyUsed:true,dirty:false,
+ observedAtMs:frameNo*100,invalidations:2,mapRevision:1,model:{time:0,frameSimSec:0,magLimit:9,lastKey:[1]},
+ counters:{draftPasses:2,refinePasses:300,historySaves:1,dirtyReasons:{targets:2}}};}
+function preparation(){
+ const native=n=>{const s=sample(n);Object.assign(s,{gpuSynchronized:false,finishMs:0,readbackMs:0});return s;};
+ const prefix=Array.from({length:120},(_,i)=>({...native(i+2),readiness:{catalogPrefix:{updates:i+1,remaining:119-i}}}));
+ const nativeWarmup=Array.from({length:120},(_,i)=>native(i+122));
+ const pair=value=>({A:structuredClone(value),B:structuredClone(value)});
+ return {complete:true,prefix:pair(prefix),nativeWarmup:pair(nativeWarmup),assets:{...pair([]),elapsedMs:10,readiness:[{A:{ready:true,catalogPrefix:{updates:120,remaining:0}},B:{ready:true,catalogPrefix:{updates:120,remaining:0}}}]},
+ refinement:{...pair([]),before:pair(volume(241)),after:pair(volume(241)),maxAdditionalFrames:460},
+ fences:['settled','native-warm','refined'].flatMap(stage=>['A','B'].map(label=>({label,stage,before:stage==='settled'?121:241,after:stage==='settled'?121:241,durationMs:1,pixel:[0,0,0,0],contextLost:false,error:0,defaultFramebuffer:true})))};
+}
 function scenario(fixture = protocol.fixtures[1], ratios = [1, 1, 1, 1, 1]) {
-  const counters = { A: 120, B: 120 };
-  return { name: fixture.subject, fixture, pages: Object.fromEntries(['A', 'B'].map(label => [label,
-    { gpu: 'SwiftShader', longTaskSupported: true, observerProbe: { passed: true, observed: [{ duration: 80 }] } }])),
-    before: { A: state(fixture.subject), B: state(fixture.subject) },
-    warmup: { A: Array.from({ length: 120 }, (_, i) => sample(i + 1)), B: Array.from({ length: 120 }, (_, i) => sample(i + 1)) },
+  const counters = { A: 361, B: 361 };
+  return { name: fixture.subject, fixture, preparation:preparation(),phases:['preparation','warmup','measurement'].map((name,i)=>({name,limitMs:runLimits[name+'Ms'],startedAtMs:i*20,elapsedMs:10,completed:true,timedOut:false})), pages: Object.fromEntries(['A', 'B'].map(label => [label,
+    { mobile:false,gpu: 'SwiftShader', longTaskSupported: true, observerProbe: { passed: true, observed: [{ duration: 80 }] } }])),
+    prepared: { A:{...state(fixture.subject),workload:{frameNo:241}}, B:{...state(fixture.subject),workload:{frameNo:241}} },
+    before: { A:{...state(fixture.subject),workload:{frameNo:361}}, B:{...state(fixture.subject),workload:{frameNo:361}} },
+    warmup: { A: Array.from({ length: 120 }, (_, i) => sample(i + 242)), B: Array.from({ length: 120 }, (_, i) => sample(i + 242)) },
     trials: protocol.orders.map((order, i) => ({ order, blocks: [...order].map((label, j) => {
       const startTime = (i * 4 + j + 1) * 1000;
       const samples = Array.from({ length: 60 }, () => sample(++counters[label], label === 'B' ? ratios[i] : 1));
@@ -46,7 +60,7 @@ function scenario(fixture = protocol.fixtures[1], ratios = [1, 1, 1, 1, 1]) {
     }) })), longTasks: { A: { allEntries: [] }, B: { allEntries: [] } } };
 }
 function report() {
-  return { device: 'desktop', protocol: structuredClone(protocol), selectedFixtures: structuredClone(protocol.fixtures),
+  return { device: 'desktop', runLimits, protocol: structuredClone(protocol), selectedFixtures: structuredClone(protocol.fixtures),
     sources: { A: { revision: protocol.baseline }, B: { revision: protocol.productionCandidate, productionReference: protocol.productionCandidate } }, harness: { digest },
     errors: [], scenarios: protocol.fixtures.map(f => scenario(f)) };
 }
@@ -63,6 +77,7 @@ test('all enabled layers are explicit', () => {
 test('mobile health requires its full production texture and native postprocessing policy', () => {
   const s = state(); s.quality.mobile = true;
   assert.throws(() => assertHealthyState(s, true, 'sun'));
+  s.layers.volume.res=[430,932];
   Object.assign(s.river, { count: 9216, drawCount: 9216, drawnCount: 9216, ambient: 9116, drawnAmbient: 9116 });
   assertHealthyState(s, true, 'sun');
   s.post.bloom = true; assert.throws(() => assertHealthyState(s, true, 'sun'));
@@ -120,6 +135,10 @@ test('long-task windows retain inclusive boundary tasks and all raw entries', ()
   const s = summarizeLongTasks(entries, [{ start: 0, end: 10 }]); assert.equal(s.measuredCount, 2); assert.equal(s.allEntries.length, 3);
 });
 for (const [name, mutate] of [
+  ['changed phase budget', r => r.runLimits={...runLimits,preparationMs:1}],
+  ['unfinished preparation',r=>r.scenarios[0].preparation.complete=false],
+  ['partial-history acceptance',r=>r.scenarios[0].trials[0].blocks[0].samples[0].volumeProgress.historyUsed=false],
+  ['phase timeout',r=>r.scenarios[0].phases[0].timedOut=true],
   ['missing view', r => { r.scenarios.pop(); r.selectedFixtures.pop(); }], ['duplicate view', r => r.scenarios[0] = r.scenarios[1]],
   ['wrong device', r => r.device = 'mobile'], ['changed threshold', r => r.protocol.p95RatioLimit = 1.5],
   ['wrong candidate HEAD', r => r.sources.B.revision = protocol.baseline], ['wrong baseline', r => r.sources.A.revision = protocol.productionCandidate], ['browser error', r => r.errors.push('shader error')],

@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
@@ -12,6 +12,9 @@ import { createServer } from 'vite';
 import { protocol, summarize, validateSample, trialSummary, scenarioSummary, summarizeLongTasks, longTaskBudget,
   assertMatchedState, assertHealthyState } from './river-radiance-paired-protocol.mjs';
 import { transform, initializeDocument, initializeQA, readiness, readState } from './river-radiance-paired-browser.mjs';
+import { volumeProgressTransform, volumeRefinementReady, validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
+import { prepareFullView } from './river-radiance-full-preparation.mjs';
+import { runLimits, durableReport, phaseBudget, installReportSignals } from './river-radiance-run-budget.mjs';
 
 const args = process.argv.slice(2).filter(arg => !arg.startsWith('--'));
 assert(process.env.BASE_ROOT, 'BASE_ROOT must name the exact 09863eed worktree');
@@ -24,7 +27,7 @@ const out = resolve(args[1] || `evidence/river-radiance-paired/${device}`);
 const fixture = JSON.parse(await readFile(new URL('./fixtures/river-radiance-proxima.json', import.meta.url), 'utf8'));
 const sha = value => createHash('sha256').update(value).digest('hex');
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
-const paths = ['src/main.js', 'src/river.js', 'src/render/bodySurfaceMaterial.js', 'src/universe/athygTier1.js'];
+const paths = ['src/main.js', 'src/river.js', 'src/render/bodySurfaceMaterial.js', 'src/universe/athygTier1.js', 'src/render/galaxyVolume.js'];
 const productionPaths = ['src', 'public', 'index.html', 'package.json'];
 const sources = {};
 for (const [label, tree, expected] of [['A', baselineRoot, protocol.baseline], ['B', root, protocol.productionCandidate]]) {
@@ -36,7 +39,7 @@ for (const [label, tree, expected] of [['A', baselineRoot, protocol.baseline], [
     productionReference: expected, productionTrees: git(tree, 'ls-tree', expected, '--', ...productionPaths), hashes: {} };
   for (const path of paths) {
     const original = await readFile(resolve(tree, path), 'utf8');
-    execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(original, '/' + path) });
+    execFileSync(process.execPath, ['--input-type=module', '--check'], { input: volumeProgressTransform(original, '/' + path) ?? transform(original, '/' + path) });
   }
   for (const path of ['src/main.js', 'src/river.js', 'src/lensing.js', 'src/holeOptics.js', 'src/render/holeAppearance.js',
     'src/render/linearFrame.js', 'src/render/galaxyVolume.js', 'src/scene.js', 'package.json'])
@@ -53,23 +56,32 @@ if (process.argv.includes('--validate')) {
 await mkdir(out, { recursive: true });
 const browserArgs = ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
   '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding'];
-const report = { version: 1, device, viewport, deviceScaleFactor: 1, sources, protocol, selectedFixtures, browserArgs,
+const report = { version: 2, runLimits, device, viewport, deviceScaleFactor: 1, sources, protocol, selectedFixtures, browserArgs,
   scope: selectedFixtures.length === protocol.fixtures.length ? 'complete device suite' : 'single-view shard; aggregate all three views for acceptance',
   expectedFrames: { measured: selectedFixtures.length * 1200, warmup: selectedFixtures.length * 240 },
-  harness: Object.fromEntries(await Promise.all(['benchmark-river-radiance.mjs', 'river-radiance-paired-browser.mjs', 'river-radiance-paired-protocol.mjs', 'river-radiance-qa.mjs', 'fixtures/river-radiance-proxima.json']
+  harness: Object.fromEntries(await Promise.all(['benchmark-river-radiance.mjs', 'river-radiance-paired-browser.mjs', 'river-radiance-paired-protocol.mjs', 'river-radiance-qa.mjs', 'river-radiance-full-preparation.mjs', 'river-radiance-run-budget.mjs', 'river-radiance-volume-progress.mjs', 'river-radiance-preparation-qa.mjs', 'fixtures/river-radiance-proxima.json']
     .map(async path => [path, sha(await readFile(new URL(path, import.meta.url)))]))),
   method: 'One Chromium instance, two fresh full application pages per view, serial normal browser timer tasks, real production frame, gl.finish plus synchronous 1px RGBA readback included in duration; all 120 warmup and 60/block samples retained across all five ABBA/BAAB trials',
   fixtureControl: 'Physical clock, source fixture and camera are frozen. River dtSim alone receives the declared visual advection; normal device particle/draw/compute policies and all normally enabled production render layers remain present. This is steady-state render performance, not live orbital evolution',
-  setup: 'AT-HYG uses its normal camera-priority selection for exactly 120 production streaming updates/eight tiles per update, then test-only hooks hold further tile requests. Every selected row remains rendered, its sorted tile IDs and row-byte SHA256 must match, and pending loads/assets/workers settle using equal serial A/B frames before the fixed 120-frame warmup. No fixture, trial or sample retry, replacement or outlier removal',
+  setup: 'Preparation uses native rAF without test-added GPU synchronization, then verified drains and full volume history use before the separate synchronous warmup. AT-HYG uses its normal camera-priority selection for exactly 120 production streaming updates/eight tiles per update, then test-only hooks hold further tile requests. Every selected row remains rendered, its sorted tile IDs and row-byte SHA256 must match, and pending loads/assets/workers settle using equal serial A/B frames before the fixed 120-frame warmup. No fixture, trial or sample retry, replacement or outlier removal',
   omissions: ['Further AT-HYG tile requests after the fixed 120-update normal-entry history; bounded row IDs and hashes are recorded, every selected row and all normally enabled renderer layers remain present'],
   limitations: 'Hosted headless Chromium/SwiftShader with desktop/mobile viewport and production device policy; not physical-device FPS, native GPU evidence, startup latency, live physical evolution or interaction latency. Bounded catalog setup and further streaming are outside timing; this is not a maximum-catalog stress test. Equal frozen workload is mandatory; adaptive-quality divergence fails without compensating or lowering counts',
   gate: 'Every fixture: median of all five paired p95 ratios <=1.05. All measured long tasks must pass unchanged blocking-time, count and maximum-duration guards. GPU loss, GL errors, unequal workload, missing maps/layers or incomplete samples fail',
   hardware: { platform: os.platform(), release: os.release(), arch: os.arch(), logicalCPUs: os.cpus().length,
     cpuModels: [...new Set(os.cpus().map(cpu => cpu.model))], totalMemoryBytes: os.totalmem(), node: process.version },
   scenarios: [], workerEvents: [], errors: [], passed: false };
-const save = () => writeFile(resolve(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
+const save = () => durableReport(resolve(out, 'report.json'), report);
+let activeBudget;
+const checkpointTimer=setInterval(()=>activeBudget?.checkpoint(),runLimits.checkpointMs);
+installReportSignals(report,()=>activeBudget,save);
+save();
 let browser;
 const servers = {}, caches = [], contexts = new Set();
+async function cleanupWithinBudget(operation){
+  let timer;
+  try{return await Promise.race([operation(),new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Browser cleanup exceeded ten seconds')),10000);})]);}
+  finally{clearTimeout(timer);}
+}
 async function activate(page) {
   const start = performance.now(); await page.bringToFront(); await page.waitForFunction(() => !document.hidden);
   return performance.now() - start;
@@ -83,10 +95,15 @@ async function frame(page) {
   sample.protocolAndSchedulingMs = Math.max(0, sample.roundTripMs - sample.frameAndFinishMs);
   return sample;
 }
-async function frames(page, count, samples) {
+async function frames(page, count, samples, label, previous, last) {
   for (let i = 0; i < count; i++) {
-    const sample = await frame(page); samples.push(sample); validateSample(sample);
-    if (samples.length > 1) assert.equal(sample.frameNo, samples.at(-2).frameNo + 1, 'Every timer task executes exactly one frame');
+    await activeBudget.run(async()=>{
+      const sample = await frame(page); samples.push(sample);save();validateSample(sample);
+      sample.volumeProgress=await page.evaluate(()=>pairedQA.volume.pairedVolumeProgress());save();
+      assert(volumeRefinementReady(sample.volumeProgress,[viewport.width,viewport.height]),'Full history readiness must persist through acceptance');
+      last[label]=validateRefinementAdvance(previous[label],sample.volumeProgress,last[label],[viewport.width,viewport.height]);previous[label]=sample.volumeProgress;
+      if (samples.length > 1) assert.equal(sample.frameNo, samples.at(-2).frameNo + 1, 'Every timer task executes exactly one frame');
+    },`synchronized frame ${label}`);
   }
 }
 async function snapshot(page) {
@@ -111,20 +128,25 @@ async function observerProbe(page) {
   }, probe);
 }
 try {
-  browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: browserArgs });
-  report.browser = await browser.version();
-  for (const [label, tree] of [['A', baselineRoot], ['B', root]]) {
-    const cacheDir = await mkdtemp(resolve(os.tmpdir(), `radiance-paired-${label}-`)); caches.push(cacheDir);
-    const server = await createServer({ root: tree, cacheDir, logLevel: 'error', server: { host: '127.0.0.1', port: 0, hmr: false },
-      plugins: [{ name: 'full-radiance-paired-qa', enforce: 'pre', transform }] });
-    await server.listen(); servers[label] = server;
-  }
   for (const spec of selectedFixtures) {
     const name = `${spec.subject}-${spec.rate ? 'advection' : 'paused'}`;
-    const scenario = { name, fixture: spec, pages: {}, setup: {}, settlement: { A: [], B: [], readiness: [] },
+    const scenario = { name, fixture: spec, pages: {}, setup: {},
+      phases: [], preparation: {prefix:{A:[],B:[]},assets:{A:[],B:[],readiness:[]},nativeWarmup:{A:[],B:[]},refinement:{A:[],B:[]},fences:[],complete:false},
       warmup: { A: [], B: [] }, trials: [], longTasks: {}, loadAverageBefore: os.loadavg() };
     report.scenarios.push(scenario); const pages = {};
-    for (const label of ['A', 'B']) {
+    activeBudget=phaseBudget(scenario.phases,save);activeBudget.start('preparation');
+    if(!browser)await activeBudget.run(async()=>{
+      browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined, args: browserArgs });
+      report.browser = await browser.version();
+      for (const [label, tree] of [['A', baselineRoot], ['B', root]]) {
+        const cacheDir = await mkdtemp(resolve(os.tmpdir(), `radiance-paired-${label}-`)); caches.push(cacheDir);
+        const server = await createServer({ root: tree, cacheDir, logLevel: 'error', server: { host: '127.0.0.1', port: 0, hmr: false },
+          plugins: [{ name: 'full-radiance-paired-qa', enforce: 'pre', transform:(source,id)=>volumeProgressTransform(source,id)??transform(source,id) }] });
+        await server.listen(); servers[label] = server;
+      }
+
+    },'browser and server initialization');
+    for (const label of ['A', 'B']) await activeBudget.run(async()=>{
       const context = await browser.newContext({ viewport, deviceScaleFactor: 1, isMobile: mobile, hasTouch: mobile }); contexts.add(context);
       await context.addInitScript(initializeDocument);
       const page = await context.newPage(); pages[label] = page; page.setDefaultTimeout(120000);
@@ -144,36 +166,31 @@ try {
       await page.waitForFunction(() => pairedQA.tier1.tier1Stats().initialized);
       scenario.setup[label] = { catalogSetupUpdates: protocol.catalogSetupUpdates, tileRequestsPerUpdate: 8 };
       await save();
-    }
+    },`initialize ${label}`);
     assert.equal(scenario.pages.A.gpu, scenario.pages.B.gpu, 'Same renderer implementation required');
-    // Matched setup frames are separate from the exactly 120 declared warmup.
-    // A timeout fails the run; it never shrinks a layer or a measured window.
-    const settlementDeadline = performance.now() + 300000;
-    while (true) {
-      for (const label of ['A', 'B']) { await activate(pages[label]); await frames(pages[label], 1, scenario.settlement[label]); }
-      const ready = { A: await pages.A.evaluate(readiness), B: await pages.B.evaluate(readiness) };
-      scenario.settlement.readiness.push(ready);
-      if (ready.A.ready && ready.B.ready) break;
-      if (scenario.settlement.A.length % 20 === 0) await save();
-      assert(performance.now() < settlementDeadline, 'Full production layers must settle within five minutes; unsettled selected layers cannot pass');
-    }
-    for (const label of ['A', 'B']) { await activate(pages[label]); await frames(pages[label], protocol.warmupFrames, scenario.warmup[label]); }
-    scenario.before = { A: await snapshot(pages.A), B: await snapshot(pages.B) };
+    const previous=await prepareFullView({pages,record:scenario.preparation,viewport,budget:activeBudget,save,activate,readiness});
+    scenario.prepared=await activeBudget.run(async()=>({A:await snapshot(pages.A),B:await snapshot(pages.B)}),'fully prepared snapshots');
+    for(const label of ['A','B'])assertHealthyState(scenario.prepared[label],mobile,spec.subject);
+    assertMatchedState(scenario.prepared.A,scenario.prepared.B);activeBudget.finish();
+    const last=Object.fromEntries(['A','B'].map(label=>[label,previous[label].observedAtMs]));
+    activeBudget.start('warmup');
+    for (const label of ['A', 'B']) { await activeBudget.run(()=>activate(pages[label]),`warmup activation ${label}`); await frames(pages[label], protocol.warmupFrames, scenario.warmup[label],label,previous,last); }
+    scenario.before = await activeBudget.run(async()=>({A:await snapshot(pages.A),B:await snapshot(pages.B)}),'warmup snapshots');
     for (const label of ['A', 'B']) assertHealthyState(scenario.before[label], mobile, spec.subject);
-    assertMatchedState(scenario.before.A, scenario.before.B); await save();
+    assertMatchedState(scenario.before.A, scenario.before.B); await save();activeBudget.finish();activeBudget.start('measurement');
     for (const [trialIndex, order] of protocol.orders.entries()) {
       const trial = { index: trialIndex + 1, order, blocks: [] }; scenario.trials.push(trial);
       for (const [blockIndex, label] of [...order].entries()) {
-        const page = pages[label], activationMs = await activate(page);
+        const page = pages[label], activationMs = await activeBudget.run(()=>activate(page),`measured activation ${label}`);
         const block = { index: blockIndex + 1, label, activationMs, loadAverage: os.loadavg(), samples: [] };
         trial.blocks.push(block);
-        block.startTime = await page.evaluate(() => performance.now());
-        await frames(page, protocol.samplesPerBlock, block.samples);
-        block.endTime = await page.evaluate(() => performance.now());
+        block.startTime = await activeBudget.run(()=>page.evaluate(() => performance.now()),'block start');
+        await frames(page, protocol.samplesPerBlock, block.samples,label,previous,last);
+        block.endTime = await activeBudget.run(()=>page.evaluate(() => performance.now()),'block end');
         block.frame = summarize(block.samples.map(s => s.frameAndFinishMs));
         block.cpu = summarize(block.samples.map(s => s.cpuMs)); block.readback = summarize(block.samples.map(s => s.readbackMs));
         block.roundTrip = summarize(block.samples.map(s => s.roundTripMs));
-        block.after = await snapshot(page); await save();
+        block.after = await activeBudget.run(()=>snapshot(page),'block snapshot'); await save();
         assertHealthyState(block.after, mobile, spec.subject);
         const sameOrdinal = trial.blocks.find(other => other.label !== label && other.after?.workload.frameNo === block.after.workload.frameNo);
         if (sameOrdinal) assertMatchedState(sameOrdinal.after, block.after);
@@ -184,21 +201,20 @@ try {
       Object.assign(trial, trialSummary(trial)); await save();
       console.log('PAIRED RADIANCE', device, name, trial.index, order, 'p95', trial.A.p95, trial.B.p95, 'ratio', trial.ratio);
     }
-    Object.assign(scenario, scenarioSummary(scenario));
     for (const label of ['A', 'B']) {
       // Drain after a normal browser task so the last measured task is delivered.
-      const entries = await pages[label].evaluate(() => new Promise(resolve => setTimeout(() => {
+      const entries = await activeBudget.run(()=>pages[label].evaluate(() => new Promise(resolve => setTimeout(() => {
         for (const entry of __pairedObserver.takeRecords()) __pairedLongTasks.push({ startTime: entry.startTime, duration: entry.duration });
         resolve(__pairedLongTasks);
-      }, 0)));
+      }, 0))),'long-task observer drain');
       const ranges = scenario.trials.flatMap(t => t.blocks.filter(b => b.label === label).map(b => ({ start: b.startTime, end: b.endTime })));
       scenario.longTasks[label] = summarizeLongTasks(entries, ranges);
     }
     // Per-view budgets are diagnostic. The unchanged acceptance budget is
     // computed over all measured windows across all three views below.
     scenario.longTaskBudget = longTaskBudget(scenario.longTasks.A, scenario.longTasks.B);
-    await save();
-    for (const page of Object.values(pages)) { const context = page.context(); await context.close(); contexts.delete(context); }
+    await save();activeBudget.finish();Object.assign(scenario,scenarioSummary(scenario));save();
+    await cleanupWithinBudget(async()=>{for(const page of Object.values(pages)){const context=page.context();await context.close();contexts.delete(context);}});
   }
   report.longTasks = {};
   for (const label of ['A', 'B']) {
@@ -217,9 +233,13 @@ try {
 } catch (error) {
   report.errors.push({ message: error.stack || String(error) }); report.passed = false; process.exitCode = 1; console.error(error);
 } finally {
-  await save();
-  for (const context of contexts) await context.close();
-  await browser?.close();
-  for (const server of Object.values(servers)) await server.close();
-  for (const cache of caches) await rm(cache, { recursive: true, force: true });
+  clearInterval(checkpointTimer);save();
+  try{await cleanupWithinBudget(async()=>{
+    for(const context of contexts)await context.close();await browser?.close();
+    for(const server of Object.values(servers))await server.close();
+    for(const cache of caches)await rm(cache,{recursive:true,force:true});
+  });}
+  catch(error){report.errors.push({message:error.stack||String(error)});report.passed=false;report.shardComplete=false;process.exitCode=1;}
+  finally{save();}
+  process.exit(process.exitCode||0);
 }

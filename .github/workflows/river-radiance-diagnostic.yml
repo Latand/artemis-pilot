@@ -65,7 +65,7 @@ jobs:
     name: Full normal-entry performance ${{ matrix.device }} ${{ matrix.fixture }}
     needs: [paired-mobile-transient, paired-lifecycle]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 135
     strategy:
       fail-fast: false
       matrix:
@@ -79,9 +79,10 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-river-radiance-paired.mjs
+      - run: node scripts/smoke-river-radiance-paired.mjs && node scripts/smoke-river-radiance-run-budget.mjs && node scripts/smoke-river-radiance-full-preparation.mjs
       - run: npx playwright install --with-deps chromium
       - name: Preserve every paired trial on the exact baseline and candidate
+        timeout-minutes: 131
         env:
           DEVICE: ${{ matrix.device }}
           FIXTURE: ${{ matrix.fixture }}
@@ -100,6 +101,7 @@ jobs:
     needs: paired-performance
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

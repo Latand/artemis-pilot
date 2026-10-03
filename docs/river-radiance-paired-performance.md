@@ -9,7 +9,7 @@ unchanged. Its disabled river/background layers cannot measure this change.
 
 ## Scope and workload
 
-Run desktop (1200×800) and mobile (430×932), both DPR1, with the actual production
+Run desktop (1200×800) and mobile (430×932), both DPR 1, with the actual production
 particle texture (15,376 desktop; 9,216 mobile), normal device draw/cadence policy,
 and all normally enabled render layers present. No `np` override, forced compute cadence, disabled
 catalog renderer, or shader gain-off substitute is used. Optional bloom and the galaxy
@@ -37,13 +37,26 @@ magnitude, and color-index bytes. A missing CPU row, pending request, unequal ID
 or unequal row hash fails. Equal update counts alone are never considered proof
 of equal catalog content.
 
-All remaining assets/workers must settle using equal, serial A/B production frame
-deliveries. There is a five-minute settlement deadline: failure is reported, not
-worked around by reducing rows, particles, or quality. Settlement samples/readiness
-are retained separately from the fixed warmup. The full HYG layer, procedural
-field, galaxy population/volume, normal epoch-dependent tides, maps, gravity river,
-and production postprocessing/lensing remain present. Production visibility and the selected epoch
-still decide whether a particular layer has visible content.
+Preparation preserves the reviewed native-rAF path: 120 catalog-prefix frames per
+revision, then a separate five-minute deadline for remaining assets/workers,
+120 further native preparation frames, and bounded continued refinement until
+full rows, blend and saved-history use are complete on both pages. These native
+frames omit only the test-added GPU finish/readback; production synchronization
+remains. They are recorded separately and never counted as acceptance warmup.
+Each stage has a verified GPU drain, and the refinement stage retains actual row,
+history, dirty/reset-reason and model-input evidence. Refinement allows at most
+ceil(full target height / 2) +60 additional frames, without changing its budget.
+Desktop is bounded to 460 additional frames; mobile to 526. Final full-resolution
+state and raw river textures must match before the original synchronous warmup.
+
+The entire preparation phase has a 60-minute cap, including browser/page startup,
+fixed prefix, assets, native refinement, GPU drains and final snapshots. Asset
+readiness must arrive strictly before its separate five-minute deadline after
+the prefix; late readiness is a failure. A new dirty/reset reason, a clean frame
+without row progress, or stalled blend/history fails. The full HYG layer,
+procedural field, galaxy population/volume, epoch-dependent tides, maps, gravity
+river and normal postprocessing/lensing remain present. Production visibility
+still determines which layers have visible content.
 
 ## Unchanged acceptance
 
@@ -85,6 +98,8 @@ No browser is launched by either command below:
 
 ```sh
 node scripts/smoke-river-radiance-paired.mjs
+node scripts/smoke-river-radiance-run-budget.mjs
+node scripts/smoke-river-radiance-full-preparation.mjs
 BASE_ROOT=/path/to/exact-baseline DEVICE=desktop node scripts/benchmark-river-radiance.mjs . /tmp/radiance-validation --validate
 BASE_ROOT=/path/to/exact-baseline DEVICE=mobile node scripts/benchmark-river-radiance.mjs . /tmp/radiance-validation --validate
 ```
@@ -105,29 +120,88 @@ current checkout's HEAD as the expected reviewed candidate; set
 the performance gate complete until both device aggregates pass. Omitting
 `FIXTURE` runs all three views serially and computes that device's full gate.
 
-## Cost and limits
+## Cost and bounded execution
 
-Per device the mandatory acceptance record contains 3,600 measured frame deliveries
-(1,800/revision) and 720 warmup deliveries (360/revision). The bounded streaming
-setup adds at least 720 deliveries across the device's three views, followed by
-any additional equal settlement frames. Thus the minimum is 5,040 frame deliveries
-per device, or 1,680 per view shard, plus startup, snapshots, and settlement waits.
+The completed preparation proof at 998184eb, run 37140303408, establishes the
+actual desktop Proxima readiness contract. Both revisions retained 119,625 HYG
+rows, 76 named stars, 960 AT-HYG tiles/308,779 rows, 250,001 resolved stars,
+15,376 drawn particles and the full 1200×800 volume. They completed rows at
+frame 337, saved history at 338 and first used it at 339. All 692 delivered frames
+and both before/after raw river texture hashes were independently replayed.
+Recorded preparation phases and drains took 45.6 minutes. Eight fully settled
+synchronized diagnostic samples per revision had baseline/candidate p50
+2.388/2.253 seconds and p95 2.471/2.396 seconds. This proves readiness and provides
+a planning input; eight samples do not satisfy performance acceptance.
 
-No prior measurement of this full-layer workload supports a runtime prediction.
-Recent nearby-hole optical runs of a different workload reported roughly
-0.15–0.32 seconds/frame on mobile and 0.56–0.80 seconds/frame on desktop. Applied
-only as arithmetic to 1,680 deliveries, those ranges give about 4.2–9.0 minutes
-and 15.7–22.4 minutes respectively, before startup, snapshots and additional
-settlement. They are comparisons, not forecasts or evidence for this shader.
-A 60-minute per-view hosted timeout provides headroom without reducing the
-mandatory sample count. Six independent device/view jobs keep an individual job
-bounded to one complete view; settlement has an internal five-minute deadline. The workflow
-must provide enough time for every mandatory sample and always retain incomplete
-failure artifacts. A timeout cannot be relabeled as passing or shortened by a
-partial trial.
+Each view keeps 120 synchronous warmup frames per revision, then 600 measured
+frames per revision: 1,200 measured deliveries total, not 1,200 per revision.
+At the observed Proxima p50/p95 costs, both revisions together need 9.3–9.7 minutes
+for warmup and 46.4–48.7 minutes for measurement. With the observed 45.6-minute
+preparation and five minutes for startup, snapshots and uploads, the planning
+estimate is 106–109 minutes per similarly expensive shard. The other views and
+mobile device have not been measured in this full workload; that arithmetic is
+a budget proxy, not a predicted runtime or accepted result for those views.
+
+Explicit phase caps are 60 minutes preparation, 15 minutes synchronous warmup,
+and 55 minutes measured trials plus final state/observer checks. Each phase is
+bounded even while a browser call is pending; finishing at or after its deadline
+fails. The browser step has a 131-minute ceiling and its job 135 minutes, reserving
+up to four minutes around the step for dependencies and artifact upload. The
+5-minute planning margin includes those tasks plus bounded cleanup. Cleanup is
+limited to ten seconds. No automatic retries are configured.
+
+Six independent device/view shards can run in parallel when admitted. Their
+hard ceiling is 810 standard-runner minutes (13.5 runner-hours); using the Proxima
+proxy gives 10.6–10.9 runner-hours, roughly 106–109 minutes if all six are admitted
+together. Queuing and different view costs remain unknown. Both mandatory
+aggregate jobs are separately bounded to ten minutes. The unchanged transient
+and lifecycle prerequisite jobs retain their own 45/60-minute caps and are
+additional to the performance-stage budget. No matrix is launched by this local
+patch or by the preparation-only branch.
+
+Including all prerequisite and aggregate caps, the complete workflow ceiling is
+995 runner-minutes (16 hours 35 minutes). With immediate admission and parallel
+matrix legs, the maximum dependency path is 60 +135 +10 =205 minutes; queue time
+is additional. The 135-minute figure describes the performance stage only.
+
+Reports use an atomic replace after fsync. Every delivered sample is saved
+before validation, progress is checkpointed every five seconds during pending
+browser work, and SIGTERM/SIGINT retain completed samples plus the active pending
+operation before exiting with failure. Aggregation also writes a failure report
+when a shard is missing or invalid. Artifact upload remains `if: always()` with
+14-day retention. Platform-wide termination or upload failure cannot guarantee
+remote artifact delivery; the local report remains consistent and no incomplete
+record can pass an aggregate. All original failures remain preserved.
+
+Per device, acceptance still contains 3,600 measured deliveries (1,800/revision)
+and 720 synchronized warmup deliveries (360/revision), in addition to recorded
+preparation. The observed desktop Proxima path adds 676 native preparation
+deliveries per shard, giving 2,116 total including acceptance warmup/measurement.
+No resolution, row, particle, view, trial or sample reduction is used to meet a
+deadline. Any such reduction would change the production workload and invalidate
+this full-layer acceptance comparison.
+
+## Runner billing
+
+Read-only GitHub verification on 2026-10-03 returned public visibility for
+Latand/artemis-pilot. All jobs in these workflows use literal `ubuntu-latest`,
+a standard GitHub-hosted runner. Official GitHub documentation states that
+standard public-repository runner usage is free and unlimited; these caps do not
+consume billed/private-repository runner minutes or create a paid-runner
+commitment. Larger runners are chargeable even for public repositories, and
+changing runner class or repository visibility requires reassessment.
+
+Artifacts retain 14 days. Account storage/billing settings were not inspected or
+changed, so this finding concerns runner compute and does not assert that every
+possible storage-related charge is impossible. Concurrency remains subject to
+account/platform limits.
+
+Sources: [GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners),
+[GitHub Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
+[Actions limits](https://docs.github.com/en/actions/reference/limits).
 
 Hosted headless Chromium/SwiftShader evidence does not establish physical desktop
 or mobile FPS, native GPU cost, startup latency, or interaction latency. Bounded
-catalog streaming is disclosed above. All local checks for this extension are
-pure/transform checks: no local browser was launched and no performance result is
-claimed before the reviewed hosted run.
+catalog streaming is disclosed above. Local checks are pure/transform checks;
+no local browser was launched. Complete performance acceptance remains pending
+all reviewed hosted shards and both mandatory aggregates.

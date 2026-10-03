@@ -39,8 +39,8 @@ export function pairedVolumeProgress(){return {
 };}
 `;
 }
-export function validateVolumeProgress(state){
-  assert.deepEqual(state.fullSize,[1200,800],'Proof retains the full desktop target');
+export function validateVolumeProgress(state,expectedSize=[1200,800]){
+  assert.deepEqual(state.fullSize,expectedSize,'Keep the declared full device target');
   assert(state.enabled&&state.opacity>.001);
   assert(Number.isInteger(state.refineRow)&&state.refineRow>=0);
   assert(Number.isFinite(state.mix)&&state.mix>=0&&state.mix<=1);
@@ -49,13 +49,13 @@ export function validateVolumeProgress(state){
   assert(state.counters.dirtyReasons&&Object.values(state.counters.dirtyReasons).every(n=>Number.isInteger(n)&&n>=0));
   for(const key of['draftPasses','refinePasses','historySaves'])assert(Number.isInteger(state.counters[key])&&state.counters[key]>=0);
 }
-export function volumeRefinementReady(state){
-  validateVolumeProgress(state);
+export function volumeRefinementReady(state,expectedSize=[1200,800]){
+  validateVolumeProgress(state,expectedSize);
   return state.refineRow>=state.fullSize[1]&&state.mix===1&&state.historyReady&&state.historySaved&&state.historyUsed
     &&!state.dirty&&state.counters.historySaves>0;
 }
-export function validateRefinementAdvance(previous,next,lastProgressAtMs){
-  validateVolumeProgress(previous);validateVolumeProgress(next);
+export function validateRefinementAdvance(previous,next,lastProgressAtMs,expectedSize=[1200,800]){
+  validateVolumeProgress(previous,expectedSize);validateVolumeProgress(next,expectedSize);
   assert.deepEqual(next.model,previous.model,'Frozen volume inputs must remain fixed');
   assert.deepEqual(next.counters.dirtyReasons,previous.counters.dirtyReasons,'Unexpected volume dirty/reset reason after settlement');
   assert.equal(next.invalidations,previous.invalidations);assert.equal(next.mapRevision,previous.mapRevision);
@@ -67,7 +67,7 @@ export function validateRefinementAdvance(previous,next,lastProgressAtMs){
   const advanced=next.refineRow>previous.refineRow||next.mix>previous.mix||(!previous.historyReady&&next.historyReady)
     ||(!previous.historyUsed&&next.historyUsed);
   assert(next.observedAtMs>=previous.observedAtMs&&Number.isFinite(lastProgressAtMs)&&lastProgressAtMs<=previous.observedAtMs);
-  if(volumeRefinementReady(previous)&&volumeRefinementReady(next))return next.observedAtMs;
+  if(volumeRefinementReady(previous,expectedSize)&&volumeRefinementReady(next,expectedSize))return next.observedAtMs;
   assert(advanced||next.observedAtMs-lastProgressAtMs<5000,'Volume blend/history stalled for five seconds');
   return advanced?next.observedAtMs:lastProgressAtMs;
 }
