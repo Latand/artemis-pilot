@@ -1,0 +1,16 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
+const baseline=execFileSync('git',['show','ea036dfeab73f526e77779ae472fe4889b3eb6f0:scripts/benchmark-explored-systems.mjs'],{encoding:'utf8'});
+const diagnostic=readFileSync(new URL('./diagnose-inactive-optics-cpu.mjs',import.meta.url),'utf8');
+const window=text=>text.slice(text.indexOf('    for (const fixture of fixtures)'),text.indexOf('    // CPU profiling can alter JIT state.'));
+assert(window(baseline).length>5000);
+assert.equal(window(diagnostic),window(baseline),'every acceptance frame, ratio and long-task calculation is byte-identical');
+for(const marker of ['const samplesPerBlock = 60, warmupFrames = 120;',"const orders = ['ABBA', 'BAAB', 'ABBA', 'BAAB', 'ABBA'];",'scenario.medianPairedRatio <= 1.05'])assert(diagnostic.includes(marker));
+assert(diagnostic.includes("['earth-near','catalog-star','system-overview'].includes(fixture.name)"));
+assert(diagnostic.includes('`${device}-${fixture.name}-${label}.cpuprofile`'),'each affected fixture keeps its own raw profile');
+assert(diagnostic.indexOf("await session.send('Profiler.start')")>diagnostic.indexOf('// CPU profiling can alter JIT state.'));
+assert(diagnostic.includes("['bhVisuals', 'if (bhVisualDue) updateBHVisuals(dtR, earthX, earthZ);']"));
+const outcome=text=>text.slice(text.indexOf('    report.passed ='));
+assert.equal(outcome(diagnostic),outcome(baseline),'final strict gate and failure preservation are unchanged');
+console.log('Inactive optics attribution preserves exact acceptance windows, thresholds, fixture inputs and raw outcomes');

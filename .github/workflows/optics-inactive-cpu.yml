@@ -1,0 +1,44 @@
+name: Inactive optics CPU attribution
+on:
+  push:
+    branches: [diagnostic/optics-inactive-cpu]
+permissions:
+  contents: read
+jobs:
+  mobile-affected-views:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-inactive-optics-cpu.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: Pin both complete production source roots
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/inactive-before" cb6601c2a5cdde3a8e9f22f6ac9b17a6837696a6
+          git worktree add --detach "$RUNNER_TEMP/inactive-after" ea036dfeab73f526e77779ae472fe4889b3eb6f0
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/inactive-before/node_modules"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/inactive-after/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/inactive-before" >> "$GITHUB_ENV"
+          echo "CANDIDATE_ROOT=$RUNNER_TEMP/inactive-after" >> "$GITHUB_ENV"
+      - name: Unchanged paired windows then affected-view CPU profiles
+        env:
+          DEVICE: mobile
+          PAIRED_CPU_PROFILE: '1'
+        run: |
+          node scripts/diagnose-inactive-optics-cpu.mjs "$CANDIDATE_ROOT" evidence/inactive-optics --validate
+          node scripts/diagnose-inactive-optics-cpu.mjs "$CANDIDATE_ROOT" evidence/inactive-optics
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: inactive-optics-cpu-mobile
+          path: evidence/inactive-optics
+          if-no-files-found: error
+          retention-days: 14
