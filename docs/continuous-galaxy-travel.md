@@ -31,3 +31,11 @@ An ordinary query touches at most 125 birth cells, 80 candidate stars per cell, 
 ## Next acceptance milestone
 
 A separate bounded mutual-interaction island should select at most 64 masses by physical influence, including offscreen neighbours; apply deterministic symmetric pair forces once per step; and persist checkpoints/residuals across island entry/exit. Tests must bound energy/momentum drift and prove no double counting with the prescribed host potential. This change does not simulate all stars in advance.
+
+## First hosted route result and pending acceptance
+
+Exact head `219e9a62` passed the real-control route and retained the same M31 star and planet across return/quickload at coordinate time 6 s. The images showed the requested dark intergalactic sky. Visual review also found legacy Solar/MW guide labels leaking into M31 views; those labels now use observer-to-source reach rather than camera-target zoom. The inherited Moon-beacon return triangle remains blocked on the #48 foundation repair.
+
+The software-rendered capture did **not** meet the absolute 50 ms transition target: median submitted-frame wall time was 1.91 s, p95 3.75 s, and the largest post-startup frame was 16.71 s during stellar approach. These values include browser/driver blocking, not just JavaScript compute. Do not call this smooth-device-performance evidence.
+
+`benchmark-galaxy-travel.mjs` is a paired diagnostic, not an acceptance substitute. It pins the common #48 foundation to `1a8e3af`, uses the same software browser/viewport and fixed galaxy-quality setting on both exact source trees, replays six observer views from the successful route, and applies identical native WASD input in predeclared ABBA/BAAB order. Baseline lacks foreign targets and surfaces, so this is matched camera workload, not identical object content. Both cold and warm samples, stage timings, completion readback, and hardware timer support are retained. Absolute target failure is reported independently of the relative ratio. The functional route also records per-frame discovery/render stages to locate its expensive transitions.

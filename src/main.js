@@ -1,3 +1,4 @@
+import { observerLabelAllowed } from './universe/observerLabels.js';
 import { aimExplorationCamera } from './universe/cameraNavigation.js';
 import { prepareSystemCameraAnchor, systemAnchor } from './render/systemPrecision.js';
 import { galaxyFocusPosition } from './galaxyTravel.js';
@@ -932,6 +933,7 @@ function updateStarLabels(w, h) {
             // binary components (GUNIIBUU B) only carry the " B" name suffix.
             if ((star.companion || / B$/.test(star.name)) && cam.dist > 3e8) return false;
             const pos = starScenePos(i, _starLabelPos);
+            if (!observerLabelAllowed(camera.position.distanceTo(pos) / K, "stellar", activeStarFocus && i === focusStar)) return false;
             const p = projectTo(pos, w, h, _starBinP);
             if (!p || p[0] < 0 || p[0] > w || p[1] < 0 || p[1] > h) return false;
             const op = activeStarFocus && i === focusStar ? starLabelFade * dim
@@ -963,6 +965,7 @@ function updateStarLabels(w, h) {
 const labelSlots = [];
 const _slotP = [0, 0];
 function putUnlessCrowded(el, v3, dy, w, h) {
+    if (!observerLabelAllowed(camera.position.distanceTo(v3) / K)) { hideLabel(el); return; }
     const p = projectTo(v3, w, h, _slotP);
     if (!p) { hideLabel(el); return; }
     for (let k = 0; k < labelSlots.length; k += 2) {
@@ -2075,7 +2078,9 @@ function frameStep() {
         tier1CamDirWorld.y = -tier1CamDirScene.z;
         tier1CamDirWorld.z = tier1CamDirScene.y;
         setObserver(camWorldKmX, camWorldKmY, camWorldKmZ, G.t);
+        const foreignFieldT0 = perfStart();
         updateForeignStarField(camera, [camWorldKmX, camWorldKmY, camWorldKmZ], G.t);
+        perfEnd("travel.foreignField", foreignFieldT0);
         updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, tier1CamDirWorld, G.t);
         if (minorRenderers.oort.mesh.visible && (nearFieldDue || !minorRenderers.oort.geometry.drawRange.count)) {
             minorSunWorld[0] = eph.earthX + eph.sunX;

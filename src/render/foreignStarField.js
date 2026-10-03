@@ -1,3 +1,4 @@
+import { PERF, markPerf } from '../perf.js';
 // Bounded camera-neighbourhood detail. The same provider serves physical
 // ship discovery. A promoted ID leaves this point layer exactly once.
 import * as THREE from 'three';
@@ -26,7 +27,10 @@ export function updateForeignStarField(camera, world, t) {
     if (!mesh) return;
     // Small spatial cells amortize discovery; exact time publication is separate.
     const key = [getSeed(), ...world.map(v => Math.floor(v / PC_KM)), Math.floor(t / 31557600), journalRevision()].join(':');
-    if (key !== last) { rows = sampleForeignStars(world, t); last = key; }
+    const discoveryT0 = PERF.enabled ? performance.now() : 0;
+    const rediscovered = key !== last;
+    if (rediscovered) { rows = sampleForeignStars(world, t); last = key; }
+    if (PERF.enabled) markPerf("travel.foreignDiscovery", rediscovered ? performance.now() - discoveryT0 : 0, { rediscovered, stars: rows.length });
     if (lastT !== t) { for (const star of rows) updateForeignStar(star, t); lastT = t; }
     const promoted = new Set(ACTIVE_STARS.map(s => s.id));
     const a = mesh.geometry.attributes; let n = 0;

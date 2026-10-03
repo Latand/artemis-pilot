@@ -37,3 +37,35 @@ jobs:
           name: continuous-galaxy-travel
           path: evidence/galaxy-travel/
           retention-days: 14
+  paired-renderer-diagnostic:
+    name: Matched camera timing (diagnostic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Prepare exact stacked baseline
+        env:
+          # Freeze the common #48 foundation used by this slice. A moving
+          # feature-branch base must not silently introduce unrelated fixes.
+          BASE_SHA: 1a8e3af6f7e6ab16f121864afdf9cf96df5c645c
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/travel-base" "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/travel-base/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/travel-base" >> "$GITHUB_ENV"
+      - run: node scripts/benchmark-galaxy-travel.mjs --validate
+      - run: node scripts/benchmark-galaxy-travel.mjs . evidence/galaxy-travel-paired
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: continuous-galaxy-travel-paired
+          path: evidence/galaxy-travel-paired/
+          retention-days: 14

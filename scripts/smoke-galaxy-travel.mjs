@@ -129,3 +129,10 @@ for (const radius of [.002, .02, .2, 4]) for (let angle = 0; angle < 100; angle+
 }
 assert(falseNegatives > 100, 'Control reproduces rounded global frustum rejection across oblique views');
 console.log('400 tiny foreign body frustum/model-view checks passed; control false-negatives:', falseNegatives);
+
+const { observerLabelAllowed, LABEL_REACH_KM } = await import('../src/universe/observerLabels.js');
+assert(observerLabelAllowed(1e8));
+assert(!observerLabelAllowed(2.5e6 * 9460730472580.8), 'Solar labels cannot leak into M31 closeups');
+assert(!observerLabelAllowed(2.5e6 * 9460730472580.8, 'stellar'), 'Remote MW guide labels disappear at M31');
+assert(observerLabelAllowed(2.5e6 * 9460730472580.8, 'stellar', true), 'An explicitly selected named destination keeps its guide');
+assert(observerLabelAllowed(LABEL_REACH_KM.stellar * .9, 'stellar'));
