@@ -1,25 +1,11 @@
-name: Black-hole disk and ring partial-release QA
+name: Disk and ring partial-release preflight
 on:
-  pull_request:
-    paths:
-      - 'scripts/probe-optics-crossing.mjs'
-      - 'scripts/probe-optics-partial-release.mjs'
-      - 'scripts/smoke-optics-partial-release.mjs'
-      - 'scripts/optics-deferred-edge-fixture.mjs'
-      - 'scripts/smoke-optics-crossing.mjs'
-      - 'src/lensing.js'
-      - 'src/holeOptics.js'
-      - 'src/tdeVisuals.js'
-      - 'src/render/ringSamplingDepth.js'
-      - 'src/render/planetAppearance.js'
-      - 'scripts/smoke-ring-sampling-depth.mjs'
-      - 'scripts/optics-depth-fixture.mjs'
-      - 'scripts/benchmark-explored-systems.mjs'
-      - '.github/workflows/optics-crossing.yml'
+  push:
+    branches: [diagnostic/optics-disk-ring-release]
 permissions:
   contents: read
 concurrency:
-  group: optics-crossing-${{ github.event.pull_request.number }}
+  group: optics-crossing-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   capture:
@@ -34,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -84,7 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
