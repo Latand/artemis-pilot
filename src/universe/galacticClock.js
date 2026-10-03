@@ -10,6 +10,7 @@
 // after 1 Myr, 2.5 kpc after 10 Myr, ~16 kpc (the far side of the disc) after
 // 100 Myr. It now moves rigidly with the galactic centre: its offset from the
 // drawn centre is the same at every time, and nothing changes at t = 0.
+import { updateCatalogStar, catalogMotionFor, catalogEvalTime } from "./catalogMotion.js";
 import { STARS } from "../constants.js";
 import { SUN_GAL, galDeltaToWorldKmInto, setSunGalAnchor } from "./coords.js";
 import { solarGalacticStateAt } from "./solarOrbit.js";
@@ -20,8 +21,8 @@ const SGR_EPOCH = SGR ? [SGR.x, SGR.y, SGR.z] : null;
 const _shift = [0, 0, 0];
 let SYNC_T = 0;
 
-// Moves the anchor and Sgr A* to sim time simT. Idempotent; cheap (one
-// closed-form orbit evaluation).
+// Publish the Sun anchor, central hole and bounded destination table. The
+// table shares the active layer's cadence; the Sun/nucleus retain exact time.
 export function syncGalacticFrame(simT) {
     const t = Number.isFinite(simT) ? simT : 0;
     solarGalacticStateAt(t, SUN_NOW);
@@ -33,6 +34,27 @@ export function syncGalacticFrame(simT) {
         SGR.x = SGR_EPOCH[0] + _shift[0];
         SGR.y = SGR_EPOCH[1] + _shift[1];
         SGR.z = SGR_EPOCH[2] + _shift[2];
+    }
+    const catalogT = catalogEvalTime(t);
+    // Publish once for all consumers; stable objects/IDs keep selected systems
+    // attached. Epoch coordinates never change, so seeks and reverse retrace.
+    for (const star of STARS) {
+        if (star === SGR || star.companion || star._posSimT === catalogT) continue;
+        updateCatalogStar(star, catalogT);
+    }
+    for (const star of STARS) {
+        if (star.companion && star._posSimT !== catalogT) {
+            const host = STARS.find(s => s.name === star.companion);
+            if (host) {
+                const epoch = catalogMotionFor(star), parent = catalogMotionFor(host);
+                star.x = host.x + epoch.x - parent.x;
+                star.y = host.y + epoch.y - parent.y;
+                star.z = host.z + epoch.z - parent.z;
+                star.dLy = Math.hypot(star.x, star.y, star.z) / 9460730472580.8;
+                star._posSimT = catalogT;
+                continue;
+            }
+        }
     }
     SYNC_T = t;
     return SUN_NOW;

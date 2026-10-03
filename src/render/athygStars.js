@@ -19,10 +19,10 @@
 // renderOrigin.worldToResidualArr; call `refreshAllResiduals` after a rebase
 // to recompute every loaded star's residual against the new origin.
 //
-// Proper motion (`pm`, mas/yr x10 per axis) is decoded and stored per star but
-// not applied to position anywhere in this module — Tier-1 stars are static
-// until a later work package decides an update cadence for real per-star
-// kinematics; this only reserves the storage and documents the gap.
+// Catalog points share the same bounded Galactic epicycle kernel as active
+// destinations. Proper motions are retained but lack radial velocities here;
+// this version explicitly uses synthetic thin-disk kinematics, not astrometry.
+// Three packed orbit floats per star; only time/anchor uniforms change per frame.
 //
 // Brightness (WP16): the GPU `absMag` attribute holds each star's ABSOLUTE
 // magnitude (mag - 5*log10(distFromSol_pc/10)), computed once at ingest from
@@ -33,6 +33,7 @@
 // procedural star at the same camera distance, instead of forever reflecting
 // how bright it happens to look from Sol.
 
+import { createCatalogMotion } from "../universe/catalogMotion.js";
 import * as THREE from "three";
 import { linearStarColor } from "./stellarAppearance.js";
 import { makeStarPointMaterial } from "./starPointMaterial.js";
@@ -103,7 +104,7 @@ export const TIER1_MAG_LIMIT = BRIGHTNESS_CURVE.magLimit;
 // so a tier-1 star renders exactly like a tier-0, curated or procedural star
 // of the same absolute magnitude at the same camera distance.
 function makeTier1Material({ dim = 1, magPenalty = 0 } = {}) {
-    return makeStarPointMaterial({ dim, magPenalty, hidden: true });
+    return makeStarPointMaterial({ dim, magPenalty, hidden: true, catalogMotion: true });
 }
 
 // --- THREE-backed groups -----------------------------------------------------
@@ -131,6 +132,7 @@ export function createTileGroups(parent, manifest, span = GROUP_TILE_SPAN, optio
         hiddenAttr.setUsage(THREE.DynamicDrawUsage);
         teffAttr.setUsage(THREE.DynamicDrawUsage);
         geometry.setAttribute("position", posAttr);
+        geometry.setAttribute("catalogOrbit", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
         geometry.setAttribute("color", colAttr);
         geometry.setAttribute("absMag", magAttr);
         geometry.setAttribute("hidden", hiddenAttr);
@@ -176,6 +178,8 @@ export function ingestTile(groups, tileId, tileData, span = GROUP_TILE_SPAN) {
         const wx = pcX * PC_KM, wy = pcY * PC_KM, wz = pcZ * PC_KM;
         group.worldKm[si * 3] = wx; group.worldKm[si * 3 + 1] = wy; group.worldKm[si * 3 + 2] = wz;
         worldToResidualArr(wx, wy, wz, posArr, si * 3, K);
+        const orbit = createCatalogMotion(wx, wy, wz, { id: "t1:" + tileId + ":" + i });
+        group.geometry.attributes.catalogOrbit.array.set([orbit.xp, orbit.yp, orbit.zp], si * 3);
         const mag = magCi[i * 2] / 100;
         const ci = magCi[i * 2 + 1] / 1000;
         teffArr[si] = bvToTeff(ci);
@@ -195,6 +199,7 @@ export function ingestTile(groups, tileId, tileData, span = GROUP_TILE_SPAN) {
     const magAttr = group.geometry.attributes.absMag;
     const teffAttr = group.geometry.attributes.teffK;
     posAttr.addUpdateRange(offset * 3, count * 3); posAttr.needsUpdate = true;
+    group.geometry.attributes.catalogOrbit.addUpdateRange(offset * 3, count * 3); group.geometry.attributes.catalogOrbit.needsUpdate = true;
     colAttr.addUpdateRange(offset * 3, count * 3); colAttr.needsUpdate = true;
     magAttr.addUpdateRange(offset, count); magAttr.needsUpdate = true;
     teffAttr.addUpdateRange(offset, count); teffAttr.needsUpdate = true;

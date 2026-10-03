@@ -1,3 +1,5 @@
+import { catalogEvalTime } from "./catalogMotion.js";
+import { syncGalacticFrame } from "./galacticClock.js";
 import { formedStarsAt, formedStarForNebula, nebulaRevision } from "./nebulaeData.js";
 import { K, LY_KM, MU_S, R_SUN, STARS } from "../constants.js";
 import { SUN_GAL, PC_KM, galToWorldKmFromInto, worldKmToGalFromInto } from "./coords.js";
@@ -38,10 +40,8 @@ function simTBucket(simT) {
 // bucket (toward zero), never at whichever instant a refresh happened to run:
 // positions are then a pure function of the bucket, the paths agree, and
 // |t| below one bucket is exactly the epoch/catalog position.
-export function activeStarEvalTime(simT) {
-    const b = simTBucket(simT);
-    return b === 0 ? 0 : b * PROC_REEVAL_DT_S;
-}
+export const activeStarEvalTime = catalogEvalTime;
+
 let LAST_EVAL_T = 0;
 let FORMATION_TIME = 0;
 let FORMATION_SIGNATURE = "";
@@ -439,6 +439,8 @@ export function promoteTier1Star(tileId, idx) {
         catalog: "athyg-tier1",
         tier1: { tileId, idx },
         x: info.position.x, y: info.position.y, z: info.position.z,
+        epochPosition: info.epochPosition,
+        _posSimT: LAST_EVAL_T,
         dLy: Math.hypot(info.position.x, info.position.y, info.position.z) / LY_KM,
         mass: info.mass,
         mu: MU_S * info.mass,
@@ -600,6 +602,7 @@ function rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalo
 // sim time the caller's frame covers; past ACTIVE_STAR_CONFIG
 // .decorrelatedFrameSec only the nearest decorrelatedRadiusPc is sampled.
 export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0, frameAdvanceSec = 0) {
+    syncGalacticFrame(simT);
     FORMATION_TIME = simT;
     // A reverse slice starting exactly at birth belongs to the pre-birth side.
     const formed = formedStarsAt(simT, frameAdvanceSec >= 0);

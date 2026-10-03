@@ -1,3 +1,4 @@
+import { catalogMotionFor, updateCatalogStar } from "./universe/catalogMotion.js";
 import { addRuntimeStar, CATALOG_PROMOTION_MAX, INITIAL_STAR_COUNT, LY_KM, R_SUN, STARS } from "./constants.js";
 import {
     ACTIVE_STARS, ACTIVE_STAR_CONFIG, activeStarFocusValue, activeStarStats, activeStarsTime, activeStarsExactTime, refreshActiveStars,
@@ -21,6 +22,7 @@ let labelMap = null;
 let searchTimer = 0;
 
 const SERIAL_STAR_FIELDS = [
+    "epochPosition",
     "name", "dLy", "x", "y", "z", "color", "mass", "R", "catalog", "hygIndex",
     "hip", "hd", "hr", "spect", "mag", "absMag", "lumSolar", "tempK", "estimated",
 ];
@@ -292,6 +294,9 @@ export function restorePromotedCatalogStars(rows = []) {
             continue;
         }
         try {
+            if (star.epochPosition && (!Array.isArray(star.epochPosition) || star.epochPosition.length !== 3 || !star.epochPosition.every(Number.isFinite))) continue;
+            catalogMotionFor(star);
+            updateCatalogStar(star, activeStarsTime());
             const starIndex = addRuntimeStar(star);
             hooks.onPromote(starIndex, star, false, "restore");
             restored.push(starIndex);
@@ -365,6 +370,8 @@ async function promoteIndex(index) {
         setOpen(false);
         return existing;
     }
+    catalogMotionFor(star);
+    updateCatalogStar(star, activeStarsTime());
     const starIndex = addRuntimeStar(star);
     hooks.onPromote(starIndex, star, false, "promote");
     setOpen(false);
