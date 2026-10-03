@@ -10,8 +10,10 @@ const mobile=process.env.DEVICE==='mobile';
 const root=resolve(process.env.BASE_ROOT||process.cwd());
 const baseline=!!process.env.BASE_ROOT;
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/river-coverage');
+const viewport=mobile?{width:215,height:466}:{width:384,height:256};
+const captureViewport=mobile?{width:430,height:932}:{width:960,height:640};
 await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),baseline,mobile,frames:[],checks:[],errors:[],omissions:['HYG background','resolved procedural field','tier-1 streaming'],reference:'Synthetic off-center Sun boundary crossing based on supplied photos; exact photographed camera pose is unknown.'};
+const report={revision:execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),baseline,mobile,viewport,captureViewport,frames:[],checks:[],errors:[],omissions:['HYG background','resolved procedural field','tier-1 streaming'],reference:'Synthetic off-center Sun boundary crossing based on supplied photos; exact photographed camera pose is unknown.'};
 const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);};
 const save=()=>writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
 const hook=`
@@ -58,12 +60,16 @@ let browser;
 try{
  await server.listen();
  browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
- const page=await browser.newPage({viewport:mobile?{width:430,height:932}:{width:960,height:640},hasTouch:mobile,isMobile:mobile,deviceScaleFactor:1});page.setDefaultTimeout(180000);
+ const page=await browser.newPage({viewport,hasTouch:mobile,isMobile:mobile,deviceScaleFactor:1});page.setDefaultTimeout(180000);
  page.on('pageerror',e=>report.errors.push(e.stack||e.message));page.on('console',m=>{if(m.type()==='error'&&/THREE|Shader|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
  await page.addInitScript(()=>{localStorage.clear();localStorage.setItem('ap_introSeen','1');Date.now=()=>Date.UTC(2026,9,4,12);});
  await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=sun&dist=40000&pitch=0&yaw=1.5707963267948966&compile=0&field=0&realsky=0&tier1=0&hidehelp=1`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__coverageFrame);
+ // Keep all 1200 production frames and full particle counts, but bound the
+ // software GPU's steady framebuffer work. Key evidence uses the original
+ // full viewport with exactly the same aspect ratio and one fresh app draw.
+ const screenshot=async name=>{await page.setViewportSize(captureViewport);await page.evaluate(()=>window.__coverageFrame());await page.screenshot({path:`${out}/${name}.png`,timeout:180000});await page.setViewportSize(viewport);};
  check(await page.evaluate(async mobile=>(await import('/src/scene.js')).renderQuality.mobile===mobile,mobile),'actual touch/desktop quality');
  const modes=baseline?[0]:[0,3852,-3852];
  const length=baseline?120:400;
@@ -81,7 +87,7 @@ try{
     return {...sampled,i,warp,simTime:G.t,screen:sunCore.position.clone().project(camera).toArray(),memory:{...renderer.info.memory,programs:renderer.info.programs.length},contextLost:renderer.getContext().isContextLost(),error:renderer.getContext().getError()};
    },{i,length,warp});
    report.frames.push(sample);
-   if(i===0||i===Math.floor(length/2)||i===length-1){await page.screenshot({path:`${out}/${warp}-${i}.png`,timeout:180000});await save();}
+   if(i===0||i===Math.floor(length/2)||i===length-1){await screenshot(`${warp}-${i}`);await save();}
    if(i%100===0)console.log('coverage',warp,i,sample.visible,sample.owned,sample.ratio);
   }
  }
@@ -110,7 +116,7 @@ try{
   for(const [focus,dist]of [['earth',15],['moon',8]]){
    await page.evaluate(async({focus,dist})=>{const{G}=await import('/src/state.js');const{cam}=await import('/src/scene.js');G.focus=focus;G.paused=true;cam.dist=dist;cam.distTarget=null;cam.yaw=-.4;cam.pitch=.5;}, {focus,dist});
    for(let j=0;j<24;j++)await page.evaluate(()=>window.__coverageFrame());
-   await page.screenshot({path:`${out}/near-${focus}.png`,timeout:180000});
+   await screenshot(`near-${focus}`);
   }
   // Move a real rendered BH through 3D positions while the display compute
   // skips frames. Stored halo offsets must follow the mesh on every draw.
@@ -132,7 +138,7 @@ try{
   check(report.blackHole.every(f=>f.count>20&&f.source.every((x,i)=>Math.abs(x-f.mesh[i])<1e-6)&&f.mesh.every((x,i)=>Math.abs(x-f.expected[i])<1e-6)),'moving 3D BH field, halo source and mesh stay co-located');
   check(report.blackHole.some(f=>f.skipped),'BH alignment covers retained/skipped compute frames');
   check(report.blackHole.every(f=>f.maxOffset<100),'owned BH samples remain local instead of leaving a stale displaced well');
-  await page.screenshot({path:`${out}/moving-black-hole.png`,timeout:180000});
+  await screenshot(`moving-black-hole`);
  }
  check(report.errors.length===0,'no shader/runtime errors');
 }finally{await save();await browser?.close();await server.close();}

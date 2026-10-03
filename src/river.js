@@ -685,6 +685,7 @@ const smoothCenter = new THREE.Vector3();
 const textureCenter = new THREE.Vector3();
 let smoothR = 0;
 let refreshElapsed = 0;
+let haloCoverageDirty = false;
 const bhRiverPos = new THREE.Vector3();
 const riverStarPickIndex = new Int32Array(RIVER_STAR_SOURCE_MAX);
 const riverStarPickScore = new Float64Array(RIVER_STAR_SOURCE_MAX);
@@ -1151,13 +1152,19 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // advection; respawning means it does not promise exact historical replay.
     if (dtVis === 0 || Math.sign(dtVis) !== Math.sign(river.dtAccum)) river.dtAccum = 0;
     river.dtAccum += dtVis;
-    const shouldCompute = (dtVis !== 0 || respawn > .001 || haloCoverageChanged) &&
-        (computeEvery <= 1 || river.frame % computeEvery === 0 || respawn > .08 || haloCoverageChanged);
+    // Preserve the mobile compute budget. Source-local offsets already
+    // follow the live source on skipped draws; only population reassignment
+    // waits (at most the existing cadence). Keep that request pending even
+    // when a paused camera stops moving before the next scheduled compute.
+    haloCoverageDirty ||= haloCoverageChanged;
+    const shouldCompute = (dtVis !== 0 || respawn > .001 || haloCoverageDirty) &&
+        (computeEvery <= 1 || river.frame % computeEvery === 0 || respawn > .08);
     river.skippedCompute = !shouldCompute;
     refreshElapsed += Math.max(0, Math.min(dtReal, 0.1));
     if (shouldCompute) {
         uniformsShared.uRespawn.value = respawn === 1 ? 1 : refreshProbability(respawn, refreshElapsed);
         refreshElapsed = 0;
+        haloCoverageDirty = false;
         const computeDt = river.dtAccum;
         uniformsShared.uDtSim.value = computeDt;
         river.dtVis = computeDt;
@@ -1243,5 +1250,6 @@ export function resetRiverContext() {
     uniformsShared.uRespawn.value = 1;
     river.dtAccum = 0;
     refreshElapsed = 0;
+    haloCoverageDirty = false;
     smoothR = 0; // force the next visible update to fill its new GPU target
 }

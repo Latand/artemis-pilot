@@ -37,3 +37,6 @@ assert.equal(haloViewWeight(0,0,100,100,100,10,.5,1.5),1,'Visible off-center sou
 assert.equal(haloViewWeight(0,0,8,8,8,14,.5,1.5),1,'Tiny focused local body retains coverage');
 
 assert.equal(haloViewWeight(0,0,3e8,3e8,3e8,2.4e6,.5,1.5,1.9e8),0,'Samples outside the near-only render tier release their slots');
+
+assert(src.includes('haloCoverageDirty ||= haloCoverageChanged'),'Paused view changes stay pending until the scheduled compute');
+assert(!src.includes('respawn > .08 || haloCoverageChanged'),'View-weight changes must not bypass mobile compute cadence');
