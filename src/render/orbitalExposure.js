@@ -9,7 +9,7 @@ import { G, WORLD } from '../state.js';
 import { MOONS, moonFocusIndex, moonOffset } from '../moons.js';
 import { scene, viewportSize } from '../scene.js';
 import { earthG, earthBeacon, moon, plGroups, plGlows, moonGroups, moonGlows, sunPos, surfaceExposureState } from '../bodies.js';
-import { exposurePolicy, osculatingOrbit, sampleOrbit } from './orbitalExposureMath.js';
+import { exposurePolicy, osculatingOrbit, sampleOrbit, presentationExposureSeconds } from './orbitalExposureMath.js';
 
 const SEGMENTS = 64;
 const entries = [];
@@ -17,7 +17,7 @@ const point = { x: 0, y: 0, z: 0 }, moonNow = { x: 0, y: 0 }, moonPast = { x: 0,
 const axis = new THREE.Vector3(), envelope = new THREE.Sphere();
 const frustum = new THREE.Frustum(), projectionView = new THREE.Matrix4();
 let note;
-export const orbitalExposure = { active: 0, averaged: 0, samples: 0, entries };
+export const orbitalExposure = { active: 0, averaged: 0, samples: 0, seconds: 0, entries };
 function createEntry(key, color, radius, a) {
     const geometry = new LineGeometry();
     geometry.setPositions(new Float32Array((SEGMENTS + 1) * 3));
@@ -54,12 +54,14 @@ function orbitFor(entry) {
 }
 export function hideOrbitalExposure(hideNote = true) {
     orbitalExposure.active = orbitalExposure.averaged = orbitalExposure.samples = 0;
+    orbitalExposure.seconds = 0;
     for (const entry of entries) { entry.blend = 0; entry.line.visible = false; }
     if (hideNote && note && !note.hidden) note.hidden = true;
 }
 export function updateOrbitalExposure(camera, advance, realDt, disabled = false) {
     init(); hideOrbitalExposure(false);
     if (disabled || G.paused || !advance) { if (!note.hidden) note.hidden = true; return; }
+    orbitalExposure.seconds = presentationExposureSeconds(advance, realDt);
     frustum.setFromProjectionMatrix(projectionView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     for (const entry of entries) {
         const key = entry.key, mi = moonFocusIndex(key), isPlanet = typeof key === 'number';

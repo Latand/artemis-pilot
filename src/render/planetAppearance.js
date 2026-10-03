@@ -39,10 +39,17 @@ export function earthSurfaceMaterial(dayMap, nightMap, cloudMap, radius) {
         vertexShader: vertex,
         fragmentShader: /* glsl */`
             uniform sampler2D dayMap, nightMap, cloudMap;
-            uniform sampler2D uDayIntegral, uNightIntegral, uCloudIntegral;
-            uniform vec2 uDayIntegralSize, uNightIntegralSize, uCloudIntegralSize;
-            uniform float uSurfaceExposureTurns, uCloudExposureTurns;
-            ${SURFACE_EXPOSURE_GLSL}
+            #ifdef SURFACE_ROTATION_EXPOSURE
+                uniform sampler2D uDayIntegral, uNightIntegral, uCloudIntegral;
+                uniform vec2 uDayIntegralSize, uNightIntegralSize, uCloudIntegralSize;
+                uniform float uSurfaceExposureTurns, uCloudExposureTurns;
+                ${SURFACE_EXPOSURE_GLSL}
+            #else
+                // Keep the ordinary/paused program identical to direct map
+                // sampling: unused integral samplers and uniform branches
+                // can otherwise remain costly on software/mobile shader drivers.
+                #define sampleSurfaceExposure(sourceMap, integralMap, uv, size, turns) texture2D(sourceMap, uv)
+            #endif
             uniform float uHasNight, uHasClouds, uCloudOffset, uRadius;
             uniform vec3 sunDir, uCamera;
             varying vec2 vUv;
@@ -109,6 +116,7 @@ function configureCloudRotationExposure(material) {
     const previousKey = material.customProgramCacheKey();
     material.onBeforeCompile = shader => {
         previousCompile.call(material, shader);
+        if (!material.defines?.SURFACE_ROTATION_EXPOSURE) return;
         Object.assign(shader.uniforms, uniforms);
         shader.fragmentShader = /* glsl */`
             uniform sampler2D uCloudIntegral;
@@ -126,6 +134,16 @@ function configureCloudRotationExposure(material) {
     material.needsUpdate = true;
 }
 
+// Exactly two exposure variants per Earth/cloud material. Only a transition
+// changes this part of the program key; pauses recover original map sampling.
+function setEarthExposureShaderVariant(material, active) {
+    if (!material || !!material.defines?.SURFACE_ROTATION_EXPOSURE === active) return;
+    material.defines ||= {};
+    if (active) material.defines.SURFACE_ROTATION_EXPOSURE = 1;
+    else delete material.defines.SURFACE_ROTATION_EXPOSURE;
+    material.needsUpdate = true;
+}
+
 // Earth colour/night lights and the independently drifting cloud layer have
 // different spin rates but share one presentation shutter. Lighting stays at
 // the exact current geometric phase; no epoch or orientation is overwritten.
@@ -135,6 +153,12 @@ export function updateEarthSurfaceExposure(earthMaterial, cloudMaterial, earthSp
     if (earthMaterial?.uniforms.uCloudExposureTurns)
         earthMaterial.uniforms.uCloudExposureTurns.value = surfaceExposureTurns(cloudSpin, simExposureSeconds);
     const cloudActive = updateSurfaceRotationExposure(cloudMaterial, cloudSpin, simExposureSeconds);
+    // The shadow sampler uses the cloud spin, which can enter its exposure
+    // threshold just before the Earth day/night samplers do.
+    const cloudShadowActive = !!earthMaterial?.uniforms.uCloudIntegralSize &&
+        earthMaterial.uniforms.uCloudIntegralSize.value.x * earthMaterial.uniforms.uCloudExposureTurns.value > .5;
+    setEarthExposureShaderVariant(earthMaterial, earthActive || cloudShadowActive);
+    setEarthExposureShaderVariant(cloudMaterial, cloudActive);
     return earthActive || cloudActive;
 }
 

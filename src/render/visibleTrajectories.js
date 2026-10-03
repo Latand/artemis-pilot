@@ -7,14 +7,15 @@ import { earthG, moon, plGroups, moonGroups, sunPos, sunCore } from '../bodies.j
 import { scene, viewportSize, registerNearTierOnly } from '../scene.js';
 import { shipG, dot } from '../ship.js';
 import { osculatingOrbit, sampleOrbit } from './orbitalExposureMath.js';
-import { selectVisibleTrajectories, trajectoryHorizon, playbackDirection, projectedVelocity, fullyOcculted, VISIBLE_TRAJECTORY_LIMIT, VISIBLE_TRAJECTORY_SEGMENTS } from './visibleTrajectoryMath.js';
+import { orbitalExposure } from './orbitalExposure.js';
+import { selectVisibleTrajectories, trajectoryHorizon, playbackDirection, projectedVelocity, fullyOcculted, trajectoryDisplayOpacity, orbitalDirectionSweep, VISIBLE_TRAJECTORY_LIMIT, VISIBLE_TRAJECTORY_SEGMENTS } from './visibleTrajectoryMath.js';
 
 const N = VISIBLE_TRAJECTORY_SEGMENTS;
 const candidates = [], layers = [], projection = new THREE.Vector3(), next = new THREE.Vector3();
 const worldVelocity = new THREE.Vector3(), cameraRight = new THREE.Vector3(), cameraUp = new THREE.Vector3(), cameraForward = new THREE.Vector3();
 const point = {}, offset = {}, screenMotion = {}, tangent = new THREE.Vector3(), normal = new THREE.Vector3();
 let initialized = false, toggle, note;
-export const visibleTrajectories = { enabled: true, ids: [], active: 0, linear: 0, samples: 0, layers, candidates };
+export const visibleTrajectories = { enabled: true, ids: [], active: 0, linear: 0, samples: 0, faded: 0, layers, candidates };
 function makeCandidate(id, focus, radius, color) {
     const c = { id, focus, radius, color, position: new THREE.Vector3(), host: new THREE.Vector3(), orbit: {}, visible: false, model: 'two-body', x:0,y:0,z:0,vx:0,vy:0,vz:0,mu:0 };
     candidates.push(c); return c;
@@ -42,7 +43,7 @@ function init() {
     }
     toggle=document.createElement('button');toggle.id='motionPathsToggle';toggle.type='button';
     toggle.setAttribute('aria-pressed','true');
-    toggle.title='Dashed: short parent-relative two-body preview. Solid arrow: current velocity in playback direction. Ship, placed holes, and perturbed paths use a linear estimate of at most 60 seconds. Does not change the ship prediction control.';
+    toggle.title='Dashed: short parent-relative two-body preview. Solid arrow: current velocity in playback direction. Fast unresolved guides fade; pause for exact directions. Ship, placed holes, and perturbed paths use a linear estimate of at most 60 seconds. Does not change the ship prediction control.';
     toggle.addEventListener('click',()=>{visibleTrajectories.enabled=!visibleTrajectories.enabled;toggle.setAttribute('aria-pressed',String(visibleTrajectories.enabled));if(!visibleTrajectories.enabled)hideVisibleTrajectories();});
     document.querySelector('#timeDock .tdHeading')?.append(toggle);
     note=document.createElement('div');note.id='motionPathsNote';note.hidden=true;
@@ -76,7 +77,7 @@ function refreshStates(oi) {
     }
 }
 export function hideVisibleTrajectories(hideNote = true) {
-    visibleTrajectories.active=visibleTrajectories.linear=visibleTrajectories.samples=0;
+    visibleTrajectories.active=visibleTrajectories.linear=visibleTrajectories.samples=visibleTrajectories.faded=0;
     for(const layer of layers){layer.path.visible=layer.arrow.visible=false;}
     if(hideNote&&note&&!note.hidden)note.hidden=true;
 }
@@ -113,8 +114,17 @@ export function updateVisibleTrajectories(camera,oi,disabled=false) {
     const tanHalfFov = Math.tan(camera.fov * Math.PI / 360);
     const perturbed=BH.n>0||GS.length>0||WORLD.tdeInProgress;
     for(let index=0;index<selected.length;index++) {
-        const c=selected[index],layer=layers[index];
-        const conic=c.model==='linear'||(perturbed&&c.model!=='analytic-moon')?null:osculatingOrbit(c.x,c.y,c.z,c.vx,c.vy,c.vz,c.mu,c.orbit);
+        const c=selected[index],layer=layers[visibleTrajectories.active];
+        const localOrbit=osculatingOrbit(c.x,c.y,c.z,c.vx,c.vy,c.vz,c.mu,c.orbit);
+        const conic=c.model==='linear'||(perturbed&&c.model!=='analytic-moon')?null:localOrbit;
+        const bodyBlend=G.paused?0:(orbitalExposure.entries.find(entry=>entry.key===c.focus)?.blend||0);
+        // A short linear ship/encounter preview remains linear. Its current
+        // bound-state period is used only to avoid a strobing direction guide.
+        const shutter=G.paused?0:orbitalExposure.seconds;
+        const opacity=trajectoryDisplayOpacity(bodyBlend,shutter,localOrbit?.period,orbitalDirectionSweep(localOrbit,shutter));
+        if(opacity<.999)visibleTrajectories.faded++;
+        if(opacity<.005)continue;
+        layer.opacity=opacity;layer.path.material.opacity=.72*opacity;layer.arrow.material.opacity=.85*opacity;
         const speed=Math.hypot(c.vx,c.vy,c.vz),linear=!conic;
         const horizon=trajectoryHorizon({speed,kmPerPixel:c.kmPerPixel,period:conic?.period,linear});
         layer.id=c.id;layer.horizon=horizon;layer.model=linear?'linear':'two-body';
@@ -154,7 +164,9 @@ export function updateVisibleTrajectories(camera,oi,disabled=false) {
     }
     const toggleText=`Motion paths · ${visibleTrajectories.active}`;
     if(toggle.textContent!==toggleText)toggle.textContent=toggleText;
-    if(note.hidden!==!visibleTrajectories.active)note.hidden=!visibleTrajectories.active;
-    const noteText=`Parent-frame previews · ${direction<0?'reverse':'forward'} arrows${visibleTrajectories.linear?' · linear ≤60 s included':''}`;
+    const noteHidden=!visibleTrajectories.active&&!visibleTrajectories.faded;
+    if(note.hidden!==noteHidden)note.hidden=noteHidden;
+    const noteText=(visibleTrajectories.active?`Parent-frame previews · ${direction<0?'reverse':'forward'} arrows${visibleTrajectories.linear?' · linear ≤60 s included':''}`:'')
+        +(visibleTrajectories.faded?(visibleTrajectories.active?' · ':'')+'Fast paths fade; pause for exact arrows':'');
     if(note.textContent!==noteText)note.textContent=noteText;
 }
