@@ -10,6 +10,7 @@ import { createServer } from 'vite';
 import { protocol, summarize, validateSample, assertHealthyState, assertMatchedState } from './river-radiance-paired-protocol.mjs';
 import { transform, initializeDocument, initializeQA, readiness, readState } from './river-radiance-paired-browser.mjs';
 import { validatePreparationFrame, validatePrefix, validateFence, settlementReadyWithinDeadline } from './river-radiance-preparation-qa.mjs';
+import { volumeProgressTransform, validateVolumeProgress, volumeRefinementReady, validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
 
 assert(process.env.BASE_ROOT, 'Exact baseline root required');
 const root=resolve(process.argv[2]||'.'), baseline=resolve(process.env.BASE_ROOT), out=resolve(process.argv[3]||'evidence/radiance-preparation');
@@ -19,20 +20,20 @@ const spec=protocol.fixtures.find(f=>f.subject==='proxima');
 const fixture=JSON.parse(await readFile(new URL('./fixtures/river-radiance-proxima.json',import.meta.url),'utf8'));
 const report={probeOnly:true,passed:null,shardComplete:false,device:'desktop',fixture:spec,
   scope:'One desktop Proxima preparation proof; no paired performance acceptance or omitted-trial substitute',
-  method:'Exactly120 native-rAF production frames per revision for the fixed catalog prefix, then a separate five-minute asset/worker settlement deadline. Setup and120 warmup frames use native rAF without test-added finish/readPixels. Production-internal synchronization remains. Verified GPU fences follow settlement and warmup. Eight normal timer-task synchronized cost probes per revision follow; all are diagnostic only.',
+  method:'Exactly120 native-rAF production frames per revision for the fixed catalog prefix, then a separate five-minute asset/worker settlement deadline. Setup and120 warmup frames use native rAF without test-added finish/readPixels. Additional matched native frames require actual full-row, blend and history completion, with dirty/reset and stalled-progress guards. Production-internal synchronization remains. Verified GPU fences follow settlement, warmup and refinement. Eight normal timer-task synchronized cost probes per revision follow; all are diagnostic only.',
   limits:{jobMinutes:60,prefixUpdates:120,assetSettlementMs:300000,warmupFrames:120,costFramesPerRevision:8},
-  sources:{},prefix:{A:[],B:[]},settlement:{A:[],B:[],readiness:[]},warmup:{A:[],B:[]},fences:[],cost:{A:[],B:[]},errors:[]};
+  sources:{},prefix:{A:[],B:[]},settlement:{A:[],B:[],readiness:[]},warmup:{A:[],B:[]},refinement:{A:[],B:[]},fences:[],cost:{A:[],B:[]},errors:[]};
 for(const [label,dir,expected]of[['A',baseline,protocol.baseline],['B',root,protocol.productionCandidate]]){
   if(label==='A')assert.equal(git(dir,'rev-parse','HEAD'),expected);
   git(dir,'diff','--exit-code',expected,'--','src','public','index.html','package.json');
   assert.equal(git(dir,'ls-files','--others','--exclude-standard','--','src','public','index.html','package.json'),'');
   report.sources[label]={revision:git(dir,'rev-parse','HEAD'),tree:git(dir,'rev-parse','HEAD^{tree}'),productionReference:expected};
-  for(const path of ['src/main.js','src/river.js','src/render/bodySurfaceMaterial.js','src/universe/athygTier1.js']){
+  for(const path of ['src/main.js','src/river.js','src/render/bodySurfaceMaterial.js','src/universe/athygTier1.js','src/render/galaxyVolume.js']){
     const source=await readFile(resolve(dir,path),'utf8');
-    execFileSync(process.execPath,['--input-type=module','--check'],{input:transform(source,'/'+path)});
+    execFileSync(process.execPath,['--input-type=module','--check'],{input:volumeProgressTransform(source,'/'+path)??transform(source,'/'+path)});
   }
 }
-report.harness=Object.fromEntries(await Promise.all(['probe-river-radiance-preparation.mjs','river-radiance-preparation-qa.mjs','river-radiance-paired-browser.mjs','river-radiance-paired-protocol.mjs']
+report.harness=Object.fromEntries(await Promise.all(['probe-river-radiance-preparation.mjs','river-radiance-preparation-qa.mjs','river-radiance-paired-browser.mjs','river-radiance-paired-protocol.mjs','river-radiance-volume-progress.mjs']
   .map(async p=>[p,hash(await readFile(new URL(p,import.meta.url)))])));
 if(process.argv.includes('--validate')){console.log(JSON.stringify({hooks:'valid',browserRun:false,sources:report.sources}));process.exit(0);}
 await mkdir(out,{recursive:true});
@@ -49,11 +50,15 @@ async function deliver(page,synchronize){
   sample.protocolAndSchedulingMs=Math.max(0,sample.roundTripMs-sample.frameAndFinishMs);
   (synchronize?validateSample:validatePreparationFrame)(sample);return sample;
 }
+async function volumeProgress(label){
+  const state=await pages[label].evaluate(()=>pairedQA.volume.pairedVolumeProgress());
+  validateVolumeProgress(state);return state;
+}
 async function pairedPreparation(target){
   for(const label of['A','B']){
     const sample=await deliver(pages[label],false),previous=target[label].at(-1);
     if(previous)assert.equal(sample.frameNo,previous.frameNo+1,'No omitted native-rAF production frame');
-    target[label].push(sample);await save();
+    sample.volumeProgress=await volumeProgress(label);target[label].push(sample);await save();
   }
 }
 async function fence(label,stage){
@@ -74,7 +79,7 @@ try{
   report.browser=await browser.version();report.started=Date.now();
   for(const[label,dir]of[['A',baseline],['B',root]]){
     const cacheDir=await mkdtemp(resolve(os.tmpdir(),'radiance-preparation-'));caches.push(cacheDir);
-    const server=await createServer({root:dir,cacheDir,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'radiance-preparation',enforce:'pre',transform}]});
+    const server=await createServer({root:dir,cacheDir,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'radiance-preparation',enforce:'pre',transform:(source,id)=>volumeProgressTransform(source,id)??transform(source,id)}]});
     await server.listen();servers.push(server);
     const context=await browser.newContext({viewport:{width:1200,height:800},deviceScaleFactor:1});contexts.push(context);
     await context.addInitScript(initializeDocument);const page=await context.newPage();pages[label]=page;page.setDefaultTimeout(120000);
@@ -107,11 +112,35 @@ try{
   for(const label of['A','B'])await fence(label,'settled');
   for(let i=0;i<protocol.warmupFrames;i++)await pairedPreparation(report.warmup);
   for(const label of['A','B'])await fence(label,'warm');
+  report.refinement.before={A:await volumeProgress('A'),B:await volumeProgress('B')};
+  const previous={...report.refinement.before},lastProgressAt=Object.fromEntries(['A','B'].map(label=>[label,previous[label].observedAtMs]));
+  const refinementStart=performance.now();
+  // Production advances at least two rows per clean refinement frame. Allow
+  // a whole target's worth plus native frames for the300ms blend, never a
+  // request to lower its resolution or alter the adaptive budget.
+  report.refinement.maxAdditionalFrames=Math.ceil(previous.A.fullSize[1]/2)+60;
+  while(!(['A','B'].every(label=>volumeRefinementReady(previous[label])))){
+    assert(report.refinement.A.length<report.refinement.maxAdditionalFrames,'Volume refinement exceeded its bounded native-frame allowance');
+    await pairedPreparation(report.refinement);
+    for(const label of['A','B']){
+      const next=report.refinement[label].at(-1).volumeProgress;
+      lastProgressAt[label]=validateRefinementAdvance(previous[label],next,lastProgressAt[label]);previous[label]=next;
+      const prefix=await pages[label].evaluate(()=>({updates:__pairedTier1Updates,remaining:__pairedTier1Remaining}));validatePrefix(prefix,120);
+    }
+    report.refinement.elapsedMs=performance.now()-refinementStart;await save();
+  }
+  report.refinement.after=structuredClone(previous);
+  for(const label of['A','B'])await fence(label,'refined');
   report.before={A:await snapshot('A'),B:await snapshot('B')};
   for(const label of['A','B'])assertHealthyState(report.before[label],false,'proxima');
   assertMatchedState(report.before.A,report.before.B);await save();
   for(let i=0;i<report.limits.costFramesPerRevision;i++){
-    for(const label of['A','B']){report.cost[label].push(await deliver(pages[label],true));await save();}
+    for(const label of['A','B']){
+      const sample=await deliver(pages[label],true);sample.volumeProgress=await volumeProgress(label);
+      report.cost[label].push(sample);await save();
+      assert(volumeRefinementReady(sample.volumeProgress),'Volume must remain fully refined during diagnostic cost samples');
+      lastProgressAt[label]=validateRefinementAdvance(previous[label],sample.volumeProgress,lastProgressAt[label]);previous[label]=sample.volumeProgress;
+    }
   }
   report.after={A:await snapshot('A'),B:await snapshot('B')};
   for(const label of['A','B'])assertHealthyState(report.after[label],false,'proxima');

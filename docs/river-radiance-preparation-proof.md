@@ -42,10 +42,53 @@ unsynchronized preparation records. Any later decision to use this setup path
 in that runner requires review and a fresh complete gate. A proof timeout or
 continued expensive settled frames must be reported before another matrix.
 
+## Progressive volume readiness
+
+The first preparation proof, run `37136825781` at `cbed691f`, completed its
+120-update prefix in 710.4 seconds. Both sides loaded the same 960 tiles and
+308,779 rows, and the resolved field became idle. Eight subsequent synchronized
+samples had p50 2.661 seconds for the baseline and 2.613 for the candidate.
+These are diagnostic samples, not performance acceptance: the volume still
+reported `draft=true` and `historyReady=false`.
+
+Source and recorded prefix counters explain that flag. `draft` means the final
+blend has not completed; it does not mean each ray pass is a draft pass. Actual
+frames 4–121 all used full-target refinement integration. Native wall-clock
+adaptation lowered the refine budget to 0.02, permitting only two rows per frame
+in the 1200×800 full target. Reconstructing the observed prefix gives 369/800
+rows at frame 121. A later total of 625 rows is only an inference because the
+first proof did not record warmup row counters. The frozen fixture time is
+17076376013673600 seconds (+541117702.6667 years); visual advection is injected
+only into the river and does not advance that physical clock.
+
+The next isolated proof records the actual row, mix, full/draft target sizes,
+history state, physical inputs, adaptive budget, and every existing dirty reason
+after every delivered frame. Test-only counters distinguish maps, map blending,
+target changes, fine-detail band, camera/model key, magnitude limit, enable state,
+and context resets. Removing those counters restores the exact original source
+bytes; they cannot modify rendering decisions.
+
+After the unchanged 120-prefix and 120-warmup frames, matched native frames
+continue until both sides have rendered all 800 rows, completed the blend, saved
+history, and delivered the first clean frame that actually uses that history.
+The save frame alone is not ready: history preparation precedes the save in the
+production render. Input changes, new dirty/draft resets, backward
+rows, or a delivered clean refinement frame without row progress fail. A stalled
+blend/history fails after five seconds without progress. The additional sequence
+is also bounded to 460 frames (400 at the two-row minimum plus 60 blend frames)
+and the job retains its hard 60-minute ceiling. Catalog requests remain held at
+the exact completed prefix. A verified GPU fence follows full refinement before
+the same eight diagnostic cost probes; each probe must retain full readiness.
+The refinement checkpoint is copied independently, and every cost sample is
+persisted before its readiness/progress assertions so failures retain their
+actual diagnostic state.
+This followup cannot launch the full matrix or certify its performance gate.
+
 Local validation (no browser):
 
 ```sh
 node scripts/smoke-river-radiance-preparation.mjs
+node scripts/smoke-river-radiance-volume-progress.mjs
 node scripts/smoke-river-radiance-paired.mjs
 BASE_ROOT=/path/to/exact-baseline node scripts/probe-river-radiance-preparation.mjs . /tmp/radiance-preparation --validate
 ```

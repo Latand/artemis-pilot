@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-river-radiance-paired.mjs && node scripts/smoke-river-radiance-preparation.mjs
+      - run: node scripts/smoke-river-radiance-paired.mjs && node scripts/smoke-river-radiance-preparation.mjs && node scripts/smoke-river-radiance-volume-progress.mjs
       - run: npx playwright install --with-deps chromium
       - name: Preserve untimed full preparation and diagnostic synchronized cost
         run: |
