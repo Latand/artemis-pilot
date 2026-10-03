@@ -18,17 +18,17 @@ const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||u
 try{
  const page=await browser.newPage({viewport:mobile?{width:430,height:932}:{width:1280,height:820},isMobile:mobile,hasTouch:mobile,deviceScaleFactor:1});page.setDefaultTimeout(180000);
  await page.addInitScript(()=>{localStorage.clear();localStorage.setItem('ap_introSeen','1');localStorage.setItem('ap_uiMode','observe');Date.now=()=>Date.UTC(2026,9,3,6);});
- page.on('pageerror',e=>report.errors.push(e.stack||e.message));page.on('console',m=>{if(m.type()==='error')report.errors.push(m.text());});
+ page.on('pageerror',e=>{report.errors.push(e.stack||e.message);console.error('PAGE ERROR',e.stack||e.message);});page.on('console',m=>{if(m.type()==='error')report.errors.push(m.text());});
  await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=sun&hidehelp=1&compile=0&np=128`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__orbitalFrame);
  const frames=async(n)=>{for(let i=0;i<n;i++)await page.evaluate(()=>__orbitalFrame());};
  const setup=async(focus,dist,rate)=>{
-  await page.evaluate(async({focus,dist,rate})=>{
+  await page.evaluate(async({focus,dist,rate,mobile})=>{
    const {cam}=await import('/src/scene.js');const {setFocus}=await import('/src/input.js');
    setFocus(focus);cam.dist=dist;cam.distTarget=null;cam.yaw=.4;cam.pitch=1.2;
-   __G.gr=false;__G.warp=rate;__G.paused=rate===0;__qaDt=1/60;
-  },{focus,dist,rate});await frames(2);
+   __G.gr=false;__G.warp=rate;__G.paused=rate===0;__qaDt=mobile?1/30:1/60;
+  },{focus,dist,rate,mobile});await frames(2);
  };
  const capture=async(name)=>{
   const info=await page.evaluate(async()=>{

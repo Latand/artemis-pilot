@@ -33,6 +33,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: node scripts/smoke-orbital-exposure.mjs && node scripts/smoke-orbital-exposure-integration.mjs && npm run smoke:planet-phases && npm run smoke:reverse && npm run smoke:time-dock && npm test && npm run build
       - name: Capture matched orbital sequences and exact physical transforms
+        if: ${{ !cancelled() }}
         env:
           DEVICE: ${{ matrix.device }}
         run: node scripts/verify-orbital-exposure.mjs

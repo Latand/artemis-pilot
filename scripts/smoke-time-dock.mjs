@@ -54,7 +54,12 @@ async function openReadyPage(context, label, url) {
   const page = await context.newPage();
   watchErrors(page, label);
   await page.goto(url, { waitUntil: "networkidle" });
-  await page.waitForFunction(() => window.__G && document.body.classList.contains("mode-observe"));
+  try {
+    await page.waitForFunction(() => window.__G && document.body.classList.contains("mode-observe"));
+  } catch (error) {
+    console.error("Time Dock startup diagnostics", JSON.stringify(pageErrors));
+    throw error;
+  }
   return page;
 }
 
