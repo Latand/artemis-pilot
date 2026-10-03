@@ -36,11 +36,16 @@ export function sampleOrbit(orbit, dt, out) {
     return out;
 }
 
+export function presentationExposureSeconds(advance, realDt) {
+    return Number.isFinite(advance) && Number.isFinite(realDt) && realDt > 0
+        ? advance * Math.max(1, 1 / (30 * realDt)) : 0;
+}
+
 export function exposurePolicy({ advance, realDt, period, orbitPx, radiusPx, focused = false, paused = false }) {
     if (paused || focused || !Number.isFinite(advance) || !advance || !(period > 0) || !(realDt > 0)) return { blend: 0, averaged: 0, span: 0 };
     // At least a 1/30-s presentation shutter, so 60/120 Hz frames overlap.
     // Actual delivered time is used; no selected-rate or clock cap is added.
-    const shutter = Math.abs(advance) * Math.max(1, 1 / (30 * realDt));
+    const shutter = Math.abs(presentationExposureSeconds(advance, realDt));
     const turns = shutter / period;
     const travelPx = TAU * orbitPx * turns;
     const blend = smooth(2, 14, travelPx) * (1 - smooth(2, 6, radiusPx)) * smooth(3, 12, orbitPx);

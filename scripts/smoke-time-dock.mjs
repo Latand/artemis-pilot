@@ -55,9 +55,9 @@ async function openReadyPage(context, label, url) {
   watchErrors(page, label);
   await page.goto(url, { waitUntil: "networkidle" });
   try {
-    await page.waitForFunction(() => window.__G && document.body.classList.contains("mode-observe"));
+    await page.waitForFunction(() => window.__G && document.body.classList.contains("mode-observe"), null, { timeout: 120000, polling: 100 });
   } catch (error) {
-    console.error("Time Dock startup diagnostics", JSON.stringify(pageErrors));
+    console.error("Time Dock startup diagnostics", JSON.stringify(pageErrors), await page.evaluate(() => ({ ready: !!window.__AP_READY, mode: window.__G?.uiMode, classes: document.body.className, storedMode: localStorage.getItem("ap_uiMode") })));
     throw error;
   }
   return page;

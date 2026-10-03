@@ -1,3 +1,4 @@
+import { systemSurfaceExposureState } from './systemBodies.js';
 import * as THREE from 'three';
 import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
@@ -7,7 +8,7 @@ import { eph, liveBodyMu, liveEarthMu, IDX_SUN, IDX_MOON, IDX_PLANETS } from '..
 import { G, WORLD } from '../state.js';
 import { MOONS, moonFocusIndex, moonOffset } from '../moons.js';
 import { scene, viewportSize } from '../scene.js';
-import { earthG, earthBeacon, moon, plGroups, plGlows, moonGroups, moonGlows, sunPos } from '../bodies.js';
+import { earthG, earthBeacon, moon, plGroups, plGlows, moonGroups, moonGlows, sunPos, surfaceExposureState } from '../bodies.js';
 import { exposurePolicy, osculatingOrbit, sampleOrbit } from './orbitalExposureMath.js';
 
 const SEGMENTS = 64;
@@ -51,14 +52,14 @@ function orbitFor(entry) {
     entry.orbit.period = Math.abs(2 * Math.PI / m.n);
     return entry.orbit;
 }
-export function hideOrbitalExposure() {
+export function hideOrbitalExposure(hideNote = true) {
     orbitalExposure.active = orbitalExposure.averaged = orbitalExposure.samples = 0;
     for (const entry of entries) { entry.blend = 0; entry.line.visible = false; }
-    if (note) note.hidden = true;
+    if (hideNote && note && !note.hidden) note.hidden = true;
 }
 export function updateOrbitalExposure(camera, advance, realDt, disabled = false) {
-    init(); hideOrbitalExposure();
-    if (disabled || G.paused || !advance) return;
+    init(); hideOrbitalExposure(false);
+    if (disabled || G.paused || !advance) { if (!note.hidden) note.hidden = true; return; }
     frustum.setFromProjectionMatrix(projectionView.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
     for (const entry of entries) {
         const key = entry.key, mi = moonFocusIndex(key), isPlanet = typeof key === 'number';
@@ -116,7 +117,13 @@ export function updateOrbitalExposure(camera, advance, realDt, disabled = false)
         orbitalExposure.active++; orbitalExposure.samples += SEGMENTS + 1;
         if (policy.averaged > .5) orbitalExposure.averaged++;
     }
-    note.hidden = !orbitalExposure.active;
+    const surfaceActive = surfaceExposureState.active + systemSurfaceExposureState.active;
+    const noteHidden = !orbitalExposure.active && !surfaceActive;
+    if (note.hidden !== noteHidden) note.hidden = noteHidden;
+    const noteText = surfaceActive
+        ? (orbitalExposure.active ? 'Orbit and surface motion averaged · pause for exact detail' : 'Surface rotation averaged · pause for exact detail')
+        : 'Orbit motion averaged · pause for exact positions';
+    if (note.textContent !== noteText) note.textContent = noteText;
 }
 // Called once at the render boundary, after every beacon/label update. It
 // never changes object transforms, camera targets, orbit guides or hit tests.
@@ -129,6 +136,6 @@ export function applyOrbitalExposureMarkers(moonBeacon, labels) {
         if (key === 'moon') marker.material.opacity = .5 * (1 - entry.blend);
         else marker.material.opacity *= 1 - entry.blend;
         const label = key === 'earth' ? labels.earth : key === 'moon' ? labels.moon : typeof key === 'number' ? labels.planets[key] : labels.moons[mi];
-        if (label) label.style.filter = entry.blend > 0 ? `opacity(${1 - entry.blend})` : ''; 
+        if (label) { const filter = entry.blend > 0 ? `opacity(${1 - entry.blend})` : ''; if (label.style.filter !== filter) label.style.filter = filter; }
     }
 }

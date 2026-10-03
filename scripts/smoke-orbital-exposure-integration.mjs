@@ -36,11 +36,11 @@ const scene = new THREE.Scene();
 const viewportSize = { w: 1280, h: 820, pxScale: 820 / (2 * Math.tan(24 * Math.PI / 180)) };
 const dock = { children: [], append(node) { this.children.push(node); } };
 const document = {
-    createElement() { return { style: {}, hidden: false }; },
+    createElement() { let hidden=false;const node={style:{},hiddenWrites:0};Object.defineProperty(node,'hidden',{get:()=>hidden,set:v=>{node.hiddenWrites++;hidden=v;}});return node; },
     getElementById(id) { return id === 'timeDock' ? dock : null; },
 };
 const fixture = {
-    eph, G, WORLD, scene, viewportSize, document,
+    eph, G, WORLD, scene, viewportSize, document, surfaceExposureState: { active: 0 }, systemSurfaceExposureState: { active: 0 },
     earthG, earthBeacon, moon, plGroups, plGlows, moonGroups, moonGlows, sunPos,
     IDX_MOON: 0, IDX_SUN: 1, IDX_PLANETS: 2,
     liveEarthMu: () => WORLD.earthDestroyed ? 0 : MU_E * WORLD.muScale[PL.length + 2],
@@ -52,7 +52,7 @@ const fixture = {
 };
 // Keep production imports for Three and pure modules. Redirect only modules
 // that otherwise boot a renderer or depend on the whole browser application.
-const injected = new Set(['../ephemeris.js', '../state.js', '../scene.js', '../bodies.js']);
+const injected = new Set(['../ephemeris.js', '../state.js', '../scene.js', '../bodies.js', './systemBodies.js']);
 const source = await readFile(moduleUrl, 'utf8');
 const isolated = source.replace(/^import\s+(.+?)\s+from\s+(['"])([^'"]+)\2;$/gm, (line, bindings, quote, specifier) => {
     if (injected.has(specifier)) {
@@ -181,4 +181,5 @@ assert.equal(dock.children.length, 1);
 assert.equal(snapshot(), before, 'Repeated reverse/forward presentation still leaves physical state exact');
 hideOrbitalExposure(); apply();
 assert.equal(dock.children[0].hidden, true);
+G.paused=true;updateOrbitalExposure(camera,0,1/60);const note=dock.children[0];note.hiddenWrites=0;for(let i=0;i<12;i++)updateOrbitalExposure(camera,0,1/60);assert.equal(note.hiddenWrites,0,'Steady note state avoids repeated hidden-attribute mutations');
 console.log('orbital exposure integration: Moon base opacity, cached hidden labels, pause/focus/disable restoration, conservative envelope culling, live mass/destruction, finite bounded reuse and exact state passed');

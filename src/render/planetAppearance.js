@@ -3,6 +3,7 @@ import {relUniforms} from '../relView.js';
 import {RELATIVISTIC_VIEW_GLSL} from './viewBrightness.js';
 import {updatePhotosphereAppearance} from './stellarAppearance.js';
 import {stabilizeBodyMaterial} from './relativeBodyFrame.js';
+import {configureSurfaceRotationExposure, updateSurfaceRotationExposure, surfaceExposureTurns, SURFACE_EXPOSURE_GLSL} from './surfaceRotationExposure.js';
 
 export const EARTH_CLOUD_HEIGHT_KM = 6;
 export const EARTH_ATMOSPHERE_HEIGHT_KM = 100;
@@ -25,7 +26,7 @@ const vertex = /* glsl */`
 `;
 
 export function earthSurfaceMaterial(dayMap, nightMap, cloudMap, radius) {
-    return new THREE.ShaderMaterial({
+    const material = new THREE.ShaderMaterial({
         uniforms: {
             ...relUniforms,
             dayMap: { value: dayMap }, nightMap: { value: nightMap }, cloudMap: { value: cloudMap },
@@ -33,10 +34,15 @@ export function earthSurfaceMaterial(dayMap, nightMap, cloudMap, radius) {
             sunDir: { value: new THREE.Vector3(1, 0, 0) },
             uCamera: { value: new THREE.Vector3() },
             uCloudOffset: { value: 0 }, uRadius: { value: radius },
+            uCloudExposureTurns: { value: 0 },
         },
         vertexShader: vertex,
         fragmentShader: /* glsl */`
             uniform sampler2D dayMap, nightMap, cloudMap;
+            uniform sampler2D uDayIntegral, uNightIntegral, uCloudIntegral;
+            uniform vec2 uDayIntegralSize, uNightIntegralSize, uCloudIntegralSize;
+            uniform float uSurfaceExposureTurns, uCloudExposureTurns;
+            ${SURFACE_EXPOSURE_GLSL}
             uniform float uHasNight, uHasClouds, uCloudOffset, uRadius;
             uniform vec3 sunDir, uCamera;
             varying vec2 vUv;
@@ -51,13 +57,13 @@ export function earthSurfaceMaterial(dayMap, nightMap, cloudMap, radius) {
                 uv.x = fract(uv.x + uCloudOffset);
                 // SphereGeometry's texture v increases from south to north.
                 uv.y = 1.0 - uv.y;
-                return texture2D(cloudMap, uv).g * uHasClouds;
+                return sampleSurfaceExposure(cloudMap, uCloudIntegral, uv, uCloudIntegralSize, uCloudExposureTurns).g * uHasClouds;
             }
             void main() {
                 vec3 n = normalize(vLocal);
                 vec3 v = normalize(uCamera - vLocal / uRadius);
                 float nl = dot(n, sunDir), nv = max(dot(n, v), 0.001);
-                vec3 albedo = texture2D(dayMap, vUv).rgb;
+                vec3 albedo = sampleSurfaceExposure(dayMap, uDayIntegral, vUv, uDayIntegralSize, uSurfaceExposureTurns).rgb;
                 // The existing color mosaic supplies an approximate water mask;
                 // terrain brightness is never interpreted as elevation.
                 float ocean = smoothstep(0.015, 0.10, albedo.b - max(albedo.r, albedo.g));
@@ -80,13 +86,56 @@ export function earthSurfaceMaterial(dayMap, nightMap, cloudMap, radius) {
                 float spec = D * F * gv * gl / max(4.0 * nv, 0.01);
                 vec3 col = diffuse + transmission * spec * ocean * (1.0 - shadow);
                 float night = 1.0 - smoothstep(-0.18, 0.02, nl);
-                col += texture2D(nightMap, vUv).rgb * uHasNight * night * 0.35 * (1.0 - 0.85 * cloudAt(n));
+                col += sampleSurfaceExposure(nightMap, uNightIntegral, vUv, uNightIntegralSize, uSurfaceExposureTurns).rgb * uHasNight * night * 0.35 * (1.0 - 0.85 * cloudAt(n));
                 gl_FragColor = vec4(col, 1.0);
                 #include <tonemapping_fragment>
                 #include <colorspace_fragment>
             }
         `,
     });
+    configureSurfaceRotationExposure(material, material.uniforms, [
+        { name: 'uDay', getMap: () => material.uniforms.dayMap.value },
+        { name: 'uNight', getMap: () => material.uniforms.nightMap.value },
+        { name: 'uCloud', getMap: () => material.uniforms.cloudMap.value },
+    ]);
+    return material;
+}
+
+function configureCloudRotationExposure(material) {
+    if (!material || material.userData.surfaceRotationExposure) return;
+    const uniforms = {};
+    configureSurfaceRotationExposure(material, uniforms, [{ name: 'uCloud', getMap: () => material.alphaMap }]);
+    const previousCompile = material.onBeforeCompile;
+    const previousKey = material.customProgramCacheKey();
+    material.onBeforeCompile = shader => {
+        previousCompile.call(material, shader);
+        Object.assign(shader.uniforms, uniforms);
+        shader.fragmentShader = /* glsl */`
+            uniform sampler2D uCloudIntegral;
+            uniform vec2 uCloudIntegralSize;
+            uniform float uSurfaceExposureTurns;
+            ${SURFACE_EXPOSURE_GLSL}
+        ` + shader.fragmentShader;
+        shader.fragmentShader = shader.fragmentShader.replace('#include <alphamap_fragment>', /* glsl */`
+            #ifdef USE_ALPHAMAP
+                diffuseColor.a *= sampleSurfaceExposure(alphaMap, uCloudIntegral, vAlphaMapUv, uCloudIntegralSize, uSurfaceExposureTurns).g;
+            #endif
+        `);
+    };
+    material.customProgramCacheKey = () => previousKey + '-cloud-longitude-exposure-v1';
+    material.needsUpdate = true;
+}
+
+// Earth colour/night lights and the independently drifting cloud layer have
+// different spin rates but share one presentation shutter. Lighting stays at
+// the exact current geometric phase; no epoch or orientation is overwritten.
+export function updateEarthSurfaceExposure(earthMaterial, cloudMaterial, earthSpin, cloudSpin, simExposureSeconds) {
+    configureCloudRotationExposure(cloudMaterial);
+    const earthActive = updateSurfaceRotationExposure(earthMaterial, earthSpin, simExposureSeconds);
+    if (earthMaterial?.uniforms.uCloudExposureTurns)
+        earthMaterial.uniforms.uCloudExposureTurns.value = surfaceExposureTurns(cloudSpin, simExposureSeconds);
+    const cloudActive = updateSurfaceRotationExposure(cloudMaterial, cloudSpin, simExposureSeconds);
+    return earthActive || cloudActive;
 }
 
 export function atmosphereMaterial(radiusKm = 6371) {

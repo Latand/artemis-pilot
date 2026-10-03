@@ -1,3 +1,5 @@
+import { presentationExposureSeconds } from './render/orbitalExposureMath.js';
+import { updateVisibleTrajectories, hideVisibleTrajectories } from './render/visibleTrajectories.js';
 import { updateOrbitalExposure, hideOrbitalExposure, applyOrbitalExposureMarkers } from './render/orbitalExposure.js';
 import { initShipVisuals, updateShipVisuals } from "./shipVisuals.js";
 import { initRiverStyles } from "./riverStyles.js";
@@ -1876,10 +1878,12 @@ function frameStep() {
             plGroups[i].position.set(px, py, pz);
             plGlows[i].position.set(px, py, pz);
             flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
+            // Spin phase is cheap and must match this frame, even when
+            // slower surface/detail bookkeeping is load-shed.
+            plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
             if (nearVisualDue) {
                 plOrbitRings[i].position.copy(sunPos);
                 plGroups[i].rotation.z = PL[i].visualTilt || 0;
-                plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
             }
         }
         for (let i = 0; i < MOONS.length; i++) {
@@ -1971,7 +1975,7 @@ function frameStep() {
     const focusedSystem = getExploredSystem(G.focus, nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star, G.t);
     const activePlanetFocus = planetFocusIndex(G.focus);
     const activePlanetMoonFocus = planetMoonFocusIndex(G.focus);
-    updateSystemRender(focusedSystem, G.t, camera, G.focus);
+    updateSystemRender(focusedSystem, G.t, camera, G.focus, G.paused ? 0 : presentationExposureSeconds(advanced, rawDtR));
     updateNebulae(camera, dtR);
     {
         const cp = Math.cos(G.pitch || 0);
@@ -2209,6 +2213,7 @@ function frameStep() {
     updateLargeScaleFlow(advanced, dtR, fB, sunPos);
     updateGravityInspector();
     if (cosmicView) {
+        hideVisibleTrajectories();
         hideOrbitalExposure();
         // Hide the local GPU layer even on the cosmic early-return path.
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
@@ -2252,8 +2257,9 @@ function frameStep() {
         (!bloomForced && G.warp > 86400 && G.gr && grB > .18 && cam.dist > LY_SCENE * .05);
     bloomPass.enabled = !bloomDisabled && (cinematic.isPlaying() || bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
     if (bloomPass.enabled && !composer) ensurePostProcessing(lensingPass);
-    updateBodyShaders(camera, G.t);
+    updateBodyShaders(camera, G.t, G.paused ? 0 : presentationExposureSeconds(advanced, rawDtR), _m.om);
     updateOrbitalExposure(camera, advanced, rawDtR, cabinActive || VR.active);
+    updateVisibleTrajectories(camera, oi, cabinActive || VR.active);
     // the bodies meter the exposure afresh inside a planetary system: keep
     // the diffuse-light cap on it too (see the cosmic layer above)
     stellarExposure.value = Math.min(stellarExposure.value, galaxyVolumeExposureCap());
