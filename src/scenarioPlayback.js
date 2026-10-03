@@ -12,6 +12,7 @@ import { clearTrail, pushTrail, computePrediction } from './trails.js';
 import { hideBanner } from './hud.js';
 import { serializeLog, restoreLog } from './discoveryLog.js';
 import { shipVisuals } from './shipVisuals.js';
+import { resetDrive } from './curvatureDrive.js';
 import { setPaused, setWarp, onTimeControl, jumpActive, cancelTimeJump } from './timeCtl.js';
 import { setUiMode } from './uiMode.js';
 import { jupiterEncounterSeed, createPlaybackPlan, playbackStep, playbackPhase, playheadAtSimulation, encounterCameraDistance } from './scenarioPlaybackMath.js';
@@ -36,6 +37,7 @@ export function captureScenarioReturnState() {
         camera:{yaw:cam.yaw,pitch:cam.pitch,dist:cam.dist,distTarget:cam.distTarget,tgt:cam.tgt.toArray()} };
 }
 function releaseInput() {
+    resetDrive();
     keys.clear(); G.thrustMain=0; G.thrustLat=0; G.boost=false;
     window.dispatchEvent(new Event('ap:releaseflightinput'));
 }
@@ -114,7 +116,7 @@ export function initScenarioPlayback() {
     panel=document.createElement('section');
     panel.id='scenarioPlayback'; panel.hidden=true;
     panel.setAttribute('aria-label','Guided Jupiter slingshot');
-    panel.innerHTML='<div class="spEyebrow">GUIDED FLIGHT · ABOUT 60 SECONDS</div><div class="spTitle">Jupiter slingshot</div><div id="spPhase" role="status"></div><progress id="spProgress" max="60" value="0" aria-label="Scenario progress"></progress><div id="spTelemetry"></div><p id="spNarration"></p><div class="spLegend">Engines off · ship enlarged · gravity-flow illustration.</div><div class="spActions"><button id="spToggle" type="button">Start flight</button><button id="spRestart" type="button">Restart</button><button id="spExit" type="button">Exit</button></div>';
+    panel.innerHTML='<div class="spEyebrow">GUIDED FLIGHT · ABOUT 60 SECONDS</div><div class="spTitle">Jupiter slingshot</div><div id="spPhase" role="status"></div><progress id="spProgress" max="60" value="0" aria-label="Scenario progress"></progress><div id="spTelemetry"></div><p id="spNarration"></p><div class="spLegend">Drive off · ship enlarged · gravity-flow illustration.</div><div class="spActions"><button id="spToggle" type="button">Start flight</button><button id="spRestart" type="button">Restart</button><button id="spExit" type="button">Exit</button></div>';
     document.getElementById('root').appendChild(panel);
     document.getElementById('spToggle').onclick=togglePlayback;
     document.getElementById('spRestart').onclick=restartPlayback;
