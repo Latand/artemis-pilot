@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { R_EARTH, K } from '../src/constants.js';
 import { earthSurfaceMaterial, createEarthCloudMaterial, updateEarthSurfaceExposure, EARTH_CLOUD_HEIGHT_KM } from '../src/render/planetAppearance.js';
 import { registerEarthCloudGround } from '../src/render/cloudDepthGuard.js';
+import { createEarthCloudGeometry } from '../src/render/earthCloudGeometry.js';
 import { surfaceExposurePreparation } from '../src/render/surfaceRotationExposure.js';
 import { applyTerrellToMaterial, relUniforms } from '../src/relView.js';
 
@@ -40,7 +41,7 @@ function encodeImage(name, bytes) {
 export function makeGeometry(tier) {
     return {
         ground: new THREE.SphereGeometry(RADIUS, tier === 'mobile' ? 48 : 96, tier === 'mobile' ? 32 : 72),
-        cloud: new THREE.SphereGeometry(CLOUD_RADIUS, 96, tier === 'mobile' ? 64 : 72),
+        cloud: createEarthCloudGeometry(CLOUD_RADIUS, tier === 'mobile'),
     };
 }
 
@@ -280,7 +281,7 @@ async function start() {
             frames: q.renderedFrames, hooks: q.hookCalls, actualDepth: { test: originalGL.isEnabled(originalGL.DEPTH_TEST), write: originalGL.getParameter(originalGL.DEPTH_WRITEMASK),
                 func: originalGL.getParameter(originalGL.DEPTH_FUNC), offset: originalGL.isEnabled(originalGL.POLYGON_OFFSET_FILL),
                 factor: originalGL.getParameter(originalGL.POLYGON_OFFSET_FACTOR), units: originalGL.getParameter(originalGL.POLYGON_OFFSET_UNITS) } };
-        const stages = failureReplayPlan(spec, saved.near), maximumFrames = stages.length * FAILURE_REPLAY_MODES.length;
+        const stages = failureReplayPlan(spec, saved.near), maximumFrames = stages.length * FAILURE_REPLAY_MODES.length + 5;
         const result = { diagnosticOnly: true, acceptanceUnchanged: true, case: { ...spec }, maximumFrames,
             note: 'AlwaysDepth keeps depth testing enabled but unconditionally accepts cloud samples; cloud depth writes stay off. The larger near plane changes depth precision only and is not a proposed production change. No cross-antialias pixel comparison is an acceptance gate.',
             contexts: [], errors: [], restored: null };
@@ -321,6 +322,68 @@ async function start() {
                     oracle: difference(frames.oracle, saved.last['isolated-ordering-oracle']),
                 };
             }
+            // Independent same-context coverage masks. These diagnose whether
+            // rejected MSAA pixels are truly partial silhouettes; they never
+            // exclude pixels from the original strict acceptance comparison.
+            q.renderer = saved.renderer; q.camera.near = saved.near;
+            q.camera.updateProjectionMatrix(); q.configure(spec);
+            const beforeMasks = { earthVisible: q.earth.visible, cloudVisible: q.cloud.visible,
+                alphaMap: material.alphaMap, opacity: material.opacity,
+                turns: material.userData.surfaceRotationExposure.turns.value, programs: JSON.stringify(q.programs()) };
+            const white = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1, THREE.RGBAFormat);
+            white.generateMipmaps = false; white.wrapS = THREE.RepeatWrapping; white.needsUpdate = true;
+            const coverage = { label: 'original-msaa-coverage', diagnosticOnly: true,
+                actual: q.environment(), images: [], draws: {}, classifications: {}, restoration: null };
+            result.contexts.push(coverage);
+            let earthMask, cloudMask;
+            try {
+                q.cloud.visible = false; q.earth.visible = true;
+                const previousHooks = q.hookCalls;
+                q.renderer.render(q.scene, q.camera); q.renderedFrames++;
+                if (q.hookCalls !== previousHooks) throw new Error('Earth-only mask unexpectedly drew clouds');
+                const gl = q.renderer.getContext(); earthMask = new Uint8Array(SIZE * SIZE * 4);
+                gl.readPixels(0, 0, SIZE, SIZE, gl.RGBA, gl.UNSIGNED_BYTE, earthMask);
+                if (gl.getError() !== gl.NO_ERROR || gl.isContextLost()) throw new Error('Invalid Earth mask readback');
+                coverage.draws.earth = { originalMaterial: true, expectedOpaqueAlpha: 1, programs: q.programs() };
+                q.earth.visible = false; q.cloud.visible = true;
+                material.alphaMap = white; material.opacity = 1;
+                material.userData.surfaceRotationExposure.turns.value = 0;
+                const cloudFrame = q.render('oracle'); cloudMask = cloudFrame.bytes;
+                coverage.draws.cloud = { sameCompiledMaterial: true, whiteAlphaMap: true, opacity: 1, exposureTurns: 0,
+                    state: cloudFrame.state, programs: q.programs() };
+                coverage.images.push(encodeImage('earth-coverage-mask', earthMask), encodeImage('cloud-coverage-mask', cloudMask));
+                const classify = (a, b) => {
+                    const counts = { bothFull: 0, partial: 0, eitherZero: 0, total: 0 }, pixels = [];
+                    for (let i = 0; i < a.length; i += 4) {
+                        if (a[i] === b[i] && a[i + 1] === b[i + 1] && a[i + 2] === b[i + 2] && a[i + 3] === b[i + 3]) continue;
+                        const ea = earthMask[i + 3], ca = cloudMask[i + 3];
+                        const category = ea === 255 && ca === 255 ? 'bothFull' : ea === 0 || ca === 0 ? 'eitherZero' : 'partial';
+                        counts[category]++; counts.total++;
+                        pixels.push({ x: (i / 4) % SIZE, y: Math.floor(i / 4 / SIZE), earthAlpha: ea, cloudAlpha: ca, category });
+                    }
+                    return { counts, pixels };
+                };
+                coverage.classifications = {
+                    baselineVsOracle: classify(saved.last.baseline, saved.last['isolated-ordering-oracle']),
+                    guardedVsOracle: classify(saved.last.guarded, saved.last['isolated-ordering-oracle']),
+                    guardedVsBaseline: classify(saved.last.guarded, saved.last.baseline),
+                };
+            } finally {
+                q.earth.visible = beforeMasks.earthVisible; q.cloud.visible = beforeMasks.cloudVisible;
+                material.alphaMap = beforeMasks.alphaMap; material.opacity = beforeMasks.opacity;
+                material.userData.surfaceRotationExposure.turns.value = beforeMasks.turns;
+                white.dispose();
+            }
+            // Three exact replays verify restoration after the two mask draws.
+            const replay = {};
+            for (const [mode, key] of [['unbiased', 'baseline'], ['guarded', 'guarded'], ['oracle', 'isolated-ordering-oracle']]) {
+                const frame = q.render(mode);
+                replay[key] = difference(frame.bytes, saved.last[key]);
+            }
+            coverage.restoration = { comparisons: replay, originalMap: material.alphaMap === beforeMasks.alphaMap,
+                opacity: material.opacity === beforeMasks.opacity, exposureTurns: material.userData.surfaceRotationExposure.turns.value === beforeMasks.turns,
+                programs: JSON.stringify(q.programs()) === beforeMasks.programs, physical: q.physical() === saved.physical };
+            if (q.renderedFrames - saved.frames > maximumFrames) throw new Error('Coverage diagnostic exceeded its fixed five additional draws');
         } catch (error) { result.errors.push(error.stack || String(error)); }
         finally {
             q.renderer = saved.renderer; q.camera.near = saved.near;

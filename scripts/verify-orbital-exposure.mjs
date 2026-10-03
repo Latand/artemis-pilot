@@ -109,7 +109,7 @@ try{
  const cloudFixture=await page.evaluate(async()=>{const b=await import('/src/bodies.js');const s=await import('/src/scene.js');const prep=(await import('/src/render/surfaceRotationExposure.js')).surfaceExposurePreparation;return{t:__G.t,cloudVisible:b.clouds.visible,near:s.camera.near,depthBits:s.renderer.getContext().getParameter(s.renderer.getContext().DEPTH_BITS),distance:s.camera.position.distanceTo(b.earthG.position),cloudTriangles:b.clouds.geometry.index.count/3,groundTriangles:b.earth.geometry.index.count/3,cloudRadius:b.clouds.geometry.parameters.radius,groundRadius:b.earth.geometry.parameters.radius,preparation:{...prep}};});
  report.earthCloudFixture=cloudFixture;
  check(cloudFixture.cloudVisible,'Frozen Earth ablation includes the loaded cloud layer');
- check(cloudFixture.cloudTriangles===(mobile?12096:13632),'Only the compact cloud shell receives containment-safe tessellation');
+ check(cloudFixture.cloudTriangles===(mobile?8120:13632),'Only the compact cloud shell receives containment-safe tessellation');
  check(cloudFixture.groundTriangles===(mobile?2976:13632)&&Math.abs(cloudFixture.cloudRadius-cloudFixture.groundRadius-.006)<1e-9,'Ground tessellation and physical six-kilometre cloud altitude are unchanged');
  await page.evaluate(async()=>{(await import('/src/bodies.js')).clouds.visible=false;__orbitalRenderOnly();});await capture('08-earth-cloud-layer-off');
  await page.evaluate(async visible=>{(await import('/src/bodies.js')).clouds.visible=visible;__orbitalRenderOnly();},cloudFixture.cloudVisible);await capture('08-earth-cloud-layer-restored');
@@ -127,6 +127,15 @@ try{
  check(repeats.every(s=>JSON.stringify(s.earthPrograms)===JSON.stringify(programBaseline.earthPrograms)&&JSON.stringify(s.cloudPrograms)===JSON.stringify(programBaseline.cloudPrograms)),'Repeated pause/resume reuses Earth/cloud cached programs without growth');
  check(new Set(repeats.map(s=>s.earthProgram)).size<=2&&new Set(repeats.map(s=>s.cloudProgram)).size<=2,'Earth and clouds use at most two cached exposure variants');
 
+ // Production-layer polar checks catch a geometry/UV defect that vertex-only
+ // phase assertions miss. Use a camera distance and pitches reachable in UI.
+ for(const [pole,pitch] of [['north',1.45],['south',-1.45]]){
+  await setup('earth',8.5,0);
+  await page.evaluate(async pitch=>{(await import('/src/scene.js')).cam.pitch=pitch;},pitch);
+  await frames(1);await capture(`08-earth-${pole}-polar-paused`);
+  await page.evaluate(async rate=>{const time=await import('/src/timeCtl.js');time.setWarp(rate);time.setPaused(false);},256*day);
+  await frames(2);await capture(`08-earth-${pole}-polar-active`);
+ }
  await setup(3,350,256*day);await capture('08-jupiter-surface');
  await setup('earth',299195.7414,0);
  await page.evaluate(async()=>{const {cam}=await import('/src/scene.js');cam.yaw=Math.atan2(-__eph.sunY,__eph.sunX);cam.pitch=Math.atan2(__eph.sunZ,Math.hypot(__eph.sunX,__eph.sunY));});await frames(1);

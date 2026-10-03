@@ -1,4 +1,4 @@
-name: Isolated cloud depth preflight
+name: Isolated capped cloud preflight
 on:
   push:
     branches: [qa/cloud-depth-preflight]
@@ -22,7 +22,7 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - run: node scripts/smoke-cloud-depth-guard.mjs && node scripts/verify-cloud-depth.mjs --validate
+      - run: node scripts/smoke-cloud-depth-guard.mjs && node scripts/smoke-earth-cloud-geometry.mjs && node scripts/smoke-earth-cloud-shell.mjs && node scripts/generate-earth-cloud-geometry.mjs --check && node scripts/verify-cloud-depth.mjs --validate
       - run: node scripts/verify-cloud-depth.mjs
         timeout-minutes: 8
       - uses: actions/upload-artifact@v4
@@ -60,5 +60,48 @@ jobs:
         with:
           name: cloud-activation-${{ matrix.device }}
           path: evidence/cloud-activation-*/
+          if-no-files-found: error
+          retention-days: 14
+
+  mobile-cost:
+    name: Unchanged five-trial mobile cost gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve pinned baseline and unchanged shared benchmark
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/cloud-cost-base" cb6601c2a5cdde3a8e9f22f6ac9b17a6837696a6
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/cloud-cost-base/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/cloud-cost-base" >> "$GITHUB_ENV"
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          git -C "$RUNNER_TEMP/cloud-cost-base" rev-parse HEAD > evidence/sources/base-sha.txt
+          cp package-lock.json scripts/benchmark-explored-systems.mjs scripts/explored-system-hooks.mjs evidence/sources/
+      - run: node scripts/benchmark-explored-systems.mjs --validate
+        env:
+          DEVICE: mobile
+      - name: Require original paired p95 and long-task gates
+        # Real production frames with the benchmark's existing symmetric
+        # background omissions. Pole/transition captures retain all layers.
+        # This job is independent of the known strict MSAA fixture failure;
+        # workflow acceptance still requires every job to succeed.
+        env:
+          DEVICE: mobile
+        run: node scripts/benchmark-explored-systems.mjs . evidence/explored/paired-mobile
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cloud-candidate-paired-mobile
+          path: evidence/
           if-no-files-found: error
           retention-days: 14

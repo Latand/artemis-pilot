@@ -161,6 +161,14 @@ function setEarthExposureShaderVariant(material, active) {
 // different spin rates but share one presentation shutter. Lighting stays at
 // the exact current geometric phase; no epoch or orientation is overwritten.
 export function updateEarthSurfaceExposure(earthMaterial, cloudMaterial, earthSpin, cloudSpin, simExposureSeconds) {
+    // The cloud longitude is periodic even when mipmaps are disabled. Native
+    // geodesic seam UVs deliberately unwrap a small interval past 1; clamp-to-
+    // edge would stretch that strip. Pixel contents and UV phase are unchanged.
+    const cloudMap = cloudMaterial?.alphaMap;
+    if (cloudMap && cloudMap.wrapS !== THREE.RepeatWrapping) {
+        cloudMap.wrapS = THREE.RepeatWrapping;
+        cloudMap.needsUpdate = true;
+    }
     configureCloudRotationExposure(cloudMaterial);
     const earthActive = updateSurfaceRotationExposure(earthMaterial, earthSpin, simExposureSeconds);
     if (earthMaterial?.uniforms.uCloudExposureTurns)

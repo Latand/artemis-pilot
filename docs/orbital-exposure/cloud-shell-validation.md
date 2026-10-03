@@ -93,6 +93,55 @@ explicit first-use transition, not a seamless-entry claim. Prepared frames
 retain stable exposure; pause restores exact detail. No hidden time cap, stale
 orientation or blocking image-readback fallback is introduced.
 
+## Lower-cost mobile geometry candidate
+
+The 96×64 cloud fix failed the unchanged hosted mobile performance gate. The
+next candidate uses a fixed indexed detail18 geodesic belt, clipped at 5° from
+each pole and completed with narrow equirectangular caps. A convex hull of
+the spherical point set is generated offline; direct clipped-polygon fans
+were rejected because their sliver planes can cut inside Earth. Runtime
+loads a fixed packed payload and copies/scales its attributes once. No hull,
+subdivision or geometry traversal runs during playback.
+
+This candidate has 8,120 triangles and 4,351 UV-indexed vertices. Every face
+plane remains at least 0.851763 km above the ideal ground sphere after actual
+Float32 payload decoding. Vertices remain at the same physical 6 km altitude.
+The desktop cloud, ground, shaders and cloud rotation are unchanged. Periodic
+longitude repeat wrapping is retained even when the optional no-mipmap mode
+is used. Earth cloud shadows keep their exact existing longitude offset.
+
+Native detail18 and detail19 controls were rejected after individual pole
+images revealed Y/zig-zag and bow-tie artifacts. Vertex phase checks alone
+missed the shared-edge UV interpolation error. The capped mesh is closed
+(two faces per welded edge, Euler characteristic2), has no ordinary UV seam
+or cap-transition jump, and has the same narrow pole-fan UV bound as96×64.
+The one3° control saved only72 triangles and had less faithful transition
+interpolation, so it was not selected.
+
+The reviewed packed payload has135,740 bytes, SHA256
+`0bde50f5dcaf3441f48dc5fba36d7dfe9a6a3f547315029659e7892bb0e27115`.
+Generated JavaScript is about181KB raw/95KB gzip. One geometry uses187,952
+typed-array bytes on each CPU/GPU copy; the persistent CPU template adds
+135,740 bytes. Thus template plus one geometry is323,692 bytes, excluding
+JavaScript/base64 strings and transient decode storage. This is49,356 bytes
+more than the96×64 geometry alone, while GPU geometry drops86,384 bytes.
+It is not an overall-memory-reduction claim.
+
+`node scripts/generate-earth-cloud-geometry.mjs --check` reproduces the exact
+payload from native Three primitives and fixed constants without prior data
+or fixture input. Geometry smokes check actual decoded containment, radius,
+radial normals, outward winding, welded topology, edge-interior UV continuity,
+map/shadow phase, instance ownership, disposal and the unchanged desktop mesh.
+
+Offline production-shader images using the actual2K sources cover both poles,
+cap transitions, seams, paused/active exposure and Earth composites. Actual
+packed-decode images show none of the rejected artifacts. Native Mesa timing
+improves many mid/far cases against96×64 but does not uniformly recover the
+old48×32 cost. Fresh Node decode/scale/geometry timing measured4.72ms median,
+8.54ms p95; this is not browser/mobile startup acceptance. Final hosted polar
+frames, the strict depth/contact matrix, full production sequences and the
+unchanged five-trial1.05 p95/long-task gates remain required.
+
 ## Retained hosted failures at a93b1b7
 
 The full desktop/mobile capture reports both fail their required activation

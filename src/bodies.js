@@ -1,5 +1,6 @@
 import { updateSurfaceRotationExposure } from './render/surfaceRotationExposure.js';
 import { registerEarthCloudGround } from './render/cloudDepthGuard.js';
+import { createEarthCloudGeometry } from './render/earthCloudGeometry.js';
 import * as THREE from "three";
 import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT, AU_KM, E_EARTH, VARPI_EARTH, OMEGA_EARTH } from "./constants.js";
 import { updateEarthSurfaceExposure, earthSurfaceMaterial, createEarthCloudMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
@@ -484,11 +485,7 @@ export function buildBodies(maps) {
     shaderTick.earthUniforms = earthMat.uniforms;
     earth = new THREE.Mesh(sphere(radius, 96, 72, 48, 32), earthMat);
     clouds = new THREE.Mesh(
-        // This independently rotating 6 km shell must enclose the ground at
-        // every phase. 48x32 facets cut inside Earth; 96x64 retain >0.66 km
-        // clearance even to an ideal ground sphere. Only cloud tessellation
-        // changes: physical height, spin, ground and atmosphere stay exact.
-        sphere((R_EARTH + EARTH_CLOUD_HEIGHT_KM) * K, 96, 72, 96, 64),
+        createEarthCloudGeometry((R_EARTH + EARTH_CLOUD_HEIGHT_KM) * K, renderQuality.mobile),
         applyTerrellToMaterial(createEarthCloudMaterial(maps.clouds, () => BH.n > 0)));
     registerEarthCloudGround(clouds, earth);
     earthAtmo = new THREE.Mesh(

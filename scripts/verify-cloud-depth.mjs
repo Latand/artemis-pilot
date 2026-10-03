@@ -14,7 +14,7 @@ import { buildPlan, makeGeometry, containmentProof, DISTANCES, GAPS_KM, RADIUS, 
 const plan = buildPlan();
 const source = await readFile('src/bodies.js', 'utf8');
 assert(source.includes('earth = new THREE.Mesh(sphere(radius, 96, 72, 48, 32), earthMat)'), 'fixture matches production ground topology');
-assert(source.includes('sphere((R_EARTH + EARTH_CLOUD_HEIGHT_KM) * K, 96, 72, 96, 64)'), 'fixture matches production cloud topology');
+assert(source.includes('createEarthCloudGeometry((R_EARTH + EARTH_CLOUD_HEIGHT_KM) * K, renderQuality.mobile)'), 'fixture uses the exact production cloud geometry factory');
 assert(source.includes('applyTerrellToMaterial(createEarthCloudMaterial(maps.clouds, () => BH.n > 0))'), 'fixture uses the production cloud factory and Terrell patch');
 assert(source.includes('registerEarthCloudGround(clouds, earth)'), 'production registers its actual Earth/cloud pair');
 assert(Math.abs(CLOUD_RADIUS - RADIUS - .006) < 1e-12, 'physical cloud radius remains six kilometres above Earth');
@@ -22,7 +22,7 @@ const containment = {};
 for (const tier of ['desktop', 'mobile']) {
     const geometry = makeGeometry(tier), proof = containmentProof(geometry.cloud);
     assert(proof.minimumClearanceKm > .6 && proof.maximumRadiusError < 5e-7, `${tier}: cloud contains the entire ground sphere without changing physical altitude`);
-    assert.equal(proof.triangles, tier === 'mobile' ? 12096 : 13632);
+    assert.equal(proof.triangles, tier === 'mobile' ? 8120 : 13632);
     assert.equal(geometry.ground.index.count / 3, tier === 'mobile' ? 2976 : 13632);
     containment[tier] = proof;
     geometry.ground.dispose(); geometry.cloud.dispose();
@@ -36,11 +36,11 @@ if (process.argv.includes('--validate')) {
     for (const file of ['scripts/cloud-depth-fixture.mjs', 'scripts/verify-cloud-depth.mjs']) execFileSync(process.execPath, ['--input-type=module', '--check'], { input: await readFile(file, 'utf8') });
     for (const distance of DISTANCES) {
         const replay = failureReplayPlan({ kind: 'clear', distance });
-        assert.equal(replay.length * FAILURE_REPLAY_MODES.length, 12, 'failure replay has exactly twelve possible draws');
+        assert.equal(replay.length * FAILURE_REPLAY_MODES.length + 5, 17, 'failure replay has twelve comparison draws and five coverage/restoration draws');
         assert(replay.every(stage => stage.near < distance - CLOUD_RADIUS), 'diagnostic near planes retain the entire physical cloud shell');
         assert(replay[1].near > NEAR && replay[2].alternateContext, 'larger-near and non-MSAA controls are separate');
     }
-    console.log(JSON.stringify({ valid: true, browserStarted: false, cases: plan.cases.length, skipped: plan.skipped.length, failureReplayMaximumFrames: 12, containment }, null, 2));
+    console.log(JSON.stringify({ valid: true, browserStarted: false, cases: plan.cases.length, skipped: plan.skipped.length, failureReplayMaximumFrames: 17, containment }, null, 2));
     process.exit(0);
 }
 
@@ -57,7 +57,7 @@ const report = {
     expectedRenderedFrames: plan.cases.length * 3 + 4 * 3 + 5 * 2 + 14 * 7,
     checks: [], cases: [], sequences: [], screenshots: [], errors: [], passed: false,
 };
-for (const path of ['src/bodies.js', 'src/render/planetAppearance.js', 'src/render/cloudDepthGuard.js', 'src/render/bodyBoundsHooks.js', 'src/render/relativeBodyFrame.js', 'src/render/bodySurfaceMaterial.js', 'src/render/surfaceRotationExposure.js', 'src/relView.js', 'src/state.js',
+for (const path of ['src/bodies.js', 'src/render/earthCloudGeometry.js', 'src/render/earthCloudGeometryData.js', 'src/render/planetAppearance.js', 'src/render/cloudDepthGuard.js', 'src/render/bodyBoundsHooks.js', 'src/render/relativeBodyFrame.js', 'src/render/bodySurfaceMaterial.js', 'src/render/surfaceRotationExposure.js', 'src/relView.js', 'src/state.js',
     'scripts/cloud-depth-fixture.mjs', 'scripts/verify-cloud-depth.mjs', 'public/textures/2k_earth_daymap.jpg', 'public/textures/2k_earth_nightmap.jpg', 'public/textures/2k_earth_clouds.jpg']) {
     (report.sourceSha256 ||= {})[path] = createHash('sha256').update(await readFile(path)).digest('hex');
 }
@@ -127,7 +127,7 @@ try {
     check(report.environment.webgl2 && report.environment.depthBits === 24, 'actual hosted WebGL2 attachment has 24-bit depth');
     check(report.environment.maps.every(map => map.width === 2048 && map.height === 1024), 'all three actual 2K source maps are loaded');
     check(report.environment.geometry.desktop.groundTriangles === 13632 && report.environment.geometry.mobile.groundTriangles === 2976, 'actual raster ground meshes retain production tessellation');
-    check(report.environment.geometry.desktop.cloud.triangles === 13632 && report.environment.geometry.mobile.cloud.triangles === 12096, 'actual raster cloud meshes retain production tessellation');
+    check(report.environment.geometry.desktop.cloud.triangles === 13632 && report.environment.geometry.mobile.cloud.triangles === 8120, 'actual raster cloud meshes retain production tessellation');
     await page.waitForFunction(() => cloudDepthQA.preparation().pending === 0);
     report.preparation = await page.evaluate(() => cloudDepthQA.preparation());
     check(report.preparation.built === 3 && report.preparation.workerFailures === 0, 'production exposure worker prepares all three actual image sources');

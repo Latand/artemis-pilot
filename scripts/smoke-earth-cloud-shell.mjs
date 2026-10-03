@@ -3,12 +3,11 @@ import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { R_EARTH, K } from '../src/constants.js';
 import { EARTH_CLOUD_HEIGHT_KM, createEarthCloudMaterial } from '../src/render/planetAppearance.js';
+import { createEarthCloudGeometry } from '../src/render/earthCloudGeometry.js';
 
-// Evaluate the exact cloud geometry expression from production, rather than
-// proving a different test-only sphere. Fail closed if its construction changes.
+// Exercise the exact shared factory wired by production, not a test-only mesh.
 const source = readFileSync(new URL('../src/bodies.js', import.meta.url), 'utf8');
-const expressions = [...source.matchAll(/sphere\(\(R_EARTH \+ EARTH_CLOUD_HEIGHT_KM\) \* K, \d+, \d+, \d+, \d+\)/g)];
-assert.equal(expressions.length, 1, 'one production cloud geometry expression');
+assert.equal(source.split('createEarthCloudGeometry((R_EARTH + EARTH_CLOUD_HEIGHT_KM) * K, renderQuality.mobile)').length, 2, 'one production cloud geometry factory call');
 assert(source.includes('earth = new THREE.Mesh(sphere(radius, 96, 72, 48, 32), earthMat)'), 'ground tessellation is unchanged');
 assert.equal(EARTH_CLOUD_HEIGHT_KM, 6, 'physical cloud altitude stays six kilometres');
 assert(source.includes('applyTerrellToMaterial(createEarthCloudMaterial(maps.clouds, () => BH.n > 0))'), 'production uses the shared cloud-only policy with live black-hole state');
@@ -24,7 +23,6 @@ assert.equal(cloudMaterial.side, THREE.FrontSide, 'far cloud hemisphere never pa
 assert.equal(cloudMaterial.opacity, .92); assert.equal(cloudMaterial.transparent, true);
 assert.equal(cloudMaterial.blending, THREE.NormalBlending);
 cloudMaterial.dispose(); alphaMap.dispose();
-const build = new Function('sphere', 'R_EARTH', 'EARTH_CLOUD_HEIGHT_KM', 'K', 'return ' + expressions[0][0]);
 const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
 const ab = new THREE.Vector3(), ac = new THREE.Vector3(), normal = new THREE.Vector3();
 function inradius(geometry, rotation) {
@@ -46,9 +44,8 @@ assert(inradius(old, identity) < R_EARTH * K - .015, 'regression fixture reprodu
 assert.equal(old.index.count / 3, 2976); old.dispose();
 const results = [];
 for (const mobile of [false, true]) {
-    const sphere = (r, dw, dh, mw, mh) => new THREE.SphereGeometry(r, mobile ? mw : dw, mobile ? mh : dh);
-    const geometry = build(sphere, R_EARTH, EARTH_CLOUD_HEIGHT_KM, K);
-    assert.equal(geometry.index.count / 3, mobile ? 12096 : 13632, 'bounded cloud-only triangle count');
+    const geometry = createEarthCloudGeometry((R_EARTH + EARTH_CLOUD_HEIGHT_KM) * K, mobile);
+    assert.equal(geometry.index.count / 3, mobile ? 8120 : 13632, 'bounded cloud-only triangle count');
     let minimum = Infinity;
     for (const longitude of [-2 * Math.PI, -3.7, -.7, 0, .1, Math.PI / 96, .7, 2.1, 2 * Math.PI]) {
         const rotation = new THREE.Quaternion().setFromEuler(new THREE.Euler(.41, longitude, -.23));
