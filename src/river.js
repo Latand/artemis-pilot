@@ -6,7 +6,7 @@ import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, 
 import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { dotTexture } from "./textures.js";
-import { scene, renderer, camera, cam, renderQuality, registerNearTierOnly } from "./scene.js";
+import { scene, renderer, camera, cam, renderQuality, registerNearTierOnly, TIER_SPLIT_UNITS } from "./scene.js";
 import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
@@ -27,13 +27,15 @@ import { haloSamplingRadius, haloViewWeight, refreshProbability } from "./riverC
 // are float32, but a warped ship can sit at scene coordinates many orders of
 // magnitude beyond float32's ~7-digit precision (e.g. after tens of Gyr of
 // dark-energy expansion). So nothing scene-absolute ever reaches the GPU:
-// every position (bodies, camera, the dark-energy origin, the particles
-// themselves) is expressed relative to `smoothCenter`, a float64 JS number
+// bodies, camera, the dark-energy origin and ambient particles are expressed
+// relative to `smoothCenter`, a float64 JS number
 // that tracks the camera and is subtracted on the CPU before upload. Because
 // `smoothCenter` itself moves every frame, the persistent particle-position
 // texture is re-based each frame by `uCenterShift` (this frame's center minus
 // last computed texture's, computed in float64) so stored positions keep meaning across
-// frames instead of drifting. See WP22 deep-time fix.
+// frames instead of drifting. Mass-owned samples instead store a small
+// offset from their current source and follow it even on skipped computes.
+// No absolute world coordinate is stored in either population. See WP22.
 const SEGS = renderQuality.mobile ? 1 : 2;
 // Desktop's default particle count is traded down (176 -> 124, ~1/sqrt(2))
 // so total line-vertex-shader work (particles * VPP, each vertex running the
@@ -214,7 +216,7 @@ uniform vec3 uCenterShift;
 varying vec2 vUv;
 ${FLOW_GLSL}
 void main() {
-    // Positions are stored relative to the river's own float64 center
+    // Ambient positions are stored relative to the river's own float64 center
     // (see uCenterShift's declaration site in river.js), never in absolute
     // scene coordinates, so they stay small — and float32-precise — no
     // matter how far that center has drifted in world space. The center
@@ -1056,7 +1058,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         const core = holeVals[i] ? Math.max(sinkVals[i], Math.min(Math.max(smoothR * .0008, .45), 64)) : sinkVals[i];
         const reach = sourceSpawnReach(core, soiVals[i], h.x);
         const weight = bodyVals[i].w > 0 ? haloViewWeight(haloViewPos.x, haloViewPos.y, -haloViewPos.z,
-            d, Math.hypot(bodyVals[i].x, bodyVals[i].y, bodyVals[i].z), reach, tanHalfFov, camera.aspect) : 0;
+            d, Math.hypot(bodyVals[i].x, bodyVals[i].y, bodyVals[i].z), reach, tanHalfFov, camera.aspect, TIER_SPLIT_UNITS) : 0;
         // Hard zero is reserved for nonrenderable/precision-unsafe sources.
         // Visible viewport boundaries themselves have a generous smooth band.
         if (Math.abs(h.y - weight) > 1e-6) haloCoverageChanged = true;

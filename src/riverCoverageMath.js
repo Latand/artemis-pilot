@@ -20,12 +20,13 @@ const smooth = (a, b, x) => { const t=Math.min(1,Math.max(0,(x-a)/(b-a)));return
 // A soft padded frustum keeps source ownership ready before a halo enters
 // the viewport. Very distant subpixel/float32-unsafe halos remain field
 // sources, but do not consume visible sampling slots.
-export function haloViewWeight(x, y, depth, cameraDistance, centerDistance, reach, tanHalfFov, aspect) {
+export function haloViewWeight(x, y, depth, cameraDistance, centerDistance, reach, tanHalfFov, aspect, nearTierLimit = Infinity) {
+    const range = Number.isFinite(nearTierLimit) ? 1 - smooth(nearTierLimit * .8, nearTierLimit, Math.max(0, depth - reach * 1.25)) : 1;
     const angular = smooth(.0005, .002, reach / Math.max(cameraDistance, 1e-9));
     const precision = 1 - smooth(1e4, 1e5, centerDistance / Math.max(reach, 1e-9));
     if (depth + reach <= 0) return 0;
     const z = Math.max(depth, reach, 1e-9);
     const pad = Math.min(2, reach / z / tanHalfFov);
     const edge = Math.max(Math.abs(x) / (z * tanHalfFov * aspect), Math.abs(y) / (z * tanHalfFov));
-    return angular * precision * (1-smooth(1+pad, 1.5+pad, edge));
+    return range * angular * precision * (1-smooth(1+pad, 1.5+pad, edge));
 }

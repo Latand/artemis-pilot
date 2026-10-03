@@ -35,3 +35,5 @@ assert.equal(haloViewWeight(0,0,1e16,1e16,1e16,2.4e6,.5,1.5),0,'Deep-space invis
 assert.equal(haloViewWeight(0,0,-100,100,100,10,.5,1.5),0,'Sources behind the view release sampling slots');
 assert.equal(haloViewWeight(0,0,100,100,100,10,.5,1.5),1,'Visible off-center source remains sampled');
 assert.equal(haloViewWeight(0,0,8,8,8,14,.5,1.5),1,'Tiny focused local body retains coverage');
+
+assert.equal(haloViewWeight(0,0,3e8,3e8,3e8,2.4e6,.5,1.5,1.9e8),0,'Samples outside the near-only render tier release their slots');
