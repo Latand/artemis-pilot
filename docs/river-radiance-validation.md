@@ -30,9 +30,12 @@ validate the hooks and negative controls; they do not establish browser success.
   preflight has 261 active stars at both positions and replaces selected HYG
   source 50493 with GL 194B; the browser must independently observe a selected
   HYG identity leaving the source pool.
-- Camera eligibility changes must change the allocation CDF. Mobile must
-  actually skip a compute draw under its native adaptive policy. The test does
-  not replace that policy to make comparisons match.
+- Camera eligibility changes must change the allocation CDF. Mobile Proxima
+  must actually skip off-cadence computes in both signed advection phases and
+  retain the texture and gain snapshot on every skipped draw. The continuously
+  moving hole must compute every frame; its off-cadence computes must show the
+  existing urgent `respawn > .08` exemption in both signed phases. Neither
+  fixture replaces production scheduling to make comparisons match.
 - At frame 48, `WEBGL_lose_context` causes real native loss and restoration.
   Synchronous polling observes both native and application lifecycle state.
   A frame delivered during loss must not advance the completed-frame count or
@@ -56,3 +59,12 @@ Capture guards require a live, nonblank framebuffer and a finite on-screen
 selected source. Coverage and saturation are reported for visual review; the
 fixture does not invent a brightness threshold to label a blank halo successful.
 The production shader and source files are unchanged by this QA extension.
+
+The first extension run, `37134625806` at `5ff816e`, passed the mobile transient
+and desktop lifecycle. Mobile lifecycle passed 694 of 696 checks; its two failed
+assertions incorrectly required the continuously moving hole to skip a compute
+in both revisions. Proxima already exercised 52 skipped draws per revision,
+including four positive and four negative cadence skips, with exact held state.
+The hole followed the urgent-refresh exemption above. The original reports and
+images are retained; the corrected coverage assertion awaits another hosted run.
+Performance was skipped, and both required aggregates failed for missing shards.

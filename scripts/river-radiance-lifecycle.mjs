@@ -56,3 +56,33 @@ export function healthyRadianceRecovery(recovery, next) {
 export function signedRadianceAdvection(frame, plan) {
   return !frame.dispatch || frame.dispatch.dt === 0 || Math.sign(frame.dispatch.dt) === Math.sign(plan.rate);
 }
+
+// Coverage follows the existing production scheduling branches. A moving,
+// close-focus hole can require urgent volume refresh even on an off-cadence
+// frame; Proxima supplies the signed, held-texture mobile skip coverage.
+export function healthyRadianceMobileCadence(frames, subject) {
+  if (frames.length !== RADIANCE_LIFECYCLE_FRAMES) return false;
+  const offCadence = frame => Number.isInteger(frame.computeEvery) && frame.computeEvery > 1
+    && Number.isInteger(frame.frame) && frame.frame % frame.computeEvery !== 0;
+  if (subject === 'proxima') {
+    const signedSkip = sign => frames.some((frame, index) => {
+      const previous = frames[index - 1];
+      return Math.sign(radianceLifecycleStep(index, subject).rate) === sign
+        && Math.sign(frame.dtVis) === sign && offCadence(frame)
+        && frame.skippedCompute && !frame.dispatch && previous
+        && typeof frame.textureHash === 'string' && frame.textureHash === previous.textureHash
+        && JSON.stringify(frame.gainState) === JSON.stringify(previous.gainState);
+    });
+    return signedSkip(1) && signedSkip(-1)
+      && frames.every((frame, index) => !frame.skippedCompute || (!frame.dispatch && index > 0
+        && frame.textureHash === frames[index - 1].textureHash
+        && JSON.stringify(frame.gainState) === JSON.stringify(frames[index - 1].gainState)));
+  }
+  if (subject === 'black-hole') {
+    const urgent = frames.filter(offCadence);
+    return urgent.length > 0 && frames.every(frame => !frame.skippedCompute && !!frame.dispatch)
+      && urgent.every(frame => frame.dispatch.respawn > .08)
+      && [1, -1].every(sign => urgent.some(frame => Math.sign(frame.dispatch.dt) === sign));
+  }
+  return false;
+}

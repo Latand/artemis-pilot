@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { radianceLifecycleStep as step, healthyRadianceGain, healthyRadianceRecovery, sameCountActiveReplacement, signedRadianceAdvection } from './river-radiance-lifecycle.mjs';
+import { radianceLifecycleStep as step, healthyRadianceGain, healthyRadianceRecovery, sameCountActiveReplacement, signedRadianceAdvection, healthyRadianceMobileCadence } from './river-radiance-lifecycle.mjs';
 for (const subject of ['proxima', 'black-hole']) {
   const plan = Array.from({ length: 64 }, (_, index) => step(index, subject));
   assert(plan.some(s => s.rate > 0) && plan.some(s => s.rate < 0) && plan.some(s => s.offscreen));
@@ -35,4 +35,29 @@ assert(signedRadianceAdvection({dispatch:{dt:-3}},{rate:-1}));
 assert(signedRadianceAdvection({dispatch:null},{rate:0}));
 assert(!signedRadianceAdvection({dispatch:{dt:3}},{rate:-1}));
 assert(!signedRadianceAdvection({dispatch:{dt:3}},{rate:0}));
+const proxima = Array.from({length:64}, (_, index) => {
+  const rate = Math.sign(step(index, 'proxima').rate), skipped = rate !== 0 && index % 2 === 1;
+  return { frame:index+2, computeEvery:rate ? 2 : 1, dtVis:rate, skippedCompute:skipped,
+    dispatch:skipped ? null : {dt:rate,respawn:0}, textureHash:'same', gainState:{ownerShares:[1],referenceShares:[.5]} };
+});
+assert(healthyRadianceMobileCadence(proxima, 'proxima'));
+for (const mutate of [
+  xs => { for (let i=32;i<40;i++) { xs[i].skippedCompute=false; xs[i].dispatch={dt:1,respawn:0}; } },
+  xs => { for (let i=40;i<48;i++) { xs[i].skippedCompute=false; xs[i].dispatch={dt:-1,respawn:0}; } },
+  xs => { for (const x of xs) x.computeEvery=1; },
+  xs => { xs[33].dispatch={dt:1,respawn:0}; },
+  xs => { xs[33].textureHash='changed'; },
+  xs => { xs[33].gainState.ownerShares[0]=.5; },
+  xs => { xs.pop(); },
+]) { const wrong=structuredClone(proxima);mutate(wrong);assert(!healthyRadianceMobileCadence(wrong,'proxima')); }
+const movingHole = proxima.map(frame => ({...frame, skippedCompute:false,dispatch:{dt:frame.dtVis,respawn:.1}}));
+assert(healthyRadianceMobileCadence(movingHole, 'black-hole'));
+for (const mutate of [
+  xs => { xs[33].dispatch.respawn=.08; },
+  xs => { xs[33].dispatch=null; xs[33].skippedCompute=true; },
+  xs => { xs[1].skippedCompute=true; },
+  xs => { for (const x of xs) x.computeEvery=1; },
+  xs => { for (const x of xs) x.dispatch.dt=Math.abs(x.dispatch.dt); },
+  xs => { xs.pop(); },
+]) { const wrong=structuredClone(movingHole);mutate(wrong);assert(!healthyRadianceMobileCadence(wrong,'black-hole')); }
 console.log('Lifecycle guard rejects stale identities, stale gains, false restoration and missing reset compute');

@@ -10,7 +10,7 @@ import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import { comparableRadianceFrame, differingFields, healthyRadianceFrame, healthyRadianceCapture } from './river-radiance-qa.mjs';
 import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled } from './context-recovery-qa.mjs';
-import { RADIANCE_LIFECYCLE_FRAMES, radianceLifecycleStep, sameCountActiveReplacement, healthyRadianceGain, healthyRadianceRecovery, signedRadianceAdvection } from './river-radiance-lifecycle.mjs';
+import { RADIANCE_LIFECYCLE_FRAMES, radianceLifecycleStep, sameCountActiveReplacement, healthyRadianceGain, healthyRadianceRecovery, signedRadianceAdvection, healthyRadianceMobileCadence } from './river-radiance-lifecycle.mjs';
 
 const roots = process.argv.slice(2, 4).map(x => resolve(x));
 assert.equal(roots.length, 2, 'Pass baseline and candidate roots');
@@ -231,7 +231,9 @@ try {
           }
           check(`${name}: paused, forward and reverse advection delivered`, row.frames.some(f=>f.dispatch?.dt>0)&&row.frames.some(f=>f.dispatch?.dt<0)&&row.frames.some(f=>f.dtVis===0));
           check(`${name}: camera eligibility changes source CDF`, JSON.stringify(row.frames[23].sources.map(s=>s.cdfShare)) !== JSON.stringify(row.frames[31].sources.map(s=>s.cdfShare)));
-          if (mobile) check(`${name}: actual skipped mobile draw exercised`, row.frames.some(f=>f.skippedCompute));
+          if (mobile) check(`${name}: ${spec.subject === 'proxima' ? 'signed mobile skips hold texture and gain snapshots' : 'moving hole uses native urgent compute exemption'}`,
+            healthyRadianceMobileCadence(row.frames, spec.subject), row.frames.map((frame, index) => ({ index, frame:frame.frame,
+              computeEvery:frame.computeEvery, skipped:frame.skippedCompute, dtVis:frame.dtVis, dispatch:frame.dispatch })));
           check(`${name}: all retained sources refer to current active objects`,row.frames.every(f=>f.sources.filter(s=>s.activeSource).every(s=>s.currentActive)));
         }
         check(`${name}: selected source has owned samples`, row.frames.at(-1).sources.some(source => source.name === (spec.subject === 'proxima' ? 'PROXIMA' : spec.subject === 'sun' ? 'Sun' : 'placed-hole:0') && source.owners > 0));
