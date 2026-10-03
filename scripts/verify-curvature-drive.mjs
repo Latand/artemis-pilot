@@ -43,8 +43,8 @@ try {
  await page.keyboard.up('w');await frames(1);s=await capture('02-released-coast');check(s.drive.magnitude===0&&!s.visual.fieldVisible,'release immediately restores exact ballistic command');
  await page.keyboard.down('s');await frames(45);s=await capture('03-reverse-field');check(s.drive.ax<-.0058&&s.visual.dx<-.99,'reverse command reverses actual gradient and visible bow');await page.keyboard.up('s');
  await page.keyboard.down('e');await frames(45);s=await capture('04-lateral-field');check(s.drive.ay>.0017&&s.visual.dz<-.99,'lateral command redirects actual field');check(await page.evaluate(()=>getComputedStyle(document.getElementById('logPanel')).display==='none'),'lateral E does not open the expedition log');await page.keyboard.up('e');
- await page.keyboard.down('Shift');await page.keyboard.press('e');await page.keyboard.up('Shift');await frames(1);
- check(await page.evaluate(async()=>getComputedStyle(document.getElementById('logPanel')).display!=='none'&&(await import('/src/curvatureDrive.js')).DRIVE.magnitude===0),'Shift+E opens the log without lateral acceleration');
+ await page.keyboard.down('Shift');await page.keyboard.down('l');await page.keyboard.down('l');await page.keyboard.up('l');await page.keyboard.up('Shift');await frames(1);
+ check(await page.evaluate(async()=>getComputedStyle(document.getElementById('logPanel')).display!=='none'&&(await import('/src/curvatureDrive.js')).DRIVE.magnitude===0),'held/repeated Shift+L opens the log once without lateral acceleration');
  await page.locator('#logClose').click();await page.evaluate(()=>document.activeElement?.blur());
  await page.keyboard.down('w');await frames(30);await page.evaluate(()=>{__G.gr=false;});s=await capture('05-river-off');check(s.visual.fieldVisible,'ship-local envelope works with natural river hidden');
  const toggle=async()=>{if(mobile){await page.locator('#mMenuBtn').click();await page.locator('#mWarpVisual').click();await page.locator('#mMenuClose').click();}else await page.locator('[data-warp-visual]').first().click();};

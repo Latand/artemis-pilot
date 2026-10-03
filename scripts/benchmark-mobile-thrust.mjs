@@ -26,7 +26,7 @@ try {
    const start='const firstFrameT0 = perfStart();', loop='renderer.setAnimationLoop(frame);';
    assert.equal(source.split(start).length,2);assert.equal(source.split(loop).length,2);
    return source.replace(start,'G.t=0;G.paused=true;G.warp=60;resetEphem();clock.getDelta=()=>1/30;'+start)
-    .replace(loop,'')+`\nconst thrustReadbackPixel=new Uint8Array(4);\nwindow.__timedThrustFrame=()=>{lastMobileFrame=-Infinity;renderer.info.autoReset=false;renderer.info.reset();const start=performance.now();frame();const submitted=performance.now();const gl=renderer.getContext();gl.finish();const flushed=performance.now();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,thrustReadbackPixel);const finished=performance.now();const galaxy=galaxyVolumeStats();return{submissionMs:submitted-start,finishMs:flushed-submitted,readbackMs:finished-flushed,totalMs:finished-start,frameNo,calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,points:renderer.info.render.points,lines:renderer.info.render.lines,computeEvery:river.computeEvery||1,skippedCompute:!!river.skippedCompute,riverDrawCount:river.drawCount||0,sourceCount:river.sourceCount||0,texW:river.texW||0,quality:{...renderQuality},galaxyRenders:galaxy.renders,galaxyReady:galaxy.mapsReady&&galaxy.coverageReady,galaxyScale:galaxy.scale};};`;
+    .replace(loop,'')+`\nconst thrustReadbackPixel=new Uint8Array(4);\nwindow.__timedThrustFrame=()=>{lastMobileFrame=-Infinity;renderer.info.autoReset=false;renderer.info.reset();const start=performance.now();frame();const submitted=performance.now();const gl=renderer.getContext();gl.finish();const flushed=performance.now();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,thrustReadbackPixel);const finished=performance.now();const galaxy=galaxyVolumeStats();return{submissionMs:submitted-start,finishMs:flushed-submitted,readbackMs:finished-flushed,totalMs:finished-start,frameNo,camera:camera.position.toArray(),cameraTarget:cam.tgt.toArray(),calls:renderer.info.render.calls,triangles:renderer.info.render.triangles,points:renderer.info.render.points,lines:renderer.info.render.lines,computeEvery:river.computeEvery||1,skippedCompute:!!river.skippedCompute,riverDrawCount:river.drawCount||0,sourceCount:river.sourceCount||0,texW:river.texW||0,quality:{...renderQuality},galaxyRenders:galaxy.renders,galaxyReady:galaxy.mapsReady&&galaxy.coverageReady,galaxyScale:galaxy.scale};};`;
   }}]});
   await server.listen();
   const context=await browser.newContext({viewport:{width:430,height:932},isMobile:true,hasTouch:true,deviceScaleFactor:3});
@@ -65,7 +65,7 @@ try {
    // Independent zero-command replay from the original state. Ballistic
    // flight is unchanged by the new actuator and must remain bit-identical
    // across versions, separately from intentionally different active flight.
-   await page.evaluate(async()=>{await(await import('/src/saves.js')).loadState();__G.paused=false;});
+   await page.evaluate(async()=>{await(await import('/src/saves.js')).loadState();__G.paused=true;__G.focus='free';__timedThrustFrame();await(await import('/src/saves.js')).loadState();__G.paused=false;});
    const coastFrames=[];for(let i=0;i<48;i++)coastFrames.push(await step());
    const coastFinal=await snapshot();
    assert(coastFinal.flight.dvUsed===initial.flight.dvUsed,'Coast replay consumes zero commanded delta-v');
@@ -80,6 +80,10 @@ try {
  const first=report.runs[0];
  assert(report.runs.every(r=>JSON.stringify(r.initial.flight)===JSON.stringify(first.initial.flight)),'Matched initial physical state');
  assert(report.runs.every(r=>JSON.stringify(r.coastFinal.flight)===JSON.stringify(first.coastFinal.flight)),'Drive-off ballistic replay is bit-identical across versions');
+ assert(report.runs.every(r=>r.coastFrames.every((f,i)=>f.camera.every((v,k)=>Math.abs(v-first.coastFrames[i].camera[k])<1e-9)&&f.cameraTarget.every((v,k)=>Math.abs(v-first.coastFrames[i].cameraTarget[k])<1e-9)&&JSON.stringify(f.quality)===JSON.stringify(first.coastFrames[i].quality))),'Coast timing matches camera, target and quality on every frame');
+ const coastProfile=f=>JSON.stringify([f.computeEvery,f.skippedCompute,f.riverDrawCount,f.sourceCount,f.texW,f.galaxyReady,f.galaxyScale]);
+ report.coastWorkComparisons=report.runs.map(r=>({variant:r.variant,index:r.index,matchedWorkFrames:r.coastFrames.filter((f,i)=>coastProfile(f)===coastProfile(first.coastFrames[i])).length}));
+ report.coastWorkloadConfounded=report.coastWorkComparisons.some(r=>r.matchedWorkFrames!==48);
  // Repeated executions of each model must remain bit-identical. A deliberate
  // change from instantaneous thrust to an engaging field has different
  // physical endpoints; report it as a timing confound, never as mesh cost.

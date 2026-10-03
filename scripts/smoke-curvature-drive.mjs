@@ -38,3 +38,18 @@ for(const height of [320,820,2160])for(const fov of [30,50,90])for(const d of [1
 assert.equal(shipPresentation(.14,.012,50,820).hullAlpha,1);
 assert.equal(shipPresentation(1e6,2.4,50,820).hullAlpha,0);
 console.log('Ship presentation PASS: bounded 6px non-glow marker, continuous hull handoff across FOV / viewport sizes');
+
+// Exercise the shipped key handler (terminal declaration), with only its
+// external services stubbed. Include repeat events, not only key presses.
+const {readFileSync}=await import('node:fs');
+const source=readFileSync(new URL('../src/input.js',import.meta.url),'utf8');
+const keySource=source.slice(source.indexOf('function onKeyDown(e)'));
+let logOpens=0,loads=0;const keys=new Set();
+const keyDown=new Function('G','keys','initAudio','thrustGain','help','toggleLog','toast','loadState',`return (${keySource});`)(
+ {uiMode:'pilot',throttle:1},keys,()=>{},null,{shown:false},()=>logOpens++,()=>{},()=>{loads++;return Promise.resolve();});
+const event=(code,shiftKey=false,repeat=false)=>({code,shiftKey,repeat,target:null,preventDefault(){}});
+keyDown(event('KeyL',true));for(let i=0;i<4;i++)keyDown(event('KeyL',true,true));
+assert.equal(logOpens,1);assert.equal(loads,0);assert(!keys.has('KeyE')&&!keys.has('KeyQ'));
+keys.clear();keyDown(event('KeyE',true));keyDown(event('KeyE',true,true));assert(keys.has('KeyE'));assert.equal(logOpens,1,'boosted lateral E never opens log');
+keys.clear();keyDown(event('KeyL'));assert.equal(loads,1,'plain L still quickloads');
+console.log('Input regression PASS: held/repeated log shortcut has no lateral command; boosted E and plain quickload preserved');

@@ -147,11 +147,6 @@ function onKeyDown(e) {
                 toast(G.constellations ? "Constellation guides ON" : "Constellation guides OFF");
             } else G.gr = !G.gr;
             break;
-        case "KeyE":
-            // Plain E is lateral drive input. Opening the log must not share
-            // that command or leave a lateral field latched behind the panel.
-            if (e.shiftKey) { keys.delete("KeyE"); toggleLog(); toast("Expedition log"); }
-            break;
         case "KeyO":
             if (e.shiftKey) {
                 G.darkMatter = !G.darkMatter;
@@ -189,7 +184,12 @@ function onKeyDown(e) {
             break;
         case "KeyR": H.restart(); break;
         case "KeyK": saveState(); break;
-        case "KeyL": loadState().catch(err => toast(err?.message || String(err))); break;
+        case "KeyL":
+            // Keep Q/E and Shift+Q/E exclusively available for lateral drive.
+            // The repeat guard above makes held Shift+L toggle the log once.
+            if (e.shiftKey) { toggleLog(); toast("Expedition log"); }
+            else loadState().catch(err => toast(err?.message || String(err)));
+            break;
         case "KeyN": focusNextBlackHole(); break;
         case "KeyU":
             if (e.shiftKey) {

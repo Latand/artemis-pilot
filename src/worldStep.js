@@ -40,7 +40,7 @@ export const WORLD_STEP = {
 function shortfallReason(aMag) {
     if (BH.n > 0) return "black holes are integrated step by step";
     if (GS.length > 0) return "gravity ghosts force step-by-step physics";
-    if (aMag > 0) return "engine firing: the burn is integrated step by step";
+    if (aMag > 0) return "field active: the acceleration is integrated step by step";
     return "integration budget reached";
 }
 

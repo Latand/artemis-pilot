@@ -157,7 +157,7 @@ The static build is written to `dist/`.
 | `W` / `S` | Forward and reverse curvature field |
 | `A` / `D` | Rotate ship |
 | `Q` / `E` | Lateral field |
-| `Shift+E` | Expedition log |
+| `Shift+L` | Expedition log |
 | `Shift` | Boost |
 | `Z` / `X` | Throttle down/up |
 | `T` / `Y` | Hold prograde/retrograde |
@@ -196,7 +196,7 @@ An **ENTER VR** button appears bottom-right when a WebXR runtime is available (t
 
 | Control | Action |
 | --- | --- |
-| Right stick ↕ / ↔ | Main/reverse thrust · lateral RCS |
+| Right stick ↕ / ↔ | Forward/reverse field · lateral field |
 | Left stick ↔ / ↕ | Yaw ship · throttle trim |
 | Right trigger | Boost (analog) |
 | Left trigger | Autopilot: travel to focus / cancel |
