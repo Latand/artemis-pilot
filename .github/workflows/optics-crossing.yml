@@ -1,0 +1,46 @@
+name: Black-hole optics crossing diagnostic
+on:
+  pull_request:
+    paths:
+      - 'scripts/probe-optics-crossing.mjs'
+      - 'src/lensing.js'
+      - 'src/holeOptics.js'
+      - 'src/tdeVisuals.js'
+      - '.github/workflows/optics-crossing.yml'
+permissions:
+  contents: read
+concurrency:
+  group: optics-crossing-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  capture:
+    name: Optics crossing ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-hole-appearance.mjs && node scripts/smoke-hole-precision.mjs && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Frozen Saturn and disk plane-crossing ablations
+        env:
+          DEVICE: ${{ matrix.device }}
+          ARTEMIS_EVIDENCE: evidence/optics-crossing
+        run: node scripts/probe-optics-crossing.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optics-crossing-${{ matrix.device }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
