@@ -1,8 +1,11 @@
 import { buildCappedEarthCloudUnitMesh } from './build-earth-cloud-mesh.mjs';
+import { reorderCloudTriangles } from './reorder-cloud-triangles.mjs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 
-const { positions, uv, indices } = buildCappedEarthCloudUnitMesh();
+const { positions, uv, indices: originalIndices } = buildCappedEarthCloudUnitMesh();
+// Offline only: reorder oriented triangles; never remap a vertex or UV.
+const indices = reorderCloudTriangles(originalIndices, positions.length / 3);
 if (!(indices instanceof Uint16Array)) throw new Error('Cloud geometry must retain bounded Uint16 indices');
 const bytes = Buffer.alloc(positions.byteLength + uv.byteLength + indices.byteLength);
 let offset = 0;

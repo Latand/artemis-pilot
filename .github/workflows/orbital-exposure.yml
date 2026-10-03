@@ -22,6 +22,7 @@ on:
       - 'scripts/*surface-fastpath*'
       - 'scripts/*surface-worker*'
       - 'scripts/*earth-cloud*'
+      - 'scripts/reorder-cloud-triangles.mjs'
       - 'scripts/*cloud-depth*'
       - 'scripts/*orbital-exposure*'
       - 'scripts/*time-dock*'

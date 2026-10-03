@@ -2,6 +2,7 @@
 // atmosphere, galaxy, ship scene, labels and application clock. No performance
 // or full-application acceptance is inferred from these bounded renderings.
 import * as THREE from 'three';
+import { captureCloudRasterProvenance } from './cloud-raster-provenance.mjs';
 import { R_EARTH, K } from '../src/constants.js';
 import { earthSurfaceMaterial, createEarthCloudMaterial, updateEarthSurfaceExposure, EARTH_CLOUD_HEIGHT_KM } from '../src/render/planetAppearance.js';
 import { registerEarthCloudGround } from '../src/render/cloudDepthGuard.js';
@@ -265,6 +266,7 @@ async function start() {
             maps: q.maps.map(map => ({ source: new URL(map.image.src).pathname, width: map.image.width, height: map.image.height })),
             geometry: Object.fromEntries(Object.entries(q.geometries).map(([tier, geometries]) => [tier, { groundTriangles: geometries.ground.index.count / 3, cloud: containmentProof(geometries.cloud) }])) };
     };
+    q.failureProvenance = browserVersion => captureCloudRasterProvenance({ renderer: q.renderer, earthMaterial: q.earth.material, cloudMaterial: q.cloud.material, browserVersion });
     // Failure diagnostics only. These rows never replace a failed acceptance
     // result and are never compared across antialiasing contexts as a gate.
     q.failureReplay = spec => {

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
+import { buildCappedEarthCloudUnitMesh } from './build-earth-cloud-mesh.mjs';
+import { reorderCloudTriangles } from './reorder-cloud-triangles.mjs';
 import { createEarthCloudGeometry } from '../src/render/earthCloudGeometry.js';
 import { CLOUD_UNIT_DATA, CLOUD_DATA_SHA256, CLOUD_VERTEX_COUNT, CLOUD_TRIANGLE_COUNT } from '../src/render/earthCloudGeometryData.js';
 import { updateEarthSurfaceExposure, createEarthCloudMaterial } from '../src/render/planetAppearance.js';
@@ -10,6 +12,20 @@ const payload = Buffer.from(CLOUD_UNIT_DATA, 'base64');
 assert.equal(createHash('sha256').update(payload).digest('hex'), CLOUD_DATA_SHA256);
 assert.equal(payload.byteLength, 135740);
 assert.equal(CLOUD_VERTEX_COUNT, 4351); assert.equal(CLOUD_TRIANGLE_COUNT, 8120);
+const original = buildCappedEarthCloudUnitMesh(), originalIndices = original.indices.slice();
+const ordered = reorderCloudTriangles(original.indices, original.positions.length / 3);
+assert.deepEqual(original.indices, originalIndices, 'offline reorder never mutates its input');
+assert.deepEqual(ordered, reorderCloudTriangles(original.indices, original.positions.length / 3), 'fixed tie-break order is reproducible');
+const orientedTriangles = indices => Array.from({ length: indices.length / 3 }, (_, i) => `${indices[i * 3]},${indices[i * 3 + 1]},${indices[i * 3 + 2]}`).sort();
+assert.deepEqual(orientedTriangles(ordered), orientedTriangles(original.indices), 'every oriented triangle triple is unchanged');
+assert.equal(ordered.byteLength, original.indices.byteLength);
+const templateView = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+let templateOffset = 0;
+for (const values of [original.positions, original.uv]) for (const value of values) {
+    assert.equal(templateView.getFloat32(templateOffset, true), value, 'packed position and UV bytes retain the original capped mesh'); templateOffset += 4;
+}
+for (const value of ordered) { assert.equal(templateView.getUint16(templateOffset, true), value); templateOffset += 2; }
+assert.equal(templateOffset, payload.byteLength);
 const geometry = createEarthCloudGeometry(6.377, true), other = createEarthCloudGeometry(6.377, true);
 assert(geometry.index.array instanceof Uint16Array);
 assert.equal(Object.values(geometry.attributes).reduce((n, attribute) => n + attribute.array.byteLength, geometry.index.array.byteLength), 187952);

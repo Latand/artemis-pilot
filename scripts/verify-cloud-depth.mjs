@@ -11,6 +11,24 @@ import { resolve } from 'node:path';
 import { boundedDiagnostic } from './qa-bounded-diagnostic.mjs';
 import { buildPlan, makeGeometry, containmentProof, DISTANCES, GAPS_KM, RADIUS, CLOUD_RADIUS, SIZE, NEAR, FAR, failureReplayPlan, FAILURE_REPLAY_MODES } from './cloud-depth-fixture.mjs';
 
+function annotateProvenanceSources(provenance) {
+    for (const program of Object.values(provenance?.programs || {})) {
+        if (!Array.isArray(program?.shaders)) continue;
+        for (const shader of program.shaders) for (const field of ['source', 'translatedSource']) {
+            const captured = shader[field]?.value;
+            if (typeof captured?.text !== 'string') continue;
+            const lines = captured.text.split('\n');
+            captured.capturedTextSha256 = createHash('sha256').update(captured.text).digest('hex');
+            captured.depthEvidence = {
+                interpretation: 'Unprocessed returned source evidence. Conditional text alone does not prove an active depth write; inspect defines and complete/translated code.',
+                complete: !captured.truncated,
+                defines: lines.flatMap((text, index) => /^\s*#\s*define\b/.test(text) ? [{ line: index + 1, text }] : []),
+                tokenLines: lines.flatMap((text, index) => /USE_LOGDEPTHBUF|gl_FragDepth|gl_FragCoord|vFragDepth/.test(text) ? [{ line: index + 1, text }] : []),
+            };
+        }
+    }
+}
+
 const plan = buildPlan();
 const source = await readFile('src/bodies.js', 'utf8');
 assert(source.includes('earth = new THREE.Mesh(sphere(radius, 96, 72, 48, 32), earthMat)'), 'fixture matches production ground topology');
@@ -33,6 +51,14 @@ for (const tier of ['desktop', 'mobile']) for (const distance of DISTANCES) for 
 for (const gapKm of GAPS_KM) assert(plan.cases.some(c => c.gapKm === gapKm), `missing ${gapKm} km contact sweep`);
 for (const mode of ['paused', 'active', 'reverse']) assert(plan.cases.some(c => c.mode === mode), `missing ${mode} exposure`);
 if (process.argv.includes('--validate')) {
+    const sourceProbe = { programs: { earth: { shaders: [{ source: { value: { text: '#define EXAMPLE 1\n#ifdef USE_LOGDEPTHBUF\ngl_FragDepth = gl_FragCoord.z;\n#endif', truncated: false } } }] }, cloud: { shaders: { status: 'unavailable' } } } };
+    annotateProvenanceSources(sourceProbe);
+    const evidence = sourceProbe.programs.earth.shaders[0].source.value;
+    assert.equal(evidence.capturedTextSha256, createHash('sha256').update(evidence.text).digest('hex'));
+    assert.equal(evidence.depthEvidence.defines.length, 1);
+    assert.equal(evidence.depthEvidence.tokenLines.length, 2);
+    assert(evidence.depthEvidence.interpretation.includes('does not prove an active depth write'));
+
     for (const file of ['scripts/cloud-depth-fixture.mjs', 'scripts/verify-cloud-depth.mjs']) execFileSync(process.execPath, ['--input-type=module', '--check'], { input: await readFile(file, 'utf8') });
     for (const distance of DISTANCES) {
         const replay = failureReplayPlan({ kind: 'clear', distance });
@@ -58,7 +84,7 @@ const report = {
     checks: [], cases: [], sequences: [], screenshots: [], errors: [], passed: false,
 };
 for (const path of ['src/bodies.js', 'src/render/earthCloudGeometry.js', 'src/render/earthCloudGeometryData.js', 'src/render/planetAppearance.js', 'src/render/cloudDepthGuard.js', 'src/render/bodyBoundsHooks.js', 'src/render/relativeBodyFrame.js', 'src/render/bodySurfaceMaterial.js', 'src/render/surfaceRotationExposure.js', 'src/relView.js', 'src/state.js',
-    'scripts/cloud-depth-fixture.mjs', 'scripts/verify-cloud-depth.mjs', 'public/textures/2k_earth_daymap.jpg', 'public/textures/2k_earth_nightmap.jpg', 'public/textures/2k_earth_clouds.jpg']) {
+    'scripts/cloud-depth-fixture.mjs', 'scripts/cloud-raster-provenance.mjs', 'scripts/verify-cloud-depth.mjs', 'public/textures/2k_earth_daymap.jpg', 'public/textures/2k_earth_nightmap.jpg', 'public/textures/2k_earth_clouds.jpg']) {
     (report.sourceSha256 ||= {})[path] = createHash('sha256').update(await readFile(path)).digest('hex');
 }
 const save = () => writeFile(resolve(out, 'report.json'), JSON.stringify(report, null, 2));
@@ -160,6 +186,14 @@ try {
             report.originalFailureImages = await boundedDiagnostic(() => capture('failure'), 20000);
             await save();
             await writeFile(resolve(out, 'failure-original-report.json'), JSON.stringify(report, null, 2));
+            // Read actual attachments and linked shader provenance only after
+            // preserving the original failed verdict/images. No extra draw.
+            try {
+                report.failureProvenance = await boundedDiagnostic(() => page.evaluate(version => cloudDepthQA.failureProvenance(version), browser.version()), 10000);
+                if (report.failureProvenance.ok) annotateProvenanceSources(report.failureProvenance.value);
+                await writeFile(resolve(out, 'failure-provenance.json'), JSON.stringify(report.failureProvenance, null, 2));
+            } catch (error) { report.failureProvenancePersistenceError = error.stack || String(error); }
+            await save();
             if (spec.kind === 'clear' && report.originalFailureImages.ok) {
                 try {
                     report.failureReplay = await boundedDiagnostic(() => page.evaluate(spec => cloudDepthQA.failureReplay(spec), spec), 90000);

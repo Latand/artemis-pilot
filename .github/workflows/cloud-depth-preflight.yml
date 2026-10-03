@@ -22,7 +22,7 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - run: node scripts/smoke-cloud-depth-guard.mjs && node scripts/smoke-earth-cloud-geometry.mjs && node scripts/smoke-earth-cloud-shell.mjs && node scripts/generate-earth-cloud-geometry.mjs --check && node scripts/verify-cloud-depth.mjs --validate
+      - run: node scripts/smoke-cloud-depth-guard.mjs && node scripts/smoke-cloud-raster-provenance.mjs && node scripts/smoke-earth-cloud-geometry.mjs && node scripts/smoke-earth-cloud-shell.mjs && node scripts/generate-earth-cloud-geometry.mjs --check && node scripts/verify-cloud-depth.mjs --validate
       - run: node scripts/verify-cloud-depth.mjs
         timeout-minutes: 8
       - uses: actions/upload-artifact@v4

@@ -113,18 +113,18 @@ is used. Earth cloud shadows keep their exact existing longitude offset.
 Native detail18 and detail19 controls were rejected after individual pole
 images revealed Y/zig-zag and bow-tie artifacts. Vertex phase checks alone
 missed the shared-edge UV interpolation error. The capped mesh is closed
-(two faces per welded edge, Euler characteristic2), has no ordinary UV seam
-or cap-transition jump, and has the same narrow pole-fan UV bound as96×64.
-The one3° control saved only72 triangles and had less faithful transition
+(two faces per welded edge, Euler characteristic 2), has no ordinary UV seam
+or cap-transition jump, and has the same narrow pole-fan UV bound as 96×64.
+The one 3° control saved only 72 triangles and had less faithful transition
 interpolation, so it was not selected.
 
-The reviewed packed payload has135,740 bytes, SHA256
+The reviewed packed payload has 135,740 bytes, SHA256
 `0bde50f5dcaf3441f48dc5fba36d7dfe9a6a3f547315029659e7892bb0e27115`.
-Generated JavaScript is about181KB raw/95KB gzip. One geometry uses187,952
+Generated JavaScript is about 181 KB raw / 95 KB gzip. One geometry uses 187,952
 typed-array bytes on each CPU/GPU copy; the persistent CPU template adds
-135,740 bytes. Thus template plus one geometry is323,692 bytes, excluding
-JavaScript/base64 strings and transient decode storage. This is49,356 bytes
-more than the96×64 geometry alone, while GPU geometry drops86,384 bytes.
+135,740 bytes. Thus template plus one geometry is 323,692 bytes, excluding
+JavaScript/base64 strings and transient decode storage. This is 49,356 bytes
+more than the 96×64 geometry alone, while GPU geometry drops 86,384 bytes.
 It is not an overall-memory-reduction claim.
 
 `node scripts/generate-earth-cloud-geometry.mjs --check` reproduces the exact
@@ -133,14 +133,14 @@ or fixture input. Geometry smokes check actual decoded containment, radius,
 radial normals, outward winding, welded topology, edge-interior UV continuity,
 map/shadow phase, instance ownership, disposal and the unchanged desktop mesh.
 
-Offline production-shader images using the actual2K sources cover both poles,
+Offline production-shader images using the actual 2K sources cover both poles,
 cap transitions, seams, paused/active exposure and Earth composites. Actual
 packed-decode images show none of the rejected artifacts. Native Mesa timing
-improves many mid/far cases against96×64 but does not uniformly recover the
-old48×32 cost. Fresh Node decode/scale/geometry timing measured4.72ms median,
-8.54ms p95; this is not browser/mobile startup acceptance. Final hosted polar
+improves many mid/far cases against 96×64 but does not uniformly recover the
+old 48×32 cost. Fresh Node decode/scale/geometry timing measured 4.72 ms median,
+8.54 ms p95; this is not browser/mobile startup acceptance. Final hosted polar
 frames, the strict depth/contact matrix, full production sequences and the
-unchanged five-trial1.05 p95/long-task gates remain required.
+unchanged five-trial 1.05 p95/long-task gates remain required.
 
 ## Retained hosted failures at a93b1b7
 
@@ -150,19 +150,45 @@ check: a depth-writing Line prevents the guard from enabling. The original
 ID and reason. The source fix for empty draws requires a new exact-head run;
 the prior numeric checks are not accepted as a cloud-visibility fix.
 
-The isolated WebGL matrix stops at its 78th case (desktop, distance15, phase0,
+The isolated WebGL matrix stops at its 78th case (desktop, distance 15, phase 0,
 paused): 253 limb pixels differ from the depth-disabled ordering oracle.
-The guard repairs12 baseline pixels without introducing a new difference,
+The guard repairs 12 baseline pixels without introducing a new difference,
 but this still fails the strict zero-difference gate. A bounded failure-only
 replay saves the original verdict and images first, then compares enabled
 AlwaysDepth and disabled-depth oracles within the original MSAA context, a
-larger-near diagnostic and a separate non-MSAA context. Those12 diagnostic
+larger-near diagnostic and a separate non-MSAA context. Those 12 diagnostic
 draws cannot replace a failed result or relax its assertions. No production
 near-plane change is proposed.
 
 The same head's desktop paired performance passes. Mobile Earth fails all
-five paired trials (median p95 ratio1.08315 against the unchanged1.05 limit),
-and total long-task blocking fails56,306ms against52,311.65ms. The mobile
+five paired trials (median p95 ratio 1.08315 against the unchanged 1.05 limit),
+and total long-task blocking fails 56,306 ms against 52,311.65 ms. The mobile
 triangle increase is therefore not performance-accepted. Lower-cost geometry
 is being investigated separately; all original trials and CPU profiles stay
 retained.
+
+## Index-order-only cost follow-up
+
+The capped candidate's isolated hosted run 37137983367 passed Earth median
+p95 ratio 1.04385, but failed total long-task blocking 19,369 ms against 18,453.35 ms.
+All five trials and the full report remain retained. Its desktop/mobile
+cloud-ready capture jobs passed 51 checks each; all 16 PNGs were individually
+inspected, with no apparent old stripes or rejected polar creases in those
+views. The strict MSAA fixture remains failed and is not waived.
+
+One deterministic offline adjacency/LRU reorder now changes only the order
+of existing oriented triangle triples. Positions, normals, UVs, triangle
+multiset/winding, topology, counts and decoded storage are byte-identical.
+The fixed 32-entry cache model drops 10,444→5,529 misses; that model is not a
+measured GPU or frame-time improvement. New payload SHA256:
+`1b75dbf30d586d18b740f985607e26c012d3f2d89b44e5b297b2bd0e83a36ef2`.
+Generation remains offline; runtime decoding is unchanged. The original
+0bde50f5 payload is retained as the comparison control.
+
+Native actual-shader validation found 6,087 byte-identical original/reordered
+image pairs (12,174 frames), including signed exposure, pole/cap/limb views,
+opaque/translucent foreground probes and 886 identical production guard
+states. All 30 paired timing rounds are retained. Timing is mixed: cloud-only
+medians often improve 0–6.5%, while full Earth+cloud effects are small and one
+full-turn case worsens. The unchanged hosted five-trial p95 and mandatory
+long-task gates remain required; no performance pass is inferred here.
