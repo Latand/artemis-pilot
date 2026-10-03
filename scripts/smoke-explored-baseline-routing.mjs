@@ -27,7 +27,7 @@ try {
     }
     // Real source hook validation, with only the capability marker omitted from
     // a temporary pre-fix fixture; neither application source tree is edited.
-    for (const name of ['main.js', 'render/bodySurfaceMaterial.js', 'render/catalogStars.js']) {
+    for (const name of ['main.js', 'stars.js', 'render/bodySurfaceMaterial.js', 'render/catalogStars.js']) {
         const destination = resolve(scratch, 'pre-fix/src', name);
         await mkdir(dirname(destination), { recursive: true });
         await writeFile(destination, await readFile(resolve(root, 'src', name)));

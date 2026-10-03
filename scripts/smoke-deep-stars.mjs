@@ -206,7 +206,7 @@ console.log("\nE. every refresh path passes the real clock");
     const untimed = calls.filter(c => !(c.f === "universe/activeStars.js" && c.args === "0, 0, 0") && c.args.split(",").length < 5);
     ok(calls.length >= 3 && untimed.length === 0, "no runtime refresh evaluates the stars at the epoch",
         calls.length + " call sites" + (untimed.length ? "; untimed: " + untimed.map(c => c.f).join(", ") : ""));
-    ok(/refreshActiveStars\([^;]*G\.t, advanced\)/.test(src("main.js")) && /refreshActiveStars\([^;]*activeStarsTime\(\)\)/.test(src("catalogSearch.js")),
+    ok(/refreshActiveStars\([^;]*G\.t, advanced\)/.test(src("main.js")) && /refreshActiveStars\([^;]*activeStarsExactTime\(\)\)/.test(src("catalogSearch.js")),
         "main.js passes the clock and the frame's advance; the catalog browser uses the layer's time");
 }
 

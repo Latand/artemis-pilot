@@ -65,7 +65,7 @@ function starRows(rows, star) {
         push(rows, "Luminosity", (star.lumSolar >= 100 ? Math.round(star.lumSolar).toLocaleString("en-US")
             : star.lumSolar.toFixed(3)) + " L☉");
     }
-    if (finite(star.dLy)) push(rows, "Distance from the Sun", star.dLy.toFixed(2) + " ly");
+    if (finite(star.dLy)) push(rows, "Distance from the Sun", star.dLy.toFixed(2) + " ly" + (star.distanceEstimated ? " · photometric estimate" : ""));
 }
 
 // body is the record built by explorerUI.selectedBody(); the optional raw

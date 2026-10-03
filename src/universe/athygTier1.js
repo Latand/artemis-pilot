@@ -22,6 +22,8 @@
 // that still leaves gaps (tile errors) restarts automatically so a transient
 // failure self-heals instead of leaving a permanent hole in the sky.
 
+import { createCatalogMotion, catalogPositionAt, catalogEvalTime, setCatalogMotionTime } from "./catalogMotion.js";
+import { getOrigin } from "./renderOrigin.js";
 import { ORDER, NPIX, queryDisc, pix2ang_nest } from "./healpix.js";
 import { equatorialToWorldInto, worldToEquatorialInto } from "./coords.js";
 import { GROUP_TILE_SPAN, createTileGroups, ingestTile, markResidualsDirty, pumpGroupResiduals, disposeGroups, groupStats } from "../render/athygStars.js";
@@ -347,7 +349,7 @@ export async function initEstimated({ scene, manifestUrl = DEFAULT_EST_MANIFEST_
  * `cameraDirOrFrustum` is a {x,y,z} or [x,y,z] forward-direction vector in the
  * same axes, or null to skip view-cone prioritization this call.
  * `simTSeconds` is accepted for signature stability with the rest of the
- * universe update chain; Tier-1 stars don't move yet (see athygStars.js).
+ * universe update chain; all loaded points evaluate the shared Galactic orbit.
  * Also pumps at most one chunk of the residual-refresh backlog left by a
  * prior refreshResiduals() call (see pumpResidualRefresh) — this runs
  * unconditionally, even once tile streaming itself has reached steady
@@ -357,10 +359,14 @@ export async function initEstimated({ scene, manifestUrl = DEFAULT_EST_MANIFEST_
  * pending (the common steady state) — see the early return below.
  */
 export function updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, cameraDirOrFrustum, simTSeconds) {
+    if (state) state.motionT = catalogEvalTime(simTSeconds);
+    setCatalogMotionTime(catalogEvalTime(simTSeconds), getOrigin());
     updateStreamingState(state, cameraDirOrFrustum);
 }
 
 export function updateEstimated(camWorldKmX, camWorldKmY, camWorldKmZ, cameraDirOrFrustum, simTSeconds) {
+    if (estimatedState) estimatedState.motionT = catalogEvalTime(simTSeconds);
+    setCatalogMotionTime(catalogEvalTime(simTSeconds), getOrigin());
     updateStreamingState(estimatedState, cameraDirOrFrustum);
 }
 
@@ -488,7 +494,9 @@ export function tier1MassFor(tileId, idx) {
     const mass = ekerMassForL(observedL);
     const visual = deriveStarVisualInto(mass, {});
     const full = deriveStar(mass);
-    return { mass, L: visual.L, R: full.R, Teff: full.Teff, absMag, distPc, position: { x: x * PC_KM, y: y * PC_KM, z: z * PC_KM } };
+    const epochPosition = [x * PC_KM, y * PC_KM, z * PC_KM];
+    const now = catalogPositionAt(createCatalogMotion(...epochPosition, { id: "t1:" + tileId + ":" + idx }), state.motionT || 0);
+    return { mass, L: visual.L, R: full.R, Teff: full.Teff, absMag, distPc, epochPosition, position: { x: now[0], y: now[1], z: now[2] } };
 }
 
 export async function ensureTier1Tile(tileId) {
@@ -536,12 +544,17 @@ export function nearestTier1(camWorldKm, coneDeg = 12, maxResults = 8) {
     const radec = dirToRaDec(cx, cy, cz);
     if (!radec) return nearestScratch;
     const tiles = queryDisc(state.manifest.order, radec.raDeg, radec.decDeg, coneDeg);
-    for (const tileId of tiles) {
+    const candidates = state.motionT ? state.tileData.keys() : tiles;
+    for (const tileId of candidates) {
         const data = state.tileData.get(tileId);
         if (!data) { prefetchTier1Tile(tileId); continue; }
         for (let idx = 0; idx < data.mag.length; idx++) {
             const p = idx * 3;
-            const x = data.positions[p], y = data.positions[p + 1], z = data.positions[p + 2];
+            let x = data.positions[p], y = data.positions[p + 1], z = data.positions[p + 2];
+            if (state.motionT) {
+                const now = catalogPositionAt(createCatalogMotion(x * PC_KM, y * PC_KM, z * PC_KM, { id: "t1:" + tileId + ":" + idx }), state.motionT);
+                x = now[0] / PC_KM; y = now[1] / PC_KM; z = now[2] / PC_KM;
+            }
             const d = Math.hypot(x - cx, y - cy, z - cz);
             insertNearestTier1({ tileId, idx, x, y, z, distFromCamPc: d, mag: data.mag[idx], ci: data.ci[idx] }, maxResults);
         }
