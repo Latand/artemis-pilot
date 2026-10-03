@@ -13,6 +13,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { systemRenderStatement } from './explored-system-hooks.mjs';
 import { inspectExploredHostPoint } from './explored-point-ownership.mjs';
+import { captureExploredWarmResources, gpuResourcesDoNotGrow, inspectExploredWarmTransition } from './explored-warm-resources.mjs';
 
 const quantile = (values, q) => [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * q) - 1)];
 const median = values => quantile(values, .5);
@@ -373,7 +374,7 @@ try {
         const button = page.locator(selector);
         await button.scrollIntoViewIfNeeded();
         if (mobile) await button.tap(); else await button.click();
-        await page.evaluate(() => document.activeElement?.blur()); await frames(2);
+        await page.evaluate(() => document.activeElement?.blur()); return frames(2);
     };
     if (!expectHostDrop) {
         if (mobile) await page.locator('#explorePanelToggle').tap();
@@ -407,6 +408,23 @@ try {
         await capture('06-settled-moon-surface');
         if (mobile) await page.locator('#explorePanelToggle').tap();
         await clickSystem('#exploreSystemStar'); await settleWarmView();
+        // Settled approaches do not cover every transient wide view in the
+        // rapid route. The exact failing census identified P2's existing label
+        // as its sole first upload. Run that fixed route once and preserve its
+        // cold cost before establishing the unchanged twenty-repeat baseline.
+        check('First-use fixture is the measured Barnard P2 label route', first.starId==='cat:BARNARD'&&first.planetIndex>=1);
+        const beforeFirstUse=await page.evaluate(captureExploredWarmResources),firstUseSteps=[];
+        for(const selector of [...Array(first.planetIndex+1).fill('#exploreSystemPlanet'),'#exploreSystemMoon','#exploreSystemStar']) {
+            const samples=await clickSystem(selector);
+            firstUseSteps.push({selector,samples,camera:await readCameraControls()});
+        }
+        const afterFirstUse=await page.evaluate(captureExploredWarmResources);
+        const firstUseInvariant=inspectExploredWarmTransition(beforeFirstUse,afterFirstUse);
+        report.firstUseRapidRoute={scope:'One fixed real-button roundtrip before the warm baseline; all first-use timing and allocations retained, not part of warm performance windows',
+            before:beforeFirstUse,after:afterFirstUse,steps:firstUseSteps,invariant:firstUseInvariant,
+            maximumSubmissionMs:Math.max(...firstUseSteps.flatMap(s=>s.samples.map(f=>f.cpuMs))),
+            maximumCompletedMs:Math.max(...firstUseSteps.flatMap(s=>s.samples.map(f=>f.frameAndFinishMs)))};
+        check('Fixed first-use route preserves identities and uploads only the known existing P2 label',firstUseInvariant.passed,firstUseInvariant,true);
     }
     const repeatedStart = await snapshot(first);
     report.repeatedWarmBaseline = repeatedStart;
@@ -439,7 +457,7 @@ try {
         check(`Repeated ${index + 1}: warmed host retains surface texture identity`,
             JSON.stringify(star.render.textures) === JSON.stringify(repeatedStart.render.textures), null, true);
         check(`Repeated ${index + 1}: warmed GPU resources do not grow`,
-            star.render.gpu.geometries <= repeatedStart.render.gpu.geometries && star.render.gpu.textures <= repeatedStart.render.gpu.textures, null, true);
+            gpuResourcesDoNotGrow(star.render.gpu,repeatedStart.render.gpu), null, true);
         report.repeatedRoutes.push({ fixture: first, states: { planet, moon, star } });
     }
     await phase('warmed-switch-handler-cpu');
