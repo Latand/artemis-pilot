@@ -124,7 +124,7 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
                 float finiteSource = clamp(1.0-uDist[i]/max(sourceZ,1e-9),0.0,1.0);
                 verifiedQ -= d*(uT2[i]*finiteSource/max(dot(d,d),1e-9));
             }
-            float coherent = 1.0-smoothstep(.002,.01,length(q-verifiedQ));
+            float coherenceWeight = 1.0-smoothstep(.002,.01,length(q-verifiedQ));
             q.x /= uAspect;
             vec2 rawUv = q * 0.5 + 0.5;
             vec2 uvq = clamp(rawUv, 0.0, 1.0);
@@ -132,7 +132,7 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
             // clamping used to stretch the last texel into angular wedges.
             // Continuously return to the unbent pixel when support runs out.
             float border = min(min(rawUv.x,rawUv.y),min(1.0-rawUv.x,1.0-rawUv.y));
-            float supported = smoothstep(0.0,0.035,border) * coherent;
+            float supported = smoothstep(0.0,0.035,border) * coherenceWeight;
             gl_FragColor = mix(texture2D(tDiffuse,vUv),texture2D(tDiffuse,uvq),supported);
             if (uHasDepth == 1 && zBent < 1e29 && sourceZ < zBent) {
                 supported = 0.0;

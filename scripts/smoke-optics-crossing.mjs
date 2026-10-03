@@ -29,3 +29,5 @@ const verified=p-A*finite(100,depths[3]);
 assert(Math.abs(q-verified)>.05,'final depth disproves that apparent convergence');
 assert(lens.includes('length(q-verifiedQ)'),'shader validates the final sampled source');
 assert(hole.includes('uNear/depthPerRs'),'sampling interval is clipped before choosing its midpoint');
+
+assert(!/\b(?:float|int|bool|vec[234])\s+(?:coherent|volatile|restrict|readonly|writeonly|buffer|shared|sample|subroutine)\b/.test(lens),'GLSL declarations must not use reserved memory/interpolation keywords');
