@@ -18,7 +18,21 @@ export function createShipModel() {
         cyan: new THREE.MeshBasicMaterial({ color: 0x67d7e8, toneMapped: false }),
         windows: new THREE.MeshBasicMaterial({ color: 0xf4d9a0, toneMapped: false }),
     };
-    const parts = new Map(Object.keys(materials).map(key => [key, []]));
+    const newParts = () => new Map(Object.keys(materials).map(key => [key, []]));
+    const staticParts = newParts();
+    let parts = staticParts;
+    const rotors = [];
+    const bake = (target, buckets, prefix) => {
+        for (const [name, geometries] of buckets) {
+            if (!geometries.length) continue;
+            const geometry = mergeGeometries(geometries);
+            for (const part of geometries) part.dispose();
+            geometry.computeBoundingSphere();
+            const mesh = new THREE.Mesh(geometry, materials[name]);
+            mesh.name = `${prefix}.${name}`;
+            target.add(mesh);
+        }
+    };
     const put = (key, geometry, x = 0, y = 0, z = 0) => {
         geometry.translate(x, y, z);
         parts.get(key).push(geometry);
@@ -63,10 +77,15 @@ export function createShipModel() {
     // make the rings a connected structure rather than floating ornaments.
     const ringProfile = [[.82, -.13], [.99, -.13], [1.065, -.065], [1.065, .065], [.99, .13], [.82, .13], [.79, .09], [.79, -.09], [.82, -.13]];
     for (const y of [-.61, .48]) {
+        const rotor = new THREE.Group();
+        rotor.name = `ship.rotor.${rotors.length}`;
+        // Geometry is authored in the same +Y axis: both rims turn coherently
+        // while the pressure hull, radial pylons and axial spars stay fixed.
+        parts = newParts();
         put("ceramic", lathe(ringProfile, 64), 0, y);
         put("graphite", tube(1.068, .056, .018), 0, y);
         put("copper", tube(1.07, .018, .018), 0, y - .043);
-        put("graphite", tube(.798, .125, .025), 0, y);
+
         // Narrow panel joints break up the broad ceramic faces at close zoom.
         for (const face of [-1, 1]) for (let i = 0; i < 8; i++) {
             const angle = i * Math.PI / 4;
@@ -74,26 +93,40 @@ export function createShipModel() {
             seam.rotateY(-angle);
             put("graphite", seam, Math.cos(angle) * .92, y + face * .131, Math.sin(angle) * .92);
         }
-        // Small separated segments in the inner channel, never a lens/shader.
+        // The illuminated channel belongs to the fixed inner bearing.
+        // Only its surrounding outer rim rotates, with radial clearance.
+        const rotorParts = parts; parts = staticParts;
         for (let i = 0; i < 16; i++) {
-            const arc = new THREE.TorusGeometry(.763, .013, 4, 5, Math.PI * 2 / 16 * .68);
+            const arc = new THREE.TorusGeometry(.737, .013, 4, 5, Math.PI * 2 / 16 * .68);
             arc.rotateZ(i * Math.PI * 2 / 16);
             arc.rotateX(Math.PI / 2);
             put("cyan", arc, 0, y);
         }
+        parts = rotorParts;
         for (let i = 0; i < 4; i++) {
             const angle = Math.PI / 4 + i * Math.PI / 2;
             const x = Math.cos(angle), z = Math.sin(angle);
-            beam("silver", [x * .17, y - .04, z * .15], [x * .82, y, z * .82], .11, .07);
+
             // Recessed panel breaks on the outside edge.
             const panel = new THREE.BoxGeometry(.11, .08, .018);
             panel.rotateY(Math.PI / 2 - angle);
             put("graphite", panel, x * 1.063, y, z * 1.063);
         }
+        // An asymmetric copper index plate makes even slow rotation visible.
+        const marker = new THREE.BoxGeometry(.16, .02, .10);
+        put("copper", marker, .925, y + .139, 0);
+        bake(rotor, parts, `ship.rotor.${rotors.length}`);
+        craft.add(rotor); rotors.push(rotor);
+        parts = staticParts;
+        put("graphite", tube(.775, .125, .025), 0, y);
+        for (let i = 0; i < 4; i++) {
+            const a = Math.PI / 4 + i * Math.PI / 2;
+            beam("silver", [Math.cos(a) * .17, y - .04, Math.sin(a) * .15], [Math.cos(a) * .77, y, Math.sin(a) * .77], .11, .07);
+        }
     }
     for (let i = 0; i < 4; i++) {
         const angle = Math.PI / 4 + i * Math.PI / 2;
-        const x = Math.cos(angle) * .91, z = Math.sin(angle) * .91;
+        const x = Math.cos(angle) * .68, z = Math.sin(angle) * .68;
         beam("graphite", [x, -.61, z], [x, .48, z], .075, .075);
         beam("silver", [x * 1.025, -.55, z * 1.025], [x * 1.025, .42, z * 1.025], .028, .035);
     }
@@ -102,16 +135,10 @@ export function createShipModel() {
     put("copper", tube(.263, .045, .035), 0, -.945);
     put("cyan", new THREE.CircleGeometry(.137, 24).rotateX(Math.PI / 2), 0, -.995);
 
-    // Bake by material: seven draw calls, no textures, lights, per-frame
-    // allocations, or resource growth when changing camera scale or mode.
-    for (const [name, geometries] of parts) {
-        const geometry = mergeGeometries(geometries);
-        for (const part of geometries) part.dispose();
-        geometry.computeBoundingSphere();
-        const mesh = new THREE.Mesh(geometry, materials[name]);
-        mesh.name = `ship.${name}`;
-        craft.add(mesh);
-    }
+    // Static and rotating surfaces share seven materials. Each has bounded
+    // material batches; only the two group angles change each frame.
+    bake(craft, staticParts, "ship");
+    craft.userData.rotors = rotors;
     craft.userData.design = "speculative-twin-ring";
     return craft;
 }

@@ -1,0 +1,64 @@
+name: Ship motion and speculative river
+on:
+  pull_request:
+    paths:
+      - 'src/ship*'
+      - 'src/warpRiver.js'
+      - 'src/river.js'
+      - 'src/main.js'
+      - 'index.html'
+      - 'scripts/*ship-*'
+      - '.github/workflows/ship-motion.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ship-motion-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-ship-model.mjs && node scripts/smoke-ship-motion.mjs
+      - run: npm test && npm run smoke:science-copy && npm run smoke:river-visual && npm run smoke:physics3d && npm run smoke:xrperf && npm run smoke:reltravel && npm run smoke:relview && npm run smoke:gravity-inspector
+      - run: npm run build
+  capture:
+    name: Motion ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    # Synchronous GPU readback preserves every sample but can take longer
+    # on the software CI renderer than command-submission timing.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Actual app matched animation frames and on/off physics replay
+        env:
+          DEVICE: ${{ matrix.device }}
+          ARTEMIS_EVIDENCE: evidence/motion
+        run: node scripts/verify-ship-motion.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: motion-${{ matrix.device }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
