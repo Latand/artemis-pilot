@@ -1,0 +1,50 @@
+{
+  "repository": "Latand/artemis-pilot",
+  "shards": [
+    {
+      "run": 37145710093,
+      "device": "desktop",
+      "subject": "sun",
+      "artifact": 11283689849,
+      "job": 111269512877,
+      "head": "4f79de1c7d78dcea0aa7481f6a8e9d979d34fd68",
+      "sha256": "174d93a09562726a95a5523a3fce071e4f6b6f7870292dca320dd679d1ad7d17",
+      "canonicalSha256": "888c554d0330992e3b30b04ec03c541ff414fb043c7c9744e3da8a4321b9a5a9",
+      "timingPolicy": "legacy-55",
+      "measuredFrames": 1200,
+      "artifactName": "radiance-performance-desktop-sun",
+      "artifactDigest": "sha256:d5886ebab5cb747eaf80f03f5c97fd849372e81479584e74be30bde4e41a6a38",
+      "jobName": "Full normal-entry performance desktop sun"
+    },
+    {
+      "run": 37145710093,
+      "device": "desktop",
+      "subject": "black-hole",
+      "artifact": 11284272823,
+      "job": 111269512896,
+      "head": "4f79de1c7d78dcea0aa7481f6a8e9d979d34fd68",
+      "sha256": "03cf979be1e137f6cbf95599e52851bd658ce83984e36662861e1accc049bd15",
+      "canonicalSha256": "add6c8589f2a87352a60a25cbc0b3b37097817bae22a8ad56a2f1c523e95b184",
+      "timingPolicy": "legacy-55",
+      "measuredFrames": 1200,
+      "artifactName": "radiance-performance-desktop-black-hole",
+      "artifactDigest": "sha256:12066e8b0bfad8967f1c209f100c13ec078f91af70741f6c7782c4ff632920ff",
+      "jobName": "Full normal-entry performance desktop black-hole"
+    },
+    {
+      "run": 37148090790,
+      "device": "mobile",
+      "subject": "black-hole",
+      "artifact": 11284910593,
+      "job": 111276125489,
+      "head": "b9e7c15f1507a1ecdc2beed6079676a24374b1eb",
+      "sha256": "921d5993781c69674ca15bad83fe899250f899f768035358b0b741085a7a78f0",
+      "canonicalSha256": "d4439712d23d8dc7e0333e6b7cedaebeb527005252e207c024df6df04ed99d80",
+      "timingPolicy": "legacy-55",
+      "measuredFrames": 1200,
+      "artifactName": "radiance-performance-mobile-black-hole",
+      "artifactDigest": "sha256:180249694ccb6ac024fbe328eccda4749bd8cd40ace6ba4c98c879e86c832cd8",
+      "jobName": "Corrected mobile performance black-hole"
+    }
+  ]
+}

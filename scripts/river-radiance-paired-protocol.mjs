@@ -1,7 +1,8 @@
 // Acceptance contract shared by the full-layer runner and pure negative tests.
 import assert from 'node:assert/strict';
 import { healthyRadianceFrame } from './river-radiance-qa.mjs';
-import { runLimits,validatePhases } from './river-radiance-run-budget.mjs';
+import { runLimits,legacyRunLimits,validatePhases } from './river-radiance-run-budget.mjs';
+import { pinnedCompleteShard,completedShardPolicy } from './river-radiance-complete-shards.mjs';
 import { validateFullPreparation } from './river-radiance-full-preparation.mjs';
 import { radianceDeviceTargets,volumeRefinementReady,validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
 
@@ -55,10 +56,10 @@ export function trialSummary(trial) {
   assert(A.p95 > 0);
   return { A, B, ratio: B.p95 / A.p95, regressionPercent: (B.p95 / A.p95 - 1) * 100 };
 }
-export function scenarioSummary(scenario) {
-  validatePhases(scenario.phases);
+export function scenarioSummary(scenario,{legacy=false}={}) {
+  validatePhases(scenario.phases,legacy?legacyRunLimits:runLimits);
   const size=radianceDeviceTargets(scenario.pages.A.mobile).volume;
-  validateFullPreparation(scenario.preparation,size);
+  validateFullPreparation(scenario.preparation,size,{legacy});
   assert.deepEqual(scenario.trials.map(t => t.order), protocol.orders, 'All five predeclared trials are mandatory');
   for (const label of ['A', 'B']) {
     assert.equal(scenario.warmup[label].length, protocol.warmupFrames, 'Keep all 120 warmup frames');
@@ -131,19 +132,37 @@ export function assertHealthyState(s, mobile, subject) {
   assert.equal(s.post.bloom, false, 'Default production bloom policy is preserved; neither device requests optional bloom');
 }
 
-export function aggregateReports(reports, device, expectedCandidateRevision) {
+export function aggregateReports(reports, device, expectedCandidateRevision, {reuseComplete=false,legacy=false}={}) {
+  if(legacy)assert(!reuseComplete&&['4f79de1c7d78dcea0aa7481f6a8e9d979d34fd68','b9e7c15f1507a1ecdc2beed6079676a24374b1eb'].includes(expectedCandidateRevision),'Historical policy is limited to the actual preserved heads');
   assert.match(expectedCandidateRevision, /^[a-f0-9]{40}$/, 'Reviewed candidate HEAD is required for aggregation');
+  if(reuseComplete){
+    assert.equal(reports.length,3,'Exactly three complete raw views per device');
+    assert(!completedShardPolicy.shards.some(p=>p.head===expectedCandidateRevision),'Replacement data must come from a new reviewed head');
+  }
   assert(['desktop', 'mobile'].includes(device));
   const scenarios = [];
+  const physicalSources=s=>({A:s.A,B:Object.fromEntries(['productionReference','productionTrees','hashes','computeHash'].map(k=>[k,s.B[k]]))});
+  const provenance=[];
+  let freshReport=null;
   for (const report of reports) {
-    assert.deepEqual(report.runLimits,runLimits,'Same explicit phase budgets are mandatory');
+    const pin=reuseComplete?pinnedCompleteShard(report,device):null;
+    const old=!!pin||legacy;
+    if(reuseComplete)assert.equal(report.shardComplete,true,'An incomplete report cannot contribute even partial trials');
+    assert.deepEqual(report.runLimits,old?legacyRunLimits:runLimits,'Pinned explicit phase budgets are mandatory');
+    assert.equal(report.preparationPolicy,old?undefined:'asset-native-v2');
     assert.equal(report.device, device, 'Device shards cannot be mixed');
     assert.deepEqual(report.protocol, protocol, 'No protocol changes between shards');
-    assert.deepEqual(report.sources, reports[0].sources, 'Exact same source identities across shards');
-    assert.deepEqual(report.harness, reports[0].harness, 'Same reviewed harness in every shard');
+    if(reuseComplete){
+      assert.deepEqual(physicalSources(report.sources),physicalSources(reports[0].sources),'Exact common production and baseline provenance across reused and new shards');
+      if(!pin){if(freshReport)assert.deepEqual(report.harness,freshReport.harness);freshReport=report;}
+      provenance.push({fixture:report.scenarios[0].fixture,actualHead:report.sources.B.revision,harness:report.harness,reused:!!pin,pin});
+    }else{
+      assert.deepEqual(report.sources, reports[0].sources, 'Exact same source identities across shards');
+      assert.deepEqual(report.harness, reports[0].harness, 'Same reviewed harness in every shard');
+    }
     assert.equal(report.errors.length, 0, 'Errors in a shard cannot be suppressed by aggregation');
     assert.equal(report.sources.A.revision, protocol.baseline);
-    assert.equal(report.sources.B.revision, expectedCandidateRevision, 'Every shard must use the reviewed candidate HEAD');
+    assert.equal(report.sources.B.revision,pin?pin.head:expectedCandidateRevision,'Every shard must use its exact reviewed head');
     assert.equal(report.sources.B.productionReference, protocol.productionCandidate);
     assert.equal(report.scenarios.length, report.selectedFixtures.length);
     for (const scenario of report.scenarios) {
@@ -180,7 +199,7 @@ export function aggregateReports(reports, device, expectedCandidateRevision) {
         assert(ranges.every(range => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end > range.start));
         longTasks[label] = summarizeLongTasks(scenario.longTasks[label].allEntries, ranges);
       }
-      scenarios.push({ name: scenario.name, fixture: scenario.fixture, ...scenarioSummary(scenario), longTasks });
+      scenarios.push({ name: scenario.name, fixture: scenario.fixture, ...scenarioSummary(scenario,{legacy:old}), longTasks });
     }
   }
   assert.deepEqual(scenarios.map(s => s.fixture.subject).sort(), protocol.fixtures.map(f => f.subject).sort(), 'All three views, once each, are mandatory');
@@ -192,7 +211,10 @@ export function aggregateReports(reports, device, expectedCandidateRevision) {
       measuredMaximumMs: Math.max(...sets.map(s => s.measuredMaximumMs)) };
   }
   const budget = longTaskBudget(totals.A, totals.B);
-  return { device, expectedCandidateRevision, protocol, sources: reports[0].sources, harness: reports[0].harness, scenarios,
+  if(reuseComplete)assert(freshReport,'This continuation requires its new incomplete-view replacement, never only cached gates');
+  const representative=freshReport||reports[0];
+  return { device, expectedCandidateRevision, protocol, sources: representative.sources, harness: representative.harness, scenarios,
+    ...(reuseComplete?{shardProvenance:provenance}:{}),
     mandatoryFrames: { measured: 3600, warmup: 720 }, longTasks: totals, longTaskBudget: budget,
     passed: scenarios.every(s => s.passesFivePercentTarget) && budget.passed };
 }

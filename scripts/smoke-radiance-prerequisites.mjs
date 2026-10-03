@@ -3,6 +3,7 @@ import { mkdtempSync,writeFileSync,readFileSync,rmSync,existsSync } from 'node:f
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { legacyRunLimits } from './river-radiance-run-budget.mjs';
 import { aggregateReports,protocol } from './river-radiance-paired-protocol.mjs';
 import { report as rawFixture } from './river-radiance-test-fixtures.mjs';
 import { prerequisite,verifyMetadata,verifyArtifact,verifySource,compatibleDeviceGates } from './verify-radiance-prerequisites.mjs';
@@ -29,6 +30,7 @@ for(const [index,folder]of ['transient-mobile','lifecycle-mobile','lifecycle-des
 const mobileHead='b'.repeat(40);
 function shards(device,head){
  const raw=structuredClone(rawFixture());raw.device=device;raw.sources.B.revision=head;
+ if(head===prerequisite.head){raw.runLimits=legacyRunLimits;delete raw.preparationPolicy;for(const scenario of raw.scenarios){delete scenario.preparation.nativeField;for(const phase of scenario.phases)phase.limitMs=legacyRunLimits[phase.name+'Ms'];}}
  Object.assign(raw.sources.B,{productionTrees:'same production',hashes:{source:'same source'},computeHash:'same compute'});
  if(device==='mobile'){
   function convert(value){
@@ -45,7 +47,7 @@ function shards(device,head){
  return raw.scenarios.map(s=>({...raw,selectedFixtures:[s.fixture],scenarios:[s]}));
 }
 const desktopRaw=shards('desktop',prerequisite.head),mobileRaw=shards('mobile',mobileHead);
-const desktop={errors:[],...aggregateReports(desktopRaw,'desktop',prerequisite.head)},mobile={errors:[],...aggregateReports(mobileRaw,'mobile',mobileHead)};
+const desktop={errors:[],...aggregateReports(desktopRaw,'desktop',prerequisite.head,{legacy:true})},mobile={errors:[],...aggregateReports(mobileRaw,'mobile',mobileHead)};
 const check=(d=desktop,m=mobile,dr=desktopRaw,mr=mobileRaw)=>compatibleDeviceGates(d,m,mobileHead,dr,mr);
 check();assert.throws(()=>compatibleDeviceGates(desktop,mobile,mobileHead));
 for(const mutate of[

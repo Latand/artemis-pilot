@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { spawn,spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { runLimits,phaseBudget,validatePhases,durableReport } from './river-radiance-run-budget.mjs';
-assert.deepEqual(runLimits,{preparationMs:3600000,warmupMs:900000,measurementMs:3300000,assetSettlementMs:300000,checkpointMs:5000,jobMinutes:135});
+assert.deepEqual(runLimits,{preparationMs:3600000,warmupMs:900000,measurementMs:4800000,assetSettlementMs:300000,checkpointMs:5000,jobMinutes:160});
 assert.equal((runLimits.preparationMs+runLimits.warmupMs+runLimits.measurementMs)/60000+5,runLimits.jobMinutes);
 const directory=mkdtempSync(join(tmpdir(),'radiance-deadline-'));
 try{
@@ -45,10 +45,10 @@ try{
  const aggregate=spawnSync(process.execPath,['scripts/aggregate-river-radiance-paired.mjs','desktop',aggregatePath,join(directory,'missing-report.json')],{encoding:'utf8'});
  assert.equal(aggregate.status,1);const failure=JSON.parse(readFileSync(aggregatePath));
  assert.equal(failure.passed,false);assert.match(failure.errors[0].message,/ENOENT/);
- const workflow=readFileSync('.github/workflows/river-radiance-diagnostic.yml','utf8');
- const perf=workflow.split('  paired-performance:')[1].split('  aggregate-performance:')[0];
- assert(perf.includes('timeout-minutes: 135')&&perf.includes('timeout-minutes: 131'));
- assert(perf.includes('device: [desktop, mobile]')&&perf.includes('fixture: [proxima, sun, black-hole]'));
- assert(perf.includes('if: always()')&&workflow.split('  aggregate-performance:')[1].includes('timeout-minutes: 10'));
+ const workflow=readFileSync('.github/workflows/river-radiance-incomplete.yml','utf8');
+ const perf=workflow.split('  incomplete-performance:')[1].split('  recomputed-device-aggregate:')[0];
+ assert(perf.includes('timeout-minutes: 160')&&perf.includes('timeout-minutes: 156'));
+ assert(perf.includes('device: desktop')&&perf.includes('device: mobile')&&perf.includes('fixture: proxima')&&perf.includes('fixture: sun'));
+ assert(perf.includes('if: always()')&&workflow.split('  recomputed-device-aggregate:')[1].includes('timeout-minutes: 10'));
  console.log('Phase deadlines reject late/hung operations; atomic reports preserve samples and pending operation through real SIGTERM');
 }finally{rmSync(directory,{recursive:true,force:true});}

@@ -54,7 +54,7 @@ export function compatibleDeviceGates(desktop,mobile,expectedMobileHead,desktopS
     assert(Array.isArray(shards)&&shards.length===3,'All three raw shard reports are required per device');
     assert.deepEqual(gate.errors,[],'Retained aggregate errors cannot be hidden by cached pass flags');
     assert.deepEqual(gate.protocol,protocol,'Canonical views, trials, warmup and samples are mandatory');
-    const actual=aggregateReports(shards,device,head);
+    const actual=aggregateReports(shards,device,head,{legacy:['4f79de1c7d78dcea0aa7481f6a8e9d979d34fd68','b9e7c15f1507a1ecdc2beed6079676a24374b1eb'].includes(head)});
     assert.equal(actual.passed,true,'Recomputed raw p95 and device-wide long-task gates must pass');
     for(const [key,value] of Object.entries(actual))assert.deepEqual(gate[key],value,`Cached aggregate ${key} must match raw recomputation`);
     assert.equal(gate.sources.B.revision,head);

@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import { validatePreparationFrame,validatePrefix,validateFence,settlementReadyWithinDeadline } from './river-radiance-preparation-qa.mjs';
 import { radianceDeviceTargets,validateVolumeProgress,volumeRefinementReady,validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
+import { nativeFieldSnapshot,createNativeFieldGuard,advanceNativeFieldGuard,nativeFieldSettlementReady,validateNativeSettlementRecord } from './river-radiance-native-settlement.mjs';
+
+const assetsOnly=ready=>({A:{ready:ready.A.assetReady===true},B:{ready:ready.B.assetReady===true}});
 
 export async function prepareFullView({pages,record,viewport,mobile,budget,save,activate,readiness}){
   const targets=radianceDeviceTargets(mobile),size=targets.volume;
   assert.deepEqual([viewport.width,viewport.height],targets.canvas,'Keep the declared canvas viewport');
   async function progress(label){return pages[label].evaluate(()=>pairedQA.volume.pairedVolumeProgress());}
+  let nativeTrackers=null;
   async function pair(target,deadline=Infinity){
     for(const label of['A','B'])await budget.run(async()=>{
       await activate(pages[label]);const start=performance.now();
@@ -15,6 +19,10 @@ export async function prepareFullView({pages,record,viewport,mobile,budget,save,
       sample.roundTripMs=performance.now()-start;sample.protocolAndSchedulingMs=Math.max(0,sample.roundTripMs-sample.frameAndFinishMs);
       target[label].push(sample);save();validatePreparationFrame(sample);
       sample.volumeProgress=await progress(label);save();validateVolumeProgress(sample.volumeProgress,size);
+      if(target===record.nativeField){
+        sample.nativeField=await pages[label].evaluate(nativeFieldSnapshot);save();
+        nativeTrackers[label]=advanceNativeFieldGuard(nativeTrackers[label],sample.nativeField);
+      }
     },`native preparation frame ${label}`,deadline);
   }
   async function fence(label,stage){
@@ -39,10 +47,21 @@ export async function prepareFullView({pages,record,viewport,mobile,budget,save,
     const ready=await budget.run(readBoth,'post-prefix asset readiness',assetDeadline);
     record.assets.readiness.push(ready);record.assets.elapsedMs=performance.now()-assetStart;save();
     for(const label of['A','B'])validatePrefix(ready[label].catalogPrefix,120);
-    if(settlementReadyWithinDeadline(ready,record.assets.elapsedMs,300000))break;
+    if(settlementReadyWithinDeadline(assetsOnly(ready),record.assets.elapsedMs,300000))break;
     // The same independent asset deadline also bounds frames, not just polling.
     await pair(record.assets,assetDeadline);
   }
+  record.nativeField.before=await budget.run(async()=>({A:await pages.A.evaluate(nativeFieldSnapshot),B:await pages.B.evaluate(nativeFieldSnapshot)}),'native field checkpoint');save();
+  nativeTrackers=Object.fromEntries(['A','B'].map(label=>[label,createNativeFieldGuard(record.nativeField.before[label])]));
+  let fieldStates={...record.nativeField.before};
+  while(!['A','B'].every(label=>nativeFieldSettlementReady(fieldStates[label]))){
+    // Real construction, including any staged budget retune, belongs to the
+    // existing total preparation budget. No asset deadline or cadence bypass.
+    await pair(record.nativeField);
+    fieldStates=Object.fromEntries(['A','B'].map(label=>[label,record.nativeField[label].at(-1).nativeField]));
+  }
+  record.nativeField.after=structuredClone(fieldStates);record.nativeField.complete=true;save();
+  validateNativeSettlementRecord(record.nativeField);
   for(const label of['A','B'])await fence(label,'settled');
   // Preserve the proven native preparation history. These are not the separate
   // 120 synchronous acceptance warmup frames that follow completed preparation.
@@ -67,11 +86,16 @@ export async function prepareFullView({pages,record,viewport,mobile,budget,save,
   return previous;
 }
 
-export function validateFullPreparation(record,size){
+export function validateFullPreparation(record,size,{legacy=false}={}){
   assert(record.complete);assert.equal(record.refinement.maxAdditionalFrames,Math.ceil(size[1]/2)+60);
   assert(record.refinement.A.length<=record.refinement.maxAdditionalFrames);
-  const stages=['prefix','assets','nativeWarmup','refinement'];
+  const stages=['prefix','assets',...(legacy?[]:['nativeField']),'nativeWarmup','refinement'];
+  if(!legacy)validateNativeSettlementRecord(record.nativeField);
   for(const label of['A','B']){
+    if(!legacy){
+      assert.equal(record.nativeField.before[label].frameNo,121+record.assets[label].length,'Native settlement starts at the exact asset boundary');
+      assert.equal(record.nativeField.after[label].frameNo,record.nativeField.before[label].frameNo+record.nativeField[label].length);
+    }
     assert.equal(record.prefix[label].length,120);assert.equal(record.nativeWarmup[label].length,120);
     const all=stages.flatMap(stage=>record[stage][label]);
     assert.equal(all[0].frameNo,2);
@@ -90,12 +114,12 @@ export function validateFullPreparation(record,size){
     }
   }
   assert(record.assets.readiness.length>0);
-  assert(settlementReadyWithinDeadline(record.assets.readiness.at(-1),record.assets.elapsedMs,300000));
+  assert(settlementReadyWithinDeadline(legacy?record.assets.readiness.at(-1):assetsOnly(record.assets.readiness.at(-1)),record.assets.elapsedMs,300000));
   for(const ready of record.assets.readiness)for(const label of['A','B'])validatePrefix(ready[label].catalogPrefix,120);
   assert.deepEqual(record.fences.map(f=>[f.label,f.stage]),[['A','settled'],['B','settled'],['A','native-warm'],['B','native-warm'],['A','refined'],['B','refined']]);
   for(const f of record.fences){
     validateFence(f);
-    const expected=121+record.assets[f.label].length+(f.stage==='settled'?0:120)+(f.stage==='refined'?record.refinement[f.label].length:0);
+    const expected=121+record.assets[f.label].length+(legacy?0:record.nativeField[f.label].length)+(f.stage==='settled'?0:120)+(f.stage==='refined'?record.refinement[f.label].length:0);
     assert.equal(f.before,expected,'A GPU fence must describe its exact preparation boundary');
   }
 }

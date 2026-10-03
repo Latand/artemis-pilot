@@ -1,5 +1,10 @@
 # Paired owner-radiance performance extension
 
+Current local continuation: run only desktop Proxima, mobile Sun and mobile
+Proxima; reuse the three authenticated complete shards. Preparation/warmup/
+measurement caps are now 60/15/80 minutes. The earlier run records and timing
+policies below remain historical evidence, not passing substitutes.
+
 This separate test harness compares exact baseline
 `09863eedda25eef36d79e9cf88daa4ff3e377875` against the production source in
 `2c9b5bcf2f542728d76cf1350007297db2678f34`. Later harness-only candidate commits
@@ -46,6 +51,7 @@ of equal catalog content.
 
 Preparation preserves the reviewed native-rAF path: 120 catalog-prefix frames per
 revision, then a separate five-minute deadline for remaining assets/workers,
+finite native resolved-field settlement under the total preparation cap,
 120 further native preparation frames, and bounded continued refinement until
 full rows, blend and saved-history use are complete on both pages. These native
 frames omit only the test-added GPU finish/readback; production synchronization
@@ -58,8 +64,10 @@ state and raw river textures must match before the original synchronous warmup.
 
 The entire preparation phase has a 60-minute cap, including browser/page startup,
 fixed prefix, assets, native refinement, GPU drains and final snapshots. Asset
-readiness must arrive strictly before its separate five-minute deadline after
-the prefix; late readiness is a failure. A new dirty/reset reason, a clean frame
+network/asset readiness must arrive strictly before its separate five-minute
+deadline after the prefix; late readiness is a failure. The per-frame native
+resolved-field queue is observed separately under the 60-minute total cap,
+without replacing its real idle predicate. A new dirty/reset reason, a clean frame
 without row progress, or stalled blend/history fails. The full HYG layer,
 procedural field, galaxy population/volume, epoch-dependent tides, maps, gravity
 river and normal postprocessing/lensing remain present. Production visibility
@@ -149,8 +157,10 @@ estimate is 106–109 minutes per similarly expensive shard. The other views and
 mobile device have not been measured in this full workload; that arithmetic is
 a budget proxy, not a predicted runtime or accepted result for those views.
 
-Explicit phase caps are 60 minutes preparation, 15 minutes synchronous warmup,
-and 55 minutes measured trials plus final state/observer checks. Each phase is
+The original 4f79de1c/b9e7c15f runs used 60 minutes preparation, 15 minutes
+synchronous warmup and 55 minutes measured trials plus final state/observer
+checks. These historical caps remain pinned when their completed shards are
+revalidated; the current continuation uses the policy below. Each phase is
 bounded even while a browser call is pending; finishing at or after its deadline
 fails. The browser step has a 131-minute ceiling and its job 135 minutes, reserving
 up to four minutes around the step for dependencies and artifact upload. The
@@ -270,3 +280,66 @@ shortened protocols and cached passing budgets cannot bypass the gate.
 Harness hashes differ for the reviewed
 mobile target assertion correction; production and the workload are unchanged.
 No measured failure is retried by this setup-only continuation.
+
+## Bounded completion of the three incomplete views
+
+Both original workflows are terminal. Desktop Sun, desktop black-hole and mobile
+black-hole completed all five trials and 1,200 measured frames each. Desktop
+Proxima stopped at the 55-minute measurement cap with 1,029 frames; mobile Sun
+stopped there with 1,165. Corrected mobile Proxima reached no measured trial:
+its 120-update catalog prefix finished, but the asset deadline also covered a
+finite native field retune. None of those partial trials counts toward acceptance.
+
+The retained mobile sequence has one finite 89-bin retune (38 bar +51 disk bins
+for epoch 18). The initial 250,001-star selection caused the mobile 60,000-star
+budget controller to retune once, to magnitude 7.25. At frame 179/build 179, all
+89 staged bins swapped to 38,715 stars; frame 180 added no build but had not yet
+completed the required three no-work updates. The real fixture ends there with
+idle:false. Missing queue fields are never invented in that fixture.
+
+Asset readiness now retains every prior map/catalog/network/worker requirement
+except resolvedField.idle. Native field settlement then continues every paired
+production rAF frame under the existing total 60-minute preparation cap. It reads
+existing debug state, validates the actual required-bin set, at most one issued
+request per update, completed/staged/inflight accounting, frozen observer and
+inputs, and real three-update idle. Distinct generation limits are bounded by
+the production 6..11 grid at 0.25 magnitude; repeated limits or bin rebuilds fail.
+A genuine pending worker can continue under the total deadline. There is no
+extra short native timer, forced-ready flag, skipped draw or reduced workload.
+Detailed queue snapshots are collected during native settlement, outside the
+unchanged synchronous measurement windows. Existing full-state snapshots still
+require the field to be idle before and after every measured block.
+
+Across 96 retained complete blocks, the slowest 60-frame block was 196.528 seconds
+(desktop Proxima, trial 5, A). Twenty such blocks cost 3,930.560 seconds; the largest
+observed complete-phase overhead adds 8.894 seconds. A 20% margin gives 4,727.344
+seconds (78.789 minutes), rounded to an 80-minute measurement cap. Preparation
+remains 60 minutes and synchronous warmup 15. Browser steps are capped at 156
+minutes and jobs at 160, keeping all 1,200 samples, all five original trials and
+unchanged 5% p95 and long-task limits. This is a bounded completion attempt based
+on retained workload timing; it does not reinterpret incomplete runs as passes.
+
+Only a push to `diagnostic/river-radiance-incomplete-only` triggers the new
+workflow. Its exact matrix is desktop/proxima, mobile/sun, mobile/proxima.
+It authenticates the successful original job and artifact IDs/digests for:
+
+- Desktop Sun: run 37145710093, artifact 11283689849, head 4f79de1c
+- Desktop black-hole: run 37145710093, artifact 11284272823, head 4f79de1c
+- Mobile black-hole: run 37148090790, artifact 11284910593, head b9e7c15f
+
+Raw byte and canonical JSON hashes are pinned in the complete-shard manifest.
+Their real source/harness headers and original 55-minute timing policy are kept.
+New reports must come from the new exact reviewed head, carry the explicit
+asset/native readiness contract, and complete their own full trials. The mixed
+aggregator revalidates every raw report, compares exact common production and
+baseline provenance, and recomputes all three view p95 values plus one combined
+long-task budget per device. Altered reused reports, partial trials, changed
+source revisions, shorter protocols and cached passing summaries cannot pass.
+The result lists each shard's actual provenance rather than rewriting old heads.
+
+The provenance job is capped at 10 minutes, three fresh jobs at 160 each, and two
+aggregates at 10 each: 510 standard-runner minutes maximum, with a 180-minute
+immediate-admission dependency path. Complete measured gate failures are never
+retried. Every prior failed report stays preserved. Publication and launch of
+this correction require independent review; this local implementation has not
+started another browser run.

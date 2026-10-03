@@ -38,6 +38,20 @@ test('stream request counters exist before any module startup', () => {
   vm.runInNewContext(`(${initializeDocument.toString()})();`, sandbox);
   assert.equal(sandbox.window.__pairedTier1Remaining, 0); assert.equal(sandbox.window.__pairedTier1Updates, 0);
 });
+test('asset readiness is separate from the real native field idle predicate',()=>{
+  const values={surfaces:{pending:0,inFlight:false},catalog:{loaded:true,error:''},tier1:{initialized:true,tilesLoaded:960,pending:0,tileErrors:0,residualDirtyGroups:0},
+    field:{enabled:true,idle:false},volume:{mapsReady:true,mapError:null},galaxy:{ready:true,building:false,error:null},sky:{loaded:true,error:null},tide:{started:false,ready:false,error:null}};
+  const evaluate=()=>{
+    const q={surfaces:{pairedSurfaceQueue:()=>values.surfaces},catalog:{catalogStarsStatus:()=>values.catalog},tier1:{tier1Stats:()=>values.tier1},field:{resolvedFieldStatus:()=>values.field},
+      volume:{galaxyVolumeStats:()=>values.volume},galaxies:{galaxyPopulationStatus:()=>values.galaxy},sky:{realSkyStatus:()=>values.sky},tides:{mergerTidesStatus:()=>values.tide}};
+    return vm.runInNewContext(`(${readiness.toString()})()`,{pairedQA:q,window:{__pairedTier1Remaining:0,__pairedTier1Updates:120}});
+  };
+  assert.equal(evaluate().assetReady,true);assert.equal(evaluate().ready,false);
+  values.field.idle=true;assert.equal(evaluate().ready,true);
+  for(const [entry,key,value]of [['catalog','loaded',false],['tier1','pending',1],['volume','mapsReady',false],['surfaces','pending',1],['galaxy','building',true],['sky','error','failure'],['tide','error','failure']]){
+    const original=values[entry][key];values[entry][key]=value;assert.equal(evaluate().assetReady,false);values[entry][key]=original;
+  }
+});
 test('nearest-rank p95 retains tail in mean/max', () => {
   const s = summarize(Array(95).fill(10).concat(Array(5).fill(300)));
   assert.equal(s.p95, 10); assert.equal(s.max, 300); assert.equal(s.count, 100); assert.equal(s.mean, 24.5);

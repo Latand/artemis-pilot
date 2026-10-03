@@ -125,14 +125,15 @@ export function initializeDocument() {
   }
 }
 export async function initializeQA({ fixture, spec, catalogSetupUpdates }) {
-  const [scene, state, constants, holes, bodies, surfaces, galaxy, epoch, catalog, tier1, field, volume, galaxies, tides, sky] = await Promise.all([
+  const [scene, state, constants, holes, bodies, surfaces, galaxy, epoch, catalog, tier1, field, volume, galaxies, tides, sky, fieldMath] = await Promise.all([
     import('/src/scene.js'), import('/src/state.js'), import('/src/constants.js'), import('/src/blackholes.js'),
     import('/src/bodies.js'), import('/src/render/bodySurfaceMaterial.js'), import('/src/universe/galaxy.js'),
     import('/src/epoch.js'), import('/src/render/catalogStars.js'), import('/src/universe/athygTier1.js'),
     import('/src/render/resolvedFieldStars.js'), import('/src/render/galaxyVolume.js'),
     import('/src/render/galaxyPopulationRender.js'), import('/src/render/mergerTidesRender.js'), import('/src/realSky.js'),
+    import('/src/universe/resolvedField.js'),
   ]);
-  window.pairedQA = { scene, state, G: state.G, constants, holes, bodies, surfaces, galaxy, epoch, catalog, tier1, field, volume, galaxies, tides, sky };
+  window.pairedQA = { scene, state, G: state.G, constants, holes, bodies, surfaces, galaxy, epoch, catalog, tier1, field, volume, galaxies, tides, sky, fieldMath };
   window.__pairedRadianceFixture = { sources: spec.subject === 'proxima' ? fixture.sources : [], advance: spec.rate / 60 };
   state.setSimTime(spec.subject === 'proxima' ? fixture.time : 0);
   Object.assign(state.G, { paused: true, dead: true, observerMode: true, landed: null, gr: true,
@@ -164,10 +165,12 @@ export function readiness() {
   const q = pairedQA;
   const surfaces = q.surfaces.pairedSurfaceQueue(), catalog = q.catalog.catalogStarsStatus(), tier1 = q.tier1.tier1Stats();
   const field = q.field.resolvedFieldStatus(), volume = q.volume.galaxyVolumeStats(), galaxy = q.galaxies.galaxyPopulationStatus(), sky = q.sky.realSkyStatus();
-  return { ready: !surfaces.pending && !surfaces.inFlight && catalog.loaded && !catalog.error &&
+  const tide=q.tides.mergerTidesStatus();
+  const assetReady= !surfaces.pending && !surfaces.inFlight && catalog.loaded && !catalog.error &&
     tier1.initialized && window.__pairedTier1Remaining === 0 && tier1.tilesLoaded > 0 && !tier1.pending && !tier1.tileErrors && !tier1.residualDirtyGroups &&
-    field.enabled && field.idle && volume.mapsReady && !volume.mapError && galaxy.ready && !galaxy.building && !galaxy.error && (!q.tides.mergerTidesStatus().started || q.tides.mergerTidesStatus().ready) && !q.tides.mergerTidesStatus().error && sky.loaded && !sky.error,
-    surfaces, catalog, tier1, field, volume, galaxy, sky,
+    volume.mapsReady && !volume.mapError && galaxy.ready && !galaxy.building && !galaxy.error && (!tide.started || tide.ready) && !tide.error && sky.loaded && !sky.error;
+  return {ready:assetReady&&field.enabled&&field.idle,assetReady,
+    surfaces, catalog, tier1, field, volume, galaxy, sky, tide,
     catalogPrefix:{updates:window.__pairedTier1Updates,remaining:window.__pairedTier1Remaining} };
 }
 export async function readState() {

@@ -1,6 +1,7 @@
 // Deterministic raw reports for pure acceptance/provenance negative tests.
 import { protocol } from './river-radiance-paired-protocol.mjs';
 import { runLimits } from './river-radiance-run-budget.mjs';
+import { syntheticNativeFieldSnapshot } from './smoke-river-radiance-native-settlement.mjs';
 const digest = 'a'.repeat(64);
 function state(subject = 'sun') {
   return { quality: { mobile: false, loadShed: 0 }, dpr: 1, size:[1200,800], context: { lost: false, losses: 0, restores: 0, error: 0 },
@@ -32,7 +33,7 @@ function preparation(){
  const prefix=Array.from({length:120},(_,i)=>({...native(i+2),readiness:{catalogPrefix:{updates:i+1,remaining:119-i}}}));
  const nativeWarmup=Array.from({length:120},(_,i)=>native(i+122));
  const pair=value=>({A:structuredClone(value),B:structuredClone(value)});
- return {complete:true,prefix:pair(prefix),nativeWarmup:pair(nativeWarmup),assets:{...pair([]),elapsedMs:10,readiness:[{A:{ready:true,catalogPrefix:{updates:120,remaining:0}},B:{ready:true,catalogPrefix:{updates:120,remaining:0}}}]},
+ return {complete:true,prefix:pair(prefix),nativeField:{...pair([]),before:pair(syntheticNativeFieldSnapshot()),after:pair(syntheticNativeFieldSnapshot()),complete:true},nativeWarmup:pair(nativeWarmup),assets:{...pair([]),elapsedMs:10,readiness:[{A:{ready:true,assetReady:true,catalogPrefix:{updates:120,remaining:0}},B:{ready:true,assetReady:true,catalogPrefix:{updates:120,remaining:0}}}]},
  refinement:{...pair([]),before:pair(volume(241)),after:pair(volume(241)),maxAdditionalFrames:460},
  fences:['settled','native-warm','refined'].flatMap(stage=>['A','B'].map(label=>({label,stage,before:stage==='settled'?121:241,after:stage==='settled'?121:241,durationMs:1,pixel:[0,0,0,0],contextLost:false,error:0,defaultFramebuffer:true})))};
 }
@@ -51,7 +52,7 @@ function scenario(fixture = protocol.fixtures[1], ratios = [1, 1, 1, 1, 1]) {
     }) })), longTasks: { A: { allEntries: [] }, B: { allEntries: [] } } };
 }
 function report() {
-  return { device: 'desktop', runLimits, protocol: structuredClone(protocol), selectedFixtures: structuredClone(protocol.fixtures),
+  return { device: 'desktop', preparationPolicy:'asset-native-v2',runLimits, protocol: structuredClone(protocol), selectedFixtures: structuredClone(protocol.fixtures),
     sources: { A: { revision: protocol.baseline }, B: { revision: protocol.productionCandidate, productionReference: protocol.productionCandidate } }, harness: { digest },
     errors: [], scenarios: protocol.fixtures.map(f => scenario(f)) };
 }

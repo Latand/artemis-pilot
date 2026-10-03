@@ -57,10 +57,10 @@ if (process.argv.includes('--validate')) {
 await mkdir(out, { recursive: true });
 const browserArgs = ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader',
   '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding'];
-const report = { version: 2, runLimits, device, viewport, deviceScaleFactor: 1, sources, protocol, selectedFixtures, browserArgs,
+const report = { version: 3, preparationPolicy:'asset-native-v2', runLimits, device, viewport, deviceScaleFactor: 1, sources, protocol, selectedFixtures, browserArgs,
   scope: selectedFixtures.length === protocol.fixtures.length ? 'complete device suite' : 'single-view shard; aggregate all three views for acceptance',
   expectedFrames: { measured: selectedFixtures.length * 1200, warmup: selectedFixtures.length * 240 },
-  harness: Object.fromEntries(await Promise.all(['benchmark-river-radiance.mjs', 'river-radiance-paired-browser.mjs', 'river-radiance-paired-protocol.mjs', 'river-radiance-qa.mjs', 'river-radiance-full-preparation.mjs', 'river-radiance-run-budget.mjs', 'river-radiance-volume-progress.mjs', 'river-radiance-preparation-qa.mjs', 'fixtures/river-radiance-proxima.json']
+  harness: Object.fromEntries(await Promise.all(['benchmark-river-radiance.mjs', 'river-radiance-paired-browser.mjs', 'river-radiance-paired-protocol.mjs', 'river-radiance-qa.mjs', 'river-radiance-full-preparation.mjs', 'river-radiance-run-budget.mjs', 'river-radiance-volume-progress.mjs', 'river-radiance-native-settlement.mjs', 'river-radiance-preparation-qa.mjs', 'fixtures/river-radiance-proxima.json']
     .map(async path => [path, sha(await readFile(new URL(path, import.meta.url)))]))),
   method: 'One Chromium instance, two fresh full application pages per view, serial normal browser timer tasks, real production frame, gl.finish plus synchronous 1px RGBA readback included in duration; all 120 warmup and 60/block samples retained across all five ABBA/BAAB trials',
   fixtureControl: 'Physical clock, source fixture and camera are frozen. River dtSim alone receives the declared visual advection; normal device particle/draw/compute policies and all normally enabled production render layers remain present. This is steady-state render performance, not live orbital evolution',
@@ -132,7 +132,7 @@ try {
   for (const spec of selectedFixtures) {
     const name = `${spec.subject}-${spec.rate ? 'advection' : 'paused'}`;
     const scenario = { name, fixture: spec, pages: {}, setup: {},
-      phases: [], preparation: {prefix:{A:[],B:[]},assets:{A:[],B:[],readiness:[]},nativeWarmup:{A:[],B:[]},refinement:{A:[],B:[]},fences:[],complete:false},
+      phases: [], preparation: {prefix:{A:[],B:[]},assets:{A:[],B:[],readiness:[]},nativeField:{A:[],B:[],complete:false},nativeWarmup:{A:[],B:[]},refinement:{A:[],B:[]},fences:[],complete:false},
       warmup: { A: [], B: [] }, trials: [], longTasks: {}, loadAverageBefore: os.loadavg() };
     report.scenarios.push(scenario); const pages = {};
     activeBudget=phaseBudget(scenario.phases,save);activeBudget.start('preparation');

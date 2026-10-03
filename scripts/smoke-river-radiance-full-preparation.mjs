@@ -4,6 +4,8 @@ import { execFileSync } from 'node:child_process';
 import vm from 'node:vm';
 import { radianceDeviceTargets,validateVolumeProgress } from './river-radiance-volume-progress.mjs';
 import { prepareFullView,validateFullPreparation } from './river-radiance-full-preparation.mjs';
+import { nativeFieldSnapshot } from './river-radiance-native-settlement.mjs';
+import { syntheticNativeFieldSnapshot } from './smoke-river-radiance-native-settlement.mjs';
 const failed=JSON.parse(readFileSync(new URL('./fixtures/radiance-mobile-target-4f79de1c.json',import.meta.url)));
 assert.equal(failed.runId,37145710093);assert.equal(failed.artifactId,11282255109);
 assert.deepEqual(failed.viewport,{width:430,height:932});assert.equal(failed.sample.quality.dpr,1);
@@ -23,7 +25,7 @@ for(const revision of['09863eedda25eef36d79e9cf88daa4ff3e377875','2c9b5bcf2f5427
  }
 }
 const readiness=()=>null;
-function fakePage(size,mutate){
+function fakePage(size,mutate,nativePending=false){
  let frameNo=1;
  const volume=()=>{
   const row=Math.min(137+2*Math.max(0,frameNo-5),137+2*Math.ceil((size[1]-137)/2));
@@ -36,7 +38,8 @@ function fakePage(size,mutate){
  };
  return {async evaluate(fn){
   const text=fn.toString();
-  if(fn===readiness)return {ready:frameNo>=121,catalogPrefix:{updates:Math.min(frameNo-1,120),remaining:Math.max(0,121-frameNo)}};
+  if(fn===nativeFieldSnapshot)return nativePending?syntheticNativeFieldSnapshot({frameNo,builtCount:Math.min(89,frameNo-90),idleUpdates:Math.max(0,frameNo-179),staging:frameNo<179,mLim:frameNo<179?9:7.25,stars:frameNo<179?250001:38715}):syntheticNativeFieldSnapshot({frameNo,idleUpdates:Math.max(3,frameNo-118)});
+  if(fn===readiness)return {ready:frameNo>=(nativePending?182:121),assetReady:frameNo>=121,catalogPrefix:{updates:Math.min(frameNo-1,120),remaining:Math.max(0,121-frameNo)}};
   if(text.includes('requestAnimationFrame')){
    frameNo++;return {frameNo,cpuMs:1,frameAndFinishMs:1,finishMs:0,readbackMs:0,gpuSynchronized:false,
     gpu:{contextLost:false,losses:0,restores:0,error:0,defaultFramebuffer:true},river:{enabled:true,visible:true,count:size[0]===215?9216:15376},quality:{dpr:1}};
@@ -47,11 +50,11 @@ function fakePage(size,mutate){
   throw Error('Unknown fake-page hook: '+text);
  }};
 }
-async function run(canvas,mutate){
+async function run(canvas,mutate,nativePending=false){
  const mobile=canvas[0]===430,size=radianceDeviceTargets(mobile).volume;
- const record={prefix:{A:[],B:[]},assets:{A:[],B:[],readiness:[]},nativeWarmup:{A:[],B:[]},refinement:{A:[],B:[]},fences:[],complete:false};
+ const record={prefix:{A:[],B:[]},assets:{A:[],B:[],readiness:[]},nativeField:{A:[],B:[],complete:false},nativeWarmup:{A:[],B:[]},refinement:{A:[],B:[]},fences:[],complete:false};
  let lastSave,error;
- try{await prepareFullView({pages:{A:fakePage(size,mutate),B:fakePage(size)},record,viewport:{width:canvas[0],height:canvas[1]},mobile,
+ try{await prepareFullView({pages:{A:fakePage(size,mutate,nativePending),B:fakePage(size,undefined,nativePending)},record,viewport:{width:canvas[0],height:canvas[1]},mobile,
   budget:{run:async operation=>operation()},save:()=>{lastSave=structuredClone(record);},activate:async()=>{},readiness});}
  catch(e){error=e;}
  return{record,saves:[lastSave],error};
@@ -71,11 +74,14 @@ for(const mutate of[(v,n)=>{if(n===242)v.refineRow=609;},(v,n)=>{if(n>=242)v.cou
  const result=await run([1200,800],mutate);assert(result.error);assert(result.record.refinement.A.length>0);
  assert(result.saves.at(-1).refinement.A.length>0,'Failed delivered native frames are durable before progress validation');
 }
+const native=await run([430,932],undefined,true);assert.equal(native.error,undefined);
+assert.equal(native.record.assets.A.length,0);assert.equal(native.record.nativeField.A.length,61);
+assert.equal(native.record.nativeField.after.A.frameNo,182);
 // Replay the actual accepted desktop proof when local evidence is available.
 try{
  const proof=JSON.parse(readFileSync('evidence/run-37140303408/report.json'));
  const record={complete:proof.preparationComplete,prefix:proof.prefix,assets:{...proof.settlement,elapsedMs:proof.settlementMs},nativeWarmup:proof.warmup,
   refinement:proof.refinement,fences:proof.fences.map(f=>({...f,stage:f.stage==='warm'?'native-warm':f.stage}))};
- validateFullPreparation(record,[1200,800]);console.log('Accepted 998184eb browser proof replays through full preparation validator');
+ validateFullPreparation(record,[1200,800],{legacy:true});console.log('Accepted 998184eb browser proof replays through full preparation validator');
 }catch(error){if(error.code!=='ENOENT')throw error;}
 console.log('Full preparation desktop/mobile loops preserve exact prefixes, native progression, used history, fences and failed-frame evidence');

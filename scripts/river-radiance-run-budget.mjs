@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { openSync,writeFileSync,fsyncSync,closeSync,renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-export const runLimits=Object.freeze({preparationMs:60*60000,warmupMs:15*60000,measurementMs:55*60000,
+export const legacyRunLimits=Object.freeze({preparationMs:60*60000,warmupMs:15*60000,measurementMs:55*60000,
   assetSettlementMs:5*60000,checkpointMs:5000,jobMinutes:135});
+export const runLimits=Object.freeze({...legacyRunLimits,measurementMs:80*60000,jobMinutes:160});
 
 // Sync atomic replacement also works from SIGTERM/exit handlers. A timeout
 // cannot leave a truncated JSON file or an unflushed completed sample.
@@ -51,10 +52,11 @@ export function phaseBudget(phases,save,{now=()=>performance.now(),schedule=setT
   };
 }
 
-export function validatePhases(phases){
+export function validatePhases(phases,limits=runLimits){
   assert.deepEqual(phases.map(p=>p.name),['preparation','warmup','measurement']);
   for(const phase of phases){
-    assert.equal(phase.limitMs,runLimits[phase.name+'Ms']);
+    assert.deepEqual(limits===legacyRunLimits?limits:runLimits,limits,'Only reviewed timing policies are accepted');
+    assert.equal(phase.limitMs,limits[phase.name+'Ms']);
     assert(phase.completed&&!phase.timedOut&&!phase.pendingOperation);
     assert(Number.isFinite(phase.startedAtMs)&&Number.isFinite(phase.elapsedMs)&&phase.elapsedMs>=0&&phase.elapsedMs<phase.limitMs);
   }
