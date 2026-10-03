@@ -1,7 +1,7 @@
 {
   "sourceHead": "219e9a62a489e34fa66a3ad4114621b5d033a88f",
   "sourceRun": 37108539253,
-  "note": "Matched camera workload. Baseline has no foreign provider or foreign-object IDs; both revisions use free-camera poses and the same actual WASD input. Candidate retains its deterministic explored host when applicable. Source capture did not store orientation; yaw/pitch reconstructed from recorded observer and target/anchor. This is not identical foreign-object content.",
+  "note": "Matched broad camera-matrix rendering workload. Baseline has no foreign provider or foreign-object IDs. A separate same-native-W controller trace reports pose divergence; timed ABBA/BAAB windows replay exact common camera target/distance/yaw/pitch and assert equal broad camera matrices. Candidate retains local precision refinement and deterministic explored host when applicable. Source capture did not store orientation; yaw/pitch reconstructed from recorded observer and target/anchor. Object content differs by design.",
   "fixtures": [
     {
       "name": "03-intergalactic",
