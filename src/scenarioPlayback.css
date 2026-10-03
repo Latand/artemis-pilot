@@ -1,4 +1,4 @@
-#scenarioPlayback { position:absolute; top:84px; right:18px; z-index:19; width:298px; padding:16px; color:#e8f1fa; border:1px solid #526479; border-radius:14px; background:rgba(7,14,23,.94); box-shadow:0 12px 36px #0007; pointer-events:auto; font:12px/1.5 var(--font-ui, sans-serif); }
+#scenarioPlayback { position:absolute; top:84px; right:18px; z-index:19; width:298px; padding:16px; color:#e8f1fa; border:1px solid #526479; border-radius:14px; background:rgba(7,14,23,.98); box-shadow:0 12px 36px #0007; pointer-events:auto; font:12px/1.5 var(--font-ui, sans-serif); }
 #scenarioPlayback[hidden] { display:none; }
 .spEyebrow { color:#a1b7c9; font-size:9px; letter-spacing:.1em; }
 .spTitle { font-size:19px; color:#fff; margin:2px 0 9px; }
@@ -12,9 +12,10 @@
 .spActions button:hover { background:#2d5064; }
 .spActions button:focus-visible { outline:2px solid #a1f0ff; outline-offset:2px; }
 .spActions button:disabled { opacity:.5; cursor:default; }
-.scenario-playing #physCard, .scenario-playing #hintCard { display:none!important; }
+.scenario-playing #physCard, .scenario-playing #hintCard, .scenario-playing #explorePanel, .scenario-playing #exploreCamera, .scenario-playing #timeDock, .scenario-playing #hudTL, .scenario-playing #hudTR, .scenario-playing #hudBot, .scenario-playing #mobileUI, .scenario-playing #navBall, .scenario-playing #flowPanel, .scenario-playing #evPanel, .scenario-playing #evDock { display:none!important; }
 @media(max-width:760px) {
- #scenarioPlayback { top:65px; bottom:auto; left:12px; right:12px; width:auto; padding:11px 13px; font-size:11px; }
+ #scenarioPlayback { top:116px; bottom:auto; left:12px; right:12px; width:auto; padding:11px 13px; font-size:11px; }
+ .spEyebrow { display:none; }
  .spTitle { font-size:16px; margin-bottom:4px; }
  #spNarration { min-height:0; margin:6px 0; }
  .spActions { margin-top:8px; }
@@ -22,3 +23,7 @@
  .spLegend { font-size:9px; }
 }
 @media(max-height:580px) { #scenarioPlayback { top:55px; bottom:auto; width:258px; left:auto; right:10px; padding:10px; } #spNarration { min-height:0; } }
+
+.simCard { text-align:left; font:inherit; color:inherit; }
+
+body.scenario-playing #root #timeDock { display:none!important; }

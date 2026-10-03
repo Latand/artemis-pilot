@@ -10,7 +10,8 @@ import { serializeNebulae, restoreNebulae } from './render/nebulae.js';
 import { invalidateGasDynamics } from './universe/gasDynamics.js';
 import { clearTrail, pushTrail, computePrediction } from './trails.js';
 import { hideBanner } from './hud.js';
-import { setPaused, setWarp, onTimeControl } from './timeCtl.js';
+import { serializeLog, restoreLog } from './discoveryLog.js';
+import { setPaused, setWarp, onTimeControl, jumpActive, cancelTimeJump } from './timeCtl.js';
 import { setUiMode } from './uiMode.js';
 import { jupiterEncounterSeed, createPlaybackPlan, playbackStep, playbackPhase, playheadAtSimulation, encounterCameraDistance } from './scenarioPlaybackMath.js';
 import './scenarioPlayback.css';
@@ -30,7 +31,7 @@ const restoreRecord = (target, source) => {
 // An in-memory excursion. Never overwrite the user's quicksave slot.
 export function captureScenarioReturnState() {
     return { g:clone(G), world:clone(WORLD), bh:clone(BH), gs:clone(GS), eph:snapshotEphem(), clockLo:simTimeLo(),
-        ap:clone(AP), rel:clone(REL), neb:serializeNebulae(G.t), encounters:serializeEncounterState(),
+        ap:clone(AP), rel:clone(REL), log:serializeLog(), neb:serializeNebulae(G.t), encounters:serializeEncounterState(),
         camera:{yaw:cam.yaw,pitch:cam.pitch,dist:cam.dist,distTarget:cam.distTarget,tgt:cam.tgt.toArray()} };
 }
 function releaseInput() {
@@ -49,6 +50,7 @@ function restoreReturnState(saved) {
     setSimTime(saved.g.t); advanceSimTime(saved.clockLo);
     loadEphemSnapshot(saved.eph);
     restoreRecord(AP,saved.ap); restoreRecord(REL,saved.rel);
+    restoreLog(saved.log);
     invalidateGasDynamics();
     setUiMode(saved.g.uiMode,false);
     Object.assign(cam,{yaw:saved.camera.yaw,pitch:saved.camera.pitch,dist:saved.camera.dist,distTarget:saved.camera.distTarget});
@@ -59,6 +61,7 @@ export function exitScenarioPlayback() {
     if(!session) return false;
     const saved=session.returnState;
     session=null;
+    cancelTimeJump("guided flight exit");
     cameraRevision++;
     document.body.classList.remove('scenario-playing');
     if(panel) panel.hidden=true;
@@ -78,10 +81,9 @@ export function beginJupiterPlayback(returnState, restart) {
     G.cabin=false; G.focus='ship'; G.gr=true; G.predict=false; G.hold=null;
     apOff(); relResetState(); releaseInput();
     const plan=createPlaybackPlan(seed.periapsisTimeSec);
-    session={ returnState, seed, plan, startedAt:G.t, status:'ready', lastWarp:null, closestKm:seed.radius,
+    session={ returnState, seed, plan, startedAt:G.t, status:'ready', closestKm:seed.radius,
         entrySpeed:Math.hypot(G.vx-eph.sunVx,G.vy-eph.sunVy,G.vz-(eph.sunVz||0)), uiAt:0 };
     setWarp(playbackStep(plan,0,1/60).warp,'scenario-playback');
-    session.lastWarp=G.warp;
     setPaused(true,'scenario-playback');
     cam.pitch=1.18;
     cam.yaw=Math.atan2(-seed.tangent[1],seed.tangent[0])+.45;
@@ -108,7 +110,7 @@ export function initScenarioPlayback() {
     panel=document.createElement('section');
     panel.id='scenarioPlayback'; panel.hidden=true;
     panel.setAttribute('aria-label','Guided Jupiter slingshot');
-    panel.innerHTML='<div class="spEyebrow">GUIDED FLIGHT · ABOUT 60 SECONDS</div><div class="spTitle">Jupiter slingshot</div><div id="spPhase" role="status"></div><progress id="spProgress" max="60" value="0" aria-label="Scenario progress"></progress><div id="spTelemetry"></div><p id="spNarration"></p><div class="spLegend">Engines off · ship enlarged for visibility<br>Flow lines visualize gravity; they are not a warp drive.</div><div class="spActions"><button id="spToggle" type="button">Start flight</button><button id="spRestart" type="button">Restart</button><button id="spExit" type="button">Exit</button></div>';
+    panel.innerHTML='<div class="spEyebrow">GUIDED FLIGHT · ABOUT 60 SECONDS</div><div class="spTitle">Jupiter slingshot</div><div id="spPhase" role="status"></div><progress id="spProgress" max="60" value="0" aria-label="Scenario progress"></progress><div id="spTelemetry"></div><p id="spNarration"></p><div class="spLegend">Engines off · ship enlarged · gravity-flow illustration.</div><div class="spActions"><button id="spToggle" type="button">Start flight</button><button id="spRestart" type="button">Restart</button><button id="spExit" type="button">Exit</button></div>';
     document.getElementById('root').appendChild(panel);
     document.getElementById('spToggle').onclick=togglePlayback;
     document.getElementById('spRestart').onclick=restartPlayback;
@@ -123,12 +125,12 @@ export function initScenarioPlayback() {
 }
 export function tickScenarioPlayback(wallDt, interrupted=false) {
     if(!session) return null;
-    if(interrupted || G.dead || G.landed || G.focus!=='ship' || G.cabin) { exitScenarioPlayback(); return {advanceSec:0}; }
+    if(interrupted || jumpActive() || G.dead || G.landed || G.focus!=='ship' || G.cabin) { exitScenarioPlayback(); return {advanceSec:0}; }
     if(session.status==='complete') { G.paused=true; return {advanceSec:0}; }
     if(G.paused) { renderPanel(); return {advanceSec:0}; }
     session.status='playing';
     const step=playbackStep(session.plan,G.t-session.startedAt,wallDt);
-    if(step.warp>0) { setWarp(step.warp,'scenario-playback'); session.lastWarp=G.warp; }
+    if(step.warp>0) setWarp(step.warp,'scenario-playback');
     return step;
 }
 export function settleScenarioPlayback() {
@@ -136,7 +138,7 @@ export function settleScenarioPlayback() {
     const r=Math.hypot(G.x-eph.plX[3],G.y-eph.plY[3],G.z-eph.plZ[3]);
     session.closestKm=Math.min(session.closestKm,r);
     const elapsed=G.t-session.startedAt;
-    if(elapsed>=session.plan.simDuration-1e-6) { session.status='complete'; setPaused(true,'scenario-playback'); renderPanel(true); }
+    if(elapsed>=session.plan.simDuration-1e-6 && session.status!=='complete') { session.status='complete'; setPaused(true,'scenario-playback'); renderPanel(true); }
     else renderPanel();
 }
 export function updateScenarioCamera() {
@@ -148,6 +150,15 @@ export function updateScenarioCamera() {
     cam.tgt.set(sx*.6+jx*.4,sy*.6+jy*.4,sz*.6+jz*.4);
     cam.dist=encounterCameraDistance(Math.hypot(sx-jx,sy-jy,sz-jz),PL[3].R*K,camera.aspect);
     cam.distTarget=null;
+    if(camera.aspect<1) {
+        // Leave room for the phone's guided-flight controls above the view.
+        // Move the observer target up in camera space, putting the subjects
+        // lower on screen without changing their physical coordinates.
+        const shift=cam.dist*Math.tan(24*Math.PI/180)*.2;
+        cam.tgt.x-=Math.sin(cam.pitch)*Math.cos(cam.yaw)*shift;
+        cam.tgt.y+=Math.cos(cam.pitch)*shift;
+        cam.tgt.z-=Math.sin(cam.pitch)*Math.sin(cam.yaw)*shift;
+    }
     return true;
 }
 function renderPanel(force=false) {

@@ -256,13 +256,13 @@ function restart() {
     pushTrail(true);
     computePrediction();
 }
-initPhysicsHooks({ die, award, banner: showBanner, hideBanner });
+initPhysicsHooks({ die, award: id => { if (!scenarioPlaybackActive()) award(id); }, banner: showBanner, hideBanner });
 initBHHooks({
     toast, predict: computePrediction,
     // swallowed whole (no flare): `mode` carries the physical reason
     cataclysm(target, rs, mode, bi = -1) {
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), true, false);
-        award("bh");
+        if (!scenarioPlaybackActive()) award("bh");
         if (bi >= 0) focusBlackHole(bi);
         if (name) {
             const label = name + " " + mode + " · r_s now " + fmtKm(rs);
@@ -274,7 +274,7 @@ initBHHooks({
     // so the BH paths skip the generic destruction ghost
     disrupt(target, rs, mode, bi = -1) {
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), false, false) || bodyName(target);
-        award("bh");
+        if (!scenarioPlaybackActive()) award("bh");
         if (bi >= 0) focusBlackHole(bi);
         if (name) {
             const label = name + " is being tidally shredded";
@@ -380,6 +380,7 @@ function applyStartupCameraState() {
 
 function installCameraPersistence() {
     const saveCam = () => {
+        if (scenarioPlaybackActive()) return; // Excursions must not become the next startup camera.
         try {
             localStorage.setItem("ap_cam", JSON.stringify({ dist: cam.dist, yaw: cam.yaw, pitch: cam.pitch, focus: G.focus, warp: G.warp, exploredSystem: serializeExploredSystem() }));
         } catch (e) { }
@@ -1780,8 +1781,8 @@ function frameStep() {
     const nearFieldDue = cosmicLod === 0 || frameNo % (cosmicLod === 1 ? 6 : cosmicLod === 2 ? 18 : 45) === 0;
     const activeStarsDue = cosmicLod === 0 || frameNo % (cosmicLod === 1 ? 12 : cosmicLod === 2 ? 45 : 120) === 0;
     checkBodyContacts();
-    // achievements
-    if (!G.dead) {
+    // Guided excursions must not award progress to the flight they return to.
+    if (!G.dead && !scenarioPlaybackActive()) {
         if (oi.domMoon) noteBody("moon", 0, "THE MOON");
         if (oi.domSun) noteBody("sun", 0, "THE SUN");
         if (oi.domPl && oi.pNear >= 0 && oi.pNearD < PL[oi.pNear].soi) noteBody("planet", oi.pNear, PL[oi.pNear].name);
@@ -1987,6 +1988,8 @@ function frameStep() {
     if (lastScenarioCameraRevision !== scenarioCameraRevision()) {
         lastScenarioCameraRevision = scenarioCameraRevision();
         camPrevFocus = null;
+        hudReady = false;
+        hideNearFieldLabels();
     }
     if (G.focus !== "free") {
         // rigid-follow the focus body's frame-to-frame motion so fast targets
@@ -2619,6 +2622,11 @@ function frameStep() {
                 putUnlessCrowded(bhLabels[i], bhScenePos(i, _bhLabelPos), -10, w, h);
                 bhLabelCount++;
             }
+        }
+        if (scenarioPlaybackActive()) {
+            hideNearFieldLabels();
+            labelSlots.length = 0;
+            putUnlessCrowded(plLabels[3], plGroups[3].position, -8, w, h);
         }
         nearLabelsReady = true;
     }

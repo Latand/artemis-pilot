@@ -10,7 +10,7 @@ const {G,WORLD,BH,GS,resetShip,setSimTime}=await import('../src/state.js');
 const {eph,resetEphem,snapshotEphem}=await import('../src/ephemeris.js');
 resetShip();resetEphem();
 const vec={x:3,y:4,z:5,toArray(){return[this.x,this.y,this.z];},fromArray(a){[this.x,this.y,this.z]=a;},set(x,y,z){Object.assign(this,{x,y,z});}};
-const m=globalThis.__scenarioMock={cam:{yaw:1,pitch:.4,dist:80,distTarget:null,tgt:vec},camera:{aspect:1.6},AP:{mode:'travel',target:3,phase:'coast'},REL:{active:false,phase:'off'},neb:[[1,2,3]],enc:{v:1},listeners:new Set()};
+const m=globalThis.__scenarioMock={cam:{yaw:1,pitch:.4,dist:80,distTarget:null,tgt:vec},camera:{aspect:1.6},AP:{mode:'travel',target:3,phase:'coast'},REL:{active:false,phase:'off'},neb:[[1,2,3]],enc:{v:1},log:{entries:[{id:'prior-discovery'}]},jump:false,listeners:new Set()};
 const mock={
  './scene.js':`export const {cam,camera}=globalThis.__scenarioMock;`,
  './autopilot.js':`export const AP=globalThis.__scenarioMock.AP; export function apOff(){AP.mode='off';}`,
@@ -21,7 +21,8 @@ const mock={
  './universe/gasDynamics.js':`export function invalidateGasDynamics(){}`,
  './trails.js':`export function clearTrail(){} export function pushTrail(){} export function computePrediction(){}`,
  './hud.js':`export function hideBanner(){}`,
- './timeCtl.js':`import {G} from '${new URL('../src/state.js',import.meta.url)}';export function setWarp(w,s){for(const fn of globalThis.__scenarioMock.listeners)fn('warp',s);G.warp=w;}export function setPaused(p){G.paused=p;}export function onTimeControl(fn){globalThis.__scenarioMock.listeners.add(fn);}`,
+ './discoveryLog.js':`export const serializeLog=()=>structuredClone(globalThis.__scenarioMock.log);export function restoreLog(log){globalThis.__scenarioMock.log=structuredClone(log);}`,
+ './timeCtl.js':`import {G} from '${new URL('../src/state.js',import.meta.url)}';export function setWarp(w,s){for(const fn of globalThis.__scenarioMock.listeners)fn('warp',s);G.warp=w;}export function setPaused(p){G.paused=p;}export function onTimeControl(fn){globalThis.__scenarioMock.listeners.add(fn);}export const jumpActive=()=>globalThis.__scenarioMock.jump;export function cancelTimeJump(){globalThis.__scenarioMock.jump=false;}`,
  './uiMode.js':`export function setUiMode(){}`,
  './scenarioPlayback.css':'',
 };
@@ -40,13 +41,15 @@ const first=runtime.tickScenarioPlayback(.1);assert.ok(first.advanceSec>0);G.t+=
 element('spToggle').onclick();const paused=G.t;assert.equal(runtime.tickScenarioPlayback(.1).advanceSec,0);assert.equal(G.t,paused);
 element('spToggle').onclick();assert.ok(runtime.tickScenarioPlayback(.1).advanceSec>0);
 element('spRestart').onclick();assert.equal(G.t,0);assert.equal(G.paused,true);assert.equal(element('spToggle').textContent,'Start flight');
+m.log.entries.push({id:'temporary-discovery'});
 assert.ok(runtime.exitScenarioPlayback());assert.ok(!runtime.scenarioPlaybackActive());
 for(const k of ['t','tau','x','y','z','vx','vy','vz','warp','paused','focus','uiMode','driveMode'])assert.deepEqual(G[k],original.g[k],`return ${k}`);
 assert.deepEqual([...WORLD.muScale],[...original.world.muScale]);assert.deepEqual(BH,original.bh);assert.deepEqual(GS,original.gs);assert.deepEqual(m.AP,original.ap);assert.deepEqual(m.neb,original.neb);assert.deepEqual(m.cam.tgt.toArray(),original.camera.tgt);
-assert.deepEqual(snapshotEphem(),original.eph);
+assert.deepEqual(snapshotEphem(),original.eph);assert.deepEqual(m.log,original.log,'discovery history is restored');
 assert.equal(runtime.exitScenarioPlayback(),false,'repeated exit harmless');
 // User time action relinquishes ownership before applying that action.
 reboot();runtime.beginJupiterPlayback(original,reboot);for(const fn of m.listeners)fn('warp','user');G.warp=20;assert.equal(G.x,original.g.x);assert.equal(G.warp,20);assert.ok(!runtime.scenarioPlaybackActive());
 reboot();runtime.beginJupiterPlayback(original,reboot);element('spToggle').onclick();const interrupted=runtime.tickScenarioPlayback(.1,true);assert.equal(interrupted.advanceSec,0,'interruption frame cannot burn on restored flight');assert.equal(G.x,original.g.x);
 reboot();runtime.beginJupiterPlayback(original,reboot);window.dispatchEvent(new Event('ap:replace-universe'));assert.ok(!runtime.scenarioPlaybackActive());assert.equal(G.x,original.g.x);
+reboot();runtime.beginJupiterPlayback(original,reboot);m.jump=true;assert.equal(runtime.tickScenarioPlayback(.1).advanceSec,0);assert.ok(!runtime.scenarioPlaybackActive());assert.equal(m.jump,false,'a competing event jump cannot resume after returning to a different clock');
 hook.deregister();console.log('Scenario ready/start/pause/resume/restart/exit, interruption and full return snapshot checks passed');
