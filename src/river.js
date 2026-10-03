@@ -14,6 +14,7 @@ import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW,
 import { eph } from "./ephemeris.js";
 import { publishRiverSourcePositions } from "./riverSourceCache.js";
 import { haloSamplingRadius, haloViewWeight, refreshProbability } from "./riverCoverageMath.js";
+import { sourceSampleInkGain, OWNED_SAMPLE_FRACTION } from "./riverRadianceMath.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
 // Positions live in a float texture advected by a compute pass; the analytic
@@ -89,7 +90,10 @@ if (typeof window !== "undefined") window.__river = river;
 let seedTex, rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines, dots, warpLines;
 const bodyVals = [], sinkVals = new Array(MAXB).fill(0), rsVals = new Array(MAXB).fill(0), holeVals = new Array(MAXB).fill(0), soiVals = new Array(MAXB).fill(0);
 const colorVals = [];
-const haloVals = Array.from({ length: MAXB }, () => new THREE.Vector3(22, 0, 0));
+const haloVals = Array.from({ length: MAXB }, () => new THREE.Vector4(22, 0, 0, 1));
+const haloReferenceWeights = new Float64Array(MAXB);
+const renderedOwnerShares = new Float64Array(MAXB);
+const renderedReferenceShares = new Float64Array(MAXB);
 const haloViewPos = new THREE.Vector3();
 const haloCameraInverse = new THREE.Quaternion();
 for (let i = 0; i < MAXB; i++) bodyVals.push(new THREE.Vector4());
@@ -146,7 +150,7 @@ uniform float uRs[${MAXB}];
 uniform float uHole[${MAXB}];
 uniform vec3 uColor[${MAXB}];
 uniform float uRadius;
-uniform vec3 uHalo[${MAXB}]; // sampling radius, visibility, cumulative ownership
+uniform vec4 uHalo[${MAXB}]; // radius, visibility, cumulative ownership, display ink gain
 uniform vec3 uOrigin;
 uniform float uDE;
 uniform float uPlaneBias;
@@ -498,6 +502,10 @@ void main() {
         currents = mix(currents, vec3(0.72, 0.35, 1.0), max(violet, holeInk));
         vColor = currents * max(length(vColor), 0.0) * 1.5;
     }
+    // Sampling density changes presentation, not the field or advection.
+    // Ambient tracers remain unchanged. Apply once after every style gain so
+    // lines and dots receive identical owner-aware compensation.
+    if (own >= 0 && own < uSinkNB) vColor *= uHalo[own].w;
     vAlong = segT;
     vPhase = ph + uPhase * kq;
     gl_PointSize = (2.2 + tVis * 1.6) * uPixelRatio;
@@ -1065,7 +1073,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     haloCameraInverse.copy(camera.quaternion).invert();
     const haloEase = 1 - Math.exp(-8 * Math.max(0, dtReal));
     const tanHalfFov = Math.tan(camera.fov * Math.PI / 360);
-    let haloTotal = 0, haloCoverageChanged = false;
+    let haloTotal = 0, haloReferenceTotal = 0, haloCoverageChanged = false;
     for (let i = 0; i < nb; i++) {
         haloViewPos.copy(bodyVals[i]).sub(uniformsShared.uCam.value);
         const d = haloViewPos.length();
@@ -1081,7 +1089,10 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         // Visible viewport boundaries themselves have a generous smooth band.
         if (Math.abs(h.y - weight) > 1e-6) haloCoverageChanged = true;
         h.y = weight;
-        haloTotal += Math.sqrt(Math.max(0, bodyVals[i].w)) * h.y;
+        const massWeight = Math.sqrt(Math.max(0, bodyVals[i].w));
+        haloReferenceWeights[i] = massWeight;
+        haloReferenceTotal += massWeight;
+        haloTotal += massWeight * h.y;
         h.z = haloTotal;
     }
     if (haloTotal > 1e-6) for (let i = 0; i < nb; i++) haloVals[i].z /= haloTotal;
@@ -1198,6 +1209,15 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         else if (renderQuality.mobile && computeMs < 6 && river.computeEveryAdaptive > 1) river.computeEveryAdaptive = Math.max(1, river.computeEveryAdaptive - 1);
         else if (!renderQuality.mobile) river.computeEveryAdaptive = 1;
         const sw = rtA; rtA = rtB; rtB = sw;
+        // The compute pass reassigns owners from this CDF. Hold this snapshot
+        // across skipped computes: new camera eligibility must not dim an old,
+        // still-sparse population before its replacement samples exist.
+        let previousShare = 0;
+        for (let i = 0; i < nb; i++) {
+            renderedOwnerShares[i] = Math.max(0, haloVals[i].z - previousShare);
+            previousShare = haloVals[i].z;
+            renderedReferenceShares[i] = haloReferenceTotal > 0 ? haloReferenceWeights[i] / haloReferenceTotal : 0;
+        }
         uniformsShared.uPos.value = rtA.texture;
         textureCenter.copy(smoothCenter);
         uniformsShared.uCenterShift.value.set(0, 0, 0);
@@ -1205,6 +1225,9 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         uniformsShared.uDtSim.value = 0;
         if (dtVis === 0 && respawn === 0) refreshElapsed = 0;
     }
+    const drawnHaloSamples = river.drawCount * OWNED_SAMPLE_FRACTION;
+    for (let i = 0; i < nb; i++) haloVals[i].w = sourceSampleInkGain(
+        drawnHaloSamples * renderedOwnerShares[i], drawnHaloSamples * renderedReferenceShares[i]);
 }
 
 // ---- collapsing dot-shells near Earth ----

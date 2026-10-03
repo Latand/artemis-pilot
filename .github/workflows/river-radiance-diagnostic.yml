@@ -1,0 +1,31 @@
+name: Paired owner-radiance diagnostic
+on:
+  push:
+    branches: [diagnostic/river-radiance-pair]
+permissions:
+  contents: read
+jobs:
+  paired-transient:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-river-radiance.mjs && node scripts/smoke-river-radiance-qa.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: Compare the fixed baseline and reviewed candidate
+        run: |
+          git worktree add --detach ../radiance-baseline 09863eedda25eef36d79e9cf88daa4ff3e377875
+          ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-baseline/node_modules
+          node scripts/verify-river-radiance.mjs ../radiance-baseline . evidence/river-radiance
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: paired-owner-radiance
+          path: evidence/river-radiance
+          retention-days: 14
