@@ -77,7 +77,10 @@ try {
  // Paired actual-input replay from exactly one saved physical state. Both
  // shaders are warm. Keep the existing 48-frame / 50% + 20ms cost guard.
  const replay=async enabled=>{
-  await page.evaluate(async enabled=>{document.activeElement?.blur();await(await import('/src/saves.js')).loadState();__G.paused=false;__G.warp=1;(await import('/src/shipVisuals.js')).shipVisuals.enabled=enabled;},enabled);
+  // A paused public free-camera frame clears rigid-follow history, then a
+  // second load restores the exact saved focus/camera/physics. Otherwise the
+  // previous replay's camPrevTgt would add a stale camera-only displacement.
+  await page.evaluate(async enabled=>{document.activeElement?.blur();await(await import('/src/saves.js')).loadState();__G.paused=true;__G.focus='free';__driveFrame();await(await import('/src/saves.js')).loadState();__G.paused=false;__G.warp=1;(await import('/src/shipVisuals.js')).shipVisuals.enabled=enabled;},enabled);
   await page.keyboard.down('w');await frames(48);const samples=[];
   for(let i=0;i<48;i++)samples.push(await page.evaluate(()=>new Promise((resolve,reject)=>setTimeout(()=>{try{resolve(__driveFrame());}catch(e){reject(e);}},0))));
   await page.keyboard.up('w');
