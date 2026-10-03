@@ -111,7 +111,7 @@ function onKeyDown(e) {
             break;
         case "KeyY": G.hold = G.hold === "retro" ? null : "retro"; break;
         case "KeyS":
-            if (e.shiftKey) { keys.delete("KeyS"); toggleScenarioMenu(); } // plain S stays reverse thrust
+            if (e.shiftKey) { keys.delete("KeyS"); toggleScenarioMenu(); } // plain S stays reverse field
             break;
         case "KeyF":
             if (e.shiftKey) { // cycle the planets

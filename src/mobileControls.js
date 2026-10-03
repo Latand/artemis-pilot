@@ -38,7 +38,7 @@ function setActive(el, active) {
     activeCache.set(el, active);
 }
 
-// ---- hold buttons: rotate / RCS / boost map straight onto the key set ----
+// ---- hold buttons: rotate / lateral field / boost map straight onto the key set ----
 const holdButtons = [
     ["mYawL", "KeyA"], ["mYawR", "KeyD"],
     ["mRcsL", "KeyQ"], ["mRcsR", "KeyE"],
@@ -70,7 +70,7 @@ function bindTap(id, fn) {
     el.addEventListener("click", e => { e.preventDefault(); fn(); syncMobileButtons(); });
 }
 
-// ---- throttle lever: drag up = main engine, down = retro; springs back on release.
+// ---- throttle lever: drag up = forward field, down = reverse field; springs back on release.
 // vertical offset sets the throttle level so it reads like a real analog lever ----
 function initThrottle() {
     const track = $("mThrTrack"), knob = $("mThrKnob"), fill = $("mThrFill"), cap = $("mThrCap");

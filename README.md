@@ -44,8 +44,8 @@ Every frame of these tours is an unedited render of the running simulation (`nod
 
 - **Numerical gas collapse**: Create → Gas → Star releases a 96-parcel SPH cloud with self-gravity, pressure and an isothermal cooling approximation. Cold bound gas can form a protostellar sink; hot or outward-moving gas can disperse. Pause, checkpoint replay and quicksave share the universe clock. See [resolution limits and tests](docs/gas-star-formation.md).
 
-- **First-person 3D cockpit** (J): real interior geometry composited over the world render, three live canvas MFDs (attitude tape with prograde/retrograde, osculating-orbit nav map with apo/peri, drive/systems panel), head-look on drag, sun-tracking interior light, thrust flicker, and warning annunciators.
-- **WebXR / PSVR2 support**: sit inside the cockpit with full head tracking and fly on the Sense sticks, or switch to god mode and grab the solar system with your hands — one grip drags space, both grips zoom and twist it from tabletop Earth–Moon scale out to the Local Group. Controller haptics carry engine rumble and aero buffeting.
+- **First-person 3D cockpit** (J): real interior geometry composited over the world render, three live canvas MFDs (attitude tape with prograde/retrograde, osculating-orbit nav map with apo/peri, drive/systems panel), head-look on drag, sun-tracking interior light, field-load lighting, and warning annunciators.
+- **WebXR / PSVR2 support**: sit inside the cockpit with full head tracking and fly on the Sense sticks, or switch to god mode and grab the solar system with your hands — one grip drags space, both grips zoom and twist it from tabletop Earth–Moon scale out to the Local Group. Controller haptics carry atmospheric buffeting.
 - **Autopilot you can interrupt** (⇧T travel to focus, ⇧C circularize, ⇧X off): climbs out of the local gravity well, flies a flip-and-burn intercept, brakes, captures, and circularizes — any manual input returns control instantly.
 - **Travel simulations** (⇧S): curated pre-flight states with physics explainer cards — Hohmann to Mars, lunar free-return figure-8, Jupiter slingshot, photon-sphere dive, Local Group expansion, the voyage to Proxima, and the dive to SGR A*.
 - **Real-date 3D ephemerides**: 3-D KDK or velocity-Verlet integration propagates Solar System bodies from orbital elements seeded to today's sky. Smoke tests bound selected trajectories; the 2026-08-12 total solar eclipse emerges from the ephemeris within ±2 days.
@@ -66,6 +66,12 @@ Every frame of these tours is an unedited render of the running simulation (`nod
 - **Tidal disruptions**: a close encounter is classified from its osculating orbit — none, tidal distortion, partial or full disruption (Guillochon & Ramirez-Ruiz 2013 fits, β_d 0.9 / 1.85), or swallowed whole (r_t inside the horizon, or a plunge with L < 4GM/c) — and resolved at its analytic pericentre, so the outcome does not depend on warp or frame rate. Bodies stretch along the tidal axis as they approach; disrupted matter becomes up to 3000 fluid elements on precessing conics whose frozen-in energy spread produces the stream, the bound/unbound split and the t^-5/3 return by itself. The bound half circularizes into the disk and feeds the hole along M_acc(t) = ½M*[1−(t/t_fb)^−2/3] (t_fb = 41 d for the Sun and 10⁶ M☉); debris, disk and flare are drawn at the camera's retarded time, while the HUD light curve stays in coordinate time. Captures of every regime: `docs/tde-regimes/` (`node scripts/capture-tde.mjs`).
 - **Earth that looks alive**: day/night terminator with real city-lights map, ocean sun glint, camera-aware atmosphere; limb-darkened granulated Sun with an animated corona; magnitude/color-varied starfield; ACES filmic tone mapping.
 - **Contextual onboarding**: a one-time title overlay with the voyage lore, milestone hint cards, and persistence of camera, focus, warp, and UI state across refreshes.
+
+## Curvature-drive flight
+
+The ship now uses an explicitly fictional local effective-field drive. W engages a forward potential gradient; S reverses it (braking when facing prograde); Q/E command a lateral gradient. Z/X set field strength and Shift boosts it. Release all translation controls for exact ballistic coast. The same delivered field controls the cyan compressed bow, violet expanded aft, ring motion, local river guide and a quiet cabin/interface tone. There is no exhaust, combustion noise, boost shake, or drive haptic rumble. Atmospheric entry heating and buffeting remain physical hazards.
+
+The field guide defaults on and can be hidden without changing propulsion. It remains visible without the universe river. The potential is a bounded phenomenological command model, sampled at the hull centre and integrated by the existing RK4 path. It does not solve general relativity, enable FTL, change any planet's gravity, or establish that such an engine can exist. The existing saved “fuel” number remains a delta-v challenge budget. No propellant is expelled. Old saves resume without a held field command. See [drive model and verification](docs/curvature-drive.md).
 
 ## Model scope
 
@@ -148,9 +154,9 @@ The static build is written to `dist/`.
 
 | Key | Action |
 | --- | --- |
-| `W` / `S` | Main and reverse thrust |
+| `W` / `S` | Forward and reverse curvature field |
 | `A` / `D` | Rotate ship |
-| `Q` / `E` | Lateral RCS |
+| `Q` / `E` | Lateral field |
 | `Shift` | Boost |
 | `Z` / `X` | Throttle down/up |
 | `T` / `Y` | Hold prograde/retrograde |
@@ -176,7 +182,7 @@ The static build is written to `dist/`.
 | `B` | Place a black hole on the cursor plane |
 | `[` / `]` | Change black-hole Schwarzschild radius |
 | `V` | Remove last black hole |
-| `I` | Toggle limited-fuel challenge mode |
+| `I` | Toggle limited drive-budget challenge |
 | `M` | Mute |
 | `R` | Restart |
 | `H` | Help |

@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
-// Art direction only: a speculative twin-ring explorer, not a warp-drive model.
+// Speculative twin-ring explorer. The effective drive lives in curvatureDrive.js.
 // Local +Y is the nose, exactly as expected by the existing flight renderer.
-// Keep its tail close to -1.05 so the existing thrust marker remains attached.
+// Hull coordinates are unchanged for saved camera / approach views.
 export function createShipModel() {
     const craft = new THREE.Group();
     craft.name = "Artemis twin-ring explorer";
@@ -140,5 +140,8 @@ export function createShipModel() {
     bake(craft, staticParts, "ship");
     craft.userData.rotors = rotors;
     craft.userData.design = "speculative-twin-ring";
+    craft.userData.fadeMaterials = Object.values(materials);
+    // Dither only the subpixel handoff; preserve opaque depth/sorting at close range.
+    for (const material of craft.userData.fadeMaterials) material.alphaHash = true;
     return craft;
 }
