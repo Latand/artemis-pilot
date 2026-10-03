@@ -95,7 +95,6 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
             // lookup oscillate, the framebuffer has no coherent source for
             // that ray: retain the original pixel rather than invent a ghost.
             float sourceZ = zv, dq = dz, zBent = 1e30;
-            vec2 previousQ = p;
             for (int iteration = 0; iteration < 3; iteration++) {
                 vec2 nextQ = p;
                 for (int i = 0; i < ${MAXL}; i++) {
@@ -107,7 +106,6 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
                     nextQ -= d * (uT2[i] * finiteSource / r2);
                     zBent = min(zBent, uDist[i]);
                 }
-                previousQ = q;
                 q = nextQ;
                 if (uHasDepth == 1) {
                     vec2 sampleUv = clamp(vec2(q.x/uAspect,q.y)*.5+.5,0.0,1.0);
@@ -115,7 +113,18 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
                     sourceZ = dq < 1.0 ? uNear*uFar/(uFar-dq*(uFar-uNear)) : 1e30;
                 }
             }
-            float coherent = 1.0-smoothstep(.002,.01,length(q-previousQ));
+            // Validate the FINAL sampled depth, not the previous step. A
+            // silhouette first encountered on the last lookup can otherwise
+            // turn a small iteration delta into an accepted detached image.
+            vec2 verifiedQ = p;
+            for (int i = 0; i < ${MAXL}; i++) {
+                if (i >= uN) break;
+                if (zv < uDist[i]) continue;
+                vec2 d = p-uC[i];
+                float finiteSource = clamp(1.0-uDist[i]/max(sourceZ,1e-9),0.0,1.0);
+                verifiedQ -= d*(uT2[i]*finiteSource/max(dot(d,d),1e-9));
+            }
+            float coherent = 1.0-smoothstep(.002,.01,length(q-verifiedQ));
             q.x /= uAspect;
             vec2 rawUv = q * 0.5 + 0.5;
             vec2 uvq = clamp(rawUv, 0.0, 1.0);

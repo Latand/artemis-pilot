@@ -8,22 +8,23 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { transformCelestialSource } from './celestial-detail-fixtures.mjs';
 const mobile=process.env.DEVICE==='mobile';
+const bloom=process.env.BLOOM==='1';
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/optics-crossing');await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),mobile,errors:[],cases:[],diagnosticOnly:true,
+const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),mobile,bloom,errors:[],cases:[],diagnosticOnly:true,
  scope:'Frozen rendered Saturn + nearby quasar; screen-space lens and tidal-mesh ablations. Physical interpretation is not inferred from the photograph.',
- omissions:['unrelated cosmic background, HYG and tier-1 catalogs','gravity-flow overlay','bloom; direct production lensing compositor is tested first']};
+ omissions:['unrelated cosmic background, HYG and tier-1 catalogs','gravity-flow overlay',...(bloom?[]:['bloom; direct production lensing compositor'])]};
 let server,browser;
 try{
  server=await createServer({configFile:false,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'optics-crossing-diagnostic',enforce:'pre',resolveId(id){if(id==='virtual:galaxy-preview')return '\0off';},load(id){if(id==='\0off')return 'export default null;';},transform:transformCelestialSource}]});await server.listen();
  browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
  const page=await browser.newPage({viewport:mobile?{width:390,height:700}:{width:960,height:640},deviceScaleFactor:1,isMobile:mobile,hasTouch:mobile});page.setDefaultTimeout(180000);
  page.on('pageerror',e=>report.errors.push(e.stack||e.message));page.on('console',m=>{if(m.type()==='error'&&/THREE|Shader|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
- await page.addInitScript(()=>{Date.now=()=>Date.UTC(2026,9,3,12);localStorage.clear();localStorage.setItem('ap_introSeen','1');});
+ await page.addInitScript(bloom=>{window.__qaBloom=bloom;Date.now=()=>Date.UTC(2026,9,3,12);localStorage.clear();localStorage.setItem('ap_introSeen','1');},bloom);
  await page.route(/fonts\.(googleapis|gstatic)\.com/,r=>r.fulfill({contentType:'text/css',body:''}));
- await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=saturn&dist=600&bloom=0&river=0&field=0&realsky=0&tier1=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&hidehelp=1`,{waitUntil:'domcontentloaded'});
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=saturn&dist=600&bloom=${bloom?1:0}&river=0&field=0&realsky=0&tier1=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&hidehelp=1`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__celestialFrame);
  await page.evaluate(async()=>{
-  window.qa={s:await import('/src/scene.js'),st:await import('/src/state.js'),b:await import('/src/bodies.js'),bh:await import('/src/blackholes.js'),c:await import('/src/constants.js'),e:await import('/src/ephemeris.js'),tde:await import('/src/tdeVisuals.js'),hole:await import('/src/holeOptics.js'),lens:await import('/src/lensing.js')};
+  window.qa={bloom:!!window.__qaBloom,s:await import('/src/scene.js'),st:await import('/src/state.js'),b:await import('/src/bodies.js'),bh:await import('/src/blackholes.js'),c:await import('/src/constants.js'),e:await import('/src/ephemeris.js'),tde:await import('/src/tdeVisuals.js'),hole:await import('/src/holeOptics.js'),lens:await import('/src/lensing.js')};
   qa.sat=qa.c.PL.findIndex(p=>p.name==='SATURN');
   qa.st.G.paused=true;qa.st.G.gr=false;qa.st.G.predict=false;qa.st.G.focus='free';
   qa.bh.clearBlackHoles();
@@ -32,9 +33,11 @@ try{
   await window.__celestialEnsureLensing();
   for(let i=0;i<8;i++)window.__celestialFrame();
  });
- for(const scenario of ['saturn-near-lens','disk-crossing'])for(const pitch of [.48,.08,.005,0,-.005,-.08,-.48]){
+ const coarse=[.48,.08,.005,0,-.005,-.08,-.48];
+ const dense=[.0008,.0007,.00065,.0006,.00055,.0005,.0004,0,-.0004,-.0005,-.00055,-.0006,-.00065,-.0007,-.0008];
+ for(const scenario of ['saturn-near-lens','disk-crossing'])for(const pitch of scenario==='disk-crossing'?[...new Set([...coarse,...dense])]:coarse){
   const result=await page.evaluate(({scenario,pitch})=>{
-   const{s,st,b,bh,tde,hole,lens,c,sat}=qa;const m=bh.BH_META[0];
+   const{s,st,b,bh,tde,hole,lens,c,sat,bloom}=qa;const m=bh.BH_META[0];
    st.G.focus='free';s.cam.tgt.copy(scenario==='disk-crossing'?m.g.position:b.plGroups[sat].position);
    if(scenario==='saturn-near-lens')s.cam.tgt.x-=75;
    s.cam.dist=scenario==='disk-crossing'?st.BH.rs[0]*c.K*8:600;s.cam.distTarget=null;s.cam.yaw=Math.PI/2;s.cam.pitch=pitch;
@@ -44,8 +47,11 @@ try{
    const gl=s.renderer.getContext(),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
    const draw=(lensed,tides,diskOn=true)=>{
     state.active=tides&&wasActive;disk.visible=diskOn;
-    if(lensed){lens.updateLensing(s.camera,s.camera.aspect);lens.renderLensed(s.renderer,s.scene,s.camera);}
-    else{hole.holeRoot.visible=true;s.renderSceneTiered(s.renderer,s.scene,s.camera);}
+    if(lensed)lens.updateLensing(s.camera,s.camera.aspect);
+    else{lens.lensingPass.enabled=false;hole.holeRoot.visible=true;}
+    if(bloom)s.composer.render();
+    else if(lensed)lens.renderLensed(s.renderer,s.scene,s.camera);
+    else s.renderSceneTiered(s.renderer,s.scene,s.camera);
     const bytes=new Uint8Array(w*h*4);gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
     return{bytes,png:s.renderer.domElement.toDataURL('image/png')};
    };
@@ -61,13 +67,17 @@ try{
    }
    return{images:{production:production.png,'no-lens':noLens.png,'no-tides':noTides.png,plain:plain.png,'no-disk':noDisk.png},metrics:{lensChanged,lensUndeformed,tidalChanged,diskPixels,diskLight},state:{tidalActive:wasActive,lambda:state.lambda,shrink:state.shrink,collapse:state.collapse,diskOn:wasDisk,normal:disk.material.uniforms.uNormal.value.toArray(),origin:disk.material.uniforms.uOrigin.value.toArray(),distanceRs:disk.material.uniforms.uDistance.value,near:s.camera.near,far:s.camera.far,lensCount:lens.lensingPass.uniforms.uN.value},glError:gl.getError()};
   },{scenario,pitch});
-  for(const[k,png]of Object.entries(result.images))await writeFile(`${out}/${scenario}-${pitch}-${k}.png`,Buffer.from(png.split(',')[1],'base64'));
+  for(const[k,png]of Object.entries(result.images).filter(([kind])=>coarse.includes(pitch)||kind==='production'))await writeFile(`${out}/${scenario}-${pitch}-${k}.png`,Buffer.from(png.split(',')[1],'base64'));
   delete result.images;report.cases.push({scenario,pitch,...result});await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
   assert.equal(result.glError,0,'live error-free WebGL context');assert.equal(result.state.diskOn,1,'steady quasar disk stays enabled independent of camera side');
   console.log(scenario,pitch,JSON.stringify(result.metrics));
  }
  const edge=report.cases.filter(c=>c.scenario==='disk-crossing');
  const exact=edge.find(c=>c.pitch===0),near=edge.filter(c=>Math.abs(c.pitch)===.005);
+ const crossing=edge.filter(c=>dense.includes(c.pitch)).sort((a,b)=>b.pitch-a.pitch);
+ const outer=crossing.filter(c=>Math.abs(c.pitch)===.0008).map(c=>c.metrics.diskLight);
+ assert(crossing.every(c=>c.metrics.diskLight<=Math.max(...outer)*1.25&&c.metrics.diskLight>=Math.min(...outer)*.75),'Normalized disk footprint avoids a crossing flash or dropout');
+ assert(crossing.every((c,i)=>!i||Math.abs(c.metrics.diskLight-crossing[i-1].metrics.diskLight)<=Math.max(...outer)*.2),'Dense signed crossing remains continuous');
  assert(exact.metrics.diskPixels>near.reduce((s,c)=>s+c.metrics.diskPixels,0)/near.length*.5,'No all-dark edge-on disk dropout');
  assert.deepEqual(report.errors,[]);report.completed=true;
 }finally{await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser?.close();await server?.close();}

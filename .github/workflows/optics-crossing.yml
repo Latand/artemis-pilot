@@ -15,13 +15,14 @@ concurrency:
   cancel-in-progress: true
 jobs:
   capture:
-    name: Optics crossing ${{ matrix.device }}
+    name: Optics crossing ${{ matrix.device }} / bloom-${{ matrix.bloom }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         device: [desktop, mobile]
+        bloom: [0, 1]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,12 +37,27 @@ jobs:
       - name: Frozen Saturn and disk plane-crossing ablations
         env:
           DEVICE: ${{ matrix.device }}
+          BLOOM: ${{ matrix.bloom }}
           ARTEMIS_EVIDENCE: evidence/optics-crossing
         run: node scripts/probe-optics-crossing.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: optics-crossing-${{ matrix.device }}
-          path: evidence/
+          name: optics-crossing-metrics-${{ matrix.device }}-bloom-${{ matrix.bloom }}
+          path: evidence/optics-crossing/report.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optics-crossing-saturn-${{ matrix.device }}-bloom-${{ matrix.bloom }}
+          path: evidence/optics-crossing/saturn-*.png
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optics-crossing-disk-${{ matrix.device }}-bloom-${{ matrix.bloom }}
+          path: evidence/optics-crossing/disk-*.png
           if-no-files-found: error
           retention-days: 14
