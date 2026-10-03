@@ -46,6 +46,10 @@ J.recordStarImpulse(id, 100, [1, -2, 3]);
 const saved = JSON.parse(JSON.stringify(J.serializeUniverseJournal()));
 assert.deepEqual(J.starResidualKm(id, 200), [100, -200, 300]);
 J.restoreUniverseJournal(null); J.restoreUniverseJournal(saved);
+assert.deepEqual(J.serializeUniverseJournal(), saved, 'Event identity survives a checkpoint restore');
+const nextSequence = J.recordStarImpulse(id, 300, [0, 0, 0]);
+assert(nextSequence > Math.max(...saved.events.map(e => e.sequence)), 'New events cannot reuse a restored event identity');
+assert(!J.validUniverseJournal({version:1,events:[saved.events[0],saved.events[0]]}), 'A checkpoint with duplicate event identities is rejected');
 assert.deepEqual(J.starResidualKm(id, 99), [0, 0, 0]);
 assert.deepEqual(J.starResidualKm(id, 200), [100, -200, 300]);
 const seed = getSeed(); setSeed(seed + 1); assert.equal(F.foreignStarById(id), null); setSeed(seed);
@@ -56,7 +60,11 @@ console.log(JSON.stringify({ pass: true, coldQueryMs: coldMs, sampledStars: rows
 // Review regressions: stale seed pins, ejected bodies, sub-bucket publication,
 // and real kilometre-scale free-camera residuals at an M31 planet.
 J.restoreUniverseJournal(null); A.refreshActiveStars(...world, focus, 0);
-setSeed(seed + 1); A.refreshActiveStars(...world, 'free', 0);
+const activeRevision = A.activeStarSetRevision();
+setSeed(seed + 1);
+assert.equal(A.activeStarForFocus(focus), null);
+assert(A.activeStarSetRevision() > activeRevision, 'Seed cleanup invalidates retained point/river source references before rediscovery');
+A.refreshActiveStars(...world, 'free', 0);
 assert(!A.ACTIVE_STARS.some(s => s.id === id)); assert(!A.GRAVITY_STARS.some(s => s.id === id));
 assert.equal(A.activeStarForFocus(focus), null);
 setSeed(seed); A.refreshActiveStars(...world, 'free', 0); E.restoreExploredSystem(null, 'free');

@@ -4,11 +4,21 @@ import { dotTexture } from "./textures.js";
 import { scene } from "./scene.js";
 import { createShipModel } from "./shipModel.js";
 
-// Exterior only; flight pose, scale, markers and exhaust retain their contract.
+// Exterior and navigation aids; physical state lives outside the renderer.
 export const shipG = new THREE.Group();
 export const craft = createShipModel();
 shipG.add(craft);
-export const dot = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,255,255,1)", "rgba(255,120,90,0.65)"), transparent: true, depthWrite: false, depthTest: false }));
+// A compact hollow navigation diamond, not a luminous astronomical object.
+const markerCanvas = document.createElement('canvas');
+markerCanvas.width = markerCanvas.height = 64;
+const markerCtx = markerCanvas.getContext('2d');
+markerCtx.strokeStyle = '#81c7d4'; markerCtx.lineWidth = 7;
+markerCtx.beginPath(); markerCtx.moveTo(32,6); markerCtx.lineTo(58,32);
+markerCtx.lineTo(32,58); markerCtx.lineTo(6,32); markerCtx.closePath(); markerCtx.stroke();
+export const dot = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: new THREE.CanvasTexture(markerCanvas), transparent:true, depthWrite:false,
+    depthTest:false, sizeAttenuation:false, toneMapped:false,
+}));
 shipG.add(dot);
 export const flame = new THREE.Sprite(new THREE.SpriteMaterial({ map: dotTexture("rgba(255,190,120,1)", "rgba(255,90,40,0.8)"), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
 flame.visible = false;

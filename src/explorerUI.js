@@ -127,7 +127,7 @@ function selectedBody() {
     // MOONS[i].mu is the parent planet's, kept for the analytic orbit, so a
     // planetary moon passes only its own radius and shows no mass or gravity.
     const mi=moonFocusIndex(G.focus);if(mi>=0)return {name:MOONS[mi].name,kind:'Moon',R:MOONS[mi].R,basis:'measured'};
-    const si=/^star:(\d+)$/.exec(String(G.focus));if(si&&STARS[+si[1]]){const st=STARS[+si[1]];return {...st,R:st.bh?null:st.R,kind:st.bh?'Black hole':'Catalog star',star:st.bh?null:st,rs:st.rs,bhMass:st.bh?bhMassLabel(st.rs):null,basis:st.bh?'modeled':'measured'};}
+    const si=/^star:(\d+)$/.exec(String(G.focus));if(si&&STARS[+si[1]]){const st=STARS[+si[1]];return {...st,R:st.bh?null:st.R,kind:st.bh?'Black hole':'Catalog star',star:st.bh?null:st,rs:st.rs,bhMass:st.bh?bhMassLabel(st.rs):null,basis:st.bh||st.estimated||st.distanceEstimated?'modeled':'measured'};}
     const active=activeStarForFocus(G.focus);if(active)return {...active,kind:'Stellar destination',star:active,basis:active.estimated||active.procedural?'modeled':'measured'};
     const childMoon=planetMoonFocusIndex(G.focus),pi=childMoon?.planetIndex??planetFocusIndex(G.focus),sys=getSystemForTarget(G.focus),p=sys?.planets?.[pi];
     const satellite=childMoon&&p?.moons?.[childMoon.moonIndex];

@@ -24,9 +24,11 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-catalog-motion.mjs && npm run smoke:explored-systems && npm run smoke:galaxy-dynamics && npm run smoke:tier1-runtime && npm run smoke:tier1-queryable && npm run smoke:determinism && npm test && npm run build
+      - run: node scripts/smoke-hyg-normalization.mjs && node scripts/smoke-catalog-motion.mjs && node scripts/smoke-river-source-cache.mjs && node scripts/smoke-active-point-ownership.mjs && node scripts/smoke-gas-formation.mjs && npm run smoke:explored-systems && npm run smoke:galaxy-dynamics && npm run smoke:tier1-runtime && npm run smoke:tier1-queryable && npm run smoke:determinism && npm test && npm run build
       - run: npx playwright install --with-deps chromium
       - run: node scripts/verify-catalog-motion.mjs . evidence/catalog-motion
+        env:
+          CATALOG_RIVER_QA: '1'
       - uses: actions/upload-artifact@v4
         if: always()
         with:

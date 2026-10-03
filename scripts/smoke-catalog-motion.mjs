@@ -84,13 +84,19 @@ for (const [index, name] of [[70664,'PROXIMA'],[71454,'ALPHA CEN A'],[71451,'ALP
 }
 A.refreshActiveStars(0,0,0,'hyg:117953',0);
 const retained=A.activeStarForFocus('hyg:117953');
+const retainedRevision=A.activeStarSetRevision();
+A.refreshActiveStars(0,0,0,'hyg:117953',0);
+assert.equal(A.activeStarSetRevision(),retainedRevision,'Unchanged refresh does not invalidate source selection');
 for(const t of [MYR,541101036*SEC_YEAR,-MYR,0]) {
     F.syncGalacticFrame(t); // production cosmic-frame path: no rediscovery
     assert.equal(A.activeStarsTime(),M.catalogEvalTime(t));
+    assert.equal(A.activeStarSetRevision(),retainedRevision,'Position-only publication retains structural revision');
     assert.strictEqual(A.activeStarForFocus('hyg:117953'),retained);
     const expected=H.hygStarByIndex(117953,M.catalogEvalTime(t));
     assert(dist(xyz(retained),xyz(expected))<PC_KM*1e-8,'Throttled refresh cannot leave held active rows at an older epoch');
 }
+A.refreshActiveStars(0,0,0,'hyg:117953',MYR);
+assert(A.activeStarSetRevision()>retainedRevision,'Replacing active objects invalidates retained source-reference caches');
 const { starFromCatalogRecord, serializePromotedCatalogStars, restorePromotedCatalogStars }=await import('../src/catalogSearch.js');
 const index=117953,row=meta.labels.find(r=>r[0]===index),vals=new Float32Array(bin.buffer,bin.byteOffset,bin.byteLength/4);
 const promoted=starFromCatalogRecord(meta,vals,index,row); C.addRuntimeStar(promoted);
@@ -106,6 +112,26 @@ F.syncGalacticFrame(MYR); const canonical=H.hygStarByIndex(index,M.catalogEvalTi
 assert(dist(xyz(loaded),xyz(canonical)) < PC_KM*1e-8);
 const m=M.catalogMotionFor(loaded), independent=M.createCatalogMotion(...savedEpoch,{...loaded,name:'RENAMED'});
 assert.deepEqual(M.catalogPositionAt(m,MYR),M.catalogPositionAt(independent,MYR),'Catalog identifiers, not labels, seed known motions');
+// Cached curated identity keys must preserve exact first-match semantics and
+// observe an edited alias or a replacement object immediately.
+const aliasQuery=H.hygStarByIndex(32262), sirius=STARS.find(s=>s.name==='SIRIUS A');
+const aliasProbe={...sirius,name:aliasQuery.name,hip:null,hd:null,hr:null,hygIndex:undefined,
+    epochPosition:[1e20,1e20,1e20],x:1e20,y:1e20,z:1e20};
+STARS.unshift(aliasProbe);
+try {
+    assert.strictEqual(A.activeStarForFocus('hyg:32262'),aliasProbe);
+    aliasProbe.name='QA unrelated destination';
+    assert.strictEqual(A.activeStarForFocus('hyg:32262'),sirius,'Changed name invalidates cached alias');
+    for(const field of ['hip','hd','hr']) {
+        assert(Number(aliasQuery[field])>0);
+        aliasProbe[field]=aliasQuery[field];
+        assert.strictEqual(A.activeStarForFocus('hyg:32262'),aliasProbe,field+' addition is observed');
+        aliasProbe[field]=null;
+        assert.strictEqual(A.activeStarForFocus('hyg:32262'),sirius,field+' removal is observed');
+    }
+    const replacement={...aliasProbe,name:aliasQuery.name};STARS[0]=replacement;
+    assert.strictEqual(A.activeStarForFocus('hyg:32262'),replacement,'Replacement never reuses old object ownership');
+} finally { STARS.shift(); }
 const begin=performance.now(); for(let i=0;i<1000;i++) F.syncGalacticFrame(i*MYR);
 const perFrame=(performance.now()-begin)/1000;
 assert(perFrame<2,'Curated updates must stay bounded under 2ms/epoch');

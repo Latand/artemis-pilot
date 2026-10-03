@@ -98,6 +98,10 @@ export const ACTIVE_STAR_CONFIG = {
 export const ACTIVE_STARS = [];
 export const GRAVITY_STARS = [];
 const ACTIVE_IDS = new Set();
+let ACTIVE_SET_REVISION = 0;
+// Structural publication only. Moving retained objects changes time, not this
+// revision; replacing objects invalidates downstream source-reference caches.
+export function activeStarSetRevision() { return ACTIVE_SET_REVISION; }
 const GRAVITY_IDS = new Set();
 const PINNED_PROC = new Map();
 let GENERATED_SEED = getSeed();
@@ -105,10 +109,12 @@ function forgetStaleGeneratedSources() {
     const seed = getSeed();
     if (GENERATED_SEED === seed) return;
     GENERATED_SEED = seed;
+    const activeCount = ACTIVE_STARS.length;
     for (const [id, star] of PINNED_PROC) if (star.generatedSeed !== seed) PINNED_PROC.delete(id);
     for (const list of [ACTIVE_STARS, GRAVITY_STARS]) {
         for (let i = list.length - 1; i >= 0; i--) if (list[i].procedural && list[i].generatedSeed !== seed) list.splice(i, 1);
     }
+    if (ACTIVE_STARS.length !== activeCount) ACTIVE_SET_REVISION++;
     ACTIVE_REFRESH_KEY = ''; GRAVITY_REFRESH_KEY = ''; FAST_REFRESH.seed = undefined;
     NEIGHBOURHOOD.valid = false;
 }
@@ -198,6 +204,7 @@ function pushActive(star, id, kind) {
     if (ACTIVE_STARS.length >= ACTIVE_STAR_CONFIG.totalLimit) return false;
     ACTIVE_IDS.add(id);
     ACTIVE_STARS.push(star);
+    ACTIVE_SET_REVISION++;
     if (kind === "procedural") STATS.procedural++;
     else if (kind === "catalog") STATS.catalog++;
     else STATS.known++;
@@ -548,10 +555,22 @@ function insertNearestProcedural(star, d2, limit) {
     PROC_NEAREST[p] = item;
 }
 
+// Curated aliases are compared against every candidate in a bounded catalog
+// query. Cache only their derived keys; field guards preserve edited aliases
+// and WeakMap ownership follows object replacement without retaining old rows.
+const knownIdentityKeys = new WeakMap();
+function identityKeysForKnown(star) {
+    const cached = knownIdentityKeys.get(star);
+    if (cached && cached.name === star.name && cached.hip === star.hip && cached.hd === star.hd && cached.hr === star.hr) return cached.keys;
+    const keys = catalogIdentityKeys(star);
+    knownIdentityKeys.set(star, { name: star.name, hip: star.hip, hd: star.hd, hr: star.hr, keys });
+    return keys;
+}
+
 function knownDuplicateFor(star) {
     if (!star?.activeCatalog) return null;
     const keys = catalogIdentityKeys(star);
-    const exact = STARS.find(known => catalogIdentityKeys(known).some(key => keys.includes(key)) ||
+    const exact = STARS.find(known => identityKeysForKnown(known).some(key => keys.includes(key)) ||
         (Number.isInteger(known.hygIndex) && known.hygIndex === star.hygIndex));
     if (exact) return exact;
     // The same catalog identity must not become a different star after its
@@ -670,6 +689,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
         FAST_REFRESH.lite = lite;
         return activeStarStats();
     }
+    if (ACTIVE_STARS.length) ACTIVE_SET_REVISION++;
     ACTIVE_STARS.length = 0;
     ACTIVE_IDS.clear();
     STATS.known = 0;

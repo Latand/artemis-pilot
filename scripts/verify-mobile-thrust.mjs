@@ -11,6 +11,7 @@ const root=resolve(process.env.BASE_ROOT||'.'), before=!!process.env.BASE_ROOT;
 // Later PR baselines already contain recovery. Keep the legacy negative
 // reproduction only for exact source trees that predate the lifecycle module.
 const expectBrokenRecovery=before&&!existsSync(resolve(root,'src/render/contextLifecycle.js'));
+const driveLabel=existsSync(resolve(root,'src/curvatureDrive.js'))?'FIELD':'BURN';
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/mobile-thrust');
 const suite=process.env.THRUST_SUITE||'all';
 assert(['all','recovery','soak'].includes(suite),'Known mobile QA suite');
@@ -38,13 +39,13 @@ try {
  const state=()=>page.evaluate(async()=>{const {renderer,camera,cam,renderQuality}=await import('/src/scene.js');const {stellarExposure}=await import('/src/render/stellarAppearance.js');const {galaxyVolumeStats}=await import('/src/render/galaxyVolume.js');return{frames:window.__frameStarts,success:window.__frameSuccess,t:__G.t,x:__G.x,y:__G.y,z:__G.z,vx:__G.vx,vy:__G.vy,vz:__G.vz,dv:__G.dvUsed,paused:__G.paused,dead:__G.dead,contextLost:renderer.getContext().isContextLost(),near:camera.near,far:camera.far,cam:camera.position.toArray(),dist:cam.dist,exposure:stellarExposure.value,quality:{...renderQuality},memory:{...renderer.info.memory},galaxy:galaxyVolumeStats(),mode:document.querySelector('#mMode')?.textContent,throttle:document.querySelector('#mThrCap')?.textContent};});
  const track=await page.locator('#mThrTrack').boundingBox();assert(track);
  await page.mouse.move(track.x+track.width/2,track.y+track.height*.15);await page.mouse.down();
- await page.waitForFunction(()=>__G.dvUsed>0&&document.querySelector('#mMode')?.textContent==='BURN');
+ await page.waitForFunction(label=>__G.dvUsed>0&&document.querySelector('#mMode')?.textContent===label,driveLabel);
  report.samples.push({name:'thrust-before-loss',...await state()});await capture('01-thrust-before-loss');
  await page.evaluate(async()=>{const {renderer}=await import('/src/scene.js');window.__loss=renderer.getContext().getExtension('WEBGL_lose_context');if(!window.__loss)throw Error('WEBGL_lose_context unavailable');window.__loss.loseContext();});
  await page.waitForTimeout(1600);await page.mouse.up();
  report.samples.push({name:'during-loss',...await state()});await capture('02-context-lost');
  const held=await state();await page.waitForTimeout(500);const heldLater=await state();
- if(!expectBrokenRecovery){check(heldLater.t===held.t,'Flight time is held while GPU context is lost');check(heldLater.mode==='HOLD','HUD explicitly reports the held flight');check(await page.evaluate(async()=>(await import('/src/audio.js')).thrustGain?.gain.value===0),'Engine noise stops during the GPU outage');check(await page.locator('#renderContextStatus').isVisible(),'Recovery status is visible instead of unexplained black world');}
+ if(!expectBrokenRecovery){check(heldLater.t===held.t,'Flight time is held while GPU context is lost');check(heldLater.mode==='HOLD','HUD explicitly reports the held flight');check(await page.evaluate(async()=>(await import('/src/audio.js')).thrustGain?.gain.value===0),'Propulsion feedback stops during the GPU outage');check(await page.locator('#renderContextStatus').isVisible(),'Recovery status is visible instead of unexplained black world');}
  await page.evaluate(()=>window.__loss.restoreContext());
  await page.waitForFunction(async()=>!(await import('/src/scene.js')).renderer.getContext().isContextLost());
  await page.waitForTimeout(2200);const restored=await state();report.samples.push({name:'after-restore',...restored});await capture('03-context-restored');

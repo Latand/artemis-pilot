@@ -1,3 +1,4 @@
+import { normalizeHygCatalog, isPhotometricCatalogRow } from "./universe/hygNormalization.js";
 import { canonicalDestinationName } from "./universe/catalogIdentity.js";
 import { catalogMotionFor, updateCatalogStar } from "./universe/catalogMotion.js";
 import { addRuntimeStar, CATALOG_PROMOTION_MAX, INITIAL_STAR_COUNT, LY_KM, R_SUN, STARS } from "./constants.js";
@@ -23,7 +24,7 @@ let labelMap = null;
 let searchTimer = 0;
 
 const SERIAL_STAR_FIELDS = [
-    "epochPosition",
+    "epochPosition", "distanceEstimated",
     "name", "dLy", "x", "y", "z", "color", "mass", "R", "catalog", "hygIndex",
     "hip", "hd", "hr", "spect", "mag", "absMag", "lumSolar", "tempK", "estimated",
 ];
@@ -110,6 +111,7 @@ export function searchCatalogLabels(meta, query, limit = 8) {
 }
 
 export function starFromCatalogRecord(meta, vals, index, row = null) {
+    normalizeHygCatalog(meta, vals);
     const stride = meta.stride || 10;
     const base = index * stride;
     if (index < 0 || index >= meta.count || base + stride > vals.length) throw new Error("catalog index out of range");
@@ -142,6 +144,7 @@ export function starFromCatalogRecord(meta, vals, index, row = null) {
         mass,
         R: radiusSolar * R_SUN,
         catalog: "hyg-v41-promoted",
+        distanceEstimated: isPhotometricCatalogRow(meta, index),
         hygIndex: index,
         hip: row?.[2] || "",
         hd: row?.[3] || "",
@@ -175,7 +178,7 @@ function formatLy(v) {
 function describeStar(star) {
     const mass = Number.isFinite(star.mass) ? star.mass.toFixed(star.mass < 1 ? 3 : 2) + " M☉" : "";
     const temp = Number.isFinite(star.tempK) ? Math.round(star.tempK).toLocaleString("en-US") + " K" : "";
-    return [formatLy(star.dLy), mass, temp, star.spect].filter(Boolean).join(" · ");
+    return [formatLy(star.dLy), star.distanceEstimated ? "photometric distance estimate" : "", mass, temp, star.spect].filter(Boolean).join(" · ");
 }
 
 function formatActiveDistance(km) {
@@ -190,7 +193,7 @@ function describeActiveStar(star, dKm, source, focus) {
     const lum = Number.isFinite(star.lumSolar) ? star.lumSolar.toFixed(star.lumSolar < 1 ? 4 : 2) + " L☉" : "";
     const kind = star.spect || star.cls || "";
     // focus is an internal key (e.g. "proc:…") — never show it in the row detail
-    return [source, formatActiveDistance(dKm), mass, radius, temp, lum, kind].filter(Boolean).join(" · ");
+    return [source, formatActiveDistance(dKm), star.distanceEstimated ? "photometric distance estimate" : "", mass, radius, temp, lum, kind].filter(Boolean).join(" · ");
 }
 
 function activeSource(star) {
@@ -242,6 +245,7 @@ function storedStar(raw) {
     }
     for (const field of ["hip", "hd", "hr", "spect"]) star[field] = String(star[field] || "");
     star.estimated = star.estimated !== false;
+    star.distanceEstimated = star.distanceEstimated === true;
     if (!star.name || star.hygIndex < 0) return null;
     if (!(star.dLy > 0) || !(star.mass > 0) || !(star.R > 0)) return null;
     if (!Number.isFinite(star.x) || !Number.isFinite(star.y) || !Number.isFinite(star.z)) return null;

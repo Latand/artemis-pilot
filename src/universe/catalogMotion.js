@@ -90,7 +90,8 @@ export function updateCatalogStar(star, simT) {
 }
 
 // Shared GPU uniforms: time in Myr, solar displacement in pc. The extra
-// per-point attribute is only (xp,yp,zp), 12 bytes/star, with no CPU frame scan.
+// per-point attribute is (xp,yp,zp,omega*Myr), 16 bytes/star. Packing the
+// canonical frequency avoids GPU length/division error accumulating into phase.
 export const catalogMotionUniforms = {
     uCatalogMyr: { value: 0 }, uCatalogSunDelta: { value: [0, 0, 0] },
     uCatalogOriginPc: { value: [0, 0, 0] },
@@ -106,26 +107,38 @@ export function setCatalogMotionTime(t, origin = { x: 0, y: 0, z: 0 }) {
 }
 const dot = (r, v) => `dot(vec3(${r.map(x => x.toFixed(12)).join(',')}), ${v})`;
 export const CATALOG_MOTION_GLSL = /* glsl */`
-attribute vec3 catalogOrbit;
+attribute vec4 catalogOrbit;
 uniform float uCatalogMyr;
 uniform vec3 uCatalogSunDelta, uCatalogOriginPc;
-float catalogSq(float x) { return x*x; }
+// Do not rely on implementation-dependent transcendental accuracy for a
+// phase multiplied by kpc radii. Range-reduced Taylor polynomials (sin degree
+// 13, cos degree 12) have <7e-9 truncation error on [-pi/2,pi/2].
+vec2 catalogSinCos(float angle) {
+    float a = mod(angle + 3.141592653589793, 6.283185307179586) - 3.141592653589793;
+    float signC = 1.0;
+    if (a > 1.570796326794897) { a = 3.141592653589793-a; signC = -1.0; }
+    if (a < -1.570796326794897) { a = -3.141592653589793-a; signC = -1.0; }
+    float z = a*a;
+    float sn = a*(1.0+z*(-0.1666666666666667+z*(0.0083333333333333+z*(-0.0001984126984127+z*(0.0000027557319224+z*(-0.0000000250521084+z*0.0000000001605904))))));
+    float cs = 1.0+z*(-0.5+z*(0.0416666666666667+z*(-0.0013888888888889+z*(0.0000248015873016+z*(-0.0000002755731922+z*0.0000000020876757)))));
+    return vec2(sn,signC*cs);
+}
 vec3 catalogMotion(vec3 p) {
     if (uCatalogMyr == 0.0) return p;
     vec3 w = vec3(p.x,-p.z,p.y) / ${(PC_KM * .001).toFixed(6)} + uCatalogOriginPc;
     vec3 g = vec3(${SUN_GAL[0]}.0 - ${dot(W2G[0], 'w')}, ${dot(W2G[1], 'w')}, ${SUN_GAL[2]} + ${dot(W2G[2], 'w')});
-    float r = length(g.xy), safeR = max(r,50.0), rk = safeR*.001;
-    float vc = rk < 5.0 ? 234.406*rk/5.0 : 229.0 - 1.7*(min(rk,25.0)-8.18);
-    float om = vc/safeR * ${(CATALOG_MYR_S / PC_KM).toFixed(15)};
-    float a = sqrt(2.0)*om*uCatalogMyr;
-    float cm1 = -2.0*catalogSq(sin(a*.5)), sk = sin(a);
+    float r = length(g.xy), om = catalogOrbit.w;
+    vec2 k = catalogSinCos(0.7071067811865476*om*uCatalogMyr);
+    float cm1 = -2.0*k.x*k.x, sk = 2.0*k.x*k.y;
     float dr = catalogOrbit.x*cm1 - catalogOrbit.y*sk;
     float theta = om*uCatalogMyr - sqrt(2.0)/(r-catalogOrbit.x)*(catalogOrbit.x*sk+catalogOrbit.y*cm1);
-    float sa=sin(theta), ca1=-2.0*catalogSq(sin(theta*.5));
+    vec2 ph = catalogSinCos(theta*.5);
+    float sa=2.0*ph.x*ph.y, ca1=-2.0*ph.x*ph.x;
     vec2 delta=vec2(g.x*ca1-g.y*sa,g.x*sa+g.y*ca1);
     delta += dr/max(r,1e-12)*vec2(g.x*(ca1+1.0)-g.y*sa,g.x*sa+g.y*(ca1+1.0));
     float nu = ${(CATALOG_NU_S * CATALOG_MYR_S).toFixed(15)}*uCatalogMyr;
-    vec3 d=vec3(delta,g.z*(-2.0*catalogSq(sin(nu*.5)))+catalogOrbit.z*sin(nu))-uCatalogSunDelta;
+    vec2 vertical = catalogSinCos(nu*.5);
+    vec3 d=vec3(delta,g.z*(-2.0*vertical.x*vertical.x)+catalogOrbit.z*(2.0*vertical.x*vertical.y))-uCatalogSunDelta;
     vec3 e=vec3(-d.x,d.y,d.z);
     vec3 wd=vec3(${dot(W2G.map(r=>r[0]), 'e')},${dot(W2G.map(r=>r[1]), 'e')},${dot(W2G.map(r=>r[2]), 'e')});
     return p + vec3(wd.x,wd.z,-wd.y)*${(PC_KM * .001).toFixed(6)};

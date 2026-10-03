@@ -54,9 +54,9 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - name: Prepare exact stacked baseline
         env:
-          # Freeze the common #48 foundation used by this slice. A moving
+          # Freeze the integrated #55 foundation used by this slice. A moving
           # feature-branch base must not silently introduce unrelated fixes.
-          BASE_SHA: 1a8e3af6f7e6ab16f121864afdf9cf96df5c645c
+          BASE_SHA: 1d8044568c486811b9879d4f571f8a6096accef0
         run: |
           git worktree add --detach "$RUNNER_TEMP/travel-base" "$BASE_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/travel-base/node_modules"

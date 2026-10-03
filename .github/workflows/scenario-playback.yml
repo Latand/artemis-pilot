@@ -1,0 +1,49 @@
+name: Jupiter guided playback
+on:
+  pull_request:
+    paths:
+      - 'src/scenario*'
+      - 'src/main.js'
+      - 'src/timeCtl.js'
+      - 'src/saves.js'
+      - 'scripts/*scenario-playback*'
+      - '.github/workflows/scenario-playback.yml'
+permissions:
+  contents: read
+concurrency:
+  group: scenario-playback-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  flight:
+    name: Jupiter ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npm run smoke:scenario-playback && npm test && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact revision
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/head-sha.txt
+      - name: Full flight, phase screenshots, pause, restart and return state
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: node scripts/verify-scenario-playback.mjs evidence/flight
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jupiter-playback-${{ matrix.device }}
+          path: evidence/
+          retention-days: 14

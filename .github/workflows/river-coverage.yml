@@ -1,0 +1,64 @@
+name: Source-relative river coverage
+on:
+  pull_request:
+    paths:
+      - 'src/river*'
+      - 'src/flowfield.js'
+      - 'scripts/*river*'
+      - '.github/workflows/river-coverage.yml'
+permissions:
+  contents: read
+concurrency:
+  group: river-coverage-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  coverage:
+    name: Coverage ${{ matrix.variant }} / ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    # Measured synchronized SwiftShader pace is ~5.3s/frame desktop and
+    # ~2.6s/frame touch. Keep every one of the 1200 completed frames rather
+    # than truncating the soak at the earlier 45-minute orchestration limit.
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        variant: [before, after]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-river-capture.mjs && node scripts/smoke-river-source-alignment.mjs && node scripts/smoke-river-coverage.mjs && npm run smoke:river-visual && npm test && npm run smoke:physics3d && npm run smoke:determinism && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Record exact source identities
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          mkdir -p evidence/sources
+          git rev-parse HEAD > evidence/sources/head-sha.txt
+          git rev-parse "$BASE_SHA" > evidence/sources/base-sha.txt
+          git diff "$BASE_SHA" HEAD > evidence/sources/change.diff
+          if [ "$VARIANT" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/river-base" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/river-base/node_modules"
+            echo "BASE_ROOT=$RUNNER_TEMP/river-base" >> "$GITHUB_ENV"
+          fi
+      - name: Off-center Sun paused and accelerated boundary crossings
+        env:
+          DEVICE: ${{ matrix.device }}
+          ARTEMIS_EVIDENCE: evidence/coverage
+        run: node scripts/verify-river-coverage.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: river-coverage-${{ matrix.variant }}-${{ matrix.device }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

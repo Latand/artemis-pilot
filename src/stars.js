@@ -12,7 +12,7 @@ import { dotTexture } from "./textures.js";
 import { renderQuality, scene, camera, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
 import { getExploredHost } from "./universe/exploredSystem.js";
-import { ACTIVE_STARS, activeStarsTime, activeForeignStarsStamp } from "./universe/activeStars.js";
+import { ACTIVE_STARS, activeStarsTime, activeForeignStarsStamp, activeStarSetRevision } from "./universe/activeStars.js";
 import { applyTerrellToMaterial } from "./relView.js";
 import { holeRoot, makeHoleOptics, updateHoleOptics } from "./holeOptics.js";
 import { namedHoleAppearance } from "./render/holeAppearance.js";
@@ -248,7 +248,7 @@ function syncActiveStarVisuals(camera, dtR = 0) {
 }
 
 // All procedural and HYG active stars as one point layer, re-synced whenever the
-// active set or its evaluation time changes. Offsets from the first star keep
+// active set or its evaluation time changes. Camera-relative offsets keep
 // float32 precision independent of the distance to the Sun.
 const activeProc = { mesh: null, capacity: 0, sig: "" };
 const pooledCatalogRows = new Set();
@@ -257,7 +257,7 @@ export function syncActiveProceduralPoints() {
     const explored = getExploredHost();
     if (explored?.activeCatalog && !pointStars.some(s => s.id === explored.id)) pointStars.push(explored);
     const n0 = pointStars.length;
-    const sig = (explored?.id || "") + ":" + activeForeignStarsStamp() + ":" + activeStarsTime() + ":" + n0 + ":" + (n0 ? pointStars[0].id || pointStars[0].name : "") + ":" + (n0 ? pointStars[n0 - 1].id || pointStars[n0 - 1].name : "");
+    const sig = activeStarSetRevision() + ":" + (explored?.id || "") + ":" + activeForeignStarsStamp() + ":" + activeStarsTime() + ":" + n0 + ":" + (n0 ? pointStars[0].id || pointStars[0].name : "") + ":" + (n0 ? pointStars[n0 - 1].id || pointStars[n0 - 1].name : "");
     if (sig === activeProc.sig) {
         if (activeProc.mesh && !activeProc.mesh.position.equals(camera.position)) placeActivePoints(pointStars);
         return;

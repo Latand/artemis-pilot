@@ -185,15 +185,15 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
         ? " · ⏪ REVERSE BLOCKED — irreversible event at " + fmtCivilDate(getEpochMs(), WORLD.irreversibleFloorT)
         : "";
     setText(warpEl, (G.warp < 0 ? "⏪ REVERSE " : "⏩ ") + warpLabel(G.warp) +
-        reverseBlocked + (aMag > 0 && G.warp > 600 ? " · ⚠ THRUST AT HIGH WARP" : "") + (G.paused ? " · ❚❚ PAUSED" : ""));
+        reverseBlocked + (aMag > 0 && G.warp > 600 ? " · ⚠ DRIVE AT HIGH WARP" : "") + (G.paused ? " · ❚❚ PAUSED" : ""));
     setClass(warpEl, G.paused || WORLD.reverseBlocked ? "warn" : "");
     if (G.dead) setText(engineEl, "VEHICLE LOST — " + G.deadReason);
     else if (G.landed) setText(engineEl, G.landed.body === "earth" ? "ON THE SURFACE — SHIFT+W TO LIFT OFF" :
         G.landed.body === "planet" ? "ON " + PL[G.landed.i].name + " — W TO LIFT OFF (SHIFT HELPS)" :
             G.landed.body === "sysmoon" ? "ON PROCEDURAL MOON — W TO LIFT OFF" : "ON THE LUNAR SURFACE — W TO LIFT OFF");
-    else if (aMag > 0) setText(engineEl, (mainIn ? "MAIN ENGINE " + Math.round(G.throttle * 100) + "%" : "RCS") + (G.boost ? " · BOOST ×4" : "") + " · Δv flowing");
-    else setText(engineEl, "ENGINE OFF — gravity shapes the path");
-    setText(throttleEl, "THROTTLE " + Math.round(G.throttle * 100) + "% · " +
+    else if (aMag > 0) setText(engineEl, (mainIn ? "CURVATURE FIELD " + Math.round(G.throttle * 100) + "%" : "LATERAL FIELD") + (G.boost ? " · BOOST ×4" : "") + " · effective acceleration");
+    else setText(engineEl, "FIELD IDLE — ballistic coast");
+    setText(throttleEl, "FIELD STRENGTH " + Math.round(G.throttle * 100) + "% · " +
         (G.hold === "pro" ? "HOLD PROGRADE" : G.hold === "retro" ? "HOLD RETROGRADE" : "MANUAL ATTITUDE"));
     setText(fuelTxtEl, G.infinite ? "∞" : Math.round(G.fuel) + " m/s Δv");
     const frFuel = G.infinite ? 1 : G.fuel / FUEL_DV0;

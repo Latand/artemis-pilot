@@ -1,4 +1,5 @@
 import { restoreUniverseJournal } from './universe/universeJournal.js';
+import { resetDrive } from './curvatureDrive.js';
 import { R_EARTH, MU_E, FUEL_DV0, BH_MAX, C_LIGHT, K, PL } from "./constants.js";
 import { accretedFraction } from "./tde.js";
 
@@ -191,6 +192,7 @@ export const keys = new Set();
 window.__keys = keys; // debug/testing handle
 
 export function resetShip() {
+    resetDrive();
     resetWorld();
     const r0 = R_EARTH + 300, th0 = -0.6;
     const v0 = Math.sqrt(MU_E / r0);

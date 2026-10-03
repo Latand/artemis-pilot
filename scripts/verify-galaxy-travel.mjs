@@ -39,6 +39,7 @@ try {
             star:qa.systems.getExploredHost()?.id,system:qa.systems.getExploredSystem(qa.state.G.focus)?.starId,
             rows:qa.field.foreignCameraStars().length, overview:qa.state.G.cosmicOverview,
             points:qa.scene.scene.children.find(o=>o.name==='persistent Andromeda stars')?.geometry.drawRange.count,
+            moonBeaconVisible:!!qa.scene.scene.children.find(o=>o.name==='Moon selection beacon')?.visible,
             visibleLabels:[...document.querySelectorAll('.lbl')].filter(el=>getComputedStyle(el).display!=='none'&&Number(getComputedStyle(el).opacity)>.01).map(el=>el.textContent),
             activeIds:qa.active.ACTIVE_STARS.filter(s=>s.galaxyId).map(s=>s.id) }));
         report.captures.push({name,...state});await page.screenshot({path:resolve(out,name+'.png')});await save();console.log(name,state.focus,state.distance,state.rows);return state;
@@ -90,6 +91,7 @@ try {
     await releaseKeys();await page.keyboard.press('k');await frames(2);
     await page.locator('#exploreMilkyWayReturn').click();await frames(30);const returned=await snapshot('09-return-milky-way');
     assert(returned.distance>1e10);assert.equal(returned.time,initial.time);
+    assert.equal(returned.moonBeaconVisible,false,'A retained local Moon beacon cannot overlay the Milky Way return');
     await releaseKeys();await page.keyboard.press('l');await frames(6);const reload=await snapshot('10-reloaded-same-planet');
     assert.equal(reload.focus,planet.focus);assert.equal(reload.star,candidate.id);assert.equal(reload.time,initial.time);
     assert(!reload.visibleLabels.some(label=>/^(EARTH|MOON|MARS|NEPTUNE|GAIA BH[12])$/.test(label)));

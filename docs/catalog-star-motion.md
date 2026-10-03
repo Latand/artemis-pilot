@@ -32,8 +32,8 @@ lands in a new bucket. Reverse and direct seek evaluate the same epoch function;
 there is no accumulated integration history.
 
 The full HYG and both AT-HYG point layers evaluate the same algebra in a shared
-GPU kernel, with three extra floats per point (12 bytes), rather than scanning
-millions of stars on the CPU per frame. This adds approximately 30 MB for the
+GPU kernel, with four extra floats per point (16 bytes), rather than scanning
+millions of stars on the CPU per frame. This adds approximately 40 MB for the
 2.37-million-star AT-HYG base plus HYG background, in addition to any estimated
 AT-HYG supplement. A small named buffer follows the canonical CPU objects. Both named and active
 point buffers use observer-relative residuals, independent of the optional
@@ -46,7 +46,9 @@ fallback velocities cannot switch a selected system's identity. A bounded
 active-position publisher runs even when cosmic-frame cadence defers more
 expensive neighbourhood discovery. Float32 far-field GPU
 positions are approximations; the browser test measures their deviation from
-the canonical float64 model through ±541 Myr and +1 Gyr.
+the canonical float64 model through ±541 Myr and +1 Gyr. Angular frequency is
+packed from the canonical CPU model, and range-reduced polynomial trigonometry
+avoids vendor-dependent phase error accumulating at kiloparsec radii.
 
 Intrinsic magnitudes use epoch distances, never the changing distance to the
 Sun. Promoted-star saves retain epoch coordinates, so loading a future save
@@ -102,3 +104,27 @@ a visual galaxy instance alone is not yet a navigable stellar system.
 Local Chromium execution is blocked by the executor's socket restriction;
 full-app pixels and shader verification run in the authorized GitHub Actions
 workflow. A successful local build is not visual verification.
+
+## Measured far-field precision and memory
+
+The four-float orbit attribute adds about 39.9 MB of CPU attribute arrays for
+full HYG plus the 2.37M AT-HYG base, and typically a similar amount of GPU
+residency. The estimated AT-HYG supplement is additional. The number is not a
+total application-memory estimate.
+
+Independent offline Mesa ES transform-feedback on named and stratified HYG
+rows found all sampled valid-distance rows below 0.05 pc through ±1 Gyr
+(maximum 0.03881 pc). That is a representative validation envelope, not a
+universal guarantee for every catalog record or epoch. The same valid-distance
+sample reached about 0.639 pc at 10 Gyr and 3.246 pc at 100 Gyr. The UI permits
+longer seeks; far-field catalog positions remain a float32 approximation there.
+Local named/promoted/explored state remains canonical float64, rendered with
+observer-relative residuals.
+
+The raw binary contains HYG's 100 kpc placeholder distances. Production
+catalogData.repairPlaceholderDistances replaces those with photometric priors
+(minimum 500 pc), also recalculating luminosity/mass/radius. Raw-bin precision
+samples must distinguish them from actual runtime input. These inferred values
+must not be described as measured 100 kpc distances. The worker, direct registration and normal loader share the same idempotent
+normalization. Repaired rows keep explicit estimated-distance provenance in
+active/promoted records, saves and displayed details.

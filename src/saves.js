@@ -1,4 +1,5 @@
 import { serializeUniverseJournal, restoreUniverseJournal, validUniverseJournal } from './universe/universeJournal.js';
+import { resetDrive } from './curvatureDrive.js';
 import { apOff } from "./autopilot.js";
 import { cam } from "./scene.js";
 import { getOrigin } from "./universe/renderOrigin.js";
@@ -38,7 +39,7 @@ const G_FIELDS = [
     "cabin", "cosmicOverview",
 ];
 const SERIAL_STAR_FIELDS = [
-    "epochPosition",
+    "epochPosition", "distanceEstimated",
     "name", "dLy", "x", "y", "z", "color", "mass", "R", "catalog", "hygIndex",
     "hip", "hd", "hr", "spect", "mag", "absMag", "lumSolar", "tempK", "estimated",
 ];
@@ -148,6 +149,10 @@ export async function loadState() {
         try { await ensureHygCatalogLoaded(); }
         catch { exploredCatalogUnavailable = true; }
     }
+    // Relinquish excursion ownership while its return world is still intact.
+    // The exit listener restores that snapshot; it must run before any saved
+    // seed, intervention, host or camera state is installed.
+    window.dispatchEvent(new Event("ap:replace-universe"));
     // The procedural galaxy is a pure function of (seed, cell coords), so the
     // seed must land before any procedural star is regenerated from a saved id.
     setSeed(data.v >= 9 && Number.isFinite(data.galaxySeed) ? (data.galaxySeed >>> 0) : DEFAULT_SEED);
@@ -160,6 +165,7 @@ export async function loadState() {
     apOff();
     relResetState();
     Object.assign(G, data.g);
+    resetDrive(); // legacy saves resume in exact coast, never with a stale command
     if (data.v >= 10 && data.log) restoreLog(data.log);
     else restoreLog(null);
     if (data.focusCatalog && Number.isFinite(Number(data.focusCatalog.hygIndex))) {

@@ -1,4 +1,4 @@
-import { ensureWorldFrameRecords } from "./coords.js";
+import { normalizeHygCatalog } from "./hygNormalization.js";
 const INDEX_CELL_PC = 8;
 const MIN_ACTIVE_RADIUS_SOLAR = 0.01;
 
@@ -79,7 +79,7 @@ self.onmessage = async e => {
         };
         // Index cells in the WORLD frame (ecliptic J2000), matching the
         // main-thread values the queries run against (catalogData.js).
-        ensureWorldFrameRecords(meta, vals, stride, fieldMap.x, fieldMap.y, fieldMap.z);
+        normalizeHygCatalog(meta, vals);
         const labels = new Map((meta.labels || []).map(row => [row[0], row]));
         const buckets = new Map();
         let indexCount = 0;

@@ -1,6 +1,7 @@
 import { K, LY_KM, MU_S, R_SUN } from "../constants.js";
 import { hygCatalogMetaUrl, loadHygCatalogData } from "./catalogData.js";
 import { DEEP_CATALOG, deepCatalogReachPc } from "./galaxy.js";
+import { normalizeHygCatalog, isPhotometricCatalogRow } from "./hygNormalization.js";
 import { createCatalogMotion, catalogPositionAt } from "./catalogMotion.js";
 
 const PC_LY = 3.261563777;
@@ -323,6 +324,7 @@ export function registerHygCatalog(meta, values, options = {}) {
     const stride = meta.stride || meta.fields?.length || 10;
     const count = Math.floor(vals.length / stride);
     if (!(count > 0) || count < meta.count) return false;
+    normalizeHygCatalog(meta, vals);
     const sig = catalogSignature(meta, vals);
     const sameCatalog = sig === SIGNATURE;
     if (!sameCatalog) TIER0_MOTION.clear(); // row indices name different stars now
@@ -398,6 +400,7 @@ export function hygStarByIndex(index, simT = 0) {
         name: displayName(row, index),
         catalog: "hyg-v41-active",
         activeCatalog: true,
+        distanceEstimated: isPhotometricCatalogRow(META, index),
         hygIndex: index,
         hip: row?.[2] || "",
         hd: row?.[3] || "",

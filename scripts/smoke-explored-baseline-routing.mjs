@@ -5,6 +5,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { systemRenderStatement } from './explored-system-hooks.mjs';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const harness = resolve(root, 'scripts/verify-explored-systems.mjs');
 const scratch = await mkdtemp(resolve(tmpdir(), 'explored-baseline-routing-'));
@@ -12,9 +13,21 @@ const env = { ...process.env, BASE_ROOT: '', BASELINE: '', DEVICE: 'desktop' };
 let cases = 0;
 const run = (args, overrides = {}) => spawnSync(process.execPath, [harness, ...args], { cwd: root, env: { ...env, ...overrides }, encoding: 'utf8' });
 try {
+    const oldCall = 'updateSystemRender(focusedSystem, G.t, camera, G.focus);';
+    const exposureCall = 'updateSystemRender(focusedSystem, G.t, camera, G.focus, G.paused ? 0 : presentationExposureSeconds(advanced, rawDtR));';
+    for (const call of [oldCall, exposureCall]) {
+        assert.equal(systemRenderStatement('before();\n' + call + '\nafter();'), call, 'hook preserves every production argument');
+        cases++;
+    }
+    for (const source of ['', oldCall + oldCall, oldCall + exposureCall,
+        'updateSystemRender(focusedSystem, G.t, camera, G.focus, 0);',
+        oldCall + 'updateSystemRender(otherSystem, G.t, camera, G.focus);']) {
+        assert.throws(() => systemRenderStatement(source), /Explored-system QA/, 'missing, unknown and duplicate calls fail closed');
+        cases++;
+    }
     // Real source hook validation, with only the capability marker omitted from
     // a temporary pre-fix fixture; neither application source tree is edited.
-    for (const name of ['main.js', 'render/bodySurfaceMaterial.js', 'render/catalogStars.js']) {
+    for (const name of ['main.js', 'stars.js', 'render/bodySurfaceMaterial.js', 'render/catalogStars.js']) {
         const destination = resolve(scratch, 'pre-fix/src', name);
         await mkdir(dirname(destination), { recursive: true });
         await writeFile(destination, await readFile(resolve(root, 'src', name)));

@@ -111,7 +111,7 @@ function onKeyDown(e) {
             break;
         case "KeyY": G.hold = G.hold === "retro" ? null : "retro"; break;
         case "KeyS":
-            if (e.shiftKey) { keys.delete("KeyS"); toggleScenarioMenu(); } // plain S stays reverse thrust
+            if (e.shiftKey) { keys.delete("KeyS"); toggleScenarioMenu(); } // plain S stays reverse field
             break;
         case "KeyF":
             if (e.shiftKey) { // cycle the planets
@@ -147,10 +147,6 @@ function onKeyDown(e) {
                 toast(G.constellations ? "Constellation guides ON" : "Constellation guides OFF");
             } else G.gr = !G.gr;
             break;
-        case "KeyE":
-            toggleLog();
-            toast("Expedition log");
-            break;
         case "KeyO":
             if (e.shiftKey) {
                 G.darkMatter = !G.darkMatter;
@@ -174,7 +170,7 @@ function onKeyDown(e) {
                 if (G.cabin) { G.focus = "ship"; toast("Cabin view · drag to look around"); } else toast("External view");
             }
             break;
-        case "KeyI": G.infinite = !G.infinite; toast(G.infinite ? "Infinite propellant ON" : "Infinite propellant OFF"); break;
+        case "KeyI": G.infinite = !G.infinite; toast(G.infinite ? "Unlimited drive budget ON" : "Limited drive budget ON"); break;
         case "KeyM":
             if (e.shiftKey) {
                 G.ambientAudio = G.ambientAudio === false;
@@ -188,7 +184,12 @@ function onKeyDown(e) {
             break;
         case "KeyR": H.restart(); break;
         case "KeyK": saveState(); break;
-        case "KeyL": loadState().catch(err => toast(err?.message || String(err))); break;
+        case "KeyL":
+            // Keep Q/E and Shift+Q/E exclusively available for lateral drive.
+            // The repeat guard above makes held Shift+L toggle the log once.
+            if (e.shiftKey) { toggleLog(); toast("Expedition log"); }
+            else loadState().catch(err => toast(err?.message || String(err)));
+            break;
         case "KeyN": focusNextBlackHole(); break;
         case "KeyU":
             if (e.shiftKey) {

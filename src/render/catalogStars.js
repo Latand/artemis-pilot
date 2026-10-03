@@ -21,7 +21,7 @@ import { K, PC_KM, STARS } from "../constants.js";
 import { loadHygCatalogData } from "../universe/catalogData.js";
 import { registerHygCatalog } from "../universe/hygActiveCatalog.js";
 import { catalogIdentityKeys } from "../universe/catalogIdentity.js";
-import { catalogMotionFor, createCatalogMotion, catalogEvalTime, setCatalogMotionTime } from "../universe/catalogMotion.js";
+import { CATALOG_MYR_S, catalogMotionFor, createCatalogMotion, catalogEvalTime, setCatalogMotionTime } from "../universe/catalogMotion.js";
 import { galacticFrameTime } from "../universe/galacticClock.js";
 import { getOrigin } from "../universe/renderOrigin.js";
 import { makeStarPointMaterial } from "./starPointMaterial.js";
@@ -77,7 +77,7 @@ function makeLayer(count, withHidden, motion = false) {
         h.setUsage(THREE.DynamicDrawUsage);
         geometry.setAttribute("hidden", h);
     }
-    if (motion) geometry.setAttribute("catalogOrbit", new THREE.BufferAttribute(new Float32Array(count * 3), 3));
+    if (motion) geometry.setAttribute("catalogOrbit", new THREE.BufferAttribute(new Float32Array(count * 4), 4));
     const mesh = new THREE.Points(geometry, makeStarPointMaterial({ hidden: withHidden, radius: true, catalogMotion: motion }));
     mesh.frustumCulled = false;
     mesh.renderOrder = -3;
@@ -161,7 +161,7 @@ async function loadTier0() {
             layer.worldKm[i * 3] = x * PC_KM; layer.worldKm[i * 3 + 1] = y * PC_KM; layer.worldKm[i * 3 + 2] = z * PC_KM;
             const row = labels.get(i);
             const orbit = createCatalogMotion(x * PC_KM, y * PC_KM, z * PC_KM, { hygIndex: i, hip: row?.[2], hd: row?.[3], hr: row?.[4] });
-            g.catalogOrbit.array.set([orbit.xp, orbit.yp, orbit.zp], i * 3);
+            g.catalogOrbit.array.set([orbit.xp, orbit.yp, orbit.zp, orbit.omega * CATALOG_MYR_S], i * 4);
             const dPc = Math.hypot(x, y, z);
             const temp = iTemp >= 0 ? vals[j + iTemp] : NaN;
             const teff = temp > 0 ? temp : bvToTeff(vals[j + iBv]);

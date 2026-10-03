@@ -1,4 +1,5 @@
 import { systemAnchor, bindSystemObjectAnchor } from './systemPrecision.js';
+import { updateSurfaceRotationExposure } from './surfaceRotationExposure.js';
 import * as THREE from "three";
 import { K, LY_SCENE } from "../constants.js";
 import { dotTexture, ringTextureProc } from "../textures.js";
@@ -160,7 +161,9 @@ export function moonScenePosition(system, planetIndex, moonIndex, simT, out = po
     );
 }
 
-export function updateSystemRender(system, simT, camera, focus = "") {
+export const systemSurfaceExposureState = { active: 0 };
+export function updateSystemRender(system, simT, camera, focus = "", simExposureSeconds = 0) {
+    systemSurfaceExposureState.active = 0;
     if (!sceneRef || !groups.length) return;
     if (!system || !system.hostStar) {
         if (renderedStarId) rebuild(null);
@@ -210,6 +213,7 @@ export function updateSystemRender(system, simT, camera, focus = "") {
         requestBodySurfaceDetail(slot.mesh.material, undefined, rpx, mobile);
         hostDirection.copy(starPos).sub(slot.group.position).normalize();
         updateBodySurface(slot.mesh.material, simT, hostDirection, hostColor);
+        if (updateSurfaceRotationExposure(slot.mesh.material, TAU / Math.max(1, p.rotSec || 86400), (rpx > 1 || planetFocusIndex(focus) === i) ? simExposureSeconds : 0)) systemSurfaceExposureState.active++;
         updateBodySurface(slot.ring.material, simT, hostDirection, hostColor);
         slot.glow.scale.setScalar(dCam * 9 / Math.max(1, pxScale));
         slot.glow.material.opacity = .6 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4));
@@ -238,6 +242,7 @@ export function updateSystemRender(system, simT, camera, focus = "") {
             requestBodySurfaceDetail(moon.material, undefined, moonPx, mobile);
             hostDirection.copy(starPos).sub(pos).normalize();
             updateBodySurface(moon.material, simT, hostDirection, hostColor);
+            if (updateSurfaceRotationExposure(moon.material, moonRate, (moonPx > 1 || (focusedMoon?.planetIndex === i && focusedMoon.moonIndex === j)) ? simExposureSeconds : 0)) systemSurfaceExposureState.active++;
             moon.visible = true;
             const beacon = slot.moonGlows[j];
             beacon.position.copy(moon.position);

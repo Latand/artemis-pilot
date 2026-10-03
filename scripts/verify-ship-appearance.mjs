@@ -5,9 +5,11 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 const root = resolve(process.env.BASE_ROOT || '.');
 const mobile = process.env.DEVICE === 'mobile';
+const curvatureDrive = existsSync(resolve(root, 'src/curvatureDrive.js'));
 const out = resolve(process.env.ARTEMIS_EVIDENCE || `evidence/ship-${mobile ? 'mobile' : 'desktop'}`);
 await mkdir(out, { recursive: true });
 const report = { revision: execFileSync('git', ['rev-parse', 'HEAD'], {cwd:root,encoding:'utf8'}).trim(), mobile, omissions: [], errors: [], checks: [], frames: [] };
@@ -47,8 +49,9 @@ try {
  for(let i=0;i<3;i++) {await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.press('j');await frames();await page.keyboard.press('j');await frames();}
  check(await page.evaluate(async resources=>{const {craft}=await import('/src/ship.js');const a=[];craft.traverse(o=>{if(o.isMesh)a.push([o.id,o.geometry.id,o.material.id]);});return JSON.stringify(a)===JSON.stringify(resources);},resources),'Repeated cockpit transitions reuse exact mesh, geometry and material resources');
  await page.evaluate(async()=>{document.activeElement?.blur();(await import('/src/input.js')).setFocus('ship');__G.paused=false;__G.warp=1;});await page.keyboard.down('w');await frames(2);
- check(await page.evaluate(async()=>{const {flame,exhaust}=await import('/src/ship.js');return flame.visible&&exhaust.visible&&__G.dvUsed>0;}),'Real W thrust activates existing flame, particles and physics');
- await capture('conventional-thrust',.12,.85,.36);
+ if(curvatureDrive) check(await page.evaluate(async()=>{const {flame,exhaust}=await import('/src/ship.js');const {DRIVE}=await import('/src/curvatureDrive.js');const {shipVisuals}=await import('/src/shipVisuals.js');return !flame.visible&&!exhaust.visible&&DRIVE.magnitude>0&&shipVisuals.fieldVisible&&__G.dvUsed>0;}),'Real W command couples the field envelope to physics without combustion');
+ else check(await page.evaluate(async()=>{const {flame,exhaust}=await import('/src/ship.js');return flame.visible&&exhaust.visible&&__G.dvUsed>0;}),'Baseline W thrust activates flame, particles and physics');
+ await capture(curvatureDrive?'curvature-drive':'conventional-thrust',.12,.85,.36);
  await page.keyboard.up('w');await frames();check(await page.evaluate(async()=>!(await import('/src/ship.js')).flame.visible),'Releasing W turns off the flame');await page.evaluate(()=>{__G.paused=true;});
  const saved=await page.evaluate(async()=>{const saves=await import('/src/saves.js');const before={heading:__G.heading,pitch:__G.pitch,x:__G.x,y:__G.y,z:__G.z};const ok=saves.saveState();__G.heading+=.5;const loaded=await saves.loadState();__G.paused=true;return{ok,loaded,unchanged:Object.entries(before).every(([k,v])=>__G[k]===v)};});
  check(saved.ok&&saved.loaded&&saved.unchanged,'Quicksave/load round trip preserves the existing flight state');await frames();

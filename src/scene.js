@@ -391,6 +391,7 @@ function resetShipGrab() {
     shipGrab.id = -1;
 }
 function startShipGrab(e) {
+    if (document.body.classList.contains("scenario-playing")) return false;
     if (G.uiMode === "observe") return false;
     if (G.cabin || G.dead || e.button !== 0 || e.altKey || e.ctrlKey || e.metaKey || !pointerNearShip(e)) return false;
     shipScenePoint(grabShip);
@@ -558,6 +559,19 @@ function onUp(e) {
     if (finishShipGrab(e)) { ptrs.delete(e.pointerId); pinchD = 0; return; }
     ptrs.delete(e.pointerId); pinchD = 0;
 }
+// Releasing flight ownership is cancellation, never a throw. In particular,
+// stale pointermove/up events must not overwrite a restored scenario snapshot.
+function cancelPointerGestures() {
+    const ids = new Set(ptrs.keys());
+    if (shipGrab.id >= 0) ids.add(shipGrab.id);
+    resetShipGrab();
+    ptrs.clear(); pinchD = 0;
+    for (const id of ids) {
+        try { if (el.hasPointerCapture(id)) el.releasePointerCapture(id); } catch { }
+    }
+}
+window.addEventListener("ap:releaseflightinput", cancelPointerGestures);
+window.addEventListener("blur", cancelPointerGestures);
 function onWheel(e) {
     e.preventDefault();
     if (G.cabin) return; // zoom is meaningless inside the cabin and would silently trip cosmic scale
