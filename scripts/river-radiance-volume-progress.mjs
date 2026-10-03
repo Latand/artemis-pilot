@@ -1,6 +1,12 @@
 // Read-only instrumentation for the isolated preparation proof. No rendering,
 // scheduling, resolution, field input, or readiness flag is changed here.
 import assert from 'node:assert/strict';
+// The fixed DPR1 fixtures are below production's pixel/texture-size caps.
+// Its mobile full volume target intentionally uses half the canvas dimensions.
+export function radianceDeviceTargets(mobile){
+  assert.equal(typeof mobile,'boolean');
+  return mobile?{canvas:[430,932],volume:[215,466]}:{canvas:[1200,800],volume:[1200,800]};
+}
 function once(source,token,replacement){
   assert.equal(source.split(token).length,2,`Volume progress hook changed: ${token}`);
   return source.replace(token,replacement);

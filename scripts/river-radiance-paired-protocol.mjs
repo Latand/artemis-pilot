@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { healthyRadianceFrame } from './river-radiance-qa.mjs';
 import { runLimits,validatePhases } from './river-radiance-run-budget.mjs';
 import { validateFullPreparation } from './river-radiance-full-preparation.mjs';
-import { volumeRefinementReady,validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
+import { radianceDeviceTargets,volumeRefinementReady,validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
 
 export const protocol = Object.freeze({
   baseline: '09863eedda25eef36d79e9cf88daa4ff3e377875',
@@ -57,7 +57,7 @@ export function trialSummary(trial) {
 }
 export function scenarioSummary(scenario) {
   validatePhases(scenario.phases);
-  const size=scenario.pages.A.mobile?[430,932]:[1200,800];
+  const size=radianceDeviceTargets(scenario.pages.A.mobile).volume;
   validateFullPreparation(scenario.preparation,size);
   assert.deepEqual(scenario.trials.map(t => t.order), protocol.orders, 'All five predeclared trials are mandatory');
   for (const label of ['A', 'B']) {
@@ -123,7 +123,9 @@ export function assertHealthyState(s, mobile, subject) {
   assert((!s.layers.tides.started || s.layers.tides.ready) && !s.layers.tides.error);
   assert(s.layers.field.enabled && s.layers.field.idle && s.layers.field.stars > 0);
   assert(s.layers.volume.enabled && s.layers.volume.mapsReady && s.layers.volume.coverageReady && !s.layers.volume.mapError);
-  assert.deepEqual(s.layers.volume.res,mobile?[430,932]:[1200,800]);
+  const targets=radianceDeviceTargets(mobile);
+  assert.deepEqual(s.size,targets.canvas,'Full canvas remains independent of the volume target policy');
+  assert.deepEqual(s.layers.volume.res,targets.volume,'Preserve the production full volume target for this device');
   assert(s.layers.volume.draft===false&&s.layers.volume.historyReady&&s.layers.volume.historyUsed,'Prepared full-resolution history required');
   assert(s.layers.galaxy.enabled && s.layers.galaxy.ready && !s.layers.galaxy.building && !s.layers.galaxy.error && s.layers.galaxy.galaxies > 0);
   assert.equal(s.post.bloom, false, 'Default production bloom policy is preserved; neither device requests optional bloom');

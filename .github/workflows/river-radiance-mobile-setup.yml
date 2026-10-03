@@ -1,0 +1,111 @@
+name: Corrected mobile radiance setup acceptance
+on:
+  push:
+    branches: [diagnostic/river-radiance-mobile-setup]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verified-prerequisites:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/smoke-radiance-prerequisites.mjs
+      - name: Verify the exact successful functional jobs and artifact identities
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-radiance-prerequisites.mjs fetch evidence/prerequisites
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37145710093
+          name: paired-owner-radiance-mobile
+          path: evidence/prerequisites/artifacts/paired-owner-radiance-mobile
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37145710093
+          name: paired-owner-lifecycle-mobile
+          path: evidence/prerequisites/artifacts/paired-owner-lifecycle-mobile
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37145710093
+          name: paired-owner-lifecycle-desktop
+          path: evidence/prerequisites/artifacts/paired-owner-lifecycle-desktop
+      - name: Check every report and reviewed PNG byte plus unchanged source
+        run: node scripts/verify-radiance-prerequisites.mjs verify evidence/prerequisites
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-reused-functional-provenance
+          path: |
+            evidence/prerequisites/provenance.json
+            evidence/prerequisites/metadata.json
+          retention-days: 14
+  mobile-performance:
+    name: Corrected mobile performance ${{ matrix.fixture }}
+    needs: verified-prerequisites
+    runs-on: ubuntu-latest
+    timeout-minutes: 135
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [proxima, sun, black-hole]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-river-radiance-paired.mjs && node scripts/smoke-river-radiance-run-budget.mjs && node scripts/smoke-river-radiance-full-preparation.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: Run only the three corrected mobile setup shards
+        timeout-minutes: 131
+        env:
+          DEVICE: mobile
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          git worktree add --detach ../radiance-baseline 09863eedda25eef36d79e9cf88daa4ff3e377875
+          ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-baseline/node_modules
+          BASE_ROOT="$GITHUB_WORKSPACE/../radiance-baseline" node scripts/benchmark-river-radiance.mjs . evidence/paired
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-performance-mobile-${{ matrix.fixture }}
+          path: evidence/paired
+          retention-days: 14
+  mobile-aggregate:
+    needs: mobile-performance
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: radiance-performance-mobile-*
+          path: evidence/shards
+      - name: Require all mobile trials and the unchanged device-wide budget
+        run: >-
+          node scripts/aggregate-river-radiance-paired.mjs mobile evidence/aggregate.json
+          evidence/shards/radiance-performance-mobile-proxima/report.json
+          evidence/shards/radiance-performance-mobile-sun/report.json
+          evidence/shards/radiance-performance-mobile-black-hole/report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-performance-complete-mobile
+          path: evidence/
+          retention-days: 14

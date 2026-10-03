@@ -12,7 +12,7 @@ import { createServer } from 'vite';
 import { protocol, summarize, validateSample, trialSummary, scenarioSummary, summarizeLongTasks, longTaskBudget,
   assertMatchedState, assertHealthyState } from './river-radiance-paired-protocol.mjs';
 import { transform, initializeDocument, initializeQA, readiness, readState } from './river-radiance-paired-browser.mjs';
-import { volumeProgressTransform, volumeRefinementReady, validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
+import { radianceDeviceTargets, volumeProgressTransform, volumeRefinementReady, validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
 import { prepareFullView } from './river-radiance-full-preparation.mjs';
 import { runLimits, durableReport, phaseBudget, installReportSignals } from './river-radiance-run-budget.mjs';
 
@@ -21,6 +21,7 @@ assert(process.env.BASE_ROOT, 'BASE_ROOT must name the exact 09863eed worktree')
 const root = resolve(args[0] || '.'), baselineRoot = resolve(process.env.BASE_ROOT);
 const device = process.env.DEVICE || 'desktop'; assert(['desktop', 'mobile'].includes(device));
 const mobile = device === 'mobile', viewport = mobile ? { width: 430, height: 932 } : { width: 1200, height: 800 };
+const volumeSize=radianceDeviceTargets(mobile).volume;
 const selectedFixtures = process.env.FIXTURE ? protocol.fixtures.filter(f => f.subject === process.env.FIXTURE) : protocol.fixtures;
 assert(selectedFixtures.length, 'FIXTURE must be proxima, sun or black-hole');
 const out = resolve(args[1] || `evidence/river-radiance-paired/${device}`);
@@ -100,8 +101,8 @@ async function frames(page, count, samples, label, previous, last) {
     await activeBudget.run(async()=>{
       const sample = await frame(page); samples.push(sample);save();validateSample(sample);
       sample.volumeProgress=await page.evaluate(()=>pairedQA.volume.pairedVolumeProgress());save();
-      assert(volumeRefinementReady(sample.volumeProgress,[viewport.width,viewport.height]),'Full history readiness must persist through acceptance');
-      last[label]=validateRefinementAdvance(previous[label],sample.volumeProgress,last[label],[viewport.width,viewport.height]);previous[label]=sample.volumeProgress;
+      assert(volumeRefinementReady(sample.volumeProgress,volumeSize),'Full history readiness must persist through acceptance');
+      last[label]=validateRefinementAdvance(previous[label],sample.volumeProgress,last[label],volumeSize);previous[label]=sample.volumeProgress;
       if (samples.length > 1) assert.equal(sample.frameNo, samples.at(-2).frameNo + 1, 'Every timer task executes exactly one frame');
     },`synchronized frame ${label}`);
   }
@@ -168,7 +169,7 @@ try {
       await save();
     },`initialize ${label}`);
     assert.equal(scenario.pages.A.gpu, scenario.pages.B.gpu, 'Same renderer implementation required');
-    const previous=await prepareFullView({pages,record:scenario.preparation,viewport,budget:activeBudget,save,activate,readiness});
+    const previous=await prepareFullView({pages,record:scenario.preparation,viewport,mobile,budget:activeBudget,save,activate,readiness});
     scenario.prepared=await activeBudget.run(async()=>({A:await snapshot(pages.A),B:await snapshot(pages.B)}),'fully prepared snapshots');
     for(const label of ['A','B'])assertHealthyState(scenario.prepared[label],mobile,spec.subject);
     assertMatchedState(scenario.prepared.A,scenario.prepared.B);activeBudget.finish();

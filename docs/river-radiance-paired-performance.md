@@ -25,6 +25,13 @@ These are frozen physical clocks with declared visual river advection, not live
 orbital evolution. The six paused/high-rate pixel/hash/lifecycle views remain a
 separate diagnostic.
 
+Canvas resolution and the volume's internal full target are separate. Unchanged
+production `ensureTargets` uses scale 1 on desktop and scale 0.5 on mobile, below
+its memory/texture caps. The expected full volume targets are therefore 1200×800
+and 215×466 respectively, while the mobile canvas remains 430×932 at DPR 1. QA
+checks both independently; it must not force a larger mobile volume or accept
+a reduced canvas. Tests execute the exact baseline/candidate target policy.
+
 AT-HYG is a whole-sky priority stream: its camera cone changes priority, then a
 global sweep fills the rest. This runner lets the normal production selection run
 for exactly 120 setup updates, eight new tiles per update, before holding further
@@ -46,7 +53,7 @@ remains. They are recorded separately and never counted as acceptance warmup.
 Each stage has a verified GPU drain, and the refinement stage retains actual row,
 history, dirty/reset-reason and model-input evidence. Refinement allows at most
 ceil(full target height / 2) +60 additional frames, without changing its budget.
-Desktop is bounded to 460 additional frames; mobile to 526. Final full-resolution
+Desktop is bounded to 460 additional frames; mobile to 293. Final full-resolution
 state and raw river textures must match before the original synchronous warmup.
 
 The entire preparation phase has a 60-minute cap, including browser/page startup,
@@ -205,3 +212,61 @@ or mobile FPS, native GPU cost, startup latency, or interaction latency. Bounded
 catalog streaming is disclosed above. Local checks are pure/transform checks;
 no local browser was launched. Complete performance acceptance remains pending
 all reviewed hosted shards and both mandatory aggregates.
+
+## Preserved mobile setup failure
+
+At head 4f79de1c, run 37145710093, all three mobile shards stopped on the first
+baseline preparation frame. QA incorrectly expected a 430×932 volume target;
+production correctly returned 215×466. Neither warmup nor measured trials began.
+The Proxima failure is preserved as an exact frame fixture from artifact
+11282255109; Sun 11282555028 and black-hole 11282635062 retain the same failure.
+The corrected expectation keeps all source bytes, canvas dimensions, DPR,
+particle counts, sampling policies and acceptance thresholds unchanged. Tests
+retain the old rejection and independently reject wrong canvas, target and DPR
+values on both devices. This is a setup correction, not a measured-performance
+retry or passing result.
+
+Each failed report also records the ten-second cleanup cap. The retained
+Proxima log places its primary assertion at 18:53:59.813 and process failure at
+18:54:09.951 UTC. Native frame work was still unsynchronized; the report does not
+identify which close operation was waiting or prove its cause. Queued GPU work
+is plausible, not established. Cleanup remains bounded to ten seconds, and its
+secondary failure remains visible; no timeout increase or extra probe is made.
+
+## Isolated mobile continuation
+
+The original push workflow has no device selector. Publishing a fix to its
+`diagnostic/river-radiance-pair` branch would rerun desktop, so the correction
+uses a separate `diagnostic/river-radiance-mobile-setup` branch and workflow.
+It schedules only three mobile performance shards and the mandatory mobile
+aggregate, after a ten-minute provenance check. Original desktop jobs and their
+aggregate remain exclusively in run 37145710093 at 4f79de1c; they are never
+cancelled, replaced, or inferred to pass from mobile results.
+
+The provenance check reads the original run, exact successful functional job
+IDs and artifact IDs/digests with a read-only Actions token. It downloads the
+three accepted functional artifacts and verifies every report and all 72 reviewed
+PNG hashes against the committed manifest. All checks must still pass. It also
+requires 4f79de1c ancestry and exact production/package/functional-harness bytes.
+A missing, expired, altered or failed prerequisite stops the mobile shards;
+there is no fallback that reruns those jobs. Only the small verification manifest
+is re-uploaded; the original images remain in their original artifacts.
+
+The three mobile shards retain the 135-minute job cap and all original trial,
+sample and performance gates. Their aggregate requires the new exact candidate
+head. The mobile-only workflow is bounded to 425 runner-minutes (7h05), with a
+155-minute dependency path when immediately admitted. Its read-only Actions
+permission enables cross-run artifact reads; billing and repository settings
+are unchanged.
+
+Overall performance acceptance still requires the successful original desktop
+aggregate and the new mobile aggregate. `compatibleDeviceGates` checks those
+exact expected heads, common baseline, protocol, production tree/source/compute
+hashes and full per-device frame counts. It requires all three raw shard reports
+for each device, recomputes the canonical protocol and p95/long-task aggregates
+from every retained sample and long-task entry, and requires the cached aggregate
+to equal that result. Changed actual source revisions, retained errors, jointly
+shortened protocols and cached passing budgets cannot bypass the gate.
+Harness hashes differ for the reviewed
+mobile target assertion correction; production and the workload are unchanged.
+No measured failure is retried by this setup-only continuation.

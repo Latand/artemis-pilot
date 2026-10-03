@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { validatePreparationFrame,validatePrefix,validateFence,settlementReadyWithinDeadline } from './river-radiance-preparation-qa.mjs';
-import { validateVolumeProgress,volumeRefinementReady,validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
+import { radianceDeviceTargets,validateVolumeProgress,volumeRefinementReady,validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
 
-export async function prepareFullView({pages,record,viewport,budget,save,activate,readiness}){
-  const size=[viewport.width,viewport.height];
+export async function prepareFullView({pages,record,viewport,mobile,budget,save,activate,readiness}){
+  const targets=radianceDeviceTargets(mobile),size=targets.volume;
+  assert.deepEqual([viewport.width,viewport.height],targets.canvas,'Keep the declared canvas viewport');
   async function progress(label){return pages[label].evaluate(()=>pairedQA.volume.pairedVolumeProgress());}
   async function pair(target,deadline=Infinity){
     for(const label of['A','B'])await budget.run(async()=>{
