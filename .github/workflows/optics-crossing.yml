@@ -1,0 +1,115 @@
+name: Black-hole disk and ring partial-release QA
+on:
+  pull_request:
+    paths:
+      - 'scripts/probe-optics-crossing.mjs'
+      - 'scripts/probe-optics-partial-release.mjs'
+      - 'scripts/smoke-optics-partial-release.mjs'
+      - 'scripts/optics-deferred-edge-fixture.mjs'
+      - 'scripts/smoke-optics-crossing.mjs'
+      - 'src/lensing.js'
+      - 'src/holeOptics.js'
+      - 'src/tdeVisuals.js'
+      - 'src/render/ringSamplingDepth.js'
+      - 'src/render/planetAppearance.js'
+      - 'scripts/smoke-ring-sampling-depth.mjs'
+      - 'scripts/optics-depth-fixture.mjs'
+      - 'scripts/benchmark-explored-systems.mjs'
+      - '.github/workflows/optics-crossing.yml'
+permissions:
+  contents: read
+concurrency:
+  group: optics-crossing-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  capture:
+    name: Optics crossing ${{ matrix.device }} / bloom-${{ matrix.bloom }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        bloom: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-optics-crossing.mjs && node scripts/smoke-optics-partial-release.mjs && node scripts/smoke-hole-appearance.mjs && node scripts/smoke-hole-precision.mjs && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Frozen Saturn and disk plane-crossing ablations
+        env:
+          DEVICE: ${{ matrix.device }}
+          BLOOM: ${{ matrix.bloom }}
+          ARTEMIS_EVIDENCE: evidence/optics-crossing
+        run: node scripts/probe-optics-partial-release.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optics-crossing-metrics-${{ matrix.device }}-bloom-${{ matrix.bloom }}
+          path: |
+            evidence/optics-crossing/report.json
+            evidence/optics-crossing/depth-fixture-*.png
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optics-crossing-saturn-${{ matrix.device }}-bloom-${{ matrix.bloom }}
+          path: evidence/optics-crossing/saturn-*.png
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optics-crossing-disk-${{ matrix.device }}-bloom-${{ matrix.bloom }}
+          path: evidence/optics-crossing/disk-*.png
+          if-no-files-found: error
+          retention-days: 14
+  paired-performance:
+    name: Optics full old-head pair ${{ matrix.device }} / bloom-${{ matrix.bloom }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        bloom: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact pre-edge optical source
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/optics-before-edge" 531da641fe5d61b4cdc7130285418c218299d263
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/optics-before-edge/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/optics-before-edge" >> "$GITHUB_ENV"
+      - name: Full baseline and candidate Saturn lens performance
+        env:
+          OPTICS_BENCH: '1'
+          DEVICE: ${{ matrix.device }}
+          BLOOM: ${{ matrix.bloom }}
+          PAIRED_CPU_PROFILE: '0'
+        run: |
+          node scripts/benchmark-explored-systems.mjs --validate
+          node scripts/benchmark-explored-systems.mjs . evidence/optics-paired
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: optics-paired-${{ matrix.device }}-bloom-${{ matrix.bloom }}
+          path: evidence/optics-paired/
+          if-no-files-found: error
+          retention-days: 14
