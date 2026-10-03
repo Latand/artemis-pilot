@@ -148,8 +148,9 @@ function onKeyDown(e) {
             } else G.gr = !G.gr;
             break;
         case "KeyE":
-            toggleLog();
-            toast("Expedition log");
+            // Plain E is lateral drive input. Opening the log must not share
+            // that command or leave a lateral field latched behind the panel.
+            if (e.shiftKey) { keys.delete("KeyE"); toggleLog(); toast("Expedition log"); }
             break;
         case "KeyO":
             if (e.shiftKey) {
@@ -174,7 +175,7 @@ function onKeyDown(e) {
                 if (G.cabin) { G.focus = "ship"; toast("Cabin view · drag to look around"); } else toast("External view");
             }
             break;
-        case "KeyI": G.infinite = !G.infinite; toast(G.infinite ? "Infinite propellant ON" : "Infinite propellant OFF"); break;
+        case "KeyI": G.infinite = !G.infinite; toast(G.infinite ? "Unlimited drive budget ON" : "Limited drive budget ON"); break;
         case "KeyM":
             if (e.shiftKey) {
                 G.ambientAudio = G.ambientAudio === false;

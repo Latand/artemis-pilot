@@ -157,6 +157,7 @@ The static build is written to `dist/`.
 | `W` / `S` | Forward and reverse curvature field |
 | `A` / `D` | Rotate ship |
 | `Q` / `E` | Lateral field |
+| `Shift+E` | Expedition log |
 | `Shift` | Boost |
 | `Z` / `X` | Throttle down/up |
 | `T` / `Y` | Hold prograde/retrograde |

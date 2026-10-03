@@ -42,6 +42,7 @@ try {
    const step=()=>page.evaluate(()=>new Promise((resolve,reject)=>setTimeout(()=>{try{resolve(__timedThrustFrame());}catch(e){reject(e);}},0)));
    const gpuStatus=()=>page.evaluate(async()=>{const {renderer}=await import('/src/scene.js');const gl=renderer.getContext();return{contextLost:gl.isContextLost(),error:gl.getError(),canvas:renderer.getRenderTarget()===null};});
    const initial=await snapshot();
+   await page.evaluate(async()=>{if(!(await import('/src/saves.js')).saveState())throw Error('Initial benchmark save failed');});
    // Compare the explicitly hidden guide path on both versions, independent
    // of their shipped default. This changes presentation only.
    await page.evaluate(async()=>{(await import('/src/shipVisuals.js')).shipVisuals.enabled=false;});
@@ -61,7 +62,14 @@ try {
    const final=await snapshot();
    assert(final.flight.dvUsed>initial.flight.dvUsed,'Actual mobile thrust was applied');
    assert(frames.every(f=>['submissionMs','finishMs','readbackMs','totalMs','calls','triangles','points','lines'].every(k=>Number.isFinite(f[k]))),'Finite render timing and counters');
-   report.runs.push({index,variant,initial,measurementStart,final,frames,gpuBefore,gpuAfter,meanMs:frames.reduce((s,f)=>s+f.totalMs,0)/frames.length});
+   // Independent zero-command replay from the original state. Ballistic
+   // flight is unchanged by the new actuator and must remain bit-identical
+   // across versions, separately from intentionally different active flight.
+   await page.evaluate(async()=>{await(await import('/src/saves.js')).loadState();__G.paused=false;});
+   const coastFrames=[];for(let i=0;i<48;i++)coastFrames.push(await step());
+   const coastFinal=await snapshot();
+   assert(coastFinal.flight.dvUsed===initial.flight.dvUsed,'Coast replay consumes zero commanded delta-v');
+   report.runs.push({index,variant,initial,measurementStart,final,frames,gpuBefore,gpuAfter,coastFrames,coastFinal,coastMeanMs:coastFrames.reduce((s,f)=>s+f.totalMs,0)/coastFrames.length,meanMs:frames.reduce((s,f)=>s+f.totalMs,0)/frames.length});
    await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
    assert.deepEqual(gpuBefore,{contextLost:false,error:0,canvas:true},'Warmup finishes on live, error-free canvas');
    assert.deepEqual(gpuAfter,{contextLost:false,error:0,canvas:true},'Measured readback finishes on live, error-free canvas');
@@ -71,6 +79,7 @@ try {
  }
  const first=report.runs[0];
  assert(report.runs.every(r=>JSON.stringify(r.initial.flight)===JSON.stringify(first.initial.flight)),'Matched initial physical state');
+ assert(report.runs.every(r=>JSON.stringify(r.coastFinal.flight)===JSON.stringify(first.coastFinal.flight)),'Drive-off ballistic replay is bit-identical across versions');
  // Repeated executions of each model must remain bit-identical. A deliberate
  // change from instantaneous thrust to an engaging field has different
  // physical endpoints; report it as a timing confound, never as mesh cost.
@@ -86,12 +95,17 @@ try {
  } else {
   const head=report.runs.find(r=>r.variant==='head');
   report.intentionalModelDelta=Object.fromEntries(['x','y','z','vx','vy','vz','dvUsed'].map(k=>[k,head.final.flight[k]-first.final.flight[k]]));
+  assert(Object.values(report.intentionalModelDelta).every(Number.isFinite),'Changed actuator endpoints stay finite');
  }
  assert(report.runs.every(r=>JSON.stringify(r.initial.quality)===JSON.stringify(first.initial.quality)&&JSON.stringify(r.final.quality)===JSON.stringify(first.final.quality)),'Matched production quality settings');
  assert(report.runs.every(r=>JSON.stringify(r.initial.camera)===JSON.stringify(first.initial.camera)), 'Matched initial production camera');
  if(propulsionModelsMatch)assert(report.runs.every(r=>JSON.stringify(r.final.camera)===JSON.stringify(first.final.camera)),'Matched final production camera');
  assert.equal(report.errors.length,0,'No browser/shader errors');
  const means=Object.fromEntries(['base','head'].map(v=>[v,report.runs.filter(r=>r.variant===v).reduce((s,r)=>s+r.meanMs,0)/2]));
+ assert(means.head<=means.base*1.5+20,'Hidden-guide active flight retains the 50 percent + 20ms whole-app regression bound');
+ const coastMeans=Object.fromEntries(['base','head'].map(v=>[v,report.runs.filter(r=>r.variant===v).reduce((s,r)=>s+r.coastMeanMs,0)/2]));
+ report.coastPerformance={...coastMeans,limit:'head <= base * 1.5 + 20ms'};
+ assert(coastMeans.head<=coastMeans.base*1.5+20,'Drive-off ballistic replay retains the 50 percent + 20ms whole-app regression bound');
  // Wall-clock refresh can change work even with identical physical endpoints.
  // Expose the mismatch instead of attributing an unconditional ratio to meshes.
  const profile=r=>{let prior=r.measurementStart.galaxy.renders;return r.frames.map(f=>{const delta=f.galaxyRenders-prior;prior=f.galaxyRenders;return JSON.stringify([f.quality,f.computeEvery,f.skippedCompute,f.riverDrawCount,f.sourceCount,f.texW,delta,f.galaxyReady,f.galaxyScale]);});};
