@@ -1,0 +1,124 @@
+{
+  "sourceHead": "219e9a62a489e34fa66a3ad4114621b5d033a88f",
+  "sourceRun": 37108539253,
+  "note": "Matched broad camera-matrix rendering workload. Baseline has no foreign provider or foreign-object IDs. A separate same-native-W controller trace reports pose divergence; timed ABBA/BAAB windows replay exact common camera target/distance/yaw/pitch and assert equal broad camera matrices. Candidate retains local precision refinement and deterministic explored host when applicable. Source capture did not store orientation; yaw/pitch reconstructed from recorded observer and target/anchor. Object content differs by design.",
+  "fixtures": [
+    {
+      "name": "03-intergalactic",
+      "time": 6,
+      "sourceFocus": "galaxy:m31",
+      "target": [
+        17661896085285446,
+        13394680407796070,
+        -9650048845054004
+      ],
+      "anchor": null,
+      "distance": 10244713913430848,
+      "yaw": 2.641535487237891,
+      "pitch": -0.5872171949640415
+    },
+    {
+      "name": "04-andromeda-entry",
+      "time": 6,
+      "sourceFocus": "galaxy:m31",
+      "target": [
+        17661896085285446,
+        13394680407796070,
+        -9650048845054004
+      ],
+      "anchor": null,
+      "distance": 1959900452625.0022,
+      "yaw": 2.6415354872379795,
+      "pitch": -0.5872171949635292
+    },
+    {
+      "name": "06-selected-point",
+      "time": 6,
+      "sourceFocus": "proc:gx:m31:2654435769:1249:0:-1:28",
+      "target": [
+        17661955603828258,
+        13394719648777776,
+        -9650053730004860
+      ],
+      "anchor": {
+        "origin": [
+          17661955603828258,
+          13394719648777776,
+          -9650053730004860
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      "distance": 74233511777.69374,
+      "yaw": 2.90090576973721,
+      "pitch": -0.5931737932811271
+    },
+    {
+      "name": "07-stellar-photosphere",
+      "time": 6,
+      "sourceFocus": "proc:gx:m31:2654435769:1249:0:-1:28",
+      "target": [
+        17661955603828258,
+        13394719648777776,
+        -9650053730004860
+      ],
+      "anchor": {
+        "origin": [
+          17661955603828258,
+          13394719648777776,
+          -9650053730004860
+        ],
+        "offset": [
+          0,
+          0,
+          0
+        ]
+      },
+      "distance": 13432.73430760972,
+      "yaw": 2.900969553319976,
+      "pitch": -0.5931709406305833
+    },
+    {
+      "name": "08-planet",
+      "time": 6,
+      "sourceFocus": "system:proc%3Agx%3Am31%3A2654435769%3A1249%3A0%3A-1%3A28:planet:0",
+      "target": [
+        17661955603839872,
+        13394719648778390,
+        -9650053729999886
+      ],
+      "anchor": {
+        "origin": [
+          17661955603828258,
+          13394719648777776,
+          -9650053730004860
+        ],
+        "offset": [
+          11613.814409782808,
+          613.8719330496663,
+          4974.491779854251
+        ]
+      },
+      "distance": 179.7621377739099,
+      "yaw": -3.046640947247037,
+      "pitch": -0.3415964406037582
+    },
+    {
+      "name": "09-return-milky-way",
+      "time": 6,
+      "sourceFocus": "galaxy:mw",
+      "target": [
+        -13290780969100.357,
+        -24664689981857.215,
+        250787327239112.2
+      ],
+      "anchor": null,
+      "distance": 1451807990570403,
+      "yaw": -0.5106047351224149,
+      "pitch": 0.5850290562927456
+    }
+  ]
+}

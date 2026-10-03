@@ -1,3 +1,4 @@
+import { foreignCameraStars } from './render/foreignStarField.js';
 import * as THREE from "three";
 import { STARS, K, LY_SCENE, MU_S } from "./constants.js";
 import { CURATED_PHOTOMETRY } from "./render/curatedPhotometry.js";
@@ -11,7 +12,7 @@ import { dotTexture } from "./textures.js";
 import { renderQuality, scene, camera, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
 import { getExploredHost } from "./universe/exploredSystem.js";
-import { ACTIVE_STARS, activeStarsTime, activeStarSetRevision } from "./universe/activeStars.js";
+import { ACTIVE_STARS, activeStarsTime, activeForeignStarsStamp, activeStarSetRevision } from "./universe/activeStars.js";
 import { applyTerrellToMaterial } from "./relView.js";
 import { holeRoot, makeHoleOptics, updateHoleOptics } from "./holeOptics.js";
 import { namedHoleAppearance } from "./render/holeAppearance.js";
@@ -200,6 +201,7 @@ let activeVisualSynced = false;
 let activeVisualSyncAge = Infinity, lastExploredVisualId = "";
 const activeVisualKeep = new Set();
 const activeVisualCands = [];
+const activeVisualSeen = new Set();
 function syncActiveStarVisuals(camera, dtR = 0) {
     const exploredHost = getExploredHost();
     const exploredId = exploredHost ? starVisualId(exploredHost) : "";
@@ -208,7 +210,11 @@ function syncActiveStarVisuals(camera, dtR = 0) {
     if (activeVisualSyncAge < ACTIVE_VISUAL_SYNC_S && moved < ACTIVE_VISUAL_MOVE_SYNC && exploredId === lastExploredVisualId) return;
     activeVisualKeep.clear();
     activeVisualCands.length = 0;
-    for (const star of ACTIVE_STARS) {
+    activeVisualSeen.clear();
+    for (const star of [...ACTIVE_STARS, ...foreignCameraStars()]) {
+        const visualId = starVisualId(star);
+        if (activeVisualSeen.has(visualId)) continue;
+        activeVisualSeen.add(visualId);
         if (!star.procedural && !star.activeCatalog && !star.formedStar) continue;
         _procPos.set(star.x * K, (star.z || 0) * K, -star.y * K);
         const d = camera.position.distanceTo(_procPos);
@@ -251,7 +257,7 @@ export function syncActiveProceduralPoints() {
     const explored = getExploredHost();
     if (explored?.activeCatalog && !pointStars.some(s => s.id === explored.id)) pointStars.push(explored);
     const n0 = pointStars.length;
-    const sig = activeStarSetRevision() + ":" + (explored?.id || "") + ":" + activeStarsTime() + ":" + n0 + ":" + (n0 ? pointStars[0].id || pointStars[0].name : "") + ":" + (n0 ? pointStars[n0 - 1].id || pointStars[n0 - 1].name : "");
+    const sig = activeStarSetRevision() + ":" + (explored?.id || "") + ":" + activeForeignStarsStamp() + ":" + activeStarsTime() + ":" + n0 + ":" + (n0 ? pointStars[0].id || pointStars[0].name : "") + ":" + (n0 ? pointStars[n0 - 1].id || pointStars[n0 - 1].name : "");
     if (sig === activeProc.sig) {
         if (activeProc.mesh && !activeProc.mesh.position.equals(camera.position)) placeActivePoints(pointStars);
         return;

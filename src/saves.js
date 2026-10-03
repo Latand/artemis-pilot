@@ -1,3 +1,4 @@
+import { serializeUniverseJournal, restoreUniverseJournal, validUniverseJournal } from './universe/universeJournal.js';
 import { resetDrive } from './curvatureDrive.js';
 import { apOff } from "./autopilot.js";
 import { cam } from "./scene.js";
@@ -35,7 +36,7 @@ const G_FIELDS = [
     "t", "x", "y", "z", "vx", "vy", "vz", "heading", "pitch", "throttle", "warp", "paused",
     "fuel", "infinite", "dvUsed", "hold", "landed", "dead", "deadReason",
     "deathT", "leftHome", "maxRE", "gr", "predict", "constellations", "darkEnergy", "darkMatter", "muted", "ambientAudio", "focus",
-    "cabin",
+    "cabin", "cosmicOverview",
 ];
 const SERIAL_STAR_FIELDS = [
     "epochPosition", "distanceEstimated",
@@ -84,6 +85,7 @@ export function saveState() {
     const data = {
         v: 11,
         galaxySeed: getSeed(),
+        universeJournal: serializeUniverseJournal(),
         exploredSystem,
         camera: serializeExplorationCamera(cam, getOrigin()),
         epochMs,
@@ -139,6 +141,7 @@ export async function loadState() {
     let data = null;
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
     if (!data || (data.v < 1 || data.v > 11)) { toast("No saved state · K to save one"); return false; }
+    if (!validUniverseJournal(data.universeJournal)) { toast("Saved universe journal is invalid"); return false; }
     // Catalog readiness is a preflight: no frame may see a loaded ship with
     // the previous world while this network/index operation is pending.
     let exploredCatalogUnavailable = false;
@@ -146,14 +149,18 @@ export async function loadState() {
         try { await ensureHygCatalogLoaded(); }
         catch { exploredCatalogUnavailable = true; }
     }
+    // Relinquish excursion ownership while its return world is still intact.
+    // The exit listener restores that snapshot; it must run before any saved
+    // seed, intervention, host or camera state is installed.
+    window.dispatchEvent(new Event("ap:replace-universe"));
     // The procedural galaxy is a pure function of (seed, cell coords), so the
     // seed must land before any procedural star is regenerated from a saved id.
     setSeed(data.v >= 9 && Number.isFinite(data.galaxySeed) ? (data.galaxySeed >>> 0) : DEFAULT_SEED);
+    restoreUniverseJournal(data.universeJournal);
     applyEpochMs(data.v >= 9 ? data.epochMs : null);
     const restoredStars = data.v >= 5 ? await restorePromotedCatalogStars(data.hygStars) : [];
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     // Saves restore wall-time values directly; loading cancels any jump in flight. ap_uiMode stays a device preference outside the save format.
-    window.dispatchEvent(new Event("ap:replace-universe"));
     cancelTimeJump("quickload");
     apOff();
     relResetState();
