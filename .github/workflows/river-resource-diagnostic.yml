@@ -1,0 +1,41 @@
+name: River capture resource attribution
+on:
+  pull_request:
+    paths:
+      - 'scripts/diagnose-capture-resources.mjs'
+      - '.github/workflows/river-resource-diagnostic.yml'
+permissions:
+  contents: read
+jobs:
+  diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node --check scripts/diagnose-capture-resources.mjs && node scripts/diagnose-capture-resources.mjs --validate && node scripts/diagnose-capture-resources.mjs --self-test
+      - run: npx playwright install --with-deps chromium
+      - name: Pin the actual failing production source
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/resource-source" 09863eedda25eef36d79e9cf88daa4ff3e377875
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/resource-source/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/resource-source" >> "$GITHUB_ENV"
+      - name: Attribute the first midpoint allocation and repeated capture transitions
+        env:
+          DEVICE: mobile
+          ARTEMIS_EVIDENCE: evidence/resource-probe
+        run: node scripts/diagnose-capture-resources.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: river-resource-after-mobile
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
