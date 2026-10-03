@@ -259,5 +259,5 @@ export function ringMaterial(map, radius) {
         `);
     };
     material.customProgramCacheKey = () => 'ring-shadow-' + radius;
-    return trackRingSamplingMaterial(material);
+    return trackRingSamplingMaterial(material, radius);
 }

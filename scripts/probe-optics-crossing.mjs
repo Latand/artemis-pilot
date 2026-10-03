@@ -7,6 +7,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { transformCelestialSource } from './celestial-detail-fixtures.mjs';
+import { verifyDepthCoverageFixture } from './optics-depth-fixture.mjs';
 const mobile=process.env.DEVICE==='mobile';
 const bloom=process.env.BLOOM==='1';
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/optics-crossing');await mkdir(out,{recursive:true});
@@ -15,7 +16,13 @@ const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}
  omissions:['unrelated cosmic background, HYG and tier-1 catalogs','gravity-flow overlay',...(bloom?[]:['bloom; direct production lensing compositor'])]};
 let server,browser;
 try{
- server=await createServer({configFile:false,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'optics-crossing-diagnostic',enforce:'pre',resolveId(id){if(id==='virtual:galaxy-preview')return '\0off';},load(id){if(id==='\0off')return 'export default null;';},transform:transformCelestialSource}]});await server.listen();
+ server=await createServer({configFile:false,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'optics-crossing-diagnostic',enforce:'pre',resolveId(id){if(id==='virtual:galaxy-preview')return '\0off';},load(id){if(id==='\0off')return 'export default null;';},transform(source,id){
+ if(id.split('?')[0].endsWith('/src/render/ringSamplingDepth.js')){
+  const token='u.uRingBodyRadius.value = bodyRadius;';assert.equal(source.split(token).length,2);
+  return source.replace(token,'u.uRingBodyRadius.value = window.__qaCoverageEdge === false ? 0 : bodyRadius;');
+ }
+ return transformCelestialSource(source,id);
+}}]});await server.listen();
  browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
  const page=await browser.newPage({viewport:mobile?{width:390,height:700}:{width:960,height:640},deviceScaleFactor:1,isMobile:mobile,hasTouch:mobile});page.setDefaultTimeout(180000);
  page.on('pageerror',e=>report.errors.push(e.stack||e.message));page.on('console',m=>{if(m.type()==='error'&&/THREE|Shader|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
@@ -34,6 +41,9 @@ try{
   for(let i=0;i<8;i++)window.__celestialFrame();
   qa.initialHole={x:qa.st.BH.x[0],y:qa.st.BH.y[0]};
  });
+ report.depthFixture=await verifyDepthCoverageFixture(page);
+ for(const[name,png]of Object.entries(report.depthFixture.images))await writeFile(`${out}/depth-fixture-${name}.png`,Buffer.from(png.split(',')[1],'base64'));
+ delete report.depthFixture.images;await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
  const coarse=[.48,.08,.005,0,-.005,-.08,-.48];
  const dense=[.0008,.0007,.00065,.0006,.00055,.0005,.0004,0,-.0004,-.0005,-.00055,-.0006,-.00065,-.0007,-.0008];
  for(const scenario of ['saturn-near-lens','saturn-foreground-lens','disk-crossing'])for(const pitch of scenario==='disk-crossing'?[...new Set([...coarse,...dense])]:scenario==='saturn-foreground-lens'?[.48,0,-.48]:coarse){
@@ -53,48 +63,70 @@ try{
    const state=tde.tidalState(sat),wasActive=state.active;
    const disk=m.optics.disk,wasDisk=disk.material.uniforms.uDiskOn.value;
    const gl=s.renderer.getContext(),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
-   const draw=(lensed,tides,diskOn=true,ringDepth=true,bloomEffects=true)=>{
+   const draw=(lensed,tides,diskOn=true,ringDepth=true,bloomEffects=true,edgeCoverage=true,bend=true)=>{
+    window.__qaCoverageEdge=edgeCoverage;const renderStart=performance.now();
     state.active=tides&&wasActive;disk.visible=diskOn;
     if(lensed){lens.updateLensing(s.camera,s.camera.aspect);if(!ringDepth)qa.ring.beginRingSamplingDepth();}
     else{lens.lensingPass.enabled=false;hole.holeRoot.visible=true;}
+    const lensCount=lens.lensingPass.uniforms.uN.value;if(!bend)lens.lensingPass.uniforms.uN.value=0;
     if(bloom){const enabled=s.bloomPass.enabled;s.bloomPass.enabled=enabled&&bloomEffects;try{s.composer.render();}finally{s.bloomPass.enabled=enabled;}}
     else if(lensed)lens.renderLensed(s.renderer,s.scene,s.camera);
     else s.renderSceneTiered(s.renderer,s.scene,s.camera);
+    lens.lensingPass.uniforms.uN.value=lensCount;
     const bytes=new Uint8Array(w*h*4);gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
-    return{bytes,png:s.renderer.domElement.toDataURL('image/png'),ringPresent:qa.ring.ringSamplingUniforms.uRingPresent.value};
+    const renderMs=performance.now()-renderStart;
+    return{bytes,png:s.renderer.domElement.toDataURL('image/png'),ringPresent:qa.ring.ringSamplingUniforms.uRingPresent.value,bodyRadius:qa.ring.ringSamplingUniforms.uRingBodyRadius.value,renderMs};
    };
    const production=draw(true,true),noLens=draw(false,true),noTides=draw(true,false),plain=draw(false,false),noDisk=draw(true,true,false),noRingDepth=scenario.startsWith('saturn-')?draw(true,false,true,false):noTides;
+   const noEdgeDepth=scenario.startsWith('saturn-')?draw(true,false,true,true,true,false):noTides;
    // Additive bloom may legitimately scatter nearby disk light over a body.
    // Isolate opaque occlusion with that one filter disabled, retaining the
    // same direct/composer lens and hole passes in their production order.
    const opaqueLensed=foreground&&bloom?draw(true,false,true,true,false):noTides;
-   const opaquePlain=foreground&&bloom?draw(false,false,true,true,false):plain;
+   // Use an identity lens in the SAME render-target path. Mobile's lens
+   // target has samples=0 while the direct canvas is antialiased; comparing
+   // against the direct canvas confounds ring-edge rasterization with bending.
+   const opaquePlain=foreground?draw(true,false,true,true,false,true,false):plain;
+   const edgePerformance=[];
+   if(scenario==='saturn-near-lens'&&pitch===.48){
+    for(const edge of [false,true])for(let i=0;i<3;i++)draw(true,false,true,true,true,edge);
+    for(const order of ['ABBA','BAAB','ABBA','BAAB','ABBA']){
+     const times={A:[],B:[]};for(const key of order)for(let i=0;i<3;i++)times[key].push(draw(true,false,true,true,true,key==='B').renderMs);
+     const p95=a=>[...a].sort((a,b)=>a-b)[Math.ceil(a.length*.95)-1];
+     edgePerformance.push({order,times,p95A:p95(times.A),p95B:p95(times.B),ratio:p95(times.B)/p95(times.A)});
+    }
+   }
    state.active=wasActive;disk.visible=true;
    const bodyCenter=b.plGroups[sat].position.clone().project(s.camera);
    const bodyDepth=-b.plGroups[sat].position.clone().applyMatrix4(s.camera.matrixWorldInverse).z;
    const bodyRadius=c.PL[sat].R*c.K/bodyDepth*s.camera.projectionMatrix.elements[5]*h*.5;
-   let opaquePixels=0,opaqueChanged=0;
-   let lensChanged=0,lensUndeformed=0,tidalChanged=0,ringDepthChanged=0,diskPixels=0,diskLight=0;
+   let opaquePixels=0,opaqueChanged=0,identityVsDirectChanged=0;
+   let lensChanged=0,lensUndeformed=0,tidalChanged=0,ringDepthChanged=0,edgeDepthChanged=0,diskPixels=0,diskLight=0;
    for(let i=0;i<production.bytes.length;i+=4){
     const l=(a)=>.2126*a[i]+.7152*a[i+1]+.0722*a[i+2];
     if(foreground){const px=(i/4)%w+.5,py=Math.floor(i/4/w)+.5;
-     if(Math.hypot(px-(bodyCenter.x*.5+.5)*w,py-(bodyCenter.y*.5+.5)*h)<bodyRadius*.55&&l(opaquePlain.bytes)>8){opaquePixels++;if(Math.abs(l(opaqueLensed.bytes)-l(opaquePlain.bytes))>1)opaqueChanged++;}
+     if(Math.hypot(px-(bodyCenter.x*.5+.5)*w,py-(bodyCenter.y*.5+.5)*h)<bodyRadius*.55&&l(opaquePlain.bytes)>8){opaquePixels++;if(Math.abs(l(opaqueLensed.bytes)-l(opaquePlain.bytes))>1)opaqueChanged++;if(!bloom&&Math.abs(l(opaquePlain.bytes)-l(plain.bytes))>1)identityVsDirectChanged++;}
     }
     if(Math.abs(l(production.bytes)-l(noLens.bytes))>8)lensChanged++;
     if(Math.abs(l(noTides.bytes)-l(plain.bytes))>8)lensUndeformed++;
     if(Math.abs(l(noLens.bytes)-l(plain.bytes))>8)tidalChanged++;
     if(Math.abs(l(noTides.bytes)-l(noRingDepth.bytes))>8)ringDepthChanged++;
+    if(Math.abs(l(noTides.bytes)-l(noEdgeDepth.bytes))>8)edgeDepthChanged++;
     const emit=l(production.bytes)-l(noDisk.bytes);if(emit>4){diskPixels++;diskLight+=emit;}
    }
-   return{images:{production:production.png,'no-lens':noLens.png,'no-tides':noTides.png,plain:plain.png,'no-disk':noDisk.png,...(scenario.startsWith('saturn-')?{'no-ring-depth-no-tides':noRingDepth.png}:{})},metrics:{lensChanged,lensUndeformed,tidalChanged,ringDepthChanged,opaquePixels,opaqueChanged,diskPixels,diskLight},state:{meshSourceError,physicalLensDepth,bodyDepth,lensDepthError:Math.min(...Array.from(lens.lensingPass.uniforms.uDist.value).slice(0,lens.lensingPass.uniforms.uN.value).map(z=>Math.abs(z-physicalLensDepth))),opaqueComparison:'same compositor with additive bloom disabled',ringProxyNoTides:noTides.ringPresent,ringProxyAblated:noRingDepth.ringPresent,tidalActive:wasActive,lambda:state.lambda,shrink:state.shrink,collapse:state.collapse,diskOn:wasDisk,normal:disk.material.uniforms.uNormal.value.toArray(),origin:disk.material.uniforms.uOrigin.value.toArray(),distanceRs:disk.material.uniforms.uDistance.value,near:s.camera.near,far:s.camera.far,lensCount:lens.lensingPass.uniforms.uN.value},glError:gl.getError()};
+   return{images:{...(foreground?{'identity-reference':opaquePlain.png}:{}),production:production.png,'no-lens':noLens.png,'no-tides':noTides.png,plain:plain.png,'no-disk':noDisk.png,...(scenario.startsWith('saturn-')?{'no-ring-depth-no-tides':noRingDepth.png,'no-edge-depth-no-tides':noEdgeDepth.png}:{})},edgePerformance,metrics:{lensChanged,lensUndeformed,tidalChanged,ringDepthChanged,edgeDepthChanged,opaquePixels,opaqueChanged,identityVsDirectChanged,diskPixels,diskLight},state:{meshSourceError,physicalLensDepth,bodyDepth,lensDepthError:Math.min(...Array.from(lens.lensingPass.uniforms.uDist.value).slice(0,lens.lensingPass.uniforms.uN.value).map(z=>Math.abs(z-physicalLensDepth))),opaqueComparison:'same compositor/target with lens mapping versus identity; additive bloom disabled',edgeRadiusNoTides:noTides.bodyRadius,edgeRadiusAblated:noEdgeDepth.bodyRadius,ringProxyNoTides:noTides.ringPresent,ringProxyAblated:noRingDepth.ringPresent,tidalActive:wasActive,lambda:state.lambda,shrink:state.shrink,collapse:state.collapse,diskOn:wasDisk,normal:disk.material.uniforms.uNormal.value.toArray(),origin:disk.material.uniforms.uOrigin.value.toArray(),distanceRs:disk.material.uniforms.uDistance.value,near:s.camera.near,far:s.camera.far,lensCount:lens.lensingPass.uniforms.uN.value},glError:gl.getError()};
   },{scenario,pitch});
   for(const[k,png]of Object.entries(result.images).filter(([kind])=>coarse.includes(pitch)||kind==='production'))await writeFile(`${out}/${scenario}-${pitch}-${k}.png`,Buffer.from(png.split(',')[1],'base64'));
   delete result.images;report.cases.push({scenario,pitch,...result});await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
   assert.equal(result.glError,0,'live error-free WebGL context');assert(result.state.meshSourceError<1e-6,'drawn hole and physical lens positions match');assert(result.state.lensDepthError<.01,'selected lens depth matches drawn hole');assert.equal(result.state.diskOn,1,'steady quasar disk stays enabled independent of camera side');
-  if(scenario.startsWith('saturn-')){assert.equal(result.state.ringProxyNoTides,1,'real ring draw publishes sampling depth');assert.equal(result.state.ringProxyAblated,0,'source-depth ablation is independent of TDE');}
+  if(scenario.startsWith('saturn-')){assert.equal(result.state.ringProxyNoTides,1,'real ring draw publishes sampling depth');assert.equal(result.state.ringProxyAblated,0,'source-depth ablation is independent of TDE');assert(result.state.edgeRadiusNoTides>0,'silhouette coverage enabled');assert.equal(result.state.edgeRadiusAblated,0,'silhouette ablation leaves the ring proxy active');}
   if(scenario==='saturn-foreground-lens'){assert(result.state.physicalLensDepth>result.state.bodyDepth+500,'test lens is behind the complete body and rings');assert(result.metrics.opaquePixels>50,'foreground body mask samples visible opaque surface');assert.equal(result.metrics.opaqueChanged,0,'a lens behind the body cannot alter its opaque interior');}
   console.log(scenario,pitch,JSON.stringify(result.metrics));
  }
+ const perf=report.cases.flatMap(c=>c.edgePerformance);
+ assert.equal(perf.length,5,'all five fixed-order edge-coverage performance trials retained');
+ report.edgePerformance={scope:'Actual frozen production renderer/compositor with GPU-synchronized full readback; edge coverage off/on ablation, not a complete baseline-head comparison',medianPairedP95Ratio:perf.map(p=>p.ratio).sort((a,b)=>a-b)[2]};
+ assert(report.edgePerformance.medianPairedP95Ratio<=1.05,'edge coverage full-frame paired p95 stays within five percent');
  const edge=report.cases.filter(c=>c.scenario==='disk-crossing');
  const exact=edge.find(c=>c.pitch===0),near=edge.filter(c=>Math.abs(c.pitch)===.005);
  const crossing=edge.filter(c=>dense.includes(c.pitch)).sort((a,b)=>b.pitch-a.pitch);

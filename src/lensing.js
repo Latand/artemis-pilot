@@ -93,7 +93,7 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
             }
             // Transparent annuli have a sampling depth, but must never become
             // opaque occluders. dz/dq remain the untouched world depth buffer.
-            zv = ringSourceDepth(vUv, zv);
+            zv = ringSourceDepth(vUv, bodyCoverageSourceDepth(vUv, zv));
             // The background-plane limit over-bends nearby planets into
             // detached copies. Use the finite source-distance factor D_ls/D_s.
             // The source depth is at the sampled pixel, so solve this bounded
@@ -117,7 +117,7 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
                     vec2 sampleUv = clamp(vec2(q.x/uAspect,q.y)*.5+.5,0.0,1.0);
                     dq = texture2D(tDepth,sampleUv).x;
                     sourceZ = dq < 1.0 ? uNear*uFar/(uFar-dq*(uFar-uNear)) : 1e30;
-                    sourceZ = ringSourceDepth(sampleUv, sourceZ);
+                    sourceZ = ringSourceDepth(sampleUv, bodyCoverageSourceDepth(sampleUv, sourceZ));
                 }
             }
             // Validate the FINAL sampled depth, not the previous step. A
