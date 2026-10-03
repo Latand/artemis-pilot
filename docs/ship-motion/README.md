@@ -1,3 +1,5 @@
+> Historical PR #32 design and verification record. The active pilot experience now uses a coupled fictional curvature drive, default-on field guide and compact ship markers. See [the current model](../curvature-drive.md). Revision-specific reviews below describe their captured historical builds.
+
 # Speed-linked rings and optional speculative river visual
 
 Both exterior annuli rotate about the hull's local +Y axis; the hull, radial

@@ -9,8 +9,8 @@ const meshesOf = model => { const a=[]; model.traverse(o=>{if(o.isMesh)a.push(o)
 assert.equal(model.userData.rotors.length, 2);
 assert.equal(meshesOf(model).length, 13, 'Seven fixed batches plus three per rotor');
 const bounds = new THREE.Box3().setFromObject(model);
-assert(Math.abs(bounds.min.y + 1.05) < .065, 'Aft extremity stays attached to existing exhaust anchor');
-assert(bounds.min.y > -1.06 && bounds.max.y > 1.3 && bounds.max.y < 1.5, 'Nose +Y and tail retain orientation / exhaust offset contract');
+assert(Math.abs(bounds.min.y + 1.05) < .065, 'Aft extremity preserves the hull silhouette');
+assert(bounds.min.y > -1.06 && bounds.max.y > 1.3 && bounds.max.y < 1.5, 'Nose +Y and tail retain the hull coordinate contract');
 assert(Math.abs(bounds.max.x + bounds.min.x) < 1e-6 && Math.abs(bounds.max.z + bounds.min.z) < 1e-6, 'Rings are centered on the hull axis');
 assert(bounds.max.x < 1.1 && bounds.max.z < 1.1, 'Ship remains within the existing adaptive-size footprint');
 const geometries = new Set(), materials = new Set();
@@ -57,11 +57,11 @@ model.traverse(o=>{if(!o.isMesh)return;const p=o.geometry.attributes.position;
  if(o.name.startsWith('ship.rotor'))rotorMinR=Math.min(rotorMinR,r);else staticMaxR=Math.max(staticMaxR,r);}
 });
 assert(staticMaxR+.01<rotorMinR*Math.cos(Math.PI/64),'Full 360-degree swept clearance from fixed hull, bearings, lights and supports');
-// A conventional engine aperture must not be buried behind the solid hull.
+// The cyan aft field housing remains visible through its surrounding shroud.
 model.updateMatrixWorld(true);
 for (const x of [.01,.05,.10,.13]) {
  const ray = new THREE.Raycaster(new THREE.Vector3(x,-2,0),new THREE.Vector3(0,1,0));
- assert.equal(ray.intersectObject(model,true)[0]?.object.name,'ship.cyan','Aft aperture remains visible through the nozzle');
+ assert.equal(ray.intersectObject(model,true)[0]?.object.name,'ship.cyan','Aft field aperture remains visible through the shroud');
 }
 // Visible cyan arcs sit in front of the graphite liner, not inside it.
 for (const y of [-.61,.48]) for (const theta of [.02,.05,.1,.2,.25]) {
