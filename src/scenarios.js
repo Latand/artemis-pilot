@@ -13,6 +13,7 @@ import { apTravelToFocus } from "./autopilot.js";
 import { resetHints } from "./hints.js";
 import { hideHelp } from "./hud.js";
 import { setWarp } from "./timeCtl.js";
+import { beginJupiterPlayback, captureScenarioReturnState, exitScenarioPlayback, initScenarioPlayback } from "./scenarioPlayback.js";
 
 const $ = id => document.getElementById(id);
 let H = { restart: () => { } };
@@ -86,31 +87,14 @@ const SCENARIOS = [
     {
         id: "slingshot",
         name: "JUPITER SLINGSHOT",
-        blurb: "Steal orbital momentum from a gas giant.",
+        blurb: "A guided, engine-off gravity assist. About 60 seconds, with a slower close pass.",
         physicsCard: [
-            "In Jupiter's frame you arrive and leave at the same speed — a perfect elastic bounce.",
-            "The Sun's frame disagrees: the swing rotates your velocity, and Jupiter's 13 km/s of orbital motion gets added to it.",
-            "This pass dives to ~3.5 Jupiter radii and steals ~7 km/s of heliocentric speed; Jupiter slows by an immeasurable hair — momentum is conserved.",
-            "Voyager, Cassini, and New Horizons all paid for the outer system with this trick.",
+            "Jupiter's gravity bends a three-dimensional, unpowered hyperbolic encounter.",
+            "The ship gains heliocentric energy by turning through the moving planet's gravity field.",
+            "The target periapsis is 3.5 Jupiter radii with an asymptotic relative speed of 5.6 km/s.",
+            "The simulation treats the ship as a test particle: Jupiter's tiny recoil is neglected. Flow lines are a gravity visualization.",
         ],
-        setup() {
-            // ship ahead of Jupiter, drifting back at v∞ = 5.6 km/s with a
-            // 1.35e6 km impact parameter; offline run: periapsis 3.5 R_J,
-            // heliocentric 6.9 → 14.6 km/s over an 8-day encounter.
-            const J = 3, b = 1.35e6, vinf = 5.6, ahead = 2e6;
-            const jvxH = eph.plVx[J] - eph.sunVx, jvyH = eph.plVy[J] - eph.sunVy;
-            const vJ = Math.hypot(jvxH, jvyH);
-            const tx = jvxH / vJ, ty = jvyH / vJ;
-            G.x = eph.plX[J] + ahead * tx - b * ty;
-            G.y = eph.plY[J] + ahead * ty + b * tx; G.z = 0;
-            G.vx = eph.plVx[J] - vinf * tx;
-            G.vy = eph.plVy[J] - vinf * ty; G.vz = 0;
-            G.heading = Math.atan2(G.vy, G.vx);
-            G.pitch = 0;
-            setWarp(86400, "scenario");
-            G.focus = J;
-            cam.dist = 2800;
-        },
+        setup() {}, // The guided runtime seeds this state after capturing the return flight.
     },
     {
         id: "photonSphere",
@@ -239,24 +223,30 @@ function showPhysCard(sc) {
 
 function loadScenario(sc) {
     hideHelp();
+    exitScenarioPlayback();
+    const returnState = sc.id === "slingshot" ? captureScenarioReturnState() : null;
     H.restart();
     clearBlackHoles();
-    sc.setup();
+    if (returnState) beginJupiterPlayback(returnState, H.restart);
+    else sc.setup();
     clearTrail();
     pushTrail(true);
     computePrediction();
     if ($("intro").style.display !== "none") dismissIntro();
     closeMenu();
-    showPhysCard(sc);
+    if (!returnState) showPhysCard(sc);
     toast("Simulation loaded · " + sc.name);
 }
 
 export function initScenarios(hooks) {
     H = hooks;
+    initScenarioPlayback();
     const grid = $("simsGrid");
     for (const sc of SCENARIOS) {
-        const d = document.createElement("div");
+        const d = document.createElement("button");
+        d.type = "button";
         d.className = "simCard";
+        d.dataset.scenario = sc.id;
         d.innerHTML = '<div class="scName">' + sc.name + '</div><div class="scBlurb">' + sc.blurb + "</div>";
         d.onclick = () => loadScenario(sc);
         grid.appendChild(d);
