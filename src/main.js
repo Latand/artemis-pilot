@@ -1,3 +1,4 @@
+import { updateOrbitalExposure, hideOrbitalExposure, applyOrbitalExposureMarkers } from './render/orbitalExposure.js';
 import { initShipVisuals, updateShipVisuals } from "./shipVisuals.js";
 import { initRiverStyles } from "./riverStyles.js";
 import { updateGravityInspector } from "./gravityInspector.js";
@@ -22,7 +23,7 @@ import {
     farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
-    buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
+    buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, earthOrbitRing, moon, moonOrbitRing, moonSoiRing,
     plGroups, plSurfaces, plGlows, plOrbitRings, plLabels, galaxyBackdrop, sunDirW, updateBodyShaders, scheduleDeferredRealSkyLoad, requestEarthNightTexture,
     moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
@@ -1595,6 +1596,7 @@ function updateBodySurfaceLod(cosmicView, detailShed) {
 let bodyLodReady = false, bodyLodLastDist = 0, bodyLodLastFocus = null, bodyLodLastCosmic = false, bodyLodLastDetail = false;
 
 function renderFrame(showCockpit) {
+    applyOrbitalExposureMarkers(moonBeacon, { earth: lblE, moon: lblM, planets: plLabels, moons: moonLabels });
     if (renderContext.isLost()) return;
     if (VR.active) { renderVRFrame(showCockpit && VR.mode === "ship"); return; }
     const renderT0 = perfStart();
@@ -1916,6 +1918,10 @@ function frameStep() {
     perfEnd("scene.bodies", sceneBodiesT0, PERF.enabled ? { nearFieldDue, nearVisualDue, cosmicView } : null);
     const sceneFocusT0 = perfStart();
     const sunCamDist = Math.max(1e-9, camera.position.distanceTo(sunPos));
+    const earthOrbitGuide = smooth01(6, 24, AU_KM * K * viewportSize.pxScale / sunCamDist);
+    earthOrbitRing.position.copy(sunPos);
+    earthOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.sunDestroyed && earthOrbitGuide > .01;
+    earthOrbitRing.material.opacity = .5 * earthOrbitGuide;
     for (let i = 0; i < PL.length; i++) {
         plGroups[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
         // Orbit rings and planet markers are guides: they fade out as the
@@ -2203,6 +2209,7 @@ function frameStep() {
     updateLargeScaleFlow(advanced, dtR, fB, sunPos);
     updateGravityInspector();
     if (cosmicView) {
+        hideOrbitalExposure();
         // Hide the local GPU layer even on the cosmic early-return path.
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
         updateShells(0, 0);
@@ -2246,6 +2253,7 @@ function frameStep() {
     bloomPass.enabled = !bloomDisabled && (cinematic.isPlaying() || bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
     if (bloomPass.enabled && !composer) ensurePostProcessing(lensingPass);
     updateBodyShaders(camera, G.t);
+    updateOrbitalExposure(camera, advanced, rawDtR, cabinActive || VR.active);
     // the bodies meter the exposure afresh inside a planetary system: keep
     // the diffuse-light cap on it too (see the cosmic layer above)
     stellarExposure.value = Math.min(stellarExposure.value, galaxyVolumeExposureCap());

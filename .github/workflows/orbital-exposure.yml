@@ -1,0 +1,45 @@
+name: Orbital exposure and Earth guide QA
+on:
+  pull_request:
+    paths:
+      - 'src/main.js'
+      - 'src/bodies.js'
+      - 'src/render/orbitalExposure*'
+      - 'scripts/*orbital-exposure*'
+      - '.github/workflows/orbital-exposure.yml'
+permissions:
+  contents: read
+concurrency:
+  group: orbital-exposure-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  capture:
+    name: Orbits ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/smoke-orbital-exposure.mjs && node scripts/smoke-orbital-exposure-integration.mjs && npm run smoke:planet-phases && npm run smoke:reverse && npm run smoke:time-dock && npm test && npm run build
+      - name: Capture matched orbital sequences and exact physical transforms
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: node scripts/verify-orbital-exposure.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orbital-exposure-${{ matrix.device }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT, AU_KM } from "./constants.js";
+import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT, AU_KM, E_EARTH, VARPI_EARTH } from "./constants.js";
 import { earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
 import { stellarExposure, meteredSkyExposure, linearStarColor, updatePhotosphereAppearance } from "./render/stellarAppearance.js";
 import { makeStarPointMaterial } from "./render/starPointMaterial.js";
@@ -20,7 +20,7 @@ import { sunStateAt, AGB_TIP_R_RSUN } from "./universe/sunEvolution.js";
 
 export const sunPos = new THREE.Vector3();
 export let sunLight, sunCore, sunGlow, sunCorona, sunPN, sky, skyStars, galaxyBackdrop;
-export let earthG, earth, clouds, earthAtmo, earthBeacon, moon, moonOrbitRing, moonSoiRing;
+export let earthG, earth, clouds, earthAtmo, earthBeacon, earthOrbitRing, moon, moonOrbitRing, moonSoiRing;
 export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], plLabels = [];
 // Planetary moons: physical-size detailed surfaces + unresolved guide dot + label
 export const moonGroups = [], moonSurfaces = [], moonGlows = [], moonLabels = [];
@@ -488,6 +488,12 @@ export function buildBodies(maps) {
     earthBeacon.renderOrder = 5;
     earthG.add(earth, clouds, earthAtmo, earthBeacon);
     scene.add(earthG);
+    // Earth is not a member of PL: its heliocentric guide needs its own ring.
+    earthOrbitRing = new THREE.LineLoop(
+        orbitEllipseGeometry(AU_KM, E_EARTH, VARPI_EARTH),
+        new THREE.LineBasicMaterial({ color: 0x2c3a4a, transparent: true, opacity: .5, depthWrite: false }));
+    earthOrbitRing.name = "Earth orbit guide";
+    scene.add(earthOrbitRing);
     // ---- moon ----
     const moonMap = maps.moon;
     moon = new THREE.Mesh(
