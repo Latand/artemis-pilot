@@ -10,10 +10,11 @@ const mobile=process.env.DEVICE==='mobile';
 const root=resolve(process.env.BASE_ROOT||process.cwd());
 const baseline=!!process.env.BASE_ROOT;
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/river-coverage');
-const viewport=mobile?{width:215,height:466}:{width:384,height:256};
+const viewport=mobile?{width:215,height:466}:{width:768,height:512};
+assert(mobile||viewport.width>760,'Desktop CSS viewport must stay above the production mobile breakpoint');
 const captureViewport=mobile?{width:430,height:932}:{width:960,height:640};
 await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),baseline,mobile,viewport,captureViewport,frames:[],checks:[],errors:[],omissions:['HYG background','resolved procedural field','tier-1 streaming'],reference:'Synthetic off-center Sun boundary crossing based on supplied photos; exact photographed camera pose is unknown.'};
+const report={revision:execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),baseline,mobile,viewport,captureViewport,soakDpr:.5,captureDpr:1,frames:[],checks:[],errors:[],omissions:['HYG background','resolved procedural field','tier-1 streaming'],reference:'Synthetic off-center Sun boundary crossing based on supplied photos; exact photographed camera pose is unknown.'};
 const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);};
 const save=()=>writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
 const hook=`
@@ -50,6 +51,7 @@ export function coverageSourceRead(index){
 `;
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'solar-coverage-qa',enforce:'pre',transform(source,id){
  if(id.split('?')[0].endsWith('/src/river.js'))return source+hook;
+ if(id.split('?')[0].endsWith('/src/scene.js'))return source+'\nwindow.__coverageDpr=pr=>{renderQuality.dpr=pr;renderer.setPixelRatio(pr);resizePostProcessing();};';
  if(!id.split('?')[0].endsWith('/src/main.js'))return;
  const token='const firstFrameT0 = perfStart();';assert.equal(source.split(token).length,2);
  return source.replace('renderer.setAnimationLoop(frame);','')
@@ -64,12 +66,14 @@ try{
  page.on('pageerror',e=>report.errors.push(e.stack||e.message));page.on('console',m=>{if(m.type()==='error'&&/THREE|Shader|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
  await page.addInitScript(()=>{localStorage.clear();localStorage.setItem('ap_introSeen','1');Date.now=()=>Date.UTC(2026,9,4,12);});
  await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
- await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=sun&dist=40000&pitch=0&yaw=1.5707963267948966&compile=0&field=0&realsky=0&tier1=0&hidehelp=1`,{waitUntil:'domcontentloaded'});
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=sun&dist=40000&pitch=0&yaw=1.5707963267948966&dpr=.5&compile=0&field=0&realsky=0&tier1=0&hidehelp=1`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__coverageFrame);
  // Keep all 1200 production frames and full particle counts, but bound the
- // software GPU's steady framebuffer work. Key evidence uses the original
+ // software GPU's steady framebuffer work at the supported dpr=.5 setting.
+ // Desktop CSS width stays above 760px so its production quality tier and
+ // 15,376-particle allocation do not switch to mobile. Key evidence uses the original
  // full viewport with exactly the same aspect ratio and one fresh app draw.
- const screenshot=async name=>{await page.setViewportSize(captureViewport);await page.evaluate(()=>window.__coverageFrame());await page.screenshot({path:`${out}/${name}.png`,timeout:180000});await page.setViewportSize(viewport);};
+ const screenshot=async name=>{await page.setViewportSize(captureViewport);await page.evaluate(()=>{window.__coverageDpr(1);window.__coverageFrame();});await page.screenshot({path:`${out}/${name}.png`,timeout:180000});await page.evaluate(()=>window.__coverageDpr(.5));await page.setViewportSize(viewport);};
  check(await page.evaluate(async mobile=>(await import('/src/scene.js')).renderQuality.mobile===mobile,mobile),'actual touch/desktop quality');
  const modes=baseline?[0]:[0,3852,-3852];
  const length=baseline?120:400;
