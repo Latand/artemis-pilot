@@ -1,3 +1,6 @@
+import { presentationExposureSeconds } from './render/orbitalExposureMath.js';
+import { updateVisibleTrajectories, hideVisibleTrajectories } from './render/visibleTrajectories.js';
+import { updateOrbitalExposure, hideOrbitalExposure, applyOrbitalExposureMarkers } from './render/orbitalExposure.js';
 import { initShipVisuals, updateShipVisuals } from "./shipVisuals.js";
 import { initRiverStyles } from "./riverStyles.js";
 import { updateGravityInspector } from "./gravityInspector.js";
@@ -22,7 +25,7 @@ import {
     farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
-    buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
+    buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, earthOrbitRing, moon, moonOrbitRing, moonSoiRing,
     plGroups, plSurfaces, plGlows, plOrbitRings, plLabels, galaxyBackdrop, sunDirW, updateBodyShaders, scheduleDeferredRealSkyLoad, requestEarthNightTexture,
     moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
@@ -1356,6 +1359,7 @@ let beltCursor = 0, kuiperCursor = 0;
 const arrC = [0, 0, 0];
 const fv = [0, 0, 0];
 let placed = false, frameNo = 0, grB = 0, exAcc = 0, exAnyAlive = false, hudReady = false, nearLabelsReady = false, nearVisualReady = false;
+let hudLastFocus, hudLastMode, hudLastWarp, hudLastPaused;
 const DIR_FADE_START_KMS = 55, DIR_FADE_END_KMS = 90;
 let prevHeadingVis = null, prevVelAngleVis = null;
 function angleDelta(a, b) {
@@ -1539,10 +1543,10 @@ function hudCadence(cabinActive, aMag) {
     return G.warp > 600 ? 6 : 2;
 }
 function nearLabelCadence() {
-    if (renderQuality.mobile) return G.warp > 600 ? 6 : G.warp > 60 ? 4 : 2;
-    if (G.warp > 3600) return 6;
-    if (G.warp > 600) return 4;
-    return 2;
+    // This is the bounded local-body list, not the star catalog. Positions
+    // must follow every rendered body/camera frame, especially after focus
+    // changes and at high warp; setLabelState avoids unchanged DOM writes.
+    return 1;
 }
 const BODY_SURFACE_MIN_PX_DESKTOP = 1.35, BODY_SURFACE_MIN_PX_MOBILE = 2.0;
 const BODY_DETAIL_MIN_PX = 10;
@@ -1595,6 +1599,7 @@ function updateBodySurfaceLod(cosmicView, detailShed) {
 let bodyLodReady = false, bodyLodLastDist = 0, bodyLodLastFocus = null, bodyLodLastCosmic = false, bodyLodLastDetail = false;
 
 function renderFrame(showCockpit) {
+    applyOrbitalExposureMarkers(moonBeacon, { earth: lblE, moon: lblM, planets: plLabels, moons: moonLabels });
     if (renderContext.isLost()) return;
     if (VR.active) { renderVRFrame(showCockpit && VR.mode === "ship"); return; }
     const renderT0 = perfStart();
@@ -1874,10 +1879,12 @@ function frameStep() {
             plGroups[i].position.set(px, py, pz);
             plGlows[i].position.set(px, py, pz);
             flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
+            // Spin phase is cheap and must match this frame, even when
+            // slower surface/detail bookkeeping is load-shed.
+            plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
             if (nearVisualDue) {
                 plOrbitRings[i].position.copy(sunPos);
                 plGroups[i].rotation.z = PL[i].visualTilt || 0;
-                plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
             }
         }
         for (let i = 0; i < MOONS.length; i++) {
@@ -1916,6 +1923,10 @@ function frameStep() {
     perfEnd("scene.bodies", sceneBodiesT0, PERF.enabled ? { nearFieldDue, nearVisualDue, cosmicView } : null);
     const sceneFocusT0 = perfStart();
     const sunCamDist = Math.max(1e-9, camera.position.distanceTo(sunPos));
+    const earthOrbitGuide = smooth01(6, 24, AU_KM * K * viewportSize.pxScale / sunCamDist);
+    earthOrbitRing.position.copy(sunPos);
+    earthOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.sunDestroyed && earthOrbitGuide > .01;
+    earthOrbitRing.material.opacity = .5 * earthOrbitGuide;
     for (let i = 0; i < PL.length; i++) {
         plGroups[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
         // Orbit rings and planet markers are guides: they fade out as the
@@ -1965,7 +1976,7 @@ function frameStep() {
     const focusedSystem = getExploredSystem(G.focus, nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star, G.t);
     const activePlanetFocus = planetFocusIndex(G.focus);
     const activePlanetMoonFocus = planetMoonFocusIndex(G.focus);
-    updateSystemRender(focusedSystem, G.t, camera, G.focus);
+    updateSystemRender(focusedSystem, G.t, camera, G.focus, G.paused ? 0 : presentationExposureSeconds(advanced, rawDtR));
     updateNebulae(camera, dtR);
     {
         const cp = Math.cos(G.pitch || 0);
@@ -2009,8 +2020,12 @@ function frameStep() {
     cam.dist = Math.max(minD, cam.dist);
     const cabinActive = updateCabinHUD(cosmicView, oi);
     const hudEvery = hudCadence(cabinActive, aMag);
-    const hudDue = !hudReady || frameNo % hudEvery === 0;
-    if (hudDue) hudReady = true;
+    const hudInputChanged = hudLastFocus !== G.focus || hudLastMode !== G.uiMode || hudLastWarp !== G.warp || hudLastPaused !== G.paused;
+    const hudDue = !hudReady || hudInputChanged || frameNo % hudEvery === 0;
+    if (hudDue) {
+        hudReady = true; hudLastFocus = G.focus; hudLastMode = G.uiMode;
+        hudLastWarp = G.warp; hudLastPaused = G.paused;
+    }
     if (VR.active) {
         // rigs follow the ship (or the god transform); the desktop camera is
         // re-pointed at the VR eye so camera-dependent systems keep working
@@ -2203,6 +2218,8 @@ function frameStep() {
     updateLargeScaleFlow(advanced, dtR, fB, sunPos);
     updateGravityInspector();
     if (cosmicView) {
+        hideVisibleTrajectories();
+        hideOrbitalExposure();
         // Hide the local GPU layer even on the cosmic early-return path.
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
         updateShells(0, 0);
@@ -2245,7 +2262,9 @@ function frameStep() {
         (!bloomForced && G.warp > 86400 && G.gr && grB > .18 && cam.dist > LY_SCENE * .05);
     bloomPass.enabled = !bloomDisabled && (cinematic.isPlaying() || bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
     if (bloomPass.enabled && !composer) ensurePostProcessing(lensingPass);
-    updateBodyShaders(camera, G.t);
+    updateBodyShaders(camera, G.t, G.paused ? 0 : presentationExposureSeconds(advanced, rawDtR), _m.om);
+    updateOrbitalExposure(camera, advanced, rawDtR, cabinActive || VR.active);
+    updateVisibleTrajectories(camera, oi, cabinActive || VR.active);
     // the bodies meter the exposure afresh inside a planetary system: keep
     // the diffuse-light cap on it too (see the cosmic layer above)
     stellarExposure.value = Math.min(stellarExposure.value, galaxyVolumeExposureCap());

@@ -1,7 +1,9 @@
 import * as THREE from 'three';
+import { registerBodyBoundsHook } from './bodyBoundsHooks.js';
 import { generateBodySurfaceMaps } from './bodySurfaceMaps.js';
 import { getBodyAppearance } from './bodyAppearanceProfiles.js';
 import { stabilizeBodyMaterial } from './relativeBodyFrame.js';
+import { configureSurfaceRotationExposure, SURFACE_EXPOSURE_GLSL } from './surfaceRotationExposure.js';
 
 // A single low-priority queue avoids synthesizing an entire moon system in a
 // frame. Only resolved bodies request maps; each live material owns its maps.
@@ -121,7 +123,10 @@ export function requestBodySurfaceDetail(material, profile = material?.userData.
 
 const microDetail = /* glsl */`
     varying vec3 vBodySurface;
-    uniform float uSurfacePhoto, uSurfaceTime, uSurfaceGas;
+    uniform float uSurfacePhoto, uSurfaceTime, uSurfaceGas, uSurfaceExposureTurns;
+    uniform sampler2D uSurfaceMapIntegral;
+    uniform vec2 uSurfaceMapIntegralSize;
+    ${SURFACE_EXPOSURE_GLSL}
     uniform float uSurfaceMapSaturation, uSurfacePhotoMean, uSurfacePhotoContrast;
     uniform vec3 uSurfacePhotoPalette;
     uniform vec3 uSurfacePhotoTint;
@@ -155,6 +160,7 @@ export function createBodySurfaceMaterial(bodyOrProfile, { map = null, hostLit =
     material.userData.reliefProvenance = 'Deterministic synthetic relief; unchanged mean radius and collision surface';
     material.userData.surfaceUniforms = uniforms;
     material.userData.surfacePhotographic = !!map;
+    configureSurfaceRotationExposure(material, uniforms, [{ name: 'uSurfaceMap', getMap: () => material.map }]);
     material.addEventListener('dispose', () => {
         material.userData.surfaceDisposed = true;
         pending.delete(material);
@@ -166,13 +172,24 @@ export function createBodySurfaceMaterial(bodyOrProfile, { map = null, hostLit =
         shader.vertexShader = 'varying vec3 vBodySurface;\n' + shader.vertexShader;
         shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\nvBodySurface = normalize(position);');
         shader.fragmentShader = microDetail + (hostLit ? 'uniform vec3 uBodyHostDirection, uBodyHostColor;\n' : '') + shader.fragmentShader;
+        shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', /* glsl */`
+            #ifdef USE_MAP
+                diffuseColor *= sampleSurfaceExposure(map, uSurfaceMapIntegral, vMapUv, uSurfaceMapIntegralSize, uSurfaceExposureTurns);
+            #endif
+        `);
+        // Unresolved terrain normals must not reintroduce rotating specular
+        // flashes after albedo has converged to its longitude exposure.
+        shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>',
+            THREE.ShaderChunk.normal_fragment_maps.replace('mapN.xy *= normalScale;',
+                'mapN.xy *= normalScale * (1.0 - smoothstep(0.5, 4.0, uSurfaceExposureTurns * 512.0));'));
         shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>', /* glsl */`
             #include <color_fragment>
             vec3 bodyP = normalize(vBodySurface);
             vec3 grainP = bodyP * 240.0;
             grainP.x += sin(bodyP.y * 13.0 + uSurfaceTime) * uSurfaceGas * 1.5;
             float grainFootprint = max(length(dFdx(grainP)), length(dFdy(grainP)));
-            float grainVisible = 1.0 - smoothstep(0.35, 1.5, grainFootprint);
+            float grainVisible = (1.0 - smoothstep(0.35, 1.5, grainFootprint))
+                * (1.0 - smoothstep(0.5, 4.0, uSurfaceExposureTurns * 512.0));
             float grain = (bodyNoise(grainP) - 0.5) * 0.055 * grainVisible;
             // No painted-in highlights: microtexture modulates albedo only.
             diffuseColor.rgb *= 1.0 + grain;
@@ -210,7 +227,8 @@ export function createBodySurfaceMaterial(bodyOrProfile, { map = null, hostLit =
             `);
         }
     };
-    material.customProgramCacheKey = () => 'body-surface-v2-' + (hostLit ? 'host' : 'solar');
+    material.customProgramCacheKey = () => 'body-surface-v3-exposure-' + (hostLit ? 'host' : 'solar');
+    registerBodyBoundsHook(material, 'onBeforeCompile');
     return stabilizeBodyMaterial(material);
 }
 

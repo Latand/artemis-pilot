@@ -11,6 +11,7 @@ import os from 'node:os';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { systemRenderStatement } from './explored-system-hooks.mjs';
 
 const args = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const root = resolve(args[0] || '.'), baselineRoot = resolve(process.env.BASE_ROOT || '');
@@ -53,7 +54,7 @@ function fineFrameSource(source) {
         ['kuiper', 'kuiperCursor = advanceMinorSwarm(minorSwarms.kuiper, minorRenderers.kuiper, kuiperCursor, Math.ceil(minorRenderers.kuiper.capacity / 6), minorKuiperStep);'],
         ['curated.propagate', 'propagateInto(minorSwarms.curated, G.t, minorRenderers.curated.worldKm, minorSunWorld, 0, minorRenderers.curated.capacity, minorCuratedStep);'],
         ['curated.upload', 'uploadMinorResiduals(minorRenderers.curated, 0, minorRenderers.curated.capacity);'],
-        ['systemRender', 'updateSystemRender(focusedSystem, G.t, camera, G.focus);'],
+        ['systemRender', systemRenderStatement(body)],
         ['minorVisibility', 'setMinorVisible(cam.dist / K / AU_KM);'],
     ];
     for (const [name, statement] of statements) body = once(body, statement,
