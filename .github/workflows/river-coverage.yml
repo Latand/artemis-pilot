@@ -12,8 +12,52 @@ concurrency:
   group: river-coverage-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
+  capture:
+    name: Capture preflight ${{ matrix.variant }} / ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        variant: [before, after]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-river-capture.mjs && node scripts/verify-river-capture-resize.mjs --validate
+      - run: npx playwright install --with-deps chromium
+      - name: Select exact production scene for rapid-resize preflight
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          if [ "$VARIANT" = before ]; then
+            git worktree add --detach "$RUNNER_TEMP/capture-base" "$BASE_SHA"
+            ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/capture-base/node_modules"
+            echo "BASE_ROOT=$RUNNER_TEMP/capture-base" >> "$GITHUB_ENV"
+          fi
+      - name: Reproduce async-predicate race and require 32 rapid capture/restore cycles
+        env:
+          DEVICE: ${{ matrix.device }}
+          ARTEMIS_EVIDENCE: evidence/capture-resize
+        run: node scripts/verify-river-capture-resize.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: river-capture-preflight-${{ matrix.variant }}-${{ matrix.device }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14
   coverage:
     name: Coverage ${{ matrix.variant }} / ${{ matrix.device }}
+    needs: capture
     runs-on: ubuntu-latest
     # Measured synchronized SwiftShader pace is ~5.3s/frame desktop and
     # ~2.6s/frame touch. Keep every one of the 1200 completed frames rather

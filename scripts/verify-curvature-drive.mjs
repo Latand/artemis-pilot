@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled, recoveredGpuIsHealthy } from './context-recovery-qa.mjs';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -28,6 +29,7 @@ try {
  await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=ship&dist=.14&hidehelp=1&compile=0&tier1=0&field=0&realsky=0&galaxies=0&galaxyvol=0`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__driveFrame);
+ await prepareContextRecoveryQA(page);
  await page.evaluate(async()=>{const {cam}=await import('/src/scene.js');const {shipG}=await import('/src/ship.js');__G.heading=0;__G.pitch=0;__G.hold=null;__G.warp=1;__G.paused=false;__driveFrame();cam.tgt.copy(shipG.position);cam.dist=.14;cam.yaw=.85;cam.pitch=.36;});
  const frames=async n=>{for(let i=0;i<n;i++)await page.evaluate(()=>__driveFrame());};
  const state=()=>page.evaluate(async()=>{
@@ -106,16 +108,17 @@ try {
  // The new field geometry must survive GPU recovery, then engage again from
  // fresh pilot input. Recovery deliberately releases the held controls.
  await page.evaluate(()=>document.activeElement?.blur());await page.keyboard.down('w');await frames(48);
- const recovery=()=>page.evaluate(async()=>{const {renderer,scene}=await import('/src/scene.js'),{craft,shipG}=await import('/src/ship.js'),{shipVisuals}=await import('/src/shipVisuals.js'),{river,riverDebugReadPositions}=await import('/src/river.js');const field=shipG.getObjectByName('Fictional curvature drive envelope'),layer=scene.getObjectByName('Commanded curvature field river guide');const ids=[];craft.traverse(o=>{if(o.isMesh)ids.push(o.id,o.geometry.id,o.material.id);});for(const o of [field,layer])ids.push(o.id,o.geometry.id,o.material.id);const positions=riverDebugReadPositions();return{ids,flight:JSON.stringify(['t','x','y','z','vx','vy','vz','fuel','dvUsed','paused'].map(k=>__G[k])),field:field.visible,layer:layer.visible&&river.warpVisible,finite:[field,layer].every(o=>o.geometry.attributes.position.array.every(Number.isFinite)),riverFinite:positions?.finite&&positions.nonZero>0&&positions.distinct>0,canvas:renderer.getRenderTarget()===null,enabled:shipVisuals.enabled};});
+ const recovery=()=>page.evaluate(async()=>{const {renderer,scene,renderContext}=await import('/src/scene.js'),{craft,shipG}=await import('/src/ship.js'),{shipVisuals}=await import('/src/shipVisuals.js'),{river,riverDebugReadPositions}=await import('/src/river.js');const field=shipG.getObjectByName('Fictional curvature drive envelope'),layer=scene.getObjectByName('Commanded curvature field river guide');const ids=[];craft.traverse(o=>{if(o.isMesh)ids.push(o.id,o.geometry.id,o.material.id);});for(const o of [field,layer])ids.push(o.id,o.geometry.id,o.material.id);const positions=riverDebugReadPositions();return{ids,contextLost:renderer.getContext().isContextLost(),contextLifecycleLost:renderContext.isLost(),flight:JSON.stringify(['t','x','y','z','vx','vy','vz','fuel','dvUsed','paused'].map(k=>__G[k])),field:field.visible,layer:layer.visible&&river.warpVisible,finite:[field,layer].every(o=>o.geometry.attributes.position.array.every(Number.isFinite)),riverFinite:positions?.finite&&positions.nonZero>0&&positions.distinct>0,canvas:renderer.getRenderTarget()===null,enabled:shipVisuals.enabled};});
  const beforeRecovery=await recovery();check(beforeRecovery.field&&beforeRecovery.layer,'both coupled field layers render before GPU loss');
  await page.evaluate(async()=>{const {renderer}=await import('/src/scene.js');window.__driveLoss=renderer.getContext().getExtension('WEBGL_lose_context');if(!__driveLoss)throw Error('GPU loss extension required');__driveLoss.loseContext();});
- await page.waitForFunction(async()=>(await import('/src/scene.js')).renderContext.isLost());await frames(2);
+ await page.waitForFunction(contextLossSettled);await frames(2);
  check(await page.evaluate(before=>JSON.stringify(['t','x','y','z','vx','vy','vz','fuel','dvUsed','paused'].map(k=>__G[k]))===before,beforeRecovery.flight),'GPU loss holds exact physical flight');
  await page.keyboard.up('w');await page.evaluate(()=>__driveLoss.restoreContext());
- await page.waitForFunction(async()=>{const s=await import('/src/scene.js');return !s.renderContext.isLost()&&!s.renderer.getContext().isContextLost();});await frames(3);
+ await page.waitForFunction(contextRestoreSettled);await frames(3);
  check((await state()).drive.magnitude===0,'GPU recovery leaves propulsion safely disengaged');
  await page.keyboard.down('w');await frames(48);const afterRecovery=await recovery();
  report.recovery={before:beforeRecovery,after:afterRecovery};
+ check(recoveredGpuIsHealthy(afterRecovery),'Native GL and production lifecycle confirm recovered field rendering');
  check(JSON.stringify(beforeRecovery.ids)===JSON.stringify(afterRecovery.ids),'recovery preserves hull, envelope and river-guide resource identities');
  check(afterRecovery.field&&afterRecovery.layer&&afterRecovery.finite&&afterRecovery.riverFinite&&afterRecovery.canvas&&afterRecovery.enabled,'fresh command renders both recovered field layers and finite natural river');
  await capture('09-field-after-recovery');await page.keyboard.up('w');

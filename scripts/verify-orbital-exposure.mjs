@@ -104,10 +104,11 @@ try{
  const cloudFixture=await page.evaluate(async()=>{const b=await import('/src/bodies.js');const s=await import('/src/scene.js');const prep=(await import('/src/render/surfaceRotationExposure.js')).surfaceExposurePreparation;return{t:__G.t,cloudVisible:b.clouds.visible,near:s.camera.near,depthBits:s.renderer.getContext().getParameter(s.renderer.getContext().DEPTH_BITS),distance:s.camera.position.distanceTo(b.earthG.position),preparation:{...prep}};});
  report.earthCloudFixture=cloudFixture;
  check(cloudFixture.cloudVisible,'Frozen Earth ablation includes the loaded cloud layer');
- check(cloudFixture.preparation.maxSliceMs<16,'Cold surface preparation slices stay below 16 ms on QA machine');
  await page.evaluate(async()=>{(await import('/src/bodies.js')).clouds.visible=false;__orbitalRenderOnly();});await capture('08-earth-cloud-layer-off');
  await page.evaluate(async visible=>{(await import('/src/bodies.js')).clouds.visible=visible;__orbitalRenderOnly();},cloudFixture.cloudVisible);await capture('08-earth-cloud-layer-restored');
  check(await page.evaluate(()=>__G.t)===cloudFixture.t,'Cloud ablation preserves the exact epoch');
+ // Preserve the frozen diagnostic images even when the latency gate fails.
+ check(cloudFixture.preparation.maxSliceMs<16,'Cold surface preparation slices stay below 16 ms on QA machine');
  await setup('earth',60,-256*day);await capture('08-earth-reverse');
  await page.evaluate(()=>{__G.paused=true;});await frames(1);const surfacePause=await capture('08-earth-paused');
  check(surfacePause.surfaceActive===0&&surfacePause.surfaceTurns.earth===0,'Pause restores exact surface texture immediately');
