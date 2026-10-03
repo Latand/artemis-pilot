@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import { isBodyBoundsHookSafe, registerBodyBoundsHook } from './bodyBoundsHooks.js';
 // WebGLRenderer invokes material.onBeforeRender after composing modelView.
 // Recompose ONLY its translation from small CPU-double residuals. Physics,
 // world transforms and surface normal transforms remain unchanged.
 export function stabilizeBodyMaterial(material) {
     const previous=material.onBeforeRender;
+    const boundsSafe=isBodyBoundsHookSafe(material,'onBeforeRender');
     const relative=new THREE.Vector3();
     material.onBeforeRender=function(renderer,scene,camera,geometry,object,group) {
         previous?.call(this,renderer,scene,camera,geometry,object,group);
@@ -16,5 +18,6 @@ export function stabilizeBodyMaterial(material) {
         m[13]=view[1]*x+view[5]*y+view[9]*z;
         m[14]=view[2]*x+view[6]*y+view[10]*z;
     };
+    if (boundsSafe) registerBodyBoundsHook(material,'onBeforeRender');
     return material;
 }

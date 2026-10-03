@@ -10,12 +10,18 @@ on:
       - 'src/render/visibleTrajector*'
       - 'src/render/surfaceRotationExposure.js'
       - 'src/render/surfaceExposure*'
+      - 'src/render/cloudDepthGuard.js'
+      - 'src/render/bodyBoundsHooks.js'
+      - 'src/render/relativeBodyFrame.js'
+      - 'src/relView.js'
       - 'src/render/bodySurfaceMaterial.js'
       - 'src/render/planetAppearance.js'
       - 'scripts/*visible-trajector*'
       - 'scripts/*surface-exposure*'
       - 'scripts/*surface-fastpath*'
       - 'scripts/*surface-worker*'
+      - 'scripts/*earth-cloud-shell*'
+      - 'scripts/*cloud-depth*'
       - 'scripts/*orbital-exposure*'
       - 'scripts/*time-dock*'
       - 'scripts/qa-bounded-diagnostic.mjs'
@@ -40,7 +46,7 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - run: node scripts/smoke-time-dock-diagnostics.mjs && node scripts/smoke-orbital-exposure.mjs && node scripts/smoke-orbital-exposure-integration.mjs && node scripts/smoke-visible-trajectories.mjs && node scripts/smoke-visible-trajectories-integration.mjs && node scripts/smoke-surface-exposure.mjs && node scripts/smoke-surface-fastpath.mjs && node scripts/smoke-surface-worker.mjs && npm run smoke:planet-phases && npm run smoke:reverse && npm run smoke:body-surfaces && npm test && npm run build
+      - run: node scripts/smoke-time-dock-diagnostics.mjs && node scripts/smoke-orbital-exposure.mjs && node scripts/smoke-orbital-exposure-integration.mjs && node scripts/smoke-visible-trajectories.mjs && node scripts/smoke-visible-trajectories-integration.mjs && node scripts/smoke-surface-exposure.mjs && node scripts/smoke-surface-fastpath.mjs && node scripts/smoke-surface-worker.mjs && node scripts/smoke-earth-cloud-shell.mjs && node scripts/smoke-cloud-depth-guard.mjs && npm run smoke:planet-phases && npm run smoke:reverse && npm run smoke:body-surfaces && npm test && npm run build
       - name: Verify actual image worker parity and WebGL context restore
         timeout-minutes: 5
         run: node scripts/verify-surface-worker.mjs
@@ -56,6 +62,10 @@ jobs:
         run: node scripts/verify-surface-fastpath.mjs . evidence/surface-fastpath-mobile
       - run: npm run smoke:time-dock
         if: ${{ !cancelled() }}
+      - name: Verify guarded cloud depth, foreground contacts and limbs
+        if: ${{ !cancelled() }}
+        timeout-minutes: 8
+        run: node scripts/verify-cloud-depth.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -65,6 +75,7 @@ jobs:
             evidence/surface-fastpath-desktop/
             evidence/surface-fastpath-mobile/
             evidence/surface-worker/
+            evidence/cloud-depth-webgl/
           if-no-files-found: warn
           retention-days: 14
   capture:

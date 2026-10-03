@@ -4,10 +4,23 @@ import {RELATIVISTIC_VIEW_GLSL} from './viewBrightness.js';
 import {updatePhotosphereAppearance} from './stellarAppearance.js';
 import {stabilizeBodyMaterial} from './relativeBodyFrame.js';
 import {configureSurfaceRotationExposure, updateSurfaceRotationExposure, surfaceExposureTurns, SURFACE_EXPOSURE_GLSL} from './surfaceRotationExposure.js';
+import {installEarthCloudDepthGuard} from './cloudDepthGuard.js';
+import {registerBodyBoundsHook} from './bodyBoundsHooks.js';
 
 export const EARTH_CLOUD_HEIGHT_KM = 6;
 export const EARTH_ATMOSPHERE_HEIGHT_KM = 100;
 export const EARTH_SCALE_HEIGHT_KM = 8;
+
+export function createEarthCloudMaterial(alphaMap, drawDeformationPossible = () => true) {
+    return installEarthCloudDepthGuard(new THREE.MeshLambertMaterial({
+        color: 0xffffff, alphaMap, transparent: true, opacity: 0.92, depthWrite: false,
+        // Minimum tested integer raster bias, with no slope amplification.
+        // Driver-dependent depth-code magnitude is never treated as a fixed
+        // physical altitude. The guard disables bias for potential foreground
+        // overlap, preserving ordinary occlusion even if old speckles remain.
+        polygonOffset: false, polygonOffsetFactor: 0, polygonOffsetUnits: -2,
+    }), relUniforms.uBeta, drawDeformationPossible);
+}
 
 // Unit-radius, body-local coordinates keep the thin atmosphere well conditioned
 // when its parent is translated to astronomical distances.
@@ -303,6 +316,7 @@ export function photosphereMaterial(color, map = null, appearance = {}) {
         `);
     };
     material.customProgramCacheKey = () => 'photosphere-visible-v2';
+    registerBodyBoundsHook(material, 'onBeforeCompile');
     return stabilizeBodyMaterial(material);
 }
 

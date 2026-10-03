@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { registerBodyBoundsHook } from './bodyBoundsHooks.js';
 import { generateBodySurfaceMaps } from './bodySurfaceMaps.js';
 import { getBodyAppearance } from './bodyAppearanceProfiles.js';
 import { stabilizeBodyMaterial } from './relativeBodyFrame.js';
@@ -227,6 +228,7 @@ export function createBodySurfaceMaterial(bodyOrProfile, { map = null, hostLit =
         }
     };
     material.customProgramCacheKey = () => 'body-surface-v3-exposure-' + (hostLit ? 'host' : 'solar');
+    registerBodyBoundsHook(material, 'onBeforeCompile');
     return stabilizeBodyMaterial(material);
 }
 
