@@ -38,6 +38,7 @@ const G_FIELDS = [
     "cabin",
 ];
 const SERIAL_STAR_FIELDS = [
+    "epochPosition", "distanceEstimated",
     "name", "dLy", "x", "y", "z", "color", "mass", "R", "catalog", "hygIndex",
     "hip", "hd", "hr", "spect", "mag", "absMag", "lumSolar", "tempK", "estimated",
 ];

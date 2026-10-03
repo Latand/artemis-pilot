@@ -7,11 +7,12 @@ import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { dotTexture } from "./textures.js";
 import { scene, renderer, camera, cam, renderQuality, registerNearTierOnly, TIER_SPLIT_UNITS } from "./scene.js";
-import { ACTIVE_STARS } from "./universe/activeStars.js";
+import { ACTIVE_STARS, activeStarSetRevision } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
 import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW, shipFrameW, frameVelToScene, spawnReach as sourceSpawnReach, RIVER_VIS } from "./riverMath.js";
 import { eph } from "./ephemeris.js";
+import { publishRiverSourcePositions } from "./riverSourceCache.js";
 import { haloSamplingRadius, haloViewWeight, refreshProbability } from "./riverCoverageMath.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
@@ -696,6 +697,7 @@ const riverStarPickRefs = new Array(RIVER_STAR_SOURCE_MAX);
 let riverStarPickCountCached = 0;
 let riverStarPickFrame = -9999;
 let riverStarPickActiveCount = -1;
+let riverStarPickActiveRevision = -1;
 let riverStarPickCx = Infinity, riverStarPickCy = Infinity, riverStarPickCz = Infinity, riverStarPickR = 0;
 let riverStarPickRefreshed = true;
 let riverStarUniformOffset = -1, riverStarUniformCount = -1;
@@ -729,6 +731,7 @@ function clearRiverStarPick() {
     for (let p = 0; p < riverStarPickCountCached; p++) riverStarPickRefs[p] = null;
     riverStarPickCountCached = 0;
     riverStarPickActiveCount = ACTIVE_STARS.length;
+    riverStarPickActiveRevision = activeStarSetRevision();
     riverStarPickFrame = river.frame;
     return 0;
 }
@@ -741,7 +744,8 @@ function refreshRiverStarPick(smoothCenter, smoothR, localFocus, renderShed) {
     const radiusDelta = Math.abs(Math.log(Math.max(1e-9, smoothR / Math.max(1e-9, riverStarPickR))));
     const cadence = localFocus > .05 ? 8 : renderShed > .2 ? 16 : 12;
     const moved = move2 > Math.max(80, smoothR * (localFocus > .05 ? .018 : .045));
-    if (ACTIVE_STARS.length === riverStarPickActiveCount &&
+    if (activeStarSetRevision() === riverStarPickActiveRevision &&
+        ACTIVE_STARS.length === riverStarPickActiveCount &&
         river.frame - riverStarPickFrame < cadence &&
         !moved && radiusDelta < .08) {
         riverStarPickRefreshed = false;
@@ -764,6 +768,7 @@ function refreshRiverStarPick(smoothCenter, smoothR, localFocus, renderShed) {
     riverStarPickCountCached = count;
     riverStarPickFrame = river.frame;
     riverStarPickActiveCount = ACTIVE_STARS.length;
+    riverStarPickActiveRevision = activeStarSetRevision();
     riverStarPickCx = smoothCenter.x;
     riverStarPickCy = smoothCenter.y;
     riverStarPickCz = smoothCenter.z;
@@ -1044,16 +1049,12 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     } else {
         flowCtx.starCount = starSourceCount;
     }
-    // flowCtx.star{X,Y,Z} are cached ABSOLUTE positions (also consumed by
-    // flowfield.js's CPU-side flowVel(), which needs absolute coordinates),
-    // refreshed only when the star selection itself changes above. smoothCenter
-    // moves every frame though, so the GPU-facing residual is re-derived here
-    // unconditionally — reusing a stale residual between cache refreshes would
-    // silently drift each star's apparent position in the flow field.
-    for (let p = 0; p < flowCtx.starCount; p++) {
-        const slot = sinkSourceCount + p;
-        bodyVals[slot].set(flowCtx.starX[p] - smoothCenter.x, flowCtx.starY[p] - smoothCenter.y, flowCtx.starZ[p] - smoothCenter.z, flowCtx.starC[p]);
-    }
+    // Selection is throttled, coordinates are not: PR48 publishes a new
+    // epoch into retained active objects between neighbourhood refreshes.
+    // A structural revision above invalidates references when refresh builds
+    // replacement objects even if the total count is unchanged.
+    publishRiverSourcePositions(riverStarPickRefs, flowCtx.starCount, K,
+        flowCtx, bodyVals, sinkSourceCount, smoothCenter);
     nb = sinkSourceCount + flowCtx.starCount;
     uniformsShared.uNB.value = nb;
     uniformsShared.uSinkNB.value = nb;
