@@ -24,6 +24,7 @@ export function summarize(values) {
     max: Math.max(...values), mean: values.reduce((a, b) => a + b, 0) / values.length };
 }
 export function validateSample(sample) {
+  assert.equal(sample.gpuSynchronized, true, 'Acceptance samples require synchronous GPU completion');
   for (const key of ['cpuMs', 'finishMs', 'readbackMs', 'frameAndFinishMs', 'roundTripMs', 'protocolAndSchedulingMs'])
     assert(Number.isFinite(sample[key]) && sample[key] >= 0, `Invalid ${key}`);
   assert(sample.frameAndFinishMs > 0, 'A delivered frame must have positive duration');

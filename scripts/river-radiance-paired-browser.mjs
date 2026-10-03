@@ -80,14 +80,18 @@ export async function pairedTier1Rows() {
   source = once(source, 'renderer.setAnimationLoop(frame);', '// QA: real frames delivered serially on timer tasks.');
   return source + `
 const pairedReadbackPixel=new Uint8Array(4);
-window.__pairedFrame=()=>{
+window.__pairedFrame=(synchronize=true)=>{
   clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;grB=1;window.__pairedRadianceDispatch=null;
   const start=performance.now();frame();const cpuMs=performance.now()-start;const gl=renderer.getContext();
-  const finishStart=performance.now();gl.finish();const finishMs=performance.now()-finishStart;
-  const readbackStart=performance.now();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pairedReadbackPixel);
-  const readbackMs=performance.now()-readbackStart,frameAndFinishMs=performance.now()-start;
+  let finishMs=0,readbackMs=0;
+  if(synchronize){
+    const finishStart=performance.now();gl.finish();finishMs=performance.now()-finishStart;
+    const readbackStart=performance.now();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pairedReadbackPixel);
+    readbackMs=performance.now()-readbackStart;
+  }
+  const frameAndFinishMs=performance.now()-start;
   // Telemetry is outside frame timing, with identical scalar reads per source.
-  return {cpuMs,finishMs,readbackMs,frameAndFinishMs,frameNo,
+  return {cpuMs,finishMs,readbackMs,frameAndFinishMs,frameNo,gpuSynchronized:synchronize,
     gpu:{contextLost:gl.isContextLost(),losses:renderContext.losses,restores:renderContext.restores,error:gl.getError(),defaultFramebuffer:gl.getParameter(gl.FRAMEBUFFER_BINDING)===null},
     quality:{...renderQuality},
     river:{enabled:river.enabled,visible:river.visible,count:river.count,drawCount:river.drawCount,
@@ -163,7 +167,8 @@ export function readiness() {
   return { ready: !surfaces.pending && !surfaces.inFlight && catalog.loaded && !catalog.error &&
     tier1.initialized && window.__pairedTier1Remaining === 0 && tier1.tilesLoaded > 0 && !tier1.pending && !tier1.tileErrors && !tier1.residualDirtyGroups &&
     field.enabled && field.idle && volume.mapsReady && !volume.mapError && galaxy.ready && !galaxy.building && !galaxy.error && (!q.tides.mergerTidesStatus().started || q.tides.mergerTidesStatus().ready) && !q.tides.mergerTidesStatus().error && sky.loaded && !sky.error,
-    surfaces, catalog, tier1, field, volume, galaxy, sky };
+    surfaces, catalog, tier1, field, volume, galaxy, sky,
+    catalogPrefix:{updates:window.__pairedTier1Updates,remaining:window.__pairedTier1Remaining} };
 }
 export async function readState() {
   const q = pairedQA, { cam, camera, renderer } = q.scene, gl = renderer.getContext();

@@ -26,7 +26,7 @@ function state(subject = 'sun') {
       galaxy: { enabled: true, ready: true, building: false, error: null, galaxies: 40000 } }, post: { bloom: false, composer: false } };
 }
 function sample(frameNo, ratio = 1) {
-  return { frameNo, cpuMs: 4 * ratio, finishMs: 0, readbackMs: 6 * ratio, frameAndFinishMs: 10 * ratio,
+  return { frameNo, gpuSynchronized:true, cpuMs: 4 * ratio, finishMs: 0, readbackMs: 6 * ratio, frameAndFinishMs: 10 * ratio,
     roundTripMs: 11 * ratio, protocolAndSchedulingMs: ratio,
     gpu: { contextLost: false, losses: 0, restores: 0, error: 0, defaultFramebuffer: true },
     river: { enabled: true, visible: true, count: 15376, drawCount: 15376, computeEvery: 1, frame: frameNo },
@@ -94,6 +94,7 @@ for (const [name, mutate] of [
   ['adaptive cadence mismatch', s => { s.trials[0].blocks[0].samples[0].river.computeEvery = 2; }],
   ['quality mismatch', s => { s.trials[0].blocks[0].samples[0].quality.dpr = .5; }],
   ['nonfinite duration', s => { s.trials[0].blocks[0].samples[0].frameAndFinishMs = NaN; }],
+  ['unsynchronized preparation frame used for acceptance', s => { s.trials[0].blocks[0].samples[0].gpuSynchronized = false; }],
 ]) test(`reject ${name}`, () => { const s = scenario(); mutate(s); assert.throws(() => scenarioSummary(s)); });
 test('only intended display gain is ignored by workload comparison', () => {
   const a = state(), b = state(); b.river.sources[0].inkGain = .2; assertMatchedState(a, b);
