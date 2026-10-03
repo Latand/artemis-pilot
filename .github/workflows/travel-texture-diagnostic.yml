@@ -1,0 +1,34 @@
+name: Travel texture first upload diagnostic
+on:
+  push:
+    branches: [diagnostic/travel-texture-first-upload]
+permissions:
+  contents: read
+jobs:
+  mobile-texture-census:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require exact reviewed production source
+        run: git diff --exit-code e7596e7744af841175c74a2d7535c57ce1a66594 HEAD -- src public index.html package.json package-lock.json scripts/verify-explored-systems.mjs
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-texture-upload-tracker.mjs && node scripts/diagnose-explored-texture.mjs --validate
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve unchanged failing gate and record exact late upload
+        env:
+          DEVICE: mobile
+        run: node scripts/diagnose-explored-texture.mjs . evidence/texture-first-upload
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: travel-texture-first-upload
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

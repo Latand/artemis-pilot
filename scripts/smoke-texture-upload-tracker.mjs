@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { installTextureUploadTracker } from './texture-upload-tracker.mjs';
+const props = new WeakMap(), scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera();
+const renderer = { properties: { get(texture) { if (!props.has(texture)) props.set(texture, {}); return props.get(texture); } }, info: { memory: { geometries: 3, textures: 0 } } };
+const texture = new THREE.Texture({ width: 32, height: 16 });
+const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture })); scene.add(label);
+label.name = 'fixture label'; label.userData.appearanceIdentity = 'fixture:planet:2';
+let originalCalls = 0; const previous = label.onAfterRender = () => originalCalls++;
+globalThis.window = { exploredQA: { body: { systemBodyRenderState: () => [{ label, planet: { name: 'P3' }, moons: [], moonGlows: [] }] },
+    state: { G: { focus: 'system:fixture:planet:2' } }, s: { cam: { tgt: new THREE.Vector3(1,2,3), dist: 7 } } },
+    __exploredCurrentSystem: { starId: 'fixture' } };
+const tracker = installTextureUploadTracker(renderer, scene, camera);
+tracker.start(); tracker.checkpoint('before'); tracker.beforeFrame();
+assert.equal(renderer.info.memory.textures, 0, 'Census does not upload a texture');
+Object.assign(renderer.properties.get(texture), { __webglTexture: {}, __version: 0 }); renderer.info.memory.textures = 1;
+label.onAfterRender(); tracker.afterFrame({ cpuMs: 2, frameAndFinishMs: 3 });
+tracker.beforeFrame(); label.onAfterRender(); tracker.afterFrame({ cpuMs: 1, frameAndFinishMs: 2 });
+renderer.properties.get(texture).__version = 1;
+tracker.mark('async-ready'); tracker.beforeFrame(); tracker.afterFrame({ cpuMs: 1, frameAndFinishMs: 2 });
+tracker.checkpoint('after'); const report = tracker.stop();
+assert.equal(report.events.length, 2, 'One first allocation and one changed upload; unchanged frames do not duplicate events');
+const first = report.events[0]; assert.equal(first.kind, 'first-allocation'); assert.equal(first.boundary, 'production-frame');
+assert.equal(first.after.textureId, texture.uuid); assert.equal(first.after.bindings[0].owner.kind, 'label');
+assert.equal(first.after.bindings[0].owner.planetName, 'P3'); assert.equal(first.after.bindings[0].drawn, true);
+assert.equal(report.events[1].boundary, 'between-frames'); assert.equal(report.events[1].kind, 'version-upload');
+assert.equal(originalCalls, 2); assert.strictEqual(label.onAfterRender, previous, 'Instrumentation restores the original callback');
+assert.equal(report.truncated, false); assert.equal(report.frames.length, 3); assert.equal(report.checkpoints.length, 2);
+assert.equal(report.checkpoints[0].textures[0].gpuHandle, 0);
+assert.notEqual(report.checkpoints[1].textures[0].gpuHandle, 0);
+console.log('Texture census: actual handle transition, owner identity, async boundary, unchanged-frame deduplication and callback restoration passed');
