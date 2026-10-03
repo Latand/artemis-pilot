@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { beginRingSamplingDepth, trackRingSamplingMaterial, ringSamplingUniforms as u, bodyUvBounds } from '../src/render/ringSamplingDepth.js';
 
@@ -33,6 +34,18 @@ for (const affine of [new THREE.Matrix4(), new THREE.Matrix4().set(1.4,.2,.1,0,.
             .applyMatrix4(mesh.modelViewMatrix).applyMatrix4(camera.projectionMatrix);
         const x=point.x*.5+.5,vy=point.y*.5+.5;
         assert(x>=bounds.x&&x<=bounds.z&&vy>=bounds.y&&vy<=bounds.w,'post-affine sphere is inside bounded sampling region');
+        const inverse=new THREE.Matrix3().setFromMatrix4(u.uViewToRing.value);
+        const origin=new THREE.Vector3().setFromMatrixPosition(u.uViewToRing.value);
+        const projection=camera.projectionMatrix.elements;
+        const closestAt=(px,py)=>{
+            const ray=new THREE.Vector3(px/projection[0],py/projection[5],-1).applyMatrix3(inverse);
+            return origin.clone().addScaledVector(ray,-origin.dot(ray)/ray.lengthSq());
+        };
+        const closest=closestAt(point.x,point.y),e=inverse.elements;
+        const gradient=new THREE.Vector2(closest.dot(new THREE.Vector3(e[0],e[1],e[2]))/960/projection[0],
+            closest.dot(new THREE.Vector3(e[3],e[4],e[5]))/640/projection[5]).normalize();
+        if(closest.length()>58.232*.7)assert(closestAt(point.x-gradient.x*2/960,point.y-gradient.y*2/640).length()<closest.length(),
+            'one-pixel gradient probe moves inward for rotated and post-TDE silhouettes');
     }
     assert((bounds.z-bounds.x)*(bounds.w-bounds.y)<.2,'unrelated sky is excluded before neighbour reads');
 }
@@ -50,3 +63,7 @@ beginRingSamplingDepth();
 material.onBeforeRender(renderer,null,camera,geometry,mesh,null);
 assert.equal(u.uRingPresent.value,0,'hidden/disabled/new frames cannot retain an old proxy');
 console.log('Transparent ring sampling transform, tier, reset, and material invariants passed');
+const source=readFileSync(new URL('../src/render/ringSamplingDepth.js',import.meta.url),'utf8');
+const coverage=source.slice(source.indexOf('float bodyCoverageSourceDepth'),source.indexOf('float ringSourceDepth'));
+assert.equal((coverage.match(/texture2D\(tDepth/g)||[]).length,2,'at most two directed depth probes per eligible query');
+assert(!/for\s*\(/.test(coverage),'no nested neighbourhood loop in the full-screen fragment');

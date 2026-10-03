@@ -89,7 +89,7 @@ export const RING_SAMPLING_DEPTH_GLSL = /* glsl */`
         if (any(lessThan(uv,uRingBodyBounds.xy)) || any(greaterThan(uv,uRingBodyBounds.zw))) return opaqueZ;
         // Multisampled or linearly filtered colour can cover a planet texel
         // whose resolved opaque depth is clear. Search only the immediate
-        // pixel neighbourhood on the DRAWN Saturn ellipsoid's silhouette;
+        // two inward pixels on the DRAWN Saturn ellipsoid's silhouette;
         // never dilate depth across the sky, ring gaps or unrelated bodies.
         vec3 origin = uViewToRing[3].xyz;
         mat3 inverseBasis = mat3(uViewToRing);
@@ -101,15 +101,20 @@ export const RING_SAMPLING_DEPTH_GLSL = /* glsl */`
                                 length(inverseBasis[1])*2.0*texel.y/uRingProjection.y);
         if (abs(length(origin+ray*t)-uRingBodyRadius) > footprint*2.0) return opaqueZ;
         float viewFootprint = t*max(2.0*texel.x/uRingProjection.x,2.0*texel.y/uRingProjection.y);
-        float coveredZ = opaqueZ;
-        for (int x=-1; x<=1; x++) for (int y=-1; y<=1; y++) {
-            if (x == 0 && y == 0) continue;
-            float depth = texture2D(tDepth,clamp(uv+vec2(float(x),float(y))*texel,0.0,1.0)).x;
-            if (depth >= 1.0) continue;
-            float z = uNear*uFar/(uFar-depth*(uFar-uNear));
-            if (abs(z-uRingBodyDepth.x) <= uRingBodyDepth.y+viewFootprint*2.0) coveredZ=min(coveredZ,z);
-        }
-        return coveredZ;
+        // Gradient of squared local distance at the closest ray point:
+        // its derivative through t vanishes because closest is normal to ray.
+        // Step inward in PIXEL coordinates, preserving nonuniform/TDE axes.
+        vec3 closest = origin+ray*t;
+        vec2 gradient = vec2(dot(closest,inverseBasis[0])*texel.x/uRingProjection.x,
+                             dot(closest,inverseBasis[1])*texel.y/uRingProjection.y);
+        vec2 stepUv = texel*gradient/max(length(gradient),1e-20);
+        float depth = texture2D(tDepth,clamp(uv-stepUv,0.0,1.0)).x;
+        float z = uNear*uFar/max(uFar-depth*(uFar-uNear),1e-20);
+        if (depth < 1.0 && abs(z-uRingBodyDepth.x) <= uRingBodyDepth.y+viewFootprint*2.0) return z;
+        depth = texture2D(tDepth,clamp(uv-stepUv*2.0,0.0,1.0)).x;
+        z = uNear*uFar/max(uFar-depth*(uFar-uNear),1e-20);
+        if (depth < 1.0 && abs(z-uRingBodyDepth.x) <= uRingBodyDepth.y+viewFootprint*2.0) return z;
+        return opaqueZ;
     }
     float ringSourceDepth(vec2 uv, float opaqueZ) {
         if (uRingPresent == 0) return opaqueZ;
