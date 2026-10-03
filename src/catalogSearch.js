@@ -1,3 +1,5 @@
+import { canonicalDestinationName } from "./universe/catalogIdentity.js";
+import { catalogMotionFor, updateCatalogStar } from "./universe/catalogMotion.js";
 import { addRuntimeStar, CATALOG_PROMOTION_MAX, INITIAL_STAR_COUNT, LY_KM, R_SUN, STARS } from "./constants.js";
 import {
     ACTIVE_STARS, ACTIVE_STAR_CONFIG, activeStarFocusValue, activeStarStats, activeStarsTime, activeStarsExactTime, refreshActiveStars,
@@ -21,6 +23,7 @@ let labelMap = null;
 let searchTimer = 0;
 
 const SERIAL_STAR_FIELDS = [
+    "epochPosition",
     "name", "dLy", "x", "y", "z", "color", "mass", "R", "catalog", "hygIndex",
     "hip", "hd", "hr", "spect", "mag", "absMag", "lumSolar", "tempK", "estimated",
 ];
@@ -58,22 +61,6 @@ function normKey(v) {
     return String(v || "").toUpperCase().replace(/[’`]/g, "'").replace(/\s+/g, " ").trim();
 }
 
-const CURATED_ALIAS_TARGETS = new Map([
-    ["SIRIUS", "SIRIUS A"],
-    ["PROCYON", "PROCYON A"],
-    ["RIGIL KENTAURUS", "ALPHA CEN A"],
-    ["TOLIMAN", "ALPHA CEN B"],
-    ["RAN", "EPSILON ERIDANI"],
-    ["BARNARD'S STAR", "BARNARD"],
-    ["BARNARDS STAR", "BARNARD"],
-    ["VAN MAANEN'S STAR", "VAN MAANEN"],
-    ["VAN MAANENS STAR", "VAN MAANEN"],
-]);
-
-function canonicalDestinationName(v) {
-    const key = normKey(v);
-    return CURATED_ALIAS_TARGETS.get(key) || key;
-}
 
 function displayName(row, index) {
     return row?.[1] || (row?.[2] ? "HIP " + row[2] : row?.[3] ? "HD " + row[3] : "HYG " + index);
@@ -292,6 +279,9 @@ export function restorePromotedCatalogStars(rows = []) {
             continue;
         }
         try {
+            if (star.epochPosition && (!Array.isArray(star.epochPosition) || star.epochPosition.length !== 3 || !star.epochPosition.every(Number.isFinite))) continue;
+            catalogMotionFor(star);
+            updateCatalogStar(star, activeStarsTime());
             const starIndex = addRuntimeStar(star);
             hooks.onPromote(starIndex, star, false, "restore");
             restored.push(starIndex);
@@ -365,6 +355,8 @@ async function promoteIndex(index) {
         setOpen(false);
         return existing;
     }
+    catalogMotionFor(star);
+    updateCatalogStar(star, activeStarsTime());
     const starIndex = addRuntimeStar(star);
     hooks.onPromote(starIndex, star, false, "promote");
     setOpen(false);

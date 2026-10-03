@@ -1338,6 +1338,7 @@ const moonBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
     map: dotTexture("rgba(220,230,245,1)", "rgba(150,170,200,0)"),
     color: 0xaeb9c8, transparent: true, opacity: .5, depthWrite: false,
 }));
+moonBeacon.name = "Moon selection beacon";
 moonBeacon.visible = false;
 scene.add(moonBeacon);
 const camPrevTgt = new THREE.Vector3(), camDelta = new THREE.Vector3();
@@ -2064,7 +2065,7 @@ function frameStep() {
         // leaves every star the catalogs hold to them.
         setTier1Fade(1);
         setCatalogStarsFade(1);
-        updateCatalogStars();
+        updateCatalogStars(camWorldKmX, camWorldKmY, camWorldKmZ);
         starViewUniforms.uPxScale.value = viewportSize.pxScale;
         const fieldEra = eraModulation(G.t);
         const t1s = tier1Stats();
@@ -2203,6 +2204,9 @@ function frameStep() {
     updateLargeScaleFlow(advanced, dtR, fB, sunPos);
     updateGravityInspector();
     if (cosmicView) {
+        // The local beacon may retain a kpc-view scale after leaving a star.
+        // Its normal visibility update lives below this early return.
+        moonBeacon.visible = false;
         // Hide the local GPU layer even on the cosmic early-return path.
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
         updateShells(0, 0);

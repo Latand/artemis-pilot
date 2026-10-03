@@ -1,3 +1,6 @@
+import { catalogIdentityKeys } from "./catalogIdentity.js";
+import { catalogEvalTime, catalogMotionFor, updateCatalogStar } from "./catalogMotion.js";
+import { syncGalacticFrame, registerActivePositionPublisher } from "./galacticClock.js";
 import { formedStarsAt, formedStarForNebula, nebulaRevision } from "./nebulaeData.js";
 import { K, LY_KM, MU_S, R_SUN, STARS } from "../constants.js";
 import { SUN_GAL, PC_KM, galToWorldKmFromInto, worldKmToGalFromInto } from "./coords.js";
@@ -38,10 +41,8 @@ function simTBucket(simT) {
 // bucket (toward zero), never at whichever instant a refresh happened to run:
 // positions are then a pure function of the bucket, the paths agree, and
 // |t| below one bucket is exactly the epoch/catalog position.
-export function activeStarEvalTime(simT) {
-    const b = simTBucket(simT);
-    return b === 0 ? 0 : b * PROC_REEVAL_DT_S;
-}
+export const activeStarEvalTime = catalogEvalTime;
+
 let LAST_EVAL_T = 0;
 let FORMATION_TIME = 0;
 let FORMATION_SIGNATURE = "";
@@ -439,6 +440,8 @@ export function promoteTier1Star(tileId, idx) {
         catalog: "athyg-tier1",
         tier1: { tileId, idx },
         x: info.position.x, y: info.position.y, z: info.position.z,
+        epochPosition: info.epochPosition,
+        _posSimT: LAST_EVAL_T,
         dLy: Math.hypot(info.position.x, info.position.y, info.position.z) / LY_KM,
         mass: info.mass,
         mu: MU_S * info.mass,
@@ -527,16 +530,20 @@ function insertNearestProcedural(star, d2, limit) {
 
 function knownDuplicateFor(star) {
     if (!star?.activeCatalog) return null;
-    const key = stableStarKey(star);
-    const exact = STARS.find(known => stableStarKey(known) === key);
+    const keys = catalogIdentityKeys(star);
+    const exact = STARS.find(known => catalogIdentityKeys(known).some(key => keys.includes(key)) ||
+        (Number.isInteger(known.hygIndex) && known.hygIndex === star.hygIndex));
     if (exact) return exact;
-    const maskKm = ACTIVE_STAR_CONFIG.realMaskPc * PC_KM;
-    const mask2 = maskKm * maskKm;
+    // The same catalog identity must not become a different star after its
+    // independently seeded row drifts outside the old current-position mask.
+    const epoch = star.epochPosition || [star.x, star.y, star.z || 0];
+    let best = null, bestD2 = (ACTIVE_STAR_CONFIG.realMaskPc * PC_KM) ** 2;
     for (const known of STARS) {
-        const dx = star.x - known.x, dy = star.y - known.y, dz = (star.z || 0) - (known.z || 0);
-        if (dx * dx + dy * dy + dz * dz <= mask2) return known;
+        const p = catalogMotionFor(known);
+        const d2 = (epoch[0] - p.x) ** 2 + (epoch[1] - p.y) ** 2 + (epoch[2] - p.z) ** 2;
+        if (d2 < bestD2) { best = known; bestD2 = d2; }
     }
-    return null;
+    return best;
 }
 
 function catalogStarById(id, simT = 0) {
@@ -600,6 +607,7 @@ function rebuildGravityStars(wx, wy, wz, forcedIndex, forcedProcId, forcedCatalo
 // sim time the caller's frame covers; past ACTIVE_STAR_CONFIG
 // .decorrelatedFrameSec only the nearest decorrelatedRadiusPc is sampled.
 export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0, frameAdvanceSec = 0) {
+    syncGalacticFrame(simT);
     FORMATION_TIME = simT;
     // A reverse slice starting exactly at birth belongs to the pre-birth side.
     const formed = formedStarsAt(simT, frameAdvanceSec >= 0);
@@ -614,9 +622,11 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
     const lite = Math.abs(frameAdvanceSec) > ACTIVE_STAR_CONFIG.decorrelatedFrameSec;
     const hStats = hygCatalogStats();
     if (sameFastRefresh(wx, wy, wz, focus, hStats, simT) && FAST_REFRESH.lite === lite) return activeStarStats();
-    const forcedIndex = focusStarIndex(focus);
+    let forcedIndex = focusStarIndex(focus);
     const forcedProcId = proceduralFocusId(focus);
     const forcedCatalogId = hygCatalogFocusId(focus);
+    const forcedCatalog = forcedCatalogId ? catalogStarById(forcedCatalogId, simT) : null;
+    if (forcedCatalog && STARS.includes(forcedCatalog)) forcedIndex = STARS.indexOf(forcedCatalog);
     const sun = sunAt(simT);
     const gal = worldKmToGalFromInto(wx, wy, wz, sun.x, sun.y, sun.z, SHIP_GAL);
     const refreshKey = [
@@ -655,7 +665,6 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
     if (forcedIndex >= 0 && forcedIndex < STARS.length) pushActive(STARS[forcedIndex], "known:" + forcedIndex, "known");
     for (let i = 0; i < STARS.length; i++) if (STARS[i].bh) pushActive(STARS[i], "known:" + i, "known");
     if (forcedCatalogId) {
-        const forcedCatalog = catalogStarById(forcedCatalogId, simT);
         if (forcedCatalog) pushActive(forcedCatalog, activeId(forcedCatalog), forcedCatalog.activeCatalog ? "catalog" : "known");
     }
     if (forcedProcId) {
@@ -685,7 +694,7 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
         Math.min(ACTIVE_STAR_CONFIG.catalogOversampleLimit, ACTIVE_STAR_CONFIG.totalLimit),
         simT,
     )
-        .filter(st => !maskedByKnown(st, ACTIVE_STARS))
+        .filter(st => !knownDuplicateFor(st) && !maskedByKnown(st, ACTIVE_STARS))
         .map(star => starInfluence(star, wx, wy, wz))
         .sort((a, b) => b.score - a.score || a.d2 - b.d2 || activeId(a.star).localeCompare(activeId(b.star)))
         .slice(0, catalogSlotsLeft)
@@ -754,6 +763,25 @@ export function restorePinnedProceduralStars(ids = []) {
     for (const id of requested) pinProceduralStarById(id);
     return Array.from(PINNED_PROC.keys()).filter(id => requested.has(id));
 }
+
+// Camera/cosmic cadence may defer rediscovery, never the time of objects
+// already published. At most the existing active-object budget is touched.
+registerActivePositionPublisher((t, exactT) => {
+    FORMATION_TIME = exactT;
+    if (LAST_EVAL_T === t) return;
+    LAST_EVAL_T = t;
+    for (const star of ACTIVE_STARS) {
+        if (star.activeCatalog || star.tier1) updateCatalogStar(star, t);
+        else if (star.procedural && !star.companionOf) repositionProceduralStar(star, t);
+    }
+    for (const star of ACTIVE_STARS) if (star.companionOf) {
+        const primary = ACTIVE_STARS.find(s => s.id === star.companionOf);
+        if (!primary?.companionOffset) continue;
+        const d = primary.companionOffset;
+        star.x = primary.x + d.x; star.y = primary.y + d.y; star.z = primary.z + d.z;
+        star.dLy = Math.hypot(star.x, star.y, star.z) / LY_KM;
+    }
+});
 
 refreshActiveStars(0, 0, 0);
 if (typeof window !== "undefined") window.__ACTIVE_STARS = ACTIVE_STARS;
