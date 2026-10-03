@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { boundedDiagnostic } from './qa-bounded-diagnostic.mjs';
-import { buildPlan, makeGeometry, containmentProof, DISTANCES, GAPS_KM, RADIUS, CLOUD_RADIUS, SIZE, NEAR, FAR } from './cloud-depth-fixture.mjs';
+import { buildPlan, makeGeometry, containmentProof, DISTANCES, GAPS_KM, RADIUS, CLOUD_RADIUS, SIZE, NEAR, FAR, failureReplayPlan, FAILURE_REPLAY_MODES } from './cloud-depth-fixture.mjs';
 
 const plan = buildPlan();
 const source = await readFile('src/bodies.js', 'utf8');
@@ -34,7 +34,13 @@ for (const gapKm of GAPS_KM) assert(plan.cases.some(c => c.gapKm === gapKm), `mi
 for (const mode of ['paused', 'active', 'reverse']) assert(plan.cases.some(c => c.mode === mode), `missing ${mode} exposure`);
 if (process.argv.includes('--validate')) {
     for (const file of ['scripts/cloud-depth-fixture.mjs', 'scripts/verify-cloud-depth.mjs']) execFileSync(process.execPath, ['--input-type=module', '--check'], { input: await readFile(file, 'utf8') });
-    console.log(JSON.stringify({ valid: true, browserStarted: false, cases: plan.cases.length, skipped: plan.skipped.length, containment }, null, 2));
+    for (const distance of DISTANCES) {
+        const replay = failureReplayPlan({ kind: 'clear', distance });
+        assert.equal(replay.length * FAILURE_REPLAY_MODES.length, 12, 'failure replay has exactly twelve possible draws');
+        assert(replay.every(stage => stage.near < distance - CLOUD_RADIUS), 'diagnostic near planes retain the entire physical cloud shell');
+        assert(replay[1].near > NEAR && replay[2].alternateContext, 'larger-near and non-MSAA controls are separate');
+    }
+    console.log(JSON.stringify({ valid: true, browserStarted: false, cases: plan.cases.length, skipped: plan.skipped.length, failureReplayMaximumFrames: 12, containment }, null, 2));
     process.exit(0);
 }
 
@@ -146,7 +152,35 @@ try {
     for (const spec of plan.cases) {
         const result = await bounded('render isolated case', () => page.evaluate(spec => cloudDepthQA.run(spec), spec));
         result.failures = caseFailures(result); report.cases.push(result);
-        if (result.failures.length) { await capture('failure'); await save(); throw new Error(`${JSON.stringify(spec)}: ${result.failures.join('; ')}`); }
+        if (result.failures.length) {
+            const originalFailure = new Error(`${JSON.stringify(spec)}: ${result.failures.join('; ')}`);
+            // Freeze the original verdict and original three images before any
+            // replay. Diagnostics cannot clear or replace this failing result.
+            report.failure = originalFailure.stack; await save();
+            report.originalFailureImages = await boundedDiagnostic(() => capture('failure'), 20000);
+            await save();
+            await writeFile(resolve(out, 'failure-original-report.json'), JSON.stringify(report, null, 2));
+            if (spec.kind === 'clear' && report.originalFailureImages.ok) {
+                try {
+                    report.failureReplay = await boundedDiagnostic(() => page.evaluate(spec => cloudDepthQA.failureReplay(spec), spec), 90000);
+                    report.failureReplay.sourceSha256 = { ...report.sourceSha256 };
+                    if (report.failureReplay.ok) {
+                        for (const context of report.failureReplay.value.contexts) {
+                            const images = context.images; context.images = [];
+                            for (const image of images) {
+                                const file = `${String(report.cases.length).padStart(4, '0')}-failure-replay-${context.label}-${image.name}.png`;
+                                const record = { file, mode: image.name, written: false }; context.images.push(record);
+                                await writeFile(resolve(out, file), Buffer.from(image.data, 'base64')); record.written = true;
+                                report.screenshots.push({ file, caseIndex: report.cases.length - 1, diagnostic: true });
+                            }
+                        }
+                    } else report.failureReplay.restorationUnverified = true;
+                    await writeFile(resolve(out, 'failure-replay.json'), JSON.stringify(report.failureReplay, null, 2));
+                } catch (error) { report.failureReplayPersistenceError = error.stack || String(error); }
+                await save();
+            }
+            throw originalFailure;
+        }
         if (result.kind === 'clear' && result.controlVsBaseline.pixels > 0) await capture('zero-bias-speckles');
         if (result.kind === 'contact' && result.foreground.fixedLostBaselinePixels > 0) await capture('near-contact-negative-control');
         if (result.kind === 'limb' && result.foreground.fixedLostBaselinePixels > 0) await capture('limb-negative-control');

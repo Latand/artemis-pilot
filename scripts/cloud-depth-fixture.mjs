@@ -17,6 +17,25 @@ export const NEAR = .02;
 export const FAR = 9460730.4725808 * .02;
 const TAU = 2 * Math.PI;
 const MODES = ['paused', 'active', 'reverse'];
+export const FAILURE_REPLAY_MODES = ['unbiased', 'guarded', 'oracle', 'always-depth-oracle'];
+export function failureReplayPlan(spec, originalNear = NEAR) {
+    if (spec.kind !== 'clear' || !Number.isFinite(spec.distance)) throw new Error('Failure replay requires the exact failed clear case');
+    const nearestCloudDepth = spec.distance - CLOUD_RADIUS;
+    const diagnosticNear = Math.min(1, nearestCloudDepth * .5);
+    if (!(diagnosticNear > originalNear && diagnosticNear < nearestCloudDepth)) throw new Error('No safe larger-near diagnostic for this camera');
+    return [
+        { label: 'original-msaa', alternateContext: false, near: originalNear },
+        { label: 'larger-near-msaa', alternateContext: false, near: diagnosticNear },
+        { label: 'original-near-no-msaa', alternateContext: true, near: originalNear },
+    ];
+}
+function encodeImage(name, bytes) {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = SIZE;
+    const context = canvas.getContext('2d'), pixels = new Uint8ClampedArray(bytes.length);
+    for (let y = 0; y < SIZE; y++) pixels.set(bytes.subarray(y * SIZE * 4, (y + 1) * SIZE * 4), (SIZE - 1 - y) * SIZE * 4);
+    context.putImageData(new ImageData(pixels, SIZE, SIZE), 0, 0);
+    return { name, data: canvas.toDataURL('image/png').split(',')[1] };
+}
 
 export function makeGeometry(tier) {
     return {
@@ -130,11 +149,12 @@ async function start() {
     q.cloud.material.onBeforeRender = function(...args) {
         productionHook.apply(this, args); q.hookCalls++;
         q.hookState = { ...this.userData.cloudDepthGuard };
-        if (q.mode === 'unbiased' || q.mode === 'oracle') this.polygonOffset = false;
+        if (q.mode === 'unbiased' || q.mode === 'oracle' || q.mode === 'always-depth-oracle') this.polygonOffset = false;
         if (q.mode === 'fixed-bias-diagnostic') this.polygonOffset = true;
-        if (q.mode === 'oracle') {
+        if (q.mode === 'oracle' || q.mode === 'always-depth-oracle') {
             if (q.probe.visible || relUniforms.uBeta.value !== 0 || q.case.kind !== 'clear') throw new Error('Ordering oracle must never contain a foreground object or relativity');
-            this.depthTest = false;
+            this.depthTest = q.mode === 'always-depth-oracle';
+            if (q.mode === 'always-depth-oracle') this.depthFunc = THREE.AlwaysDepth;
         }
         const lists = q.renderer.renderLists.get(q.scene, 0);
         q.drawLists = { opaque: lists.opaque.length, transmissive: lists.transmissive.length, transparent: lists.transparent.length,
@@ -185,18 +205,18 @@ async function start() {
         earthRadius: q.earth.geometry.parameters.radius, cloudRadius: q.cloud.geometry.parameters.radius, projection: q.camera.projectionMatrix.toArray(),
         exposureEarth: q.earth.material.userData.surfaceRotationExposure.turns.value, exposureCloud: q.cloud.material.userData.surfaceRotationExposure.turns.value });
     q.render = mode => {
-        q.mode = mode; const material = q.cloud.material, before = q.hookCalls;
+        q.mode = mode; const material = q.cloud.material, before = q.hookCalls, originalDepthFunc = material.depthFunc;
         if (!material.depthTest || material.depthWrite) throw new Error('Production cloud depth settings were not restored');
         let state;
         try {
             q.renderer.render(q.scene, q.camera); q.renderedFrames++;
             if (q.hookCalls !== before + 1) throw new Error('Production cloud material hook did not execute exactly once');
-            state = { guard: { ...q.hookState }, lists: { ...q.drawLists }, offset: material.polygonOffset, depthTest: material.depthTest, depthWrite: material.depthWrite };
+            state = { guard: { ...q.hookState }, lists: { ...q.drawLists }, offset: material.polygonOffset, depthTest: material.depthTest, depthWrite: material.depthWrite, depthFunc: material.depthFunc };
             const gl = q.renderer.getContext(), bytes = new Uint8Array(SIZE * SIZE * 4);
             gl.readPixels(0, 0, SIZE, SIZE, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
             const error = gl.getError(); if (error !== gl.NO_ERROR || gl.isContextLost()) throw new Error(`Invalid GL readback ${error}`);
             return { bytes, state };
-        } finally { material.depthTest = true; q.mode = 'guarded'; }
+        } finally { material.depthTest = true; material.depthFunc = originalDepthFunc; q.mode = 'guarded'; }
     };
     q.run = spec => {
         q.configure(spec); const physicalBefore = q.physical();
@@ -234,13 +254,7 @@ async function start() {
             return { states, programs: q.programs() };
         } finally { BH.n = oldBH; relUniforms.uBeta.value = oldBeta; }
     };
-    q.images = () => Object.entries(q.last).map(([name, bytes]) => {
-        const canvas = document.createElement('canvas'); canvas.width = canvas.height = SIZE;
-        const context = canvas.getContext('2d'), pixels = new Uint8ClampedArray(bytes.length);
-        for (let y = 0; y < SIZE; y++) pixels.set(bytes.subarray(y * SIZE * 4, (y + 1) * SIZE * 4), (SIZE - 1 - y) * SIZE * 4);
-        context.putImageData(new ImageData(pixels, SIZE, SIZE), 0, 0);
-        return { name, data: canvas.toDataURL('image/png').split(',')[1] };
-    });
+    q.images = () => Object.entries(q.last).map(([name, bytes]) => encodeImage(name, bytes));
     q.preparation = () => ({ ...surfaceExposurePreparation });
     q.environment = () => {
         const gl = q.renderer.getContext(), ext = gl.getExtension('WEBGL_debug_renderer_info');
@@ -249,6 +263,88 @@ async function start() {
             contextAttributes: gl.getContextAttributes(), innerWidth,
             maps: q.maps.map(map => ({ source: new URL(map.image.src).pathname, width: map.image.width, height: map.image.height })),
             geometry: Object.fromEntries(Object.entries(q.geometries).map(([tier, geometries]) => [tier, { groundTriangles: geometries.ground.index.count / 3, cloud: containmentProof(geometries.cloud) }])) };
+    };
+    // Failure diagnostics only. These rows never replace a failed acceptance
+    // result and are never compared across antialiasing contexts as a gate.
+    q.failureReplay = spec => {
+        if (spec.kind !== 'clear' || JSON.stringify(spec) !== JSON.stringify(q.case)) throw new Error('Replay must use exactly the preserved failed clear case');
+        if (q.probe.visible || BH.n !== 0 || relUniforms.uBeta.value !== 0) throw new Error('Failure replay requires the isolated non-relativistic Earth/cloud scene');
+        const material = q.cloud.material, originalGL = q.renderer.getContext();
+        const depthFunctions = new Map([[originalGL.NEVER, THREE.NeverDepth], [originalGL.ALWAYS, THREE.AlwaysDepth], [originalGL.LESS, THREE.LessDepth],
+            [originalGL.LEQUAL, THREE.LessEqualDepth], [originalGL.EQUAL, THREE.EqualDepth], [originalGL.GEQUAL, THREE.GreaterEqualDepth],
+            [originalGL.GREATER, THREE.GreaterDepth], [originalGL.NOTEQUAL, THREE.NotEqualDepth]]);
+        const saved = { renderer: q.renderer, near: q.camera.near, projection: q.camera.projectionMatrix.clone(), inverseProjection: q.camera.projectionMatrixInverse.clone(),
+            case: q.case, mode: q.mode, last: q.last, hookState: q.hookState, drawLists: q.drawLists, guard: { ...material.userData.cloudDepthGuard },
+            depthTest: material.depthTest, depthWrite: material.depthWrite, depthFunc: material.depthFunc, offset: material.polygonOffset,
+            factor: material.polygonOffsetFactor, units: material.polygonOffsetUnits, physical: q.physical(), programs: JSON.stringify(q.programs()),
+            frames: q.renderedFrames, hooks: q.hookCalls, actualDepth: { test: originalGL.isEnabled(originalGL.DEPTH_TEST), write: originalGL.getParameter(originalGL.DEPTH_WRITEMASK),
+                func: originalGL.getParameter(originalGL.DEPTH_FUNC), offset: originalGL.isEnabled(originalGL.POLYGON_OFFSET_FILL),
+                factor: originalGL.getParameter(originalGL.POLYGON_OFFSET_FACTOR), units: originalGL.getParameter(originalGL.POLYGON_OFFSET_UNITS) } };
+        const stages = failureReplayPlan(spec, saved.near), maximumFrames = stages.length * FAILURE_REPLAY_MODES.length;
+        const result = { diagnosticOnly: true, acceptanceUnchanged: true, case: { ...spec }, maximumFrames,
+            note: 'AlwaysDepth keeps depth testing enabled but unconditionally accepts cloud samples; cloud depth writes stay off. The larger near plane changes depth precision only and is not a proposed production change. No cross-antialias pixel comparison is an acceptance gate.',
+            contexts: [], errors: [], restored: null };
+        let secondary;
+        try {
+            for (const stage of stages) {
+                if (stage.alternateContext) {
+                    const attributes = saved.renderer.getContext().getContextAttributes();
+                    secondary = new THREE.WebGLRenderer({ alpha: attributes.alpha, antialias: false, depth: attributes.depth, stencil: attributes.stencil,
+                        premultipliedAlpha: attributes.premultipliedAlpha, preserveDrawingBuffer: true, precision: saved.renderer.capabilities.precision });
+                    secondary.setPixelRatio(saved.renderer.getPixelRatio()); secondary.setSize(SIZE, SIZE);
+                    secondary.setClearColor(saved.renderer.getClearColor(new THREE.Color()), saved.renderer.getClearAlpha());
+                    for (const key of ['outputColorSpace', 'toneMapping', 'toneMappingExposure', 'autoClear', 'autoClearColor', 'autoClearDepth', 'autoClearStencil', 'sortObjects']) secondary[key] = saved.renderer[key];
+                    q.renderer = secondary;
+                } else q.renderer = saved.renderer;
+                q.camera.near = stage.near; q.camera.updateProjectionMatrix(); q.configure(spec);
+                const context = { ...stage, actual: q.environment(), near: q.camera.near, far: q.camera.far,
+                    nearestCloudDepth: spec.distance - CLOUD_RADIUS,
+                    nearPlaneInFrontOfWholePlanet: q.camera.near < spec.distance - CLOUD_RADIUS,
+                    xyProjectionUnchanged: q.camera.projectionMatrix.elements.every((value, i) => i === 10 || i === 14 || value === saved.projection.elements[i]),
+                    draws: {}, comparisons: {}, images: [] };
+                result.contexts.push(context);
+                const frames = {};
+                for (const mode of FAILURE_REPLAY_MODES) {
+                    if (q.renderedFrames - saved.frames >= maximumFrames) throw new Error('Failure replay draw budget exceeded');
+                    const frame = q.render(mode); frames[mode] = frame.bytes; context.draws[mode] = frame.state;
+                    context.images.push(encodeImage(mode, frame.bytes));
+                }
+                context.comparisons = {
+                    guardedVsUnbiased: difference(frames.guarded, frames.unbiased),
+                    guardedVsDepthDisabledOracle: difference(frames.guarded, frames.oracle),
+                    guardedVsAlwaysDepthOracle: difference(frames.guarded, frames['always-depth-oracle']),
+                    alwaysDepthVsDepthDisabledOracle: difference(frames['always-depth-oracle'], frames.oracle),
+                    unbiasedVsDepthDisabledOracle: difference(frames.unbiased, frames.oracle),
+                };
+                if (stage.label === 'original-msaa') context.replayVsPreservedFailure = {
+                    baseline: difference(frames.unbiased, saved.last.baseline), guarded: difference(frames.guarded, saved.last.guarded),
+                    oracle: difference(frames.oracle, saved.last['isolated-ordering-oracle']),
+                };
+            }
+        } catch (error) { result.errors.push(error.stack || String(error)); }
+        finally {
+            q.renderer = saved.renderer; q.camera.near = saved.near;
+            q.camera.projectionMatrix.copy(saved.projection); q.camera.projectionMatrixInverse.copy(saved.inverseProjection);
+            material.depthTest = saved.depthTest; material.depthWrite = saved.depthWrite; material.depthFunc = saved.depthFunc;
+            material.polygonOffset = saved.offset; material.polygonOffsetFactor = saved.factor; material.polygonOffsetUnits = saved.units;
+            Object.assign(material.userData.cloudDepthGuard, saved.guard);
+            q.case = saved.case; q.mode = saved.mode; q.last = saved.last; q.hookState = saved.hookState; q.drawLists = saved.drawLists;
+            saved.renderer.state.buffers.depth.setFunc(depthFunctions.get(saved.actualDepth.func));
+            saved.renderer.state.buffers.depth.setTest(saved.actualDepth.test); saved.renderer.state.buffers.depth.setMask(saved.actualDepth.write);
+            saved.renderer.state.setPolygonOffset(saved.actualDepth.offset, saved.actualDepth.factor, saved.actualDepth.units);
+            if (secondary) {
+                try { secondary.dispose(); secondary.forceContextLoss(); } catch (error) { result.errors.push('Secondary-context cleanup: ' + String(error)); }
+            }
+            result.renderedFrames = q.renderedFrames - saved.frames; result.hookCalls = q.hookCalls - saved.hooks;
+            result.restored = { renderer: q.renderer === saved.renderer, near: q.camera.near === saved.near,
+                projection: q.camera.projectionMatrix.equals(saved.projection) && q.camera.projectionMatrixInverse.equals(saved.inverseProjection),
+                physical: q.physical() === saved.physical, programs: JSON.stringify(q.programs()) === saved.programs,
+                actualGLDepth: originalGL.isEnabled(originalGL.DEPTH_TEST) === saved.actualDepth.test && originalGL.getParameter(originalGL.DEPTH_WRITEMASK) === saved.actualDepth.write &&
+                    originalGL.getParameter(originalGL.DEPTH_FUNC) === saved.actualDepth.func && originalGL.isEnabled(originalGL.POLYGON_OFFSET_FILL) === saved.actualDepth.offset,
+                originalPixels: q.last === saved.last, material: material.depthTest === saved.depthTest && material.depthWrite === saved.depthWrite && material.depthFunc === saved.depthFunc && material.polygonOffset === saved.offset,
+                nearValue: q.camera.near, depthFunc: material.depthFunc, depthTest: material.depthTest, depthWrite: material.depthWrite };
+        }
+        return result;
     };
     q.configure({ kind: 'clear', tier: 'desktop', distance: 60, phase: 0, mode: 'active' });
     q.ready = true;

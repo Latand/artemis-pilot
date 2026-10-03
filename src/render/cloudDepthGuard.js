@@ -21,7 +21,7 @@ function uniformSphereTransform(matrix) {
 export function createCloudDepthGuard() {
     const cloudSphere = new THREE.Sphere(), otherSphere = new THREE.Sphere(), groundSphere = new THREE.Sphere();
     const eye = new THREE.Vector3(), cloudRay = new THREE.Vector3(), otherRay = new THREE.Vector3(), viewCenter = new THREE.Vector3();
-    const state = { enabled: false, reason: 'not-rendered', checked: 0, blockedBy: null, blockedObjectId: null };
+    const state = { enabled: false, reason: 'not-rendered', checked: 0, skippedEmpty: 0, blockedBy: null, blockedObjectId: null };
     function stop(reason, object) {
         state.enabled = false; state.reason = reason; state.blockedBy = object?.name || object?.type || null;
         state.blockedObjectId = object?.id ?? null;
@@ -44,7 +44,7 @@ export function createCloudDepthGuard() {
             Number.isFinite(target.center.y) && Number.isFinite(target.center.z);
     }
     function evaluate(camera, cloud, ground, lists, relativisticBeta = 0, drawDeformationPossible = false) {
-        state.checked = 0; state.blockedBy = null; state.blockedObjectId = null;
+        state.checked = 0; state.skippedEmpty = 0; state.blockedBy = null; state.blockedObjectId = null;
         if (!camera?.isPerspectiveCamera || relativisticBeta !== 0) return stop('unsupported-projection');
         if (drawDeformationPossible) return stop('draw-deformation-context');
         if (!ground || !bounds(cloud, cloud.geometry, cloudSphere, true) || !bounds(ground, ground.geometry, groundSphere, true)) return stop('missing-ground-or-cloud-bounds');
@@ -69,6 +69,20 @@ export function createCloudDepthGuard() {
             const item = list[i];
             const object = item.object, material = item.material;
             if (object === cloud || object === ground || !material?.visible || !material.depthWrite || !material.depthTest) continue;
+            // Three r164 still lists a zero-range Line (the hidden ship
+            // prediction, for example), but draws no vertices. Only skip an
+            // ordinary built-in draw whose callbacks cannot change that range.
+            // Dynamic vertex data needs no bounds when its draw count is zero.
+            // Unknown hooks, batched draws and every nonempty line stay guarded.
+            if (item.geometry?.isBufferGeometry && !item.geometry.isInstancedBufferGeometry &&
+                !object.isBatchedMesh && !object.isInstancedMesh && !object.isSkinnedMesh &&
+                (object.isMesh || object.isLine || object.isPoints) && !material.isShaderMaterial &&
+                Number.isFinite(item.geometry.drawRange.start) && item.geometry.drawRange.start >= 0 &&
+                item.geometry.drawRange.count === 0 && bodyBoundsHooksSafe(material) &&
+                object.onBeforeRender === THREE.Object3D.prototype.onBeforeRender) {
+                state.skippedEmpty++;
+                continue;
+            }
             state.checked++;
             if (!object.isMesh) return stop('unknown-expanded-primitive', object);
             if (material.polygonOffset || (material.depthFunc !== THREE.LessEqualDepth && material.depthFunc !== THREE.LessDepth)) return stop('unknown-occluder-depth-policy', object);

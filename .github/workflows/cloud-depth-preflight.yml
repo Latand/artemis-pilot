@@ -1,0 +1,64 @@
+name: Isolated cloud depth preflight
+on:
+  push:
+    branches: [qa/cloud-depth-preflight]
+permissions:
+  contents: read
+concurrency:
+  group: cloud-depth-preflight-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  depth:
+    name: Preserve strict cloud matrix and failure replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/smoke-cloud-depth-guard.mjs && node scripts/verify-cloud-depth.mjs --validate
+      - run: node scripts/verify-cloud-depth.mjs
+        timeout-minutes: 8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cloud-depth-preflight
+          path: evidence/cloud-depth-webgl/
+          if-no-files-found: error
+          retention-days: 14
+  activation:
+    name: Default Earth activation ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/verify-cloud-activation.mjs --validate
+      - run: node scripts/verify-cloud-activation.mjs
+        timeout-minutes: 6
+        env:
+          DEVICE: ${{ matrix.device }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cloud-activation-${{ matrix.device }}
+          path: evidence/cloud-activation-*/
+          if-no-files-found: error
+          retention-days: 14

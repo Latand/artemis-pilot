@@ -63,6 +63,14 @@ custom fragment depth, fail closed. Wrapping an unknown previous hook does not
 bless it, and later replacement invalidates registration. The guard reuses its
 vectors, spheres and result state without hot-path arrays or closures.
 
+An ordinary built-in zero-count draw cannot emit fragments. The guard skips
+only an exact zero draw range with trusted material callbacks and the default
+object callback; it does not require or recompute bounds for those empty
+vertices. Nonempty lines, unknown callbacks and batched/instanced draws still
+fail closed. This covers the legacy ship-prediction line, which remains in
+Three's draw list when prediction is disabled. Hosted diagnostics record its
+exact object identity, source vertex count, material and draw range.
+
 Relativistic projection and any placed-black-hole context also disable the
 aid. The latter avoids stale bounds after TDE temporarily stretches a mesh at
 draw time and restores its matrix. Creation/removal and mode transitions are
@@ -84,3 +92,28 @@ high time rate before switching to its prepared averaged surface. This is an
 explicit first-use transition, not a seamless-entry claim. Prepared frames
 retain stable exposure; pause restores exact detail. No hidden time cap, stale
 orientation or blocking image-readback fallback is introduced.
+
+## Retained hosted failures at a93b1b7
+
+The full desktop/mobile capture reports both fail their required activation
+check: a depth-writing Line prevents the guard from enabling. The original
+40-frame sequences on each tier are preserved, along with the blocked object
+ID and reason. The source fix for empty draws requires a new exact-head run;
+the prior numeric checks are not accepted as a cloud-visibility fix.
+
+The isolated WebGL matrix stops at its 78th case (desktop, distance15, phase0,
+paused): 253 limb pixels differ from the depth-disabled ordering oracle.
+The guard repairs12 baseline pixels without introducing a new difference,
+but this still fails the strict zero-difference gate. A bounded failure-only
+replay saves the original verdict and images first, then compares enabled
+AlwaysDepth and disabled-depth oracles within the original MSAA context, a
+larger-near diagnostic and a separate non-MSAA context. Those12 diagnostic
+draws cannot replace a failed result or relax its assertions. No production
+near-plane change is proposed.
+
+The same head's desktop paired performance passes. Mobile Earth fails all
+five paired trials (median p95 ratio1.08315 against the unchanged1.05 limit),
+and total long-task blocking fails56,306ms against52,311.65ms. The mobile
+triangle increase is therefore not performance-accepted. Lower-cost geometry
+is being investigated separately; all original trials and CPU profiles stay
+retained.
