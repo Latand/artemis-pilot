@@ -8,8 +8,8 @@ const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 const errors=[], report=[];
 try {
- for(const [label,width,height] of [['desktop',1366,900],['mobile',430,932]].filter(row=>!process.env.DEVICE||row[0]===process.env.DEVICE)) {
-  const page=await browser.newPage({viewport:{width,height},isMobile:label==='mobile',hasTouch:label==='mobile'});
+ for(const [label,width,height] of [['desktop',1366,900],['mobile',430,932],['mobile-compact',390,700],['mobile-landscape',932,430]].filter(row=>!process.env.DEVICE||row[0].startsWith(process.env.DEVICE))) {
+  const page=await browser.newPage({viewport:{width,height},isMobile:label.startsWith('mobile'),hasTouch:label.startsWith('mobile')});
   page.on('pageerror',e=>errors.push(label+': '+e.message));
   page.on('console',m=>{if(m.type()==='error'&&/THREE|WebGL|shader/i.test(m.text()))errors.push(label+': '+m.text());});
   await page.addInitScript(()=>{HTMLElement.prototype.requestFullscreen=()=>Promise.resolve();});

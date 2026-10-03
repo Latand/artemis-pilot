@@ -12,7 +12,7 @@ import { toast } from "./achievements.js";
 import { apTravelToFocus } from "./autopilot.js";
 import { resetHints } from "./hints.js";
 import { hideHelp } from "./hud.js";
-import { setWarp } from "./timeCtl.js";
+import { setWarp, cancelTimeJump } from "./timeCtl.js";
 import { beginJupiterPlayback, captureScenarioReturnState, exitScenarioPlayback, initScenarioPlayback } from "./scenarioPlayback.js";
 
 const $ = id => document.getElementById(id);
@@ -224,6 +224,7 @@ function showPhysCard(sc) {
 function loadScenario(sc) {
     hideHelp();
     exitScenarioPlayback();
+    cancelTimeJump("scenario selected");
     const returnState = sc.id === "slingshot" ? captureScenarioReturnState() : null;
     H.restart();
     clearBlackHoles();

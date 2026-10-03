@@ -1,7 +1,7 @@
 import { G, WORLD, BH, GS, keys, setSimTime, simTimeLo, advanceSimTime } from './state.js';
 import { PL, K } from './constants.js';
 import { eph, snapshotEphem, loadEphemSnapshot } from './ephemeris.js';
-import { cam, camera } from './scene.js';
+import { cam, camera, viewportSize } from './scene.js';
 import { AP, apOff } from './autopilot.js';
 import { REL, relResetState } from './relState.js';
 import { clearBlackHoles, addBlackHole } from './blackholes.js';
@@ -11,6 +11,7 @@ import { invalidateGasDynamics } from './universe/gasDynamics.js';
 import { clearTrail, pushTrail, computePrediction } from './trails.js';
 import { hideBanner } from './hud.js';
 import { serializeLog, restoreLog } from './discoveryLog.js';
+import { shipVisuals } from './shipVisuals.js';
 import { setPaused, setWarp, onTimeControl, jumpActive, cancelTimeJump } from './timeCtl.js';
 import { setUiMode } from './uiMode.js';
 import { jupiterEncounterSeed, createPlaybackPlan, playbackStep, playbackPhase, playheadAtSimulation, encounterCameraDistance } from './scenarioPlaybackMath.js';
@@ -30,7 +31,7 @@ const restoreRecord = (target, source) => {
 
 // An in-memory excursion. Never overwrite the user's quicksave slot.
 export function captureScenarioReturnState() {
-    return { g:clone(G), world:clone(WORLD), bh:clone(BH), gs:clone(GS), eph:snapshotEphem(), clockLo:simTimeLo(),
+    return { g:clone(G), world:clone(WORLD), bh:clone(BH), gs:clone(GS), eph:snapshotEphem(), clockLo:simTimeLo(), warpVisualEnabled:shipVisuals.enabled,
         ap:clone(AP), rel:clone(REL), log:serializeLog(), neb:serializeNebulae(G.t), encounters:serializeEncounterState(),
         camera:{yaw:cam.yaw,pitch:cam.pitch,dist:cam.dist,distTarget:cam.distTarget,tgt:cam.tgt.toArray()} };
 }
@@ -51,6 +52,8 @@ function restoreReturnState(saved) {
     loadEphemSnapshot(saved.eph);
     restoreRecord(AP,saved.ap); restoreRecord(REL,saved.rel);
     restoreLog(saved.log);
+    shipVisuals.enabled=saved.warpVisualEnabled;
+    shipVisuals.strength=0;
     invalidateGasDynamics();
     setUiMode(saved.g.uiMode,false);
     Object.assign(cam,{yaw:saved.camera.yaw,pitch:saved.camera.pitch,dist:saved.camera.dist,distTarget:saved.camera.distTarget});
@@ -80,6 +83,7 @@ export function beginJupiterPlayback(returnState, restart) {
     G.heading=Math.atan2(G.vy,G.vx); G.pitch=Math.atan2(G.vz,Math.hypot(G.vx,G.vy));
     G.cabin=false; G.focus='ship'; G.gr=true; G.predict=false; G.hold=null;
     apOff(); relResetState(); releaseInput();
+    shipVisuals.enabled=false; shipVisuals.strength=0;
     const plan=createPlaybackPlan(seed.periapsisTimeSec);
     session={ returnState, seed, plan, startedAt:G.t, status:'ready', closestKm:seed.radius,
         entrySpeed:Math.hypot(G.vx-eph.sunVx,G.vy-eph.sunVy,G.vz-(eph.sunVz||0)), uiAt:0 };
@@ -148,16 +152,27 @@ export function updateScenarioCamera() {
     // Follow the ship while keeping the entire encounter in frame. This only
     // changes the observer; ship and planet stay at authoritative positions.
     cam.tgt.set(sx*.6+jx*.4,sy*.6+jy*.4,sz*.6+jz*.4);
-    cam.dist=encounterCameraDistance(Math.hypot(sx-jx,sy-jy,sz-jz),PL[3].R*K,camera.aspect);
+    const bounds=panel?.getBoundingClientRect?.();
+    const height=viewportSize.h||932, width=viewportSize.w||height*camera.aspect;
+    const top=camera.aspect<1 ? Math.min(height-120,(bounds?.bottom||320)+40) : 0;
+    const usableHeight=camera.aspect<1 ? Math.max(100,height-top-30) : height;
+    const compactLandscape=camera.aspect>=1 && width<1000;
+    const usableWidth=compactLandscape ? Math.max(200,(bounds?.x||width-300)-30) : width;
+    const framingAspect=Math.min(camera.aspect,usableHeight/height,usableWidth/height);
+    cam.dist=encounterCameraDistance(Math.hypot(sx-jx,sy-jy,sz-jz),PL[3].R*K,framingAspect);
     cam.distTarget=null;
     if(camera.aspect<1) {
-        // Leave room for the phone's guided-flight controls above the view.
-        // Move the observer target up in camera space, putting the subjects
-        // lower on screen without changing their physical coordinates.
-        const shift=cam.dist*Math.tan(24*Math.PI/180)*.2;
+        // Reserve the actual phone card height; short portrait screens need
+        // more offset than tall ones. The subjects remain physical bodies.
+        const center=top+usableHeight/2;
+        const shift=cam.dist*Math.tan(24*Math.PI/180)*(2*center/height-1);
         cam.tgt.x-=Math.sin(cam.pitch)*Math.cos(cam.yaw)*shift;
         cam.tgt.y+=Math.cos(cam.pitch)*shift;
         cam.tgt.z-=Math.sin(cam.pitch)*Math.sin(cam.yaw)*shift;
+    } else if(compactLandscape) {
+        const shift=cam.dist*Math.tan(24*Math.PI/180)*(width-usableWidth)/height;
+        cam.tgt.x+=Math.sin(cam.yaw)*shift;
+        cam.tgt.z-=Math.cos(cam.yaw)*shift;
     }
     return true;
 }

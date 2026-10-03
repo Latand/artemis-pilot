@@ -1,6 +1,6 @@
 # Guided Jupiter slingshot
 
-Select Travel simulations → Jupiter slingshot, then Start flight. The ~60-second sequence accelerates the approach and departure, slowing smoothly around closest approach. Pause and Resume retain the exact position. Restart resets only this excursion; Exit (or Escape) restores the pre-scenario flight, clock, camera, settings, black holes, gas formations, encounter state, autopilot and relativistic-travel state. The browser quicksave slot is not touched. Changing Time / second exits the guided excursion before applying the new user-selected rate. Other scenarios retain their existing behavior.
+Select Travel simulations → Jupiter slingshot, then Start flight. The ~60-second sequence accelerates the approach and departure, slowing smoothly around closest approach. Pause and Resume retain the exact position. Restart resets only this excursion; Exit (or Escape) restores the pre-scenario flight, clock, camera, settings, black holes, gas formations, encounter state, autopilot and relativistic-travel state. The browser quicksave slot is not touched. An in-progress event jump is canceled before the return snapshot, preserving its restored user rate rather than a transient jump rate. Changing Time / second exits the guided excursion before applying the new user-selected rate. Other scenarios retain their existing behavior.
 
 ## Physical scope
 
@@ -19,5 +19,5 @@ The hull is enlarged as a navigation illustration. The existing river shows the 
 ## Checks
 
 - `npm run smoke:scenario-playback`: three epochs, actual production ship integrator, positive hyperbolic energy, angular momentum, periapsis, heliocentric gain, no propulsive Δv, continuous monotone timing, delivered-time inversion, variable frame rate and stall/completion bounds.
-- `npm run verify:scenario-playback -- <output-directory>`: actual app desktop/mobile button flows, the full clock-driven main loop, phase screenshots and projected motion samples, pause/resume, restart, complete hold, return-state equality and panel overflow.
+- `npm run verify:scenario-playback -- <output-directory>`: actual app desktop, tall/compact portrait and landscape button flows, the full clock-driven main loop, phase screenshots and projected motion samples, pause/resume, restart, complete hold, return-state equality and panel overflow, subject/control occlusion and stale pointer input after exit.
 - The GitHub Actions workflow preserves the exact tested head and individual phase screenshots. Its deterministic clock input is a QA hook only, injected by the browser harness; production code has no test clock.
