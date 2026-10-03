@@ -88,15 +88,34 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
                 dz = texture2D(tDepth, vUv).x;
                 if (dz < 1.0) zv = uNear * uFar / (uFar - dz * (uFar - uNear));
             }
-            float zBent = 1e30;                       // nearest lens bending this ray
-            for (int i = 0; i < ${MAXL}; i++) {
-                if (i >= uN) break;
-                if (zv < uDist[i]) continue;          // in front of this lens
-                vec2 d = p - uC[i];
-                float r2 = max(dot(d, d), 1e-9);
-                q -= d * (uT2[i] / r2);
-                zBent = min(zBent, uDist[i]);
+            // The background-plane limit over-bends nearby planets into
+            // detached copies. Use the finite source-distance factor D_ls/D_s.
+            // The source depth is at the sampled pixel, so solve this bounded
+            // screen-space lookup iteratively. If an occlusion makes the
+            // lookup oscillate, the framebuffer has no coherent source for
+            // that ray: retain the original pixel rather than invent a ghost.
+            float sourceZ = zv, dq = dz, zBent = 1e30;
+            vec2 previousQ = p;
+            for (int iteration = 0; iteration < 3; iteration++) {
+                vec2 nextQ = p;
+                for (int i = 0; i < ${MAXL}; i++) {
+                    if (i >= uN) break;
+                    if (zv < uDist[i]) continue;
+                    vec2 d = p - uC[i];
+                    float r2 = max(dot(d, d), 1e-9);
+                    float finiteSource = clamp(1.0 - uDist[i] / max(sourceZ, 1e-9), 0.0, 1.0);
+                    nextQ -= d * (uT2[i] * finiteSource / r2);
+                    zBent = min(zBent, uDist[i]);
+                }
+                previousQ = q;
+                q = nextQ;
+                if (uHasDepth == 1) {
+                    vec2 sampleUv = clamp(vec2(q.x/uAspect,q.y)*.5+.5,0.0,1.0);
+                    dq = texture2D(tDepth,sampleUv).x;
+                    sourceZ = dq < 1.0 ? uNear*uFar/(uFar-dq*(uFar-uNear)) : 1e30;
+                }
             }
+            float coherent = 1.0-smoothstep(.002,.01,length(q-previousQ));
             q.x /= uAspect;
             vec2 rawUv = q * 0.5 + 0.5;
             vec2 uvq = clamp(rawUv, 0.0, 1.0);
@@ -104,19 +123,16 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
             // clamping used to stretch the last texel into angular wedges.
             // Continuously return to the unbent pixel when support runs out.
             float border = min(min(rawUv.x,rawUv.y),min(1.0-rawUv.x,1.0-rawUv.y));
-            float supported = smoothstep(0.0,0.035,border);
+            float supported = smoothstep(0.0,0.035,border) * coherent;
             gl_FragColor = mix(texture2D(tDiffuse,vUv),texture2D(tDiffuse,uvq),supported);
-            if (uHasDepth == 1 && zBent < 1e29) {
-                // the sky this ray comes from is hidden behind a body in front
-                // of the lens (sampling it would show a ghost of that body):
-                // keep this pixel's own, unbent sky instead
-                float dq = texture2D(tDepth, uvq).x;
-                float zq = dq < 1.0 ? uNear * uFar / (uFar - dq * (uFar - uNear)) : 1e30;
-                if (zq < zBent) gl_FragColor = texture2D(tDiffuse, vUv);
+            if (uHasDepth == 1 && zBent < 1e29 && sourceZ < zBent) {
+                supported = 0.0;
+                gl_FragColor = texture2D(tDiffuse,vUv);
             }
-            // the world's depth, unbent (the full-range projection holeRoot is
-            // drawn with gives the near tier's depths well within a quantum)
-            gl_FragDepthEXT = dz;
+            // Carry the same source's depth with its accepted colour. Keeping
+            // the unbent planet depth under displaced colour made the later
+            // analytic hole composite cut a different silhouette out of it.
+            gl_FragDepthEXT = supported > .5 ? dq : dz;
         }`,
     depthFunc: THREE.AlwaysDepth,
 }));

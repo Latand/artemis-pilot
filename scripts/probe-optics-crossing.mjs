@@ -43,27 +43,31 @@ try{
    const disk=m.optics.disk,wasDisk=disk.material.uniforms.uDiskOn.value;
    const gl=s.renderer.getContext(),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
    const draw=(lensed,tides,diskOn=true)=>{
-    state.active=tides&&wasActive;disk.material.uniforms.uDiskOn.value=diskOn?wasDisk:0;
+    state.active=tides&&wasActive;disk.visible=diskOn;
     if(lensed){lens.updateLensing(s.camera,s.camera.aspect);lens.renderLensed(s.renderer,s.scene,s.camera);}
     else{hole.holeRoot.visible=true;s.renderSceneTiered(s.renderer,s.scene,s.camera);}
     const bytes=new Uint8Array(w*h*4);gl.readPixels(0,0,w,h,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
     return{bytes,png:s.renderer.domElement.toDataURL('image/png')};
    };
    const production=draw(true,true),noLens=draw(false,true),noTides=draw(true,false),plain=draw(false,false),noDisk=draw(true,true,false);
-   state.active=wasActive;disk.material.uniforms.uDiskOn.value=wasDisk;
-   let lensChanged=0,tidalChanged=0,diskPixels=0,diskLight=0;
+   state.active=wasActive;disk.visible=true;
+   let lensChanged=0,lensUndeformed=0,tidalChanged=0,diskPixels=0,diskLight=0;
    for(let i=0;i<production.bytes.length;i+=4){
     const l=(a)=>.2126*a[i]+.7152*a[i+1]+.0722*a[i+2];
     if(Math.abs(l(production.bytes)-l(noLens.bytes))>8)lensChanged++;
+    if(Math.abs(l(noTides.bytes)-l(plain.bytes))>8)lensUndeformed++;
     if(Math.abs(l(noLens.bytes)-l(plain.bytes))>8)tidalChanged++;
     const emit=l(production.bytes)-l(noDisk.bytes);if(emit>4){diskPixels++;diskLight+=emit;}
    }
-   return{images:{production:production.png,'no-lens':noLens.png,'no-tides':noTides.png,plain:plain.png,'no-disk':noDisk.png},metrics:{lensChanged,tidalChanged,diskPixels,diskLight},state:{tidalActive:wasActive,lambda:state.lambda,shrink:state.shrink,collapse:state.collapse,diskOn:wasDisk,normal:disk.material.uniforms.uNormal.value.toArray(),origin:disk.material.uniforms.uOrigin.value.toArray(),distanceRs:disk.material.uniforms.uDistance.value,near:s.camera.near,far:s.camera.far,lensCount:lens.lensingPass.uniforms.uN.value},glError:gl.getError()};
+   return{images:{production:production.png,'no-lens':noLens.png,'no-tides':noTides.png,plain:plain.png,'no-disk':noDisk.png},metrics:{lensChanged,lensUndeformed,tidalChanged,diskPixels,diskLight},state:{tidalActive:wasActive,lambda:state.lambda,shrink:state.shrink,collapse:state.collapse,diskOn:wasDisk,normal:disk.material.uniforms.uNormal.value.toArray(),origin:disk.material.uniforms.uOrigin.value.toArray(),distanceRs:disk.material.uniforms.uDistance.value,near:s.camera.near,far:s.camera.far,lensCount:lens.lensingPass.uniforms.uN.value},glError:gl.getError()};
   },{scenario,pitch});
   for(const[k,png]of Object.entries(result.images))await writeFile(`${out}/${scenario}-${pitch}-${k}.png`,Buffer.from(png.split(',')[1],'base64'));
   delete result.images;report.cases.push({scenario,pitch,...result});await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
   assert.equal(result.glError,0,'live error-free WebGL context');assert.equal(result.state.diskOn,1,'steady quasar disk stays enabled independent of camera side');
   console.log(scenario,pitch,JSON.stringify(result.metrics));
  }
+ const edge=report.cases.filter(c=>c.scenario==='disk-crossing');
+ const exact=edge.find(c=>c.pitch===0),near=edge.filter(c=>Math.abs(c.pitch)===.005);
+ assert(exact.metrics.diskPixels>near.reduce((s,c)=>s+c.metrics.diskPixels,0)/near.length*.5,'No all-dark edge-on disk dropout');
  assert.deepEqual(report.errors,[]);report.completed=true;
 }finally{await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser?.close();await server?.close();}
