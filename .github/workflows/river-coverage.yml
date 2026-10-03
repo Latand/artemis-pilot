@@ -15,7 +15,10 @@ jobs:
   coverage:
     name: Coverage ${{ matrix.variant }} / ${{ matrix.device }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Measured synchronized SwiftShader pace is ~5.3s/frame desktop and
+    # ~2.6s/frame touch. Keep every one of the 1200 completed frames rather
+    # than truncating the soak at the earlier 45-minute orchestration limit.
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:

@@ -73,7 +73,28 @@ try{
  // Desktop CSS width stays above 760px so its production quality tier and
  // 15,376-particle allocation do not switch to mobile. Key evidence uses the original
  // full viewport with exactly the same aspect ratio and one fresh app draw.
- const screenshot=async name=>{await page.setViewportSize(captureViewport);await page.evaluate(()=>{window.__coverageDpr(1);window.__coverageFrame();});await page.screenshot({path:`${out}/${name}.png`,timeout:180000});await page.evaluate(()=>window.__coverageDpr(.5));await page.setViewportSize(viewport);};
+ const setViewportStable=async size=>{
+  await page.setViewportSize(size);
+  // ResizeObserver runs after layout, independently of the disabled app
+  // loop. Rendering before it fires leaves a freshly cleared canvas in the
+  // screenshot. Wait for the real renderer/camera viewport to catch up.
+  await page.waitForFunction(async size=>{const s=await import('/src/scene.js');return s.viewportSize.w===size.width&&s.viewportSize.h===size.height;},size);
+ };
+ const screenshot=async name=>{
+  await setViewportStable(captureViewport);
+  const capture=await page.evaluate(async()=>{
+   window.__coverageDpr(1);window.__coverageFrame();
+   const s=await import('/src/scene.js'),gl=s.renderer.getContext();
+   const width=gl.drawingBufferWidth,height=gl.drawingBufferHeight,pixels=new Uint8Array(width*height*4);
+   gl.readPixels(0,0,width,height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+   let litPixels=0;for(let i=0;i<pixels.length;i+=4)if(pixels[i]+pixels[i+1]+pixels[i+2]>30)litPixels++;
+   return {width,height,litPixels,dpr:s.renderer.getPixelRatio(),mobile:s.renderQuality.mobile,viewport:{...s.viewportSize}};
+  });
+  report.captures??=[];report.captures.push({name,...capture});
+  check(capture.litPixels>4&&capture.width===captureViewport.width&&capture.height===captureViewport.height&&capture.mobile===mobile,`${name}: nonblank full-resolution scene at correct device quality`);
+  await page.screenshot({path:`${out}/${name}.png`,timeout:180000});
+  await page.evaluate(()=>window.__coverageDpr(.5));await setViewportStable(viewport);
+ };
  check(await page.evaluate(async mobile=>(await import('/src/scene.js')).renderQuality.mobile===mobile,mobile),'actual touch/desktop quality');
  const modes=baseline?[0]:[0,3852,-3852];
  const length=baseline?120:400;
