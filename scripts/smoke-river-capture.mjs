@@ -46,6 +46,6 @@ for(const mobile of [false,true]){
  assert.notEqual(asyncPredicate,helper);
  await assert.rejects(run(mobile,'valid',asyncPredicate),/must return synchronously/,'Async polling must fail instead of concealing the browser race');
 }
-assert(source.includes('const modes=baseline?[0]:[0,3852,-3852];'));
-assert(source.includes('const length=baseline?120:400;'));
+assert(source.includes('const modes=legacy?[0]:[0,3852,-3852];'));
+assert(source.includes('const length=legacy?120:400;'));
 console.log('River capture: synchronous viewport polling, camera/buffer settlement, default-buffer read/PNG, restoration, blank/size/quality rejection, async mutations and all1200 frames pass');
