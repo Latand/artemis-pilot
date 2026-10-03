@@ -74,6 +74,7 @@ import { initLog, noteBody, noteNotable, noteStar, updateRecords as updateDiscov
 import * as cinematic from "./cinematic.js";
 import { initQuickControls } from "./quickControls.js";
 import { initScenarios } from "./scenarios.js";
+import { exitScenarioPlayback, scenarioPlaybackActive, tickScenarioPlayback, settleScenarioPlayback, updateScenarioCamera, scenarioCameraRevision } from "./scenarioPlayback.js";
 import { initHints, hintTick } from "./hints.js";
 import { VR, initVR, vrPoll, vrUpdateRigs, renderVRFrame, vrHaptics } from "./vr.js";
 import {
@@ -242,6 +243,7 @@ function die(reason, swallowed) {
     showBanner("VEHICLE LOST", reason + " · MET " + fmtMET(G.t) + " · max Earth distance " + fmtKm(G.maxRE) + " · Δv used " + Math.round(G.dvUsed) + " m/s", "R TO REBUILD SHIP");
 }
 function restart() {
+    exitScenarioPlayback();
     cancelTimeJump("restart");
     resetEphem();
     resetShip();
@@ -254,13 +256,13 @@ function restart() {
     pushTrail(true);
     computePrediction();
 }
-initPhysicsHooks({ die, award, banner: showBanner, hideBanner });
+initPhysicsHooks({ die, award: id => { if (!scenarioPlaybackActive()) award(id); }, banner: showBanner, hideBanner });
 initBHHooks({
     toast, predict: computePrediction,
     // swallowed whole (no flare): `mode` carries the physical reason
     cataclysm(target, rs, mode, bi = -1) {
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), true, false);
-        award("bh");
+        if (!scenarioPlaybackActive()) award("bh");
         if (bi >= 0) focusBlackHole(bi);
         if (name) {
             const label = name + " " + mode + " · r_s now " + fmtKm(rs);
@@ -272,7 +274,7 @@ initBHHooks({
     // so the BH paths skip the generic destruction ghost
     disrupt(target, rs, mode, bi = -1) {
         const name = markBodyDestroyed(target, mode + " by r_s " + fmtKm(rs), false, false) || bodyName(target);
-        award("bh");
+        if (!scenarioPlaybackActive()) award("bh");
         if (bi >= 0) focusBlackHole(bi);
         if (name) {
             const label = name + " is being tidally shredded";
@@ -378,6 +380,7 @@ function applyStartupCameraState() {
 
 function installCameraPersistence() {
     const saveCam = () => {
+        if (scenarioPlaybackActive()) return; // Excursions must not become the next startup camera.
         try {
             localStorage.setItem("ap_cam", JSON.stringify({ dist: cam.dist, yaw: cam.yaw, pitch: cam.pitch, focus: G.focus, warp: G.warp, exploredSystem: serializeExploredSystem() }));
         } catch (e) { }
@@ -1344,7 +1347,7 @@ const camPrevTgt = new THREE.Vector3(), camDelta = new THREE.Vector3();
 const cabinEye = new THREE.Vector3(), cabinLook = new THREE.Vector3();
 const tier1CamDirScene = new THREE.Vector3();
 const tier1CamDirWorld = { x: 0, y: 0, z: 1 };
-let camPrevFocus = null;
+let camPrevFocus = null, lastScenarioCameraRevision = 0;
 const _m = { mx: 0, my: 0, vmx: 0, vmy: 0, ang: 0 };
 const minorSunWorld = [0, 0, 0];
 const minorTailBody = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0 };
@@ -1752,9 +1755,10 @@ function frameStep() {
     // ---- physics ----
     const physicsT0 = perfStart();
     let advanced = 0, activeStarsFresh = false;
-    setExternalTimeDriver(cinematic.isPlaying() || REL.active);
+    const scenarioFrame = tickScenarioPlayback(rawDtR, !!(rotIn || mainIn || latIn || AP.mode !== "off" || REL.active || cinematic.isPlaying() || VR.active));
+    setExternalTimeDriver(cinematic.isPlaying() || REL.active || scenarioPlaybackActive());
     const jumpFrame = tickJump(rawDtR, dtR, aMag > 0);
-    const frameSimAdvance = jumpFrame ? jumpFrame.advanceSec : dtR * G.warp;
+    const frameSimAdvance = scenarioFrame ? scenarioFrame.advanceSec : jumpFrame ? jumpFrame.advanceSec : dtR * G.warp;
     // one world step for every mode (flight, landed, dead, relativistic):
     // Sun evolution + engulfment, reverse guards, budgeted integration, and
     // the delivered time the jump runtime and Time Dock report
@@ -1764,6 +1768,7 @@ function frameStep() {
     } else { preparePausedGas(G.t); noteFrameDelivery(0, 0); }
     const jumpSettlement = jumpFrame ? settleTimeJump(jumpFrame, advanced, aMag > 0) : null;
     if (jumpSettlement && Number.isFinite(jumpSettlement.syncTimeSec)) setSimTime(jumpSettlement.syncTimeSec);
+    settleScenarioPlayback();
     snapLanded();
     const oi = orbitInfo();
     perfEnd("frame.physics", physicsT0, PERF.enabled ? { advanced, warp: G.warp, dtR, rawDtR, dtRCap } : null);
@@ -1776,8 +1781,8 @@ function frameStep() {
     const nearFieldDue = cosmicLod === 0 || frameNo % (cosmicLod === 1 ? 6 : cosmicLod === 2 ? 18 : 45) === 0;
     const activeStarsDue = cosmicLod === 0 || frameNo % (cosmicLod === 1 ? 12 : cosmicLod === 2 ? 45 : 120) === 0;
     checkBodyContacts();
-    // achievements
-    if (!G.dead) {
+    // Guided excursions must not award progress to the flight they return to.
+    if (!G.dead && !scenarioPlaybackActive()) {
         if (oi.domMoon) noteBody("moon", 0, "THE MOON");
         if (oi.domSun) noteBody("sun", 0, "THE SUN");
         if (oi.domPl && oi.pNear >= 0 && oi.pNearD < PL[oi.pNear].soi) noteBody("planet", oi.pNear, PL[oi.pNear].name);
@@ -1951,7 +1956,7 @@ function frameStep() {
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
-    shipG.visible = !G.dead && !cosmicView && !G.cabin && !(focusNeb >= 0 && NEBULAE[focusNeb]?.formation) && (G.uiMode !== "observe" || VR.active);
+    shipG.visible = !G.dead && !cosmicView && !G.cabin && !(focusNeb >= 0 && NEBULAE[focusNeb]?.formation) && (G.uiMode !== "observe" || VR.active || scenarioPlaybackActive());
     clouds.rotation.y += dtR * .01;
     perfEnd("scene.focus", sceneFocusT0, PERF.enabled ? { activeStarsDue, activeStarsFresh, focus: String(G.focus) } : null);
     // ---- camera ----
@@ -1980,6 +1985,12 @@ function frameStep() {
         activeDynamicFocus ? activeStarScenePos(activeDynamicFocus) :
         G.focus === "free" ? cam.tgt : typeof G.focus === "number" ? plGroups[G.focus].position :
         G.focus === "moon" ? moon.position : G.focus === "earth" ? earthG.position : G.focus === "sun" ? sunCore.position : shipG.position;
+    if (lastScenarioCameraRevision !== scenarioCameraRevision()) {
+        lastScenarioCameraRevision = scenarioCameraRevision();
+        camPrevFocus = null;
+        hudReady = false;
+        hideNearFieldLabels();
+    }
     if (G.focus !== "free") {
         // rigid-follow the focus body's frame-to-frame motion so fast targets
         // stay centered at any warp; the lerp only glides out the residual
@@ -2007,6 +2018,7 @@ function frameStep() {
         if (Math.abs(goal - cam.dist) <= goal * .02) { cam.dist = goal; cam.distTarget = null; }
     }
     cam.dist = Math.max(minD, cam.dist);
+    updateScenarioCamera();
     const cabinActive = updateCabinHUD(cosmicView, oi);
     const hudEvery = hudCadence(cabinActive, aMag);
     const hudDue = !hudReady || frameNo % hudEvery === 0;
@@ -2255,7 +2267,7 @@ function frameStep() {
     // ---- craft pose & adaptive size ----
     craft.quaternion.setFromUnitVectors(upV, dirV);
     const cd = camera.position.distanceTo(shipG.position);
-    const cs = Math.min(2.4, Math.max(.012, cd * .02));
+    const cs = scenarioPlaybackActive() ? cd * .035 : Math.min(2.4, Math.max(.012, cd * .02));
     const shipSpeed = Math.hypot(G.vx, G.vy, G.vz);
     // the direction guides fade by the same rule as the body arrows: the
     // ship's path is its orbit about its primary (oi.r), set against the
@@ -2271,7 +2283,7 @@ function frameStep() {
     craft.scale.setScalar(cs);
     updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible && G.gr && G.uiMode === "pilot");
     dot.scale.setScalar(cd * .014);
-    dot.material.opacity = G.dead ? 0 : (cd > 4 ? 1 : Math.max(0, (cd - 1.2) / 2.8));
+    dot.material.opacity = G.dead || scenarioPlaybackActive() ? 0 : (cd > 4 ? 1 : Math.max(0, (cd - 1.2) / 2.8));
     updateHeadingArrow(oriX, oriY, oriZ, dirV, cd, directionVisualActive && !G.dead && !cosmicView && !cabinActive, directionAlpha);
     // ---- engine flame & exhaust ----
     const thrustingMain = aMag > 0 && mainIn !== 0;
@@ -2610,6 +2622,11 @@ function frameStep() {
                 putUnlessCrowded(bhLabels[i], bhScenePos(i, _bhLabelPos), -10, w, h);
                 bhLabelCount++;
             }
+        }
+        if (scenarioPlaybackActive()) {
+            hideNearFieldLabels();
+            labelSlots.length = 0;
+            putUnlessCrowded(plLabels[3], plGroups[3].position, -8, w, h);
         }
         nearLabelsReady = true;
     }

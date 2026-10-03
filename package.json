@@ -78,7 +78,9 @@
     "smoke:gas-dynamics": "node scripts/smoke-gas-dynamics.mjs",
     "smoke:gas-world": "node scripts/smoke-gas-world.mjs",
     "smoke:gravity-inspector": "node scripts/smoke-gravity-inspector.mjs && node scripts/smoke-gravity-display.mjs && node scripts/smoke-gravity-prediction.mjs",
-    "verify:gravity-inspector": "node scripts/verify-gravity-inspector.mjs"
+    "verify:gravity-inspector": "node scripts/verify-gravity-inspector.mjs",
+    "smoke:scenario-playback": "node scripts/smoke-scenario-playback.mjs && node scripts/smoke-scenario-session.mjs && node scripts/smoke-scenario-input.mjs",
+    "verify:scenario-playback": "node scripts/verify-scenario-playback.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

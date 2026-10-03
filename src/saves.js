@@ -151,6 +151,7 @@ export async function loadState() {
     const restoredStars = data.v >= 5 ? await restorePromotedCatalogStars(data.hygStars) : [];
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     // Saves restore wall-time values directly; loading cancels any jump in flight. ap_uiMode stays a device preference outside the save format.
+    window.dispatchEvent(new Event("ap:replace-universe"));
     cancelTimeJump("quickload");
     apOff();
     relResetState();

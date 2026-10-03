@@ -1,9 +1,12 @@
 # Disk and transparent-ring partial release
 
-This candidate restores the complete production `src` subtree of reviewed commit
-`531da641fe5d61b4cdc7130285418c218299d263` in this isolated candidate. A scoped
-smoke pins the three optical modules and ring-material factory, so unrelated integration work is
-not accidentally prohibited by a whole-repository golden snapshot.
+The isolated partial candidate `4d3ded4a4731f738fd27098156469f477d643c56`
+restored the complete production `src` subtree of reviewed commit
+`531da641fe5d61b4cdc7130285418c218299d263`. The final PR candidate also merges
+main `e69158f8bfa6f2d24d786cb60c247fe66afa1420`, preserving its Jupiter playback
+source unchanged. The three optical modules and ring-material factory remain
+byte-identical to the reviewed 531 subset; a scoped smoke enforces that contract
+without prohibiting unrelated integration work.
 It retains finite-source lens geometry and final-residual validation, accepted
 opaque depth/colour pairing, transparent-ring source depth with real alpha holes,
 and normalized disk-plane raster support. It does not change physical tidal
@@ -62,3 +65,31 @@ spaghettification.
 
 No PR update or merge is justified by local smokes alone. Independent review
 and final exact-head hosted validation must precede acceptance of this subset.
+
+## Isolated subset preflight and final integration
+
+[Run 37136186500](https://github.com/Latand/artemis-pilot/actions/runs/37136186500)
+validated exact `4d3ded4` in all four pixel modes, including all 31 applicable
+cases and zero changed opaque foreground pixels. Eight key images per mode
+were individually inspected; detached thin gold edge outlines remain visible.
+Full paired p95 ratios were 0.990324 desktop/direct, 1.003307 desktop/bloom and
+0.993184 mobile/direct, with all long-task guards passing.
+
+Original mobile/bloom had p95 ratio 1.013693 but failed its maximum long-task
+guard: 326 ms versus 304.5 ms allowed. Its complete report (artifact 11278319809)
+remains retained. The single GPU-readback-dominated sample took 326.3 ms, of
+which CPU was 7.1 ms and readback 319.2 ms; the underlying cause is unproven.
+
+One unchanged full mobile/bloom repeat was
+[predeclared](https://github.com/Latand/artemis-pilot/pull/52#issuecomment-5971175913)
+before it ran. It passed p95 ratio 0.988252 and all original long-task guards
+(artifact 11279326520). Its runner changed from AMD EPYC 7763 to Intel Xeon
+6973P, so absolute timings across allocations are not a code-speedup claim.
+Source/config/workload snapshots were identical and all five trials per attempt
+remain available. No further repeat was authorized.
+
+The isolated preflight does not substitute for final broad checks on the
+published Jupiter-integrated PR head. Main's source is preserved exactly, but
+that combined head must receive its own checks before merge. Issue #49 stays
+open; only the disk-plane defect and major ring-source-depth improvement are
+in this partial release's completion scope.
