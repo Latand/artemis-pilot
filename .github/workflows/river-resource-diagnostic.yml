@@ -1,6 +1,8 @@
-name: River capture resource attribution
+name: Contiguous river geometry attribution
 on:
-  pull_request:
+  push:
+    branches:
+      - 'diagnostic/river-contiguous-geometry'
     paths:
       - 'scripts/diagnose-capture-resources.mjs'
       - '.github/workflows/river-resource-diagnostic.yml'
@@ -13,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -27,7 +29,7 @@ jobs:
           git worktree add --detach "$RUNNER_TEMP/resource-source" 09863eedda25eef36d79e9cf88daa4ff3e377875
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/resource-source/node_modules"
           echo "BASE_ROOT=$RUNNER_TEMP/resource-source" >> "$GITHUB_ENV"
-      - name: Attribute the first midpoint allocation and repeated capture transitions
+      - name: Replay every original frame through the first geometry increase
         env:
           DEVICE: mobile
           ARTEMIS_EVIDENCE: evidence/resource-probe
@@ -35,7 +37,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: river-resource-after-mobile
+          name: river-contiguous-geometry-mobile
           path: evidence/
           if-no-files-found: error
           retention-days: 14
