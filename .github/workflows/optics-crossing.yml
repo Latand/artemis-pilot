@@ -7,6 +7,9 @@ on:
       - 'src/lensing.js'
       - 'src/holeOptics.js'
       - 'src/tdeVisuals.js'
+      - 'src/render/ringSamplingDepth.js'
+      - 'src/render/planetAppearance.js'
+      - 'scripts/smoke-ring-sampling-depth.mjs'
       - '.github/workflows/optics-crossing.yml'
 permissions:
   contents: read
@@ -32,7 +35,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-optics-crossing.mjs && node scripts/smoke-hole-appearance.mjs && node scripts/smoke-hole-precision.mjs && npm run build
+      - run: node scripts/smoke-optics-crossing.mjs && node scripts/smoke-ring-sampling-depth.mjs && node scripts/smoke-hole-appearance.mjs && node scripts/smoke-hole-precision.mjs && npm run build
       - run: npx playwright install --with-deps chromium
       - name: Frozen Saturn and disk plane-crossing ablations
         env:

@@ -8,6 +8,7 @@ import { ACTIVE_STARS } from "./universe/activeStars.js";
 import { composer, renderer, renderQuality, renderSceneTiered, TIER_SPLIT_UNITS } from "./scene.js";
 import { holeRoot } from "./holeOptics.js";
 import { preciseViewPosition } from "./render/preciseViewPosition.js";
+import { beginRingSamplingDepth, ringSamplingUniforms, RING_SAMPLING_DEPTH_GLSL } from "./render/ringSamplingDepth.js";
 
 // Gravitational lensing as a screen-space post pass, applied to the world
 // render (before bloom when bloom is on). Up to four strongest lenses per
@@ -52,6 +53,7 @@ class LensPass extends ShaderPass {
 
 export const lensingPass = new LensPass(new THREE.ShaderMaterial({
     uniforms: {
+        ...ringSamplingUniforms,
         tDiffuse: { value: null },
         tDepth: { value: null },
         uHasDepth: { value: 0 },
@@ -77,6 +79,7 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
         uniform float uT2[${MAXL}];
         uniform float uAspect;
         varying vec2 vUv;
+        ${RING_SAMPLING_DEPTH_GLSL}
         void main(){
             vec2 p = vUv * 2.0 - 1.0;
             p.x *= uAspect;
@@ -88,6 +91,9 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
                 dz = texture2D(tDepth, vUv).x;
                 if (dz < 1.0) zv = uNear * uFar / (uFar - dz * (uFar - uNear));
             }
+            // Transparent annuli have a sampling depth, but must never become
+            // opaque occluders. dz/dq remain the untouched world depth buffer.
+            zv = ringSourceDepth(vUv, zv);
             // The background-plane limit over-bends nearby planets into
             // detached copies. Use the finite source-distance factor D_ls/D_s.
             // The source depth is at the sampled pixel, so solve this bounded
@@ -111,6 +117,7 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
                     vec2 sampleUv = clamp(vec2(q.x/uAspect,q.y)*.5+.5,0.0,1.0);
                     dq = texture2D(tDepth,sampleUv).x;
                     sourceZ = dq < 1.0 ? uNear*uFar/(uFar-dq*(uFar-uNear)) : 1e30;
+                    sourceZ = ringSourceDepth(sampleUv, sourceZ);
                 }
             }
             // Validate the FINAL sampled depth, not the previous step. A
@@ -201,6 +208,7 @@ function consider(cands, wx, wy, wz, rsU, camera, f) {
 // ?lens=0 disables the pass (inspection and captures of the unlensed scene)
 const lensOff = typeof location !== "undefined" && new URLSearchParams(location.search).get("lens") === "0";
 export function updateLensing(camera, aspect) {
+    beginRingSamplingDepth();
     _cand.length = 0;
     holeRoot.visible = true;
     if (lensOff || renderer.xr.isPresenting) { lensingPass.enabled = false; return false; }
@@ -215,6 +223,7 @@ export function updateLensing(camera, aspect) {
     const n = Math.min(MAXL, _cand.length);
     lensingPass.enabled = n > 0;
     if (!n) return false;
+    beginRingSamplingDepth(camera);
     const u = lensingPass.uniforms;
     u.uN.value = n;
     u.uAspect.value = aspect;
