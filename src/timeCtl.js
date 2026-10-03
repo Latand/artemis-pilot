@@ -9,6 +9,8 @@ import {
     stepJumpRuntime,
 } from "./universe/eventTimeline.js";
 
+const timeControlListeners = new Set();
+export function onTimeControl(fn) { timeControlListeners.add(fn); return () => timeControlListeners.delete(fn); }
 let jumpState = null;
 let externalTimeDriver = false;
 const jumpView = {
@@ -46,6 +48,7 @@ function clampWarp(w) {
 }
 
 export function setWarp(w, source = "user") {
+    for (const listener of timeControlListeners) listener("warp", source);
     if (source !== "jump") cancelTimeJump(source);
     G.warp = clampWarp(w);
     return G.warp;

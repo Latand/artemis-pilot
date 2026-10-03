@@ -1,0 +1,68 @@
+name: Orbital exposure and Earth guide QA
+on:
+  pull_request:
+    paths:
+      - 'src/main.js'
+      - 'src/bodies.js'
+      - 'src/render/orbitalExposure*'
+      - 'src/render/visibleTrajector*'
+      - 'src/render/surfaceRotationExposure.js'
+      - 'src/render/bodySurfaceMaterial.js'
+      - 'src/render/planetAppearance.js'
+      - 'scripts/*visible-trajector*'
+      - 'scripts/*surface-exposure*'
+      - 'scripts/*orbital-exposure*'
+      - '.github/workflows/orbital-exposure.yml'
+permissions:
+  contents: read
+concurrency:
+  group: orbital-exposure-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  model:
+    name: Motion models and Time Dock
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: node scripts/smoke-orbital-exposure.mjs && node scripts/smoke-orbital-exposure-integration.mjs && node scripts/smoke-visible-trajectories.mjs && node scripts/smoke-visible-trajectories-integration.mjs && node scripts/smoke-surface-exposure.mjs && npm run smoke:planet-phases && npm run smoke:reverse && npm run smoke:body-surfaces && npm test && npm run build
+      - run: npm run smoke:time-dock
+  capture:
+    name: Orbits ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Capture matched orbital sequences and exact physical transforms
+        timeout-minutes: 32
+        if: ${{ !cancelled() }}
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: node scripts/verify-orbital-exposure.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orbital-exposure-${{ matrix.device }}
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

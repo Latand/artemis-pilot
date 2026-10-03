@@ -1,3 +1,4 @@
+import { resetDrive } from './curvatureDrive.js';
 import { apOff } from "./autopilot.js";
 import { cam } from "./scene.js";
 import { getOrigin } from "./universe/renderOrigin.js";
@@ -151,10 +152,12 @@ export async function loadState() {
     const restoredStars = data.v >= 5 ? await restorePromotedCatalogStars(data.hygStars) : [];
     const restoredProc = data.v >= 6 ? restorePinnedProceduralStars(data.procStars) : [];
     // Saves restore wall-time values directly; loading cancels any jump in flight. ap_uiMode stays a device preference outside the save format.
+    window.dispatchEvent(new Event("ap:replace-universe"));
     cancelTimeJump("quickload");
     apOff();
     relResetState();
     Object.assign(G, data.g);
+    resetDrive(); // legacy saves resume in exact coast, never with a stale command
     if (data.v >= 10 && data.log) restoreLog(data.log);
     else restoreLog(null);
     if (data.focusCatalog && Number.isFinite(Number(data.focusCatalog.hygIndex))) {

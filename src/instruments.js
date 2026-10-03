@@ -219,17 +219,17 @@ function targetInfo() {
     return null;
 }
 function drawSys(ctx, oi, eph) {
-    header(ctx, "SYS · DRIVE");
+    header(ctx, "SYS · CURVATURE DRIVE");
     ctx.font = "17px ui-monospace, monospace";
     ctx.textAlign = "left";
     // two-column top layout: everything important above the deck line
     ctx.fillStyle = DIM;
-    ctx.fillText("THR", 16, 60);
+    ctx.fillText("FLD", 16, 60);
     ctx.fillStyle = TXT;
     ctx.fillText(Math.round(G.throttle * 100) + "%", 64, 60);
     bar(ctx, 140, 48, 96, Math.min(1, G.throttle), ACC);
     ctx.fillStyle = DIM;
-    ctx.fillText("FUEL", 16, 86);
+    ctx.fillText("Δv", 16, 86);
     ctx.fillStyle = G.infinite || G.fuel / FUEL_DV0 > .15 ? TXT : WARN;
     ctx.fillText(G.infinite ? "∞" : Math.round(G.fuel) + " m/s", 64, 86);
     if (!G.infinite) bar(ctx, 140, 74, 96, G.fuel / FUEL_DV0, G.fuel / FUEL_DV0 > .15 ? OK : WARN);

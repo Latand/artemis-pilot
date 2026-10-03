@@ -1,6 +1,7 @@
+import { updateSurfaceRotationExposure } from './render/surfaceRotationExposure.js';
 import * as THREE from "three";
-import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT, AU_KM } from "./constants.js";
-import { earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
+import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT, AU_KM, E_EARTH, VARPI_EARTH, OMEGA_EARTH } from "./constants.js";
+import { updateEarthSurfaceExposure, earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
 import { stellarExposure, meteredSkyExposure, linearStarColor, updatePhotosphereAppearance } from "./render/stellarAppearance.js";
 import { makeStarPointMaterial } from "./render/starPointMaterial.js";
 import { MOONS } from "./moons.js";
@@ -20,7 +21,7 @@ import { sunStateAt, AGB_TIP_R_RSUN } from "./universe/sunEvolution.js";
 
 export const sunPos = new THREE.Vector3();
 export let sunLight, sunCore, sunGlow, sunCorona, sunPN, sky, skyStars, galaxyBackdrop;
-export let earthG, earth, clouds, earthAtmo, earthBeacon, moon, moonOrbitRing, moonSoiRing;
+export let earthG, earth, clouds, earthAtmo, earthBeacon, earthOrbitRing, moon, moonOrbitRing, moonSoiRing;
 export const plGroups = [], plSurfaces = [], plGlows = [], plOrbitRings = [], plLabels = [];
 // Planetary moons: physical-size detailed surfaces + unresolved guide dot + label
 export const moonGroups = [], moonSurfaces = [], moonGlows = [], moonLabels = [];
@@ -159,7 +160,9 @@ function requestCloudDetails() {
 
 // All clocks below use simulation time. A paused planet and its clouds remain
 // registered, including after reversing time or restoring a saved epoch.
-export function updateBodyShaders(camera, t) {
+export const surfaceExposureState = { active: 0 };
+export function updateBodyShaders(camera, t, simExposureSeconds = 0, moonSpin = 0) {
+    surfaceExposureState.active = 0;
     const u = shaderTick;
     const radius = R_EARTH * K;
     inverseRotation.copy(earth.quaternion).invert();
@@ -178,6 +181,8 @@ export function updateBodyShaders(camera, t) {
     const earthDistance = camera.position.distanceTo(earthG.position);
     const earthPx = radius * pxScale / Math.max(radius, earthDistance);
     earthBeacon.scale.setScalar(earthDistance * (renderQuality.mobile ? 12 : 10) / Math.max(1, pxScale));
+    if (updateEarthSurfaceExposure(earth.material, clouds.material, OMEGA_EARTH,
+        OMEGA_EARTH + 2 * Math.PI / (14 * 86400), earth.visible && earthPx > 1 ? simExposureSeconds : 0)) surfaceExposureState.active++;
     const earthGuide = THREE.MathUtils.smoothstep(AU_KM * K * pxScale / Math.max(1e-9, camera.position.distanceTo(sunPos)), 6, 24);
     earthBeacon.material.opacity = .9 * (1 - THREE.MathUtils.smoothstep(earthPx, 1, 4)) * earthGuide;
     earthBeacon.visible = earthBeacon.material.opacity > .01;
@@ -191,6 +196,7 @@ export function updateBodyShaders(camera, t) {
         exposure = Math.min(exposure, meteredSkyExposure(camera, moon.position, R_MOON * K, sunPos));
         requestBodySurfaceDetail(moon.material, undefined, R_MOON * K * pxScale / Math.max(R_MOON * K, camera.position.distanceTo(moon.position)), renderQuality.mobile);
         updateBodySurface(moon.material, t);
+        if (updateSurfaceRotationExposure(moon.material, moonSpin, simExposureSeconds)) surfaceExposureState.active++;
         if (!moonRequested && !moon.material.userData.surfacePhotographic && R_MOON * K * pxScale / camera.position.distanceTo(moon.position) > 8 && moonPhotoEnabled) {
             moonRequested = true;
             loadMoonMap().then(map => {
@@ -208,6 +214,7 @@ export function updateBodyShaders(camera, t) {
         if (rpx > 2) requestPlanetTexture(i);
         requestBodySurfaceDetail(plSurfaces[i].material, undefined, rpx, renderQuality.mobile);
         updateBodySurface(plSurfaces[i].material, t);
+        if (updateSurfaceRotationExposure(plSurfaces[i].material, p.spin, plSurfaces[i].visible && rpx > 1 ? simExposureSeconds : 0)) surfaceExposureState.active++;
         // A distant marker fades continuously as the physical disk resolves.
         plGlows[i].scale.setScalar(distance * (renderQuality.mobile ? 12 : 10) / Math.max(1, pxScale));
         plGlows[i].material.opacity = 0.9 * (1 - THREE.MathUtils.smoothstep(rpx, 1, 4)) * (plGlows[i].userData.guideFade ?? 1);
@@ -227,6 +234,7 @@ export function updateBodyShaders(camera, t) {
         const rpx = m.R * K * pxScale / Math.max(m.R * K, distance);
         requestBodySurfaceDetail(surface.material, undefined, rpx, renderQuality.mobile);
         updateBodySurface(surface.material, t);
+        if (updateSurfaceRotationExposure(surface.material, m.n, surface.visible && rpx > 1 ? simExposureSeconds : 0)) surfaceExposureState.active++;
         // Approximate synchronous spin in this analytic, coplanar moon model.
         // No orbit/integrator state is changed; pause and reverse are deterministic.
         surface.rotation.y = (m.phase + m.n * t) % (Math.PI * 2);
@@ -488,6 +496,12 @@ export function buildBodies(maps) {
     earthBeacon.renderOrder = 5;
     earthG.add(earth, clouds, earthAtmo, earthBeacon);
     scene.add(earthG);
+    // Earth is not a member of PL: its heliocentric guide needs its own ring.
+    earthOrbitRing = new THREE.LineLoop(
+        orbitEllipseGeometry(AU_KM, E_EARTH, VARPI_EARTH),
+        new THREE.LineBasicMaterial({ color: 0x2c3a4a, transparent: true, opacity: .5, depthWrite: false }));
+    earthOrbitRing.name = "Earth orbit guide";
+    scene.add(earthOrbitRing);
     // ---- moon ----
     const moonMap = maps.moon;
     moon = new THREE.Mesh(

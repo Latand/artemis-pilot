@@ -53,8 +53,15 @@ async function dockGeometry(page) {
 async function openReadyPage(context, label, url) {
   const page = await context.newPage();
   watchErrors(page, label);
-  await page.goto(url, { waitUntil: "networkidle" });
-  await page.waitForFunction(() => window.__G && document.body.classList.contains("mode-observe"));
+  try {
+    // Background catalog/texture loading is not the Time Dock's readiness
+    // contract. Await document delivery, then the explicit app/mode state.
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 });
+    await page.waitForFunction(() => window.__AP_READY && window.__G && document.body.classList.contains("mode-observe"), null, { timeout: 120000, polling: 100 });
+  } catch (error) {
+    console.error("Time Dock startup diagnostics", JSON.stringify(pageErrors), await page.evaluate(() => ({ ready: !!window.__AP_READY, mode: window.__G?.uiMode, classes: document.body.className, storedMode: localStorage.getItem("ap_uiMode") })));
+    throw error;
+  }
   return page;
 }
 

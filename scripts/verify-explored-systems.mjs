@@ -11,6 +11,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { systemRenderStatement } from './explored-system-hooks.mjs';
 
 const quantile = (values, q) => [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * q) - 1)];
 const median = values => quantile(values, .5);
@@ -90,8 +91,8 @@ function transform(source, id) {
     source = once(source, 'const firstFrameT0 = perfStart();',
         'G.t=0;G.paused=true;G.warp=1;resetEphem();clock.getDelta=()=>1/60;\nconst firstFrameT0 = perfStart();');
     source = once(source, 'renderer.setAnimationLoop(frame);', '// QA: production frame is delivered explicitly.');
-    source = once(source, 'updateSystemRender(focusedSystem, G.t, camera, G.focus);',
-        'updateSystemRender(focusedSystem, G.t, camera, G.focus);window.__exploredCurrentSystem=focusedSystem;');
+    const systemRender = systemRenderStatement(source);
+    source = once(source, systemRender, systemRender + 'window.__exploredCurrentSystem=focusedSystem;');
     return source + `\nwindow.__exploredFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;
         const t=performance.now();frame();const cpu=performance.now()-t;renderer.getContext().finish();
         return {cpuMs:cpu,frameAndFinishMs:performance.now()-t};};\n`;

@@ -1,3 +1,5 @@
+> The hull geometry remains current. Flight presentation and its thrust checks have been superseded by the [fictional curvature drive](../curvature-drive.md); old baseline captures retain their historical combustion cues.
+
 # Twin-ring exterior
 
 This slice replaces only the external craft mesh with an original procedural
