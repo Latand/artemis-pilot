@@ -1,0 +1,34 @@
+name: Fixed Proxima rendering diagnostic
+on:
+  push:
+    branches: [diagnostic/proxima-river-policy]
+    paths: ['.github/diagnostics/**', '.github/workflows/proxima-policy-diagnostic.yml']
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact production revisions
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/proxima48" 1cd79ccc21371ea0c06ea59fb1ec84b3b05b293d
+          git worktree add --detach "$RUNNER_TEMP/proxima54" 09691c30263edef2181b32190306533cb00180c0
+          git worktree add --detach "$RUNNER_TEMP/proxima55" 1d8044568c486811b9879d4f571f8a6096accef0
+          for variant in 48 54 55; do ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/proxima$variant/node_modules"; done
+      - run: node .github/diagnostics/compare-proxima.mjs "$RUNNER_TEMP/proxima48" "$RUNNER_TEMP/proxima54" "$RUNNER_TEMP/proxima55" evidence/proxima-policy
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fixed-proxima-policy
+          path: evidence/proxima-policy/
+          retention-days: 14
