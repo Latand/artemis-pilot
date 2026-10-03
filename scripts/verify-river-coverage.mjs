@@ -82,17 +82,23 @@ try{
  };
  const screenshot=async name=>{
   await setViewportStable(captureViewport);
-  const capture=await page.evaluate(async()=>{
-   window.__coverageDpr(1);window.__coverageFrame();
+  const {png,...capture}=await page.evaluate(async()=>{
    const s=await import('/src/scene.js'),gl=s.renderer.getContext();
+   // No await between drawing and default-framebuffer read/copy: WebGL may
+   // clear a non-preserved backbuffer when this JavaScript task yields.
+   window.__coverageDpr(1);window.__coverageFrame();
    const width=gl.drawingBufferWidth,height=gl.drawingBufferHeight,pixels=new Uint8Array(width*height*4);
    gl.readPixels(0,0,width,height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
    let litPixels=0;for(let i=0;i<pixels.length;i+=4)if(pixels[i]+pixels[i+1]+pixels[i+2]>30)litPixels++;
-   return {width,height,litPixels,dpr:s.renderer.getPixelRatio(),mobile:s.renderQuality.mobile,viewport:{...s.viewportSize}};
+   return {width,height,litPixels,dpr:s.renderer.getPixelRatio(),mobile:s.renderQuality.mobile,viewport:{...s.viewportSize},pixelSource:'same-task WebGL canvas',png:s.renderer.domElement.toDataURL('image/png')};
   });
   report.captures??=[];report.captures.push({name,...capture});
   check(capture.litPixels>4&&capture.width===captureViewport.width&&capture.height===captureViewport.height&&capture.mobile===mobile,`${name}: nonblank full-resolution scene at correct device quality`);
-  await page.screenshot({path:`${out}/${name}.png`,timeout:180000});
+  check(png.startsWith('data:image/png;base64,'),`${name}: authoritative canvas PNG available`);
+  await writeFile(`${out}/${name}.png`,Buffer.from(png.slice(png.indexOf(',')+1),'base64'));
+  // Preserve the UI separately; the canvas copy above is authoritative for
+  // render pixels because a later DevTools screenshot is another task.
+  await page.screenshot({path:`${out}/${name}-ui.png`,timeout:180000});
   await page.evaluate(()=>window.__coverageDpr(.5));await setViewportStable(viewport);
  };
  check(await page.evaluate(async mobile=>(await import('/src/scene.js')).renderQuality.mobile===mobile,mobile),'actual touch/desktop quality');

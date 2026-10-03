@@ -1,12 +1,32 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { createServer } from "vite";
+import { boundedDiagnostic } from "./qa-bounded-diagnostic.mjs";
 
 const failures = [];
 const pageErrors = [];
 let browser = null;
 let viteServer = null;
+let activePage = null;
+const report = {
+  revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+  scope: 'Time Dock UI-only live application: real frames, physics, four viewport layouts, cadence and actual controls. Full-layer motion/pixel verification runs separately.',
+  omittedUnrelatedLayers: ['background procedural field', 'real-sky catalog', 'volumetric galaxy', 'galaxies', 'river', 'bloom', 'eager warm compile'],
+  checks: [], phases: [], pageErrors, passed: false,
+};
+mkdirSync('evidence/time-dock', { recursive: true });
+const saveReport = () => writeFileSync('evidence/time-dock/report.json', JSON.stringify(report, null, 2));
+function phase(name) {
+  const last = report.phases.at(-1);
+  if (last) last.elapsedMs = performance.now() - last.startedMs;
+  report.phases.push({ name, startedMs: performance.now() });
+  console.log('TIME DOCK PHASE', name);
+  saveReport();
+}
 
 function check(condition, message, context) {
+  report.checks.push({ pass: !!condition, message, context });
+  saveReport();
   if (condition) return;
   failures.push(message + (context === undefined ? "" : ` ${JSON.stringify(context)}`));
 }
@@ -52,20 +72,18 @@ async function dockGeometry(page) {
 
 async function openReadyPage(context, label, url) {
   const page = await context.newPage();
+  activePage = page;
   watchErrors(page, label);
-  try {
-    // Background catalog/texture loading is not the Time Dock's readiness
-    // contract. Await document delivery, then the explicit app/mode state.
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 });
-    await page.waitForFunction(() => window.__AP_READY && window.__G && document.body.classList.contains("mode-observe"), null, { timeout: 120000, polling: 100 });
-  } catch (error) {
-    console.error("Time Dock startup diagnostics", JSON.stringify(pageErrors), await page.evaluate(() => ({ ready: !!window.__AP_READY, mode: window.__G?.uiMode, classes: document.body.className, storedMode: localStorage.getItem("ap_uiMode") })));
-    throw error;
-  }
+  phase(`${label}: navigation`);
+  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 });
+  phase(`${label}: application readiness`);
+  await page.waitForFunction(() => window.__AP_READY && window.__G && document.body.classList.contains("mode-observe"), null, { timeout: 120000, polling: 100 });
+  phase(`${label}: UI checks`);
   return page;
 }
 
 try {
+  phase('server and browser setup');
   viteServer = await createServer({
     logLevel: "silent",
     server: { host: "127.0.0.1", port: 0 },
@@ -73,7 +91,10 @@ try {
   await viteServer.listen();
   const address = viteServer.httpServer?.address();
   if (!address || typeof address === "string") throw new Error("Vite server did not expose a TCP port");
-  const url = `http://127.0.0.1:${address.port}/?bloom=0&hidehelp=1&tier1=0`;
+  // Same unrelated-layer omissions as the existing save/UI smoke. Do not
+  // disable animation, bodies, physics, time controls or any tested UI state.
+  const url = `http://127.0.0.1:${address.port}/?bloom=0&hidehelp=1&tier1=0&field=0&realsky=0&galaxyvol=0&galaxies=0&river=0&compile=0`;
+  report.query = new URL(url).search;
 
   const playwrightModule = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
   const playwright = playwrightModule.default ?? playwrightModule;
@@ -207,6 +228,7 @@ try {
   await page.evaluate(() => { window.__G.cabin = false; });
   await page.waitForFunction(() => !document.body.classList.contains("mode-cabin"));
 
+  phase('desktop: logarithmic rail');
   const railContract = await page.evaluate(async () => {
     const { WARPS, SEC_YEAR } = await import("/src/constants.js");
     const { setWarp } = await import("/src/timeCtl.js");
@@ -234,6 +256,7 @@ try {
     "warp rail derives its grid from the live ladder length", railContract);
   check(railContract.perFrameQueries === 0, "per-frame Time Dock updates reuse the cached tick array", railContract);
 
+  phase('desktop: steady DOM cadence');
   const renderCadence = await page.evaluate(async () => {
     const { setWarp } = await import("/src/timeCtl.js");
     setWarp(3600, "dock-smoke-cadence");
@@ -256,6 +279,7 @@ try {
   check(renderCadence.attributeMutations === 0,
     "stable Time Dock classes and attributes produce zero redundant mutations", renderCadence);
 
+  phase('desktop: rung boundaries');
   const rungEdges = await page.evaluate(async () => {
     const { WARP_MAX } = await import("/src/constants.js");
     const { setWarp } = await import("/src/timeCtl.js");
@@ -281,6 +305,7 @@ try {
   check(rungEdges.belowMidpoint === "10 min/s" && rungEdges.aboveMidpoint === "1 h/s",
     "log-space selection changes sides at the geometric midpoint", rungEdges);
 
+  phase('desktop: real speed and reverse controls');
   const oneHour = page.locator('.tdTick[aria-label="1 h/s"]');
   await page.locator(".tdFine summary").click();
   await oneHour.click();
@@ -293,6 +318,7 @@ try {
   await page.waitForFunction(() => document.getElementById("tdRev")?.getAttribute("aria-pressed") === "true");
   check(await page.locator("#tdRev").getAttribute("aria-pressed") === "true", "REV exposes its pressed state");
 
+  phase('desktop: reverse-block pulse');
   const finiteFloorExpected = await page.evaluate(async () => {
     const { G, WORLD } = await import("/src/state.js");
     const { getEpochMs } = await import("/src/epoch.js");
@@ -322,6 +348,7 @@ try {
     live: element.getAttribute("aria-live"),
   }));
   check(statusA11y.role === "status" && statusA11y.live === "polite", "reverse-block plate is a polite live status", statusA11y);
+  phase('desktop: reverse-block latch timing');
   const latchTiming = await page.evaluate(async () => {
     const { G, WORLD } = await import("/src/state.js");
     const { renderTimeDock, sampleTimeDock } = await import("/src/timeDock.js");
@@ -350,6 +377,7 @@ try {
   check(latchTiming.visibleAtOneSecond && latchTiming.hiddenAtOnePointSevenSeconds,
     "the reverse-block plate brackets the 1.5s latch expiry", latchTiming);
 
+  phase('desktop: pause and matter blocking');
   await page.locator("#tdPause").click();
   await page.waitForFunction(() => window.__G.paused === true);
   await page.waitForFunction(() => document.getElementById("tdPause")?.getAttribute("aria-pressed") === "true");
@@ -400,6 +428,7 @@ try {
     WORLD.tdeInProgress = false;
   });
 
+  phase('desktop: real jump cancellation');
   const cancelLabel = await page.locator("#tdCancel").getAttribute("aria-label");
   check(cancelLabel === "Cancel time jump", "the jump cancel button has an explicit accessible name", { cancelLabel });
   const jumpBeforeCancel = await page.evaluate(async () => {
@@ -447,8 +476,22 @@ try {
   check(pageErrors.length === 0, "browser sessions have no page errors", pageErrors);
 
   if (failures.length) throw new Error(`smoke-time-dock FAILED:\n- ${failures.join("\n- ")}`);
+  report.passed = true;
+  phase('passed');
   console.log("smoke-time-dock passed");
+} catch (error) {
+  report.error = error.stack || String(error);
+  report.lastPage = activePage ? { url: activePage.url(), viewport: activePage.viewportSize(), closed: activePage.isClosed() } : null;
+  report.diagnostics = await boundedDiagnostic(() => activePage?.evaluate(() => ({
+    ready: !!window.__AP_READY, mode: window.__G?.uiMode, classes: document.body.className,
+    storedMode: localStorage.getItem("ap_uiMode"), dockPresent: !!document.getElementById("timeDock"),
+  })));
+  console.error('Time Dock failure diagnostics', JSON.stringify({ phase: report.phases.at(-1)?.name, pageErrors, lastPage: report.lastPage, result: report.diagnostics }));
+  throw error;
 } finally {
+  const last = report.phases.at(-1);
+  if (last) last.elapsedMs = performance.now() - last.startedMs;
+  saveReport();
   await browser?.close();
   await viteServer?.close();
 }

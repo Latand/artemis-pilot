@@ -4,6 +4,8 @@ on:
     paths:
       - 'src/main.js'
       - 'src/bodies.js'
+      - 'src/style.css'
+      - 'src/explorerUI.css'
       - 'src/render/orbitalExposure*'
       - 'src/render/visibleTrajector*'
       - 'src/render/surfaceRotationExposure.js'
@@ -11,7 +13,10 @@ on:
       - 'src/render/planetAppearance.js'
       - 'scripts/*visible-trajector*'
       - 'scripts/*surface-exposure*'
+      - 'scripts/*surface-fastpath*'
       - 'scripts/*orbital-exposure*'
+      - 'scripts/*time-dock*'
+      - 'scripts/qa-bounded-diagnostic.mjs'
       - '.github/workflows/orbital-exposure.yml'
 permissions:
   contents: read
@@ -33,8 +38,28 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - run: node scripts/smoke-orbital-exposure.mjs && node scripts/smoke-orbital-exposure-integration.mjs && node scripts/smoke-visible-trajectories.mjs && node scripts/smoke-visible-trajectories-integration.mjs && node scripts/smoke-surface-exposure.mjs && npm run smoke:planet-phases && npm run smoke:reverse && npm run smoke:body-surfaces && npm test && npm run build
+      - run: node scripts/smoke-time-dock-diagnostics.mjs && node scripts/smoke-orbital-exposure.mjs && node scripts/smoke-orbital-exposure-integration.mjs && node scripts/smoke-visible-trajectories.mjs && node scripts/smoke-visible-trajectories-integration.mjs && node scripts/smoke-surface-exposure.mjs && node scripts/smoke-surface-fastpath.mjs && npm run smoke:planet-phases && npm run smoke:reverse && npm run smoke:body-surfaces && npm test && npm run build
+      - name: Measure cold Earth shader entry and cached reuse on desktop
+        timeout-minutes: 8
+        run: node scripts/verify-surface-fastpath.mjs . evidence/surface-fastpath-desktop
+      - name: Measure cold Earth shader entry and cached reuse on mobile
+        if: ${{ !cancelled() }}
+        timeout-minutes: 8
+        env:
+          DEVICE: mobile
+        run: node scripts/verify-surface-fastpath.mjs . evidence/surface-fastpath-mobile
       - run: npm run smoke:time-dock
+        if: ${{ !cancelled() }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: motion-models-time-dock
+          path: |
+            evidence/time-dock/
+            evidence/surface-fastpath-desktop/
+            evidence/surface-fastpath-mobile/
+          if-no-files-found: warn
+          retention-days: 14
   capture:
     name: Orbits ${{ matrix.device }}
     runs-on: ubuntu-latest

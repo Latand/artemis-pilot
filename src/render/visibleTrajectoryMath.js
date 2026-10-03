@@ -2,6 +2,37 @@
 export const VISIBLE_TRAJECTORY_LIMIT = 10;
 export const VISIBLE_TRAJECTORY_SEGMENTS = 32;
 
+// A sharp instantaneous guide must not strobe on a temporally averaged body.
+// Selected bodies keep exact positions, but their velocity direction can also
+// turn too far within one shutter. Fade that guide over 10–60 degrees/interval.
+// This only controls opacity; it never invents a slower direction or clock.
+export function trajectoryDisplayOpacity(bodyBlend = 0, seconds = 0, period = Infinity, directionSweep = 0) {
+    const phase = Math.max(directionSweep / (2 * Math.PI), Number.isFinite(period) && period > 0 ? Math.abs(seconds) / period : 0);
+    const x = Math.max(0, Math.min(1, (phase - 1 / 36) / (1 / 6 - 1 / 36)));
+    return (1 - Math.max(0, Math.min(1, bodyBlend))) * (1 - x * x * (3 - 2 * x));
+}
+
+// Mean anomaly alone misses rapid periapsis turning on eccentric trajectories.
+// The planar velocity heading is monotonic in eccentric anomaly, so unwrapped
+// endpoint headings recover the whole turn without dense temporal substeps.
+// Inspect both sides for a conservative, reverse-symmetric presentation bound.
+export function orbitalDirectionSweep(orbit, seconds) {
+    if (!orbit || !Number.isFinite(seconds) || !seconds) return 0;
+    const tau=2*Math.PI, span=Math.abs(seconds)*orbit.n;
+    if(span>=tau/6)return tau/6; // already fully faded by the mean-rate floor
+    const heading=mean=>{
+        const cycles=Math.floor((mean+Math.PI)/tau),M=mean-cycles*tau;
+        let E=orbit.e<.8?M:(M<0?-Math.PI:Math.PI);
+        for(let i=0;i<12;i++)E-=(E-orbit.e*Math.sin(E)-M)/(1-orbit.e*Math.cos(E));
+        return Math.atan2(Math.sin(E),Math.sqrt(1-orbit.e*orbit.e)*Math.cos(E))+cycles*tau;
+    };
+    const current=heading(orbit.M);
+    // Include the centered shutter and either frame-to-frame interval. Five
+    // fixed endpoint solves cover an eccentric periapsis without substeps.
+    return Math.max(span,Math.abs(heading(orbit.M-span)-current),Math.abs(heading(orbit.M+span)-current),
+        Math.abs(heading(orbit.M+span/2)-heading(orbit.M-span/2)));
+}
+
 export function selectVisibleTrajectories(candidates, previousIds = [], limit = VISIBLE_TRAJECTORY_LIMIT) {
     const previous = new Set(previousIds);
     const ranked = candidates.filter(c => c.visible && [c.sx,c.sy,c.nx,c.ny,c.radiusPx].every(Number.isFinite))

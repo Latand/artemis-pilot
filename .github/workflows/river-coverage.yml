@@ -34,7 +34,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-river-source-alignment.mjs && node scripts/smoke-river-coverage.mjs && npm run smoke:river-visual && npm test && npm run smoke:physics3d && npm run smoke:determinism && npm run build
+      - run: node scripts/smoke-river-capture.mjs && node scripts/smoke-river-source-alignment.mjs && node scripts/smoke-river-coverage.mjs && npm run smoke:river-visual && npm test && npm run smoke:physics3d && npm run smoke:determinism && npm run build
       - run: npx playwright install --with-deps chromium
       - name: Record exact source identities
         env:

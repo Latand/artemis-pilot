@@ -10,6 +10,7 @@ At most ten visible Solar System bodies, the ship, and player-placed holes are s
 - Ship and placed-hole paths are instantaneous linear estimates limited to 60 seconds. Solar System conics also fall back to that short estimate while placed holes, gravity debris, or disruption are active. The visible annotation identifies when linear estimates are included. Such paths do not promise an encounter, capture, or thrust prediction.
 - Pause retains the current projection and direction; reversing playback reverses both the short sampled path and the separate tangent arrow.
 - Motion exposure is a distinct solid/fading presentation of past motion. The new dashed previews show future motion in playback direction. Neither modifies simulation state or navigation targets.
+- At undersampled playback rates, a body's sharp paths/arrows fade with its orbital exposure. Even a camera-followed body has its instantaneous guide faded if its orbital direction turns 10–60 degrees within the display shutter. A note explains this limit; pause restores the exact guide immediately. No slower or invented direction is substituted for the true velocity.
 
 Current scope excludes discovered planetary systems, catalog/procedural stars, and galaxies. Their own analytic models and reference frames must be used before their previews can be included. A zero or directly line-of-sight projected velocity may have no useful arrow. Very short linear estimates can be subpixel at a system overview; their direction arrow remains the readable guide.
 

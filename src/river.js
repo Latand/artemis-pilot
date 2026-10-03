@@ -62,6 +62,9 @@ const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX;
 export const river = {
     enabled: false,
     sourceRelativeHalos: true,
+    presentationGain: 1,
+    presentationDepthTest: false,
+    visible: false,
     radius: 22,
     count: NPART,
     drawCount: NPART,
@@ -768,8 +771,14 @@ function refreshRiverStarPick(smoothCenter, smoothR, localFocus, renderShed) {
     return count;
 }
 // bodies: 0 earth, 1 moon, 2 sun, 3..9 planets, then player holes and stars
-export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0) {
+export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0, presentation = null) {
     river.dtVis = dtSim;
+    // Resolve the draw-only policy even while hidden/disabled, so an Exit to
+    // a cosmic view cannot retain stale guided-policy diagnostics.
+    const requestedGain = Number(presentation?.opacityGain);
+    river.presentationGain = Number.isFinite(requestedGain) ? Math.max(.05, Math.min(1, requestedGain)) : 1;
+    river.presentationDepthTest = presentation?.occludeBodies === true;
+    river.visible = false;
     if (!river.enabled) return;
     warpLines.visible = false;
     river.warpVisible = false;
@@ -784,6 +793,9 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const fEff = fB * zoomFade * (1 - largeScaleFlowBlend(cam.dist));
     lines.visible = fEff > .01 && river.style !== 2;
     dots.visible = fEff > .01 && river.style === 2;
+    river.visible = lines.visible || dots.visible;
+    lineMat.depthTest = river.presentationDepthTest;
+    dots.material.depthTest = lineMat.depthTest;
     if (fEff <= .01) {
         river.computeEvery = 1;
         river.skippedCompute = false;
@@ -852,12 +864,16 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // terrain instead of drawing over it (zoom-ladder earth-5). Toggling the
     // GL depth test needs no shader rebuild and leaves every other view
     // byte-identical.
-    lineMat.depthTest = surfaceProx > 0.5;
+    // A guided-flight policy changes only natural-flow ink and occlusion.
+    // Recompute from the call argument so Exit restores the normal policy;
+    // never scale fEff, particle ownership, gravity or compute cadence here.
+    lineMat.depthTest = surfaceProx > 0.5 || river.presentationDepthTest;
+    river.presentationDepthTest = lineMat.depthTest;
     dots.material.depthTest = lineMat.depthTest;
     uniformsShared.uPixelRatio.value = renderQuality.dpr;
     uniformsShared.uLocalFocus.value = localFocus;
     const mobileOpacity = renderQuality.mobile ? 1.08 : 1;
-    uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + localFocus * .7) * (1 - loadShed * .12);
+    uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + localFocus * .7) * (1 - loadShed * .12) * river.presentationGain;
     river.renderShed = renderShed;
     let drawFrac = Math.max(.52, .56 + localFocus * .30, 1 - renderShed * .44);
     if (renderQuality.mobile) drawFrac = Math.min(drawFrac, renderQuality.loadShed >= 2 ? .72 : .84);

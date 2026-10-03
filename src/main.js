@@ -67,6 +67,8 @@ import { thrustGain, boom, updateDriveAudio } from "./audio.js";
 import { DRIVE, stepDrive, sampleDriveGradient } from "./curvatureDrive.js";
 import { shipPresentation } from "./shipPresentation.js";
 const driveAcceleration = new Float64Array(3);
+// Guided framing keeps the physical field visible without burying the subjects.
+const GUIDED_RIVER_PRESENTATION = Object.freeze({ occludeBodies: true, opacityGain: .22 });
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
 import {
@@ -2383,7 +2385,7 @@ function frameStep() {
     const fRiver = fB * (1 - smooth01(2.0e7, 7.0e7, cam.dist));
     if (PERF.enabled) {
         const riverT0 = performance.now();
-        updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR);
+        updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR, scenarioPlaybackActive() ? GUIDED_RIVER_PRESENTATION : null);
         markPerf("river.update", performance.now() - riverT0, {
             drawCount: river.drawCount || 0,
             computeEvery: river.computeEvery || 1,
@@ -2402,7 +2404,7 @@ function frameStep() {
         updateShells(Math.max(-900, Math.min(river.dtVis ?? advanced, 900)), fRiver);
         markPerf("river.shells", performance.now() - shellsT0, { visible: fRiver > .01 });
     } else {
-        updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR);
+        updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR, scenarioPlaybackActive() ? GUIDED_RIVER_PRESENTATION : null);
         updateShells(Math.max(-900, Math.min(river.dtVis ?? advanced, 900)), fRiver);
     }
     if (fRiver > .01 && hudDue && !renderQuality.mobile) {

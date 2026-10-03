@@ -1,5 +1,27 @@
 import assert from 'node:assert/strict';
-import { selectVisibleTrajectories, trajectoryHorizon, playbackDirection, projectedVelocity, fullyOcculted } from '../src/render/visibleTrajectoryMath.js';
+import { selectVisibleTrajectories, trajectoryHorizon, playbackDirection, projectedVelocity, fullyOcculted, trajectoryDisplayOpacity, orbitalDirectionSweep } from '../src/render/visibleTrajectoryMath.js';
+import { osculatingOrbit } from '../src/render/orbitalExposureMath.js';
+const periapsis=osculatingOrbit(7000,0,0,0,Math.sqrt(398600*1.9/7000),0,398600);
+const shutter=86400/30,turn=orbitalDirectionSweep(periapsis,shutter);
+assert(turn>87*Math.PI/180&&turn<89*Math.PI/180,'Eccentric periapsis resolves the actual ~88 degree velocity turnover');
+assert.equal(turn,orbitalDirectionSweep(periapsis,-shutter),'Periapsis limit is reverse-symmetric');
+assert.equal(trajectoryDisplayOpacity(0,shutter,periapsis.period,turn),0,'Mean-period alias at eccentric periapsis is suppressed');
+for(const offset of [-Math.PI*2,0,Math.PI*2]) {
+    const o={...periapsis,M:offset};
+    assert(Math.abs(orbitalDirectionSweep(o,shutter)-turn)<1e-10,'Unwrapped periapsis is independent of the anomaly branch');
+}
+assert.equal(orbitalDirectionSweep(periapsis,0),0);
+assert.equal(orbitalDirectionSweep(periapsis,periapsis.period*100),Math.PI/3,'Multiple revolutions take the fixed-cost fully faded branch');
+assert.equal(trajectoryDisplayOpacity(0,0,100),1,'Pause/exact frame preserves instantaneous guides');
+assert.equal(trajectoryDisplayOpacity(.5,0,100),.5,'Partial body exposure continuously fades its sharp guide');
+assert.equal(trajectoryDisplayOpacity(1,0,100),0,'Averaged bands do not carry a strobing instantaneous marker');
+assert.equal(trajectoryDisplayOpacity(0,100/6,100),0,'Selected-body direction also fades when unresolved');
+for(let i=0;i<=100;i++) {
+    const seconds=i/100*20,opacity=trajectoryDisplayOpacity(.2,seconds,100);
+    assert.equal(opacity,trajectoryDisplayOpacity(.2,-seconds,100),'Reverse uses the same shutter visibility');
+    assert(opacity>=0&&opacity<=.8);
+    if(i)assert(opacity<=trajectoryDisplayOpacity(.2,(i-1)/100*20,100),'Visibility changes monotonically with the shutter');
+}
 const candidates=Array.from({length:30},(_,i)=>({id:`body:${i}`,visible:true,sx:i*40,sy:100,radiusPx:1,nx:0,ny:0,selected:i===25}));
 let result=selectVisibleTrajectories(candidates);assert.equal(result.length,10);assert.equal(result[0].id,'body:25');
 const previous=result.map(c=>c.id);candidates.forEach(c=>{c.nx=.02;});result=selectVisibleTrajectories(candidates,previous);assert.deepEqual(result.map(c=>c.id),previous);
