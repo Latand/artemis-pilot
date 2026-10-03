@@ -1,3 +1,4 @@
+import { restoreUniverseJournal } from './universe/universeJournal.js';
 import { R_EARTH, MU_E, FUEL_DV0, BH_MAX, C_LIGHT, K, PL } from "./constants.js";
 import { accretedFraction } from "./tde.js";
 
@@ -7,6 +8,7 @@ export const G = {
     heading: 0, pitch: 0, throttle: 1,
     warp: 60, paused: false,
     uiMode: "observe",
+    cosmicOverview: false,
     fuel: FUEL_DV0, infinite: true, dvUsed: 0,
     hold: null,                // 'pro' | 'retro' | null
     landed: null,              // null | {body:'earth'|'moon'|'planet', ang, i?}
@@ -42,6 +44,7 @@ export function bodyScaleIndex(target) {
 }
 
 export function resetWorld() {
+    restoreUniverseJournal(null);
     WORLD.earthDestroyed = false;
     WORLD.moonDestroyed = false;
     WORLD.sunDestroyed = false;

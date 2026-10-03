@@ -1,3 +1,6 @@
+import { publishSystemCameraAnchor } from './render/systemPrecision.js';
+import { galaxyFocusPosition } from './galaxyTravel.js';
+import { initForeignStarField, updateForeignStarField, foreignCameraStars } from './render/foreignStarField.js';
 import { initShipVisuals, updateShipVisuals } from "./shipVisuals.js";
 import { initRiverStyles } from "./riverStyles.js";
 import { updateGravityInspector } from "./gravityInspector.js";
@@ -316,6 +319,7 @@ initShipVisuals();
 initTimeDock();
 initEvents({ mergerState: mergerDebugState });
 initUiMode();
+initForeignStarField(scene);
 initExplorerUI({flyTo: flyFocus, openNavigator, openCatalog: openCatalogSearchLazy, toggleHelp, toggleGravityPrediction, gravityPredictionNote:()=>gravityPredictionNote(G.focus), gravityPredictionActive:()=>gravityPredictionActive(G.focus)});
 
 // Camera/share-state must be applied before renderer warmup; otherwise startup
@@ -1042,7 +1046,7 @@ function pickSceneTarget(clientX, clientY) {
             d = screenDistance(starScenePos(i, _pickProbePos), x, y, w, h, pickProject);
             if (d < starPickRadius() && d < bestD) { best = starFocusValue(i); bestD = d; }
         }
-        for (const star of ACTIVE_STARS) if (star.procedural || star.activeCatalog || star.formedStar) {
+        for (const star of [...ACTIVE_STARS, ...foreignCameraStars()]) if (star.procedural || star.activeCatalog || star.formedStar) {
             d = screenDistance(activeStarScenePos(star, _pickProbePos), x, y, w, h, pickProject);
             if (d < starPickRadius() && d < bestD) { best = activeStarFocusValue(star); bestD = d; }
         }
@@ -1231,7 +1235,7 @@ function updateHover(w, h) {
                 d = screenDistance(pos, lastPtr[0], lastPtr[1], w, h, hoverProject);
                 if (d < bestD) { bestD = d; best = starFocusValue(i); bestPos = _hoverBestPos.copy(pos); }
             }
-            for (const star of ACTIVE_STARS) if (star.procedural || star.activeCatalog || star.formedStar) {
+            for (const star of [...ACTIVE_STARS, ...foreignCameraStars()]) if (star.procedural || star.activeCatalog || star.formedStar) {
                 const pos = activeStarScenePos(star, _hoverProbePos);
                 d = screenDistance(pos, lastPtr[0], lastPtr[1], w, h, hoverProject);
                 if (d < bestD) { bestD = d; best = activeStarFocusValue(star); bestPos = _hoverBestPos.copy(pos); }
@@ -1965,13 +1969,12 @@ function frameStep() {
     const focusedSystem = getExploredSystem(G.focus, nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star, G.t);
     const activePlanetFocus = planetFocusIndex(G.focus);
     const activePlanetMoonFocus = planetMoonFocusIndex(G.focus);
-    updateSystemRender(focusedSystem, G.t, camera, G.focus);
     updateNebulae(camera, dtR);
     {
         const cp = Math.cos(G.pitch || 0);
         dirV.set(cp * Math.cos(G.heading), Math.sin(G.pitch || 0), -cp * Math.sin(G.heading));
     }
-    const tgt = activeBHFocus ? bhScenePos(focusBH) :
+    const tgt = galaxyFocusPosition(G.focus, G.t, _focusPos) || (activeBHFocus ? bhScenePos(focusBH) :
         activeNebFocus ? (nebulaScenePos(focusNeb, _focusPos) || shipG.position) :
         activePlanetMoonFocus ? (moonScenePosition(focusedSystem, activePlanetMoonFocus.planetIndex, activePlanetMoonFocus.moonIndex, G.t, _focusPos) || shipG.position) :
         activePlanetFocus >= 0 ? (planetScenePosition(focusedSystem, activePlanetFocus, G.t, _focusPos) || shipG.position) :
@@ -1979,7 +1982,7 @@ function frameStep() {
         activeMoonFocus ? moonGroups[focusMoon].position :
         activeDynamicFocus ? activeStarScenePos(activeDynamicFocus) :
         G.focus === "free" ? cam.tgt : typeof G.focus === "number" ? plGroups[G.focus].position :
-        G.focus === "moon" ? moon.position : G.focus === "earth" ? earthG.position : G.focus === "sun" ? sunCore.position : shipG.position;
+        G.focus === "moon" ? moon.position : G.focus === "earth" ? earthG.position : G.focus === "sun" ? sunCore.position : shipG.position);
     if (G.focus !== "free") {
         // rigid-follow the focus body's frame-to-frame motion so fast targets
         // stay centered at any warp; the lerp only glides out the residual
@@ -2026,6 +2029,8 @@ function frameStep() {
     } else if (cinematic.isPlaying()) {
         cinematic.tick(dtR);
     } else applyCamera();
+    publishSystemCameraAnchor(camera, focusedSystem, G.focus, G.t);
+    updateSystemRender(focusedSystem, G.t, camera, G.focus);
     updateRelView(camera);
     perfEnd("scene.camera", sceneCameraT0, PERF.enabled ? { cabin: cabinActive, vr: VR.active, focus: String(G.focus) } : null);
     // ---- Tier-1 streaming star field (WP10) ----
@@ -2046,6 +2051,7 @@ function frameStep() {
         tier1CamDirWorld.y = -tier1CamDirScene.z;
         tier1CamDirWorld.z = tier1CamDirScene.y;
         setObserver(camWorldKmX, camWorldKmY, camWorldKmZ, G.t);
+        updateForeignStarField(camera, [camWorldKmX, camWorldKmY, camWorldKmZ], G.t);
         updateTier1(camWorldKmX, camWorldKmY, camWorldKmZ, tier1CamDirWorld, G.t);
         if (minorRenderers.oort.mesh.visible && (nearFieldDue || !minorRenderers.oort.geometry.drawRange.count)) {
             minorSunWorld[0] = eph.earthX + eph.sunX;
@@ -2175,7 +2181,7 @@ function frameStep() {
     stellarExposure.value = Math.min(stellarExposure.value, galaxyVolumeExposureCap());
     const mwSpriteDisk = MW_LIGHT.halo + MW_DISK_OF_TOTAL;
     updateGalaxyPopulation(camera, {
-        tSim: G.t, gcScene, exposure: stellarExposure.value, pxScale: viewportSize.pxScale, viewport: [viewportSize.w, viewportSize.h],
+        tSim: G.t, overview: !!G.cosmicOverview, gcScene, exposure: stellarExposure.value, pxScale: viewportSize.pxScale, viewport: [viewportSize.w, viewportSize.h],
         dpr: renderer.getPixelRatio(), maxPointPx: MAX_POINT_PX,
         mwKeep: mwSprite, mergeMorph: mergeFrac, m31Mpc, mwLum,
         mwDiskKeep: tides ? (MW_LIGHT.halo + MW_DISK_OF_TOTAL * tides.mwTotal) / mwSpriteDisk : 1 - mergeFrac,

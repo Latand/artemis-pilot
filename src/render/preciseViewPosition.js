@@ -10,7 +10,9 @@ export function preciseViewPosition(point, camera) {
         orbit.worldPosition.y !== world[13] || orbit.worldPosition.z !== world[14]) {
         return point.applyMatrix4(camera.matrixWorldInverse);
     }
-    point.sub(orbit.target).sub(orbit.offset);
+    const anchor = camera.userData.systemAnchor;
+    if (anchor) point.sub(anchor.origin).sub(anchor.offset).sub(orbit.offset);
+    else point.sub(orbit.target).sub(orbit.offset);
     const x = point.x, y = point.y, z = point.z;
     const view = camera.matrixWorldInverse.elements;
     return point.set(

@@ -251,7 +251,7 @@ export function syncActiveProceduralPoints() {
     const explored = getExploredHost();
     if (explored?.activeCatalog && !pointStars.some(s => s.id === explored.id)) pointStars.push(explored);
     const n0 = pointStars.length;
-    const sig = (explored?.id || "") + ":" + activeStarsTime() + ":" + n0 + ":" + (n0 ? pointStars[0].id || pointStars[0].name : "") + ":" + (n0 ? pointStars[n0 - 1].id || pointStars[n0 - 1].name : "");
+    const sig = (explored?.id || "") + ":" + (explored?.galaxyId ? explored._foreignT : "") + ":" + activeStarsTime() + ":" + n0 + ":" + (n0 ? pointStars[0].id || pointStars[0].name : "") + ":" + (n0 ? pointStars[n0 - 1].id || pointStars[n0 - 1].name : "");
     if (sig === activeProc.sig) {
         if (activeProc.mesh && !activeProc.mesh.position.equals(camera.position)) placeActivePoints(pointStars);
         return;

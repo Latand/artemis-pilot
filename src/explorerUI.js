@@ -1,3 +1,4 @@
+import { initGalaxyTravel } from './galaxyTravel.js';
 import { initGravityInspector, closeGravityInspector } from './gravityInspector.js';
 import { largeFlowStatus } from './render/largeScaleFlow.js';
 import { NEBULAE } from "./universe/nebulaeData.js";
@@ -33,6 +34,7 @@ function visit(focus) {
 
 export function initExplorerUI(options) {
     hooks=options;
+    initGalaxyTravel();
     initCompactExplorer({ stopMovement: () => { movement = null; } });
     initGravityInspector({togglePrediction:options.toggleGravityPrediction,predictionNote:options.gravityPredictionNote,predictionActive:options.gravityPredictionActive});
     document.querySelectorAll('[data-ui-mode]').forEach(btn => btn.addEventListener('click',()=>setUiMode(btn.dataset.uiMode)));
@@ -106,6 +108,8 @@ export function moveExplorerCamera(dt) {
 // epistemic tier those numbers belong to. A body that simply has no record for
 // a quantity carries no field for it, and bodyFacts then omits that row.
 function selectedBody() {
+    if (G.focus === 'galaxy:m31') return {name:'Andromeda',kind:'Accelerated camera approach · modeled stellar population',basis:'modeled'};
+    if (G.focus === 'galaxy:mw') return {name:'Milky Way',kind:'Accelerated camera return',basis:'modeled'};
     const ni = /^neb:(\d+)$/.exec(String(G.focus));
     if (ni && NEBULAE[+ni[1]]?.formation) {
         const n = NEBULAE[+ni[1]], s = gasStateAt(n,G.t);

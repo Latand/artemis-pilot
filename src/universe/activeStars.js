@@ -1,3 +1,4 @@
+import { foreignStarById, isForeignStarId, updateForeignStar, sampleForeignStars } from './foreignStars.js';
 import { catalogIdentityKeys } from "./catalogIdentity.js";
 import { catalogEvalTime, catalogMotionFor, updateCatalogStar } from "./catalogMotion.js";
 import { syncGalacticFrame, registerActivePositionPublisher } from "./galacticClock.js";
@@ -275,6 +276,7 @@ function runtimeProceduralStar(src, simT = 0) {
 // localStarById (already cache-backed in galaxy.js) rather than storing
 // epicyclic fields on the runtime object itself.
 function repositionProceduralStar(star, simT) {
+    if (isForeignStarId(star.id)) return updateForeignStar(star, FORMATION_TIME);
     simT = activeStarEvalTime(simT);
     if (star._posSimT === simT) return;
     const src = localStarById(star.id);
@@ -336,6 +338,7 @@ function pushCompanionIfAny(primary) {
 // simT defaults to the time of the latest refreshActiveStars (the stars'
 // "now"), not the epoch.
 export function proceduralStarById(id, simT = LAST_EVAL_T) {
+    if (isForeignStarId(id)) return foreignStarById(id, FORMATION_TIME);
     const src = localStarById(id);
     return src ? runtimeProceduralStar(src, simT) : null;
 }
@@ -703,6 +706,12 @@ export function refreshActiveStars(wx = 0, wy = 0, wz = 0, focus = -1, simT = 0,
         if (ACTIVE_STARS.length >= ACTIVE_STAR_CONFIG.totalLimit) break;
         pushActive(star, activeId(star), "catalog");
     }
+    // Physical neighbourhood discovery follows the ship, independently of the
+    // camera provider. Foreign IDs share existing bounded gravity/contact APIs.
+    for (const star of sampleForeignStars([wx, wy, wz], FORMATION_TIME)) {
+        if (ACTIVE_STARS.length >= ACTIVE_STAR_CONFIG.totalLimit) break;
+        pushActive(star, star.id, "procedural");
+    }
     PROC_NEAREST.length = 0;
     const procLimit = ACTIVE_STAR_CONFIG.totalLimit - ACTIVE_STARS.length;
     if (procLimit > 0) {
@@ -768,6 +777,10 @@ export function restorePinnedProceduralStars(ids = []) {
 // already published. At most the existing active-object budget is touched.
 registerActivePositionPublisher((t, exactT) => {
     FORMATION_TIME = exactT;
+    // Foreign objects use the exact common coordinate clock even between
+    // catalog cadence buckets. Spatial discovery may still be throttled.
+    for (const star of ACTIVE_STARS) if (isForeignStarId(star.id)) updateForeignStar(star, exactT);
+    for (const star of PINNED_PROC.values()) if (isForeignStarId(star.id)) updateForeignStar(star, exactT);
     if (LAST_EVAL_T === t) return;
     LAST_EVAL_T = t;
     for (const star of ACTIVE_STARS) {

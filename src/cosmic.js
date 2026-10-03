@@ -381,6 +381,7 @@ function localGroupScene(out) {
 }
 export function cycleCosmicScale() {
     scheduleCosmicLayerBuild();
+    G.cosmicOverview = false;
     if (cam.dist < LY_SCENE * 1000) {
         cam.dist = COSMIC_ZOOMS.MILKY_WAY;
         G.focus = "free";
@@ -392,6 +393,7 @@ export function cycleCosmicScale() {
         localGroupScene(cam.tgt);
         toast("Scale: Local Group · " + cosmicScaleLabel());
     } else if (cam.dist < LY_SCENE * 5e7) {
+        G.cosmicOverview = true;
         cam.dist = COSMIC_ZOOMS.COSMIC_WEB;
         G.focus = "free";
         localGroupScene(cam.tgt);
