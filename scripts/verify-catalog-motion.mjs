@@ -14,7 +14,7 @@ const check=(name,pass,details)=>{report.checks.push({name,pass:!!pass,details})
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'catalog-motion-qa',enforce:'pre',transform(code,id){
  if(!id.endsWith('/src/main.js'))return;
  assert(code.includes('renderer.setAnimationLoop(frame);'));
- return code.replace('renderer.setAnimationLoop(frame);','// QA: frames delivered explicitly')+`\nwindow.__catalogFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;frame();renderer.getContext().finish();};`;
+ return code.replace('renderer.setAnimationLoop(frame);','// QA: frames delivered explicitly')+`\nwindow.__catalogFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;frame();renderer.getContext().finish();};window.__catalogRedraw=()=>{renderFrame(false);renderer.getContext().finish();};`;
 }}]});await server.listen();
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try {
@@ -26,9 +26,10 @@ try {
  await page.waitForFunction(()=>window.__AP_READY&&window.__catalogFrame);
  await page.evaluate(async()=>{
   const [s,c,state,a,m,f,r,e,p,input]=await Promise.all([import('/src/scene.js'),import('/src/constants.js'),import('/src/state.js'),import('/src/universe/activeStars.js'),import('/src/universe/catalogMotion.js'),import('/src/universe/galacticClock.js'),import('/src/render/catalogStars.js'),import('/src/universe/exploredSystem.js'),import('/src/universe/planetarySystem.js'),import('/src/input.js')]);
-  window.qa={s,c,state,a,m,f,r,e,p,input};state.G.paused=true;state.G.dead=true;state.G.landed=null;
+  window.qa={s,c,state,a,m,f,r,e,p,input};state.G.paused=true;state.G.dead=true;state.G.observerMode=true;state.G.landed=null;
  });
  await page.waitForFunction(()=>qa.r.catalogStarsStatus().loaded);
+ await page.mouse.move(898,648);
  const run=async(name,years,focus='free',distLy=35)=>{
   const row=await page.evaluate(({years,focus,distLy})=>{
    const {s,c,state,a,m,f,e,p}=qa;state.setSimTime(years*c.SEC_YEAR);f.syncGalacticFrame(state.G.t);a.refreshActiveStars(0,0,0,focus,state.G.t,2e6*c.SEC_YEAR);
@@ -37,7 +38,11 @@ try {
    for(let i=0;i<4;i++)window.__catalogFrame();
    const st=c.STARS[0],sys=e.getExploredSystem('star:0',null,state.G.t),body=p.planetWorldState(sys,0,st,state.G.t,{});
    const point=s.scene.children.find(x=>x.name==='curated destinations'),slot=c.STARS.filter(x=>!x.bh).indexOf(st),v=point.geometry.attributes.position.array;
-   return {years,star:[st.x,st.y,st.z],epoch:st.epochPosition,source:a.ACTIVE_STARS.includes(st),gravitySelected:a.GRAVITY_STARS.includes(st),systemId:sys.starId,planets:JSON.stringify(sys.planets),body:[body.x,body.y,body.z],point:[(v[slot*3]+point.position.x)/c.K,-(v[slot*3+2]+point.position.z)/c.K,(v[slot*3+1]+point.position.y)/c.K],labels:[...document.querySelectorAll('.starLbl')].filter(x=>getComputedStyle(x).display!=='none').map(x=>({text:x.textContent,left:x.style.left,top:x.style.top})),drawCalls:s.renderer.info.render.calls};
+   const displayed=[(v[slot*3]+point.position.x)/c.K,-(v[slot*3+2]+point.position.z)/c.K,(v[slot*3+1]+point.position.y)/c.K];
+   const observer=[s.camera.position.x/c.K,-s.camera.position.z/c.K,s.camera.position.y/c.K];
+   const errorKm=Math.hypot(...displayed.map((x,i)=>x-[st.x,st.y,st.z][i]));
+   const rayKm=Math.hypot(...observer.map((x,i)=>x-[st.x,st.y,st.z][i]));
+   return {pointErrorPixels:errorKm/Math.max(1,rayKm)*s.viewportSize.pxScale,observer,years,star:[st.x,st.y,st.z],epoch:st.epochPosition,source:a.ACTIVE_STARS.includes(st),gravitySelected:a.GRAVITY_STARS.includes(st),systemId:sys.starId,planets:JSON.stringify(sys.planets),body:[body.x,body.y,body.z],point:[(v[slot*3]+point.position.x)/c.K,-(v[slot*3+2]+point.position.z)/c.K,(v[slot*3+1]+point.position.y)/c.K],labels:[...document.querySelectorAll('.starLbl')].filter(x=>getComputedStyle(x).display!=='none').map(x=>({text:x.textContent,left:x.style.left,top:x.style.top})),drawCalls:s.renderer.info.render.calls};
   },{years,focus,distLy});
   await page.screenshot({path:resolve(out,name+'.png')});report.frames.push({name,...row});await writeFile(resolve(out,'report.json'),JSON.stringify(report,null,2));return row;
  };
@@ -51,7 +56,16 @@ try {
  check('Epoch replay exact',JSON.stringify(zero.star)===JSON.stringify(restored.star));
  check('Selected system stable over 541 Myr',zero.systemId===far.systemId&&zero.planets===far.planets);
  check('Named stars visibly leave epoch coordinates',report.frames.slice(1,5).every(f=>Math.hypot(...f.star.map((x,i)=>x-zero.star[i]))>3e13));
- check('Point/source coherence',report.frames.every(f=>f.source&&Math.hypot(...f.point.map((x,i)=>x-f.star[i]))<Math.max(...f.star.map(Math.abs))*1e-7));
+ check('Point/source coherence under 0.01 pixel',report.frames.every(f=>f.source&&f.pointErrorPixels<.01),report.frames.map(f=>({name:f.name,errorPixels:f.pointErrorPixels})));
+ // Diagnose any stale world-mesh overlay after the near-host to wide-view
+ // transition. This ablation is evidence only; normal frames above stay intact.
+ report.returnMeshInventory=await page.evaluate(()=>{
+  const objects=[];qa.s.scene.traverseVisible(o=>{if(o.isMesh||o.isSprite)objects.push(o);});window.__catalogDiagnosticObjects=objects;
+  const rows=objects.map(o=>({id:o.id,name:o.name,type:o.type,geometry:o.geometry?.type,material:o.material?.type,color:o.material?.color?.getHexString(),opacity:o.material?.opacity,position:o.getWorldPosition(qa.s.camera.position.clone()).toArray(),scale:o.scale.toArray(),radius:o.geometry?.boundingSphere?.radius}));
+  objects.forEach(o=>o.visible=false);window.__catalogRedraw();return rows;
+ });
+ await page.screenshot({path:resolve(out,'diagnostic-return-without-meshes.png')});
+ await page.evaluate(()=>{window.__catalogDiagnosticObjects.forEach(o=>o.visible=true);window.__catalogRedraw();});
  const precision=await page.evaluate(async()=>{
   const {m,c}=qa, H=await import('/src/universe/hygActiveCatalog.js');
   const stars=[...c.STARS.filter(x=>!x.bh),H.hygStarByIndex(117953),H.hygStarByIndex(87)].filter(Boolean);
