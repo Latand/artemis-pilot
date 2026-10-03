@@ -1,3 +1,4 @@
+import { systemAnchor, bindSystemObjectAnchor } from './systemPrecision.js';
 import * as THREE from "three";
 import { K, LY_SCENE } from "../constants.js";
 import { dotTexture, ringTextureProc } from "../textures.js";
@@ -196,7 +197,12 @@ export function updateSystemRender(system, simT, camera, focus = "") {
         if (!p) continue;
         const ppos = planetScenePosition(system, i, simT, slot.group.position);
         if (!ppos) { slot.group.visible = false; slot.orbit.visible = false; continue; }
-        const dCam = camera.position.distanceTo(slot.group.position);
+        const anchor = systemAnchor(system, i, null, simT);
+        bindSystemObjectAnchor(slot.mesh, anchor); bindSystemObjectAnchor(slot.ring, anchor);
+        const eye = camera.userData.systemAnchor;
+        const dCam = anchor && eye && camera.userData.preciseOrbit
+            ? pos.copy(anchor.origin).sub(eye.origin).add(anchor.offset).sub(eye.offset).sub(camera.userData.preciseOrbit.offset).length()
+            : camera.position.distanceTo(slot.group.position);
         const rScene = p.radiusKm * K;
         const rpx = rScene * pxScale / Math.max(rScene, dCam);
         slot.mesh.scale.setScalar(rScene);
@@ -225,6 +231,7 @@ export function updateSystemRender(system, simT, camera, focus = "") {
             moon.position.set(moonOffsets[i][j].x * K, moonOffsets[i][j].z * K, -moonOffsets[i][j].y * K);
             const dMoon = camera.position.distanceTo(moon.getWorldPosition(pos));
             const moonPx = m.R * K * pxScale / Math.max(m.R * K, dMoon);
+            bindSystemObjectAnchor(moon, systemAnchor(system, i, j, simT));
             moon.scale.setScalar(m.R * K);
             const moonRate = Math.sqrt((m.orbitMu || m.mu) / (m.a * m.a * m.a));
             moon.rotation.y = ((m.phase || 0) + moonRate * simT) % TAU;

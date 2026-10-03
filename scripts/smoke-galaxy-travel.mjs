@@ -1,0 +1,138 @@
+import assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
+globalThis.window = {};
+const { GALAXIES, galaxyCenterKm, galaxyWorldKm, galaxyLocalPc } = await import('../src/universe/galaxyRegistry.js');
+const F = await import('../src/universe/foreignStars.js');
+const J = await import('../src/universe/universeJournal.js');
+const A = await import('../src/universe/activeStars.js');
+const P = await import('../src/universe/planetarySystem.js');
+const E = await import('../src/universe/exploredSystem.js');
+const { syncGalacticFrame } = await import('../src/universe/galacticClock.js');
+const { getSeed, setSeed } = await import('../src/universe/galaxy.js');
+const { raDecToWorldUnitInto, PC_KM } = await import('../src/universe/coords.js');
+const { G } = await import('../src/state.js');
+const assertClose = (a, b, tolerance) => assert(Math.abs(a - b) <= tolerance, `${a} != ${b} (tol ${tolerance})`);
+assert.deepEqual(GALAXIES.map(g => g.id), ['mw', 'm31']);
+const observed = raDecToWorldUnitInto(10.68458, 41.26917, [0, 0, 0]).map(v => v * .78343 * 1e6 * PC_KM);
+galaxyCenterKm('m31', 0).forEach((v, i) => assertClose(v / PC_KM, observed[i] / PC_KM, .001));
+const location = [10000, 0, 0], world = galaxyWorldKm('m31', location, 0);
+galaxyLocalPc('m31', world, 0).forEach((v, i) => assertClose(v, location[i], 1e-7));
+const start = performance.now(), rows = F.sampleForeignStars(world, 0), coldMs = performance.now() - start;
+assert(rows.length > 40 && rows.length <= F.FOREIGN_LIMITS.starsPerQuery);
+assert.equal(new Set(rows.map(s => s.id)).size, rows.length);
+const star = rows.find(s => P.generateSystem(s).planets.length > 0), id = star.id, initial = [star.x, star.y, star.z];
+const focus = A.proceduralFocusValue(star), ship = JSON.stringify(G);
+A.refreshActiveStars(...world, focus, 0);
+assert(A.ACTIVE_STARS.some(s => s.id === id));
+assert.equal(A.GRAVITY_STARS.filter(s => s.id === id).length, 1);
+assert(A.GRAVITY_STARS.length <= A.ACTIVE_STAR_CONFIG.gravityLimit);
+const system = E.getExploredSystem(focus), planets = JSON.stringify(system.planets), child = P.planetFocusValue(0, system);
+const descriptor = E.serializeExploredSystem();
+for (const t of [1, 1e5, 1e10, 1e15, -1e13, 0]) {
+    syncGalacticFrame(t);
+    assert.equal(A.activeStarForFocus(focus).id, id);
+    assert.equal(E.getExploredSystem(child, null, t).starId, system.starId);
+    assert.equal(JSON.stringify(E.getExploredSystem(child, null, t).planets), planets);
+}
+initial.forEach((v, i) => assert.equal([star.x, star.y, star.z][i], v));
+for (let i = 0; i < 40; i++) F.sampleForeignStars(galaxyWorldKm('m31', [10000 + i * 100, i * 100, 0], 0), 0);
+assert(F.foreignProviderStats().cells <= F.FOREIGN_LIMITS.cachedCells);
+assert(F.foreignProviderStats().stars <= F.FOREIGN_LIMITS.cachedStars);
+assert.equal(F.foreignStarById(id, 0).id, id);
+E.getExploredSystem('star:0');
+assert.equal(E.restoreExploredSystem(descriptor, child), child);
+assert.equal(JSON.stringify(E.getExploredSystem(child).planets), planets);
+J.recordStarImpulse(id, 100, [1, -2, 3]);
+const saved = JSON.parse(JSON.stringify(J.serializeUniverseJournal()));
+assert.deepEqual(J.starResidualKm(id, 200), [100, -200, 300]);
+J.restoreUniverseJournal(null); J.restoreUniverseJournal(saved);
+assert.deepEqual(J.starResidualKm(id, 99), [0, 0, 0]);
+assert.deepEqual(J.starResidualKm(id, 200), [100, -200, 300]);
+const seed = getSeed(); setSeed(seed + 1); assert.equal(F.foreignStarById(id), null); setSeed(seed);
+assert.equal(F.foreignStarById(id, 0).id, id);
+assert.equal(JSON.stringify(G), ship, 'Camera/system exploration leaves clock and ship untouched');
+console.log(JSON.stringify({ pass: true, coldQueryMs: coldMs, sampledStars: rows.length, persistentStar: id, planets: system.planets.length, limits: F.foreignProviderStats() }, null, 2));
+
+// Review regressions: stale seed pins, ejected bodies, sub-bucket publication,
+// and real kilometre-scale free-camera residuals at an M31 planet.
+J.restoreUniverseJournal(null); A.refreshActiveStars(...world, focus, 0);
+setSeed(seed + 1); A.refreshActiveStars(...world, 'free', 0);
+assert(!A.ACTIVE_STARS.some(s => s.id === id)); assert(!A.GRAVITY_STARS.some(s => s.id === id));
+assert.equal(A.activeStarForFocus(focus), null);
+setSeed(seed); A.refreshActiveStars(...world, 'free', 0); E.restoreExploredSystem(null, 'free');
+const initialForeignTime = A.activeForeignStarsTime(); syncGalacticFrame(1e8);
+assert.notEqual(A.activeForeignStarsTime(), initialForeignTime); assert.equal(A.activeStarsTime(), 0);
+syncGalacticFrame(-1e8); assert.equal(A.activeForeignStarsTime(), -1e8); syncGalacticFrame(0);
+const normal = GALAXIES.find(g => g.id === 'm31').frame.n;
+J.recordStarImpulse(id, 0, normal.map(v => v * 300));
+const ejectedSave = JSON.parse(JSON.stringify(J.serializeUniverseJournal()));
+for (const t of [5e14, 0, -1e8, 5e14]) {
+    const ejected = F.foreignStarById(id, t), position = [ejected.x, ejected.y, ejected.z];
+    assert(F.sampleForeignStars(position, t).some(s => s.id === id), 'Edited star stays discoverable outside disk and through reverse');
+    J.restoreUniverseJournal(null); assert(J.restoreUniverseJournal(ejectedSave));
+    assert(F.sampleForeignStars(position, t).some(s => s.id === id), 'Edited-star discovery survives journal restore');
+}
+J.restoreUniverseJournal(null);
+const { Vector3, PerspectiveCamera } = await import('three');
+const { systemAnchor, prepareSystemCameraAnchor } = await import('../src/render/systemPrecision.js');
+const { moveExplorationTarget, serializeExplorationCamera, restoreExplorationCamera } = await import('../src/universe/explorationCamera.js');
+const { aimExplorationCamera } = await import('../src/universe/cameraNavigation.js');
+const selected = F.foreignStarById(id, 0), sys = P.generateSystem(selected); sys.hostStar = selected;
+const eye = new PerspectiveCamera(), anchor = systemAnchor(sys, 0, null, 0);
+const cam = { tgt: anchor.origin.clone().add(anchor.offset), dist: sys.planets[0].radiusKm * .001 * 3, yaw: 0, pitch: 0, preciseTarget: anchor };
+eye.position.copy(cam.tgt).add(new Vector3(cam.dist, 0, 0));
+eye.userData.systemAnchor = anchor;
+eye.userData.preciseOrbit = { offset: new Vector3(cam.dist, 0, 0), worldPosition: eye.position.clone() };
+const before = anchor.offset.clone(), step = cam.dist / 30 * .65;
+moveExplorationTarget(cam, new Vector3(1, 0, 0), step); prepareSystemCameraAnchor(cam, sys, 'free', 0);
+assertClose(cam.preciseTarget.offset.x - before.x, step, 1e-6);
+const record = JSON.parse(JSON.stringify(serializeExplorationCamera(cam, { x: 0, y: 0, z: 0 })));
+const loadedCam = { tgt: new Vector3() }; assert(restoreExplorationCamera(record, loadedCam, { x: 0, y: 0, z: 0 }));
+assert(loadedCam.preciseTarget.offset.distanceTo(cam.preciseTarget.offset) < 1e-6);
+const toStar = { origin: anchor.origin.clone(), offset: new Vector3() };
+const observerBefore = anchor.offset.clone().add(eye.userData.preciseOrbit.offset);
+aimExplorationCamera(cam, eye, toStar, 100);
+const recreated = new Vector3(Math.cos(cam.pitch)*Math.cos(cam.yaw),Math.sin(cam.pitch),Math.cos(cam.pitch)*Math.sin(cam.yaw)).multiplyScalar(cam.dist);
+assert(recreated.distanceTo(observerBefore) < 1e-6, 'Planet-to-host re-aim preserves the split observer position');
+console.log('review regressions passed: seed cleanup, exact foreign time, ejection/save/reverse, split free movement and camera re-aim');
+
+A.refreshActiveStars(...world, 'free', 0); syncGalacticFrame(0);
+const beforeJournalStamp = A.activeForeignStarsStamp();
+J.recordStarImpulse(id, -1e7, [300, 0, 0]); syncGalacticFrame(0);
+assert.notEqual(A.activeForeignStarsStamp(), beforeJournalStamp, 'Same-clock journal changes invalidate held foreign points');
+J.restoreUniverseJournal(null); syncGalacticFrame(0);
+assert.notEqual(A.activeForeignStarsStamp(), beforeJournalStamp, 'Same-clock restore publishes a new visual revision');
+
+const { Matrix4, Frustum, SphereGeometry, Mesh, MeshBasicMaterial } = await import('three');
+const { bindSystemObjectAnchor } = await import('../src/render/systemPrecision.js');
+const { stabilizeBodyMaterial } = await import('../src/render/relativeBodyFrame.js');
+let falseNegatives = 0;
+for (const radius of [.002, .02, .2, 4]) for (let angle = 0; angle < 100; angle++) {
+    const center = new Vector3(1.7661896067001516e16, 1.3394680470280366e16, -9.65007723058525e15);
+    const camera = new PerspectiveCamera(48, 1, .02, 1e25), distance = Math.max(.25, 9 * radius);
+    const yaw = angle * 2 * Math.PI / 100, pitch = .7 * Math.sin(angle);
+    const offset = new Vector3(Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)).multiplyScalar(distance);
+    camera.position.copy(center).add(offset);
+    camera.quaternion.setFromRotationMatrix(new Matrix4().lookAt(offset, new Vector3(), camera.up)); camera.updateMatrixWorld();
+    camera.userData.preciseOrbit = { offset, worldPosition: camera.position.clone() };
+    camera.userData.systemAnchor = { origin: center, offset: new Vector3() };
+    const object = new Mesh(new SphereGeometry(1), stabilizeBodyMaterial(new MeshBasicMaterial()));
+    object.position.copy(center); object.scale.setScalar(radius); object.updateMatrixWorld();
+    const frustum = new Frustum().setFromProjectionMatrix(new Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+    if (radius < 1 && !frustum.intersectsObject(object)) falseNegatives++;
+    bindSystemObjectAnchor(object, { origin: center, offset: new Vector3() });
+    assert.equal(object.frustumCulled, false, 'Foreign body survives broad phase until accurate GPU clipping');
+    object.material.onBeforeRender(null, null, camera, object.geometry, object, null);
+    assertClose(object.modelViewMatrix.elements[14], -distance, 1e-8);
+    bindSystemObjectAnchor(object, null); assert.equal(object.frustumCulled, true, 'Ordinary systems retain their existing frustum culling');
+    object.geometry.dispose(); object.material.dispose();
+}
+assert(falseNegatives > 100, 'Control reproduces rounded global frustum rejection across oblique views');
+console.log('400 tiny foreign body frustum/model-view checks passed; control false-negatives:', falseNegatives);
+
+const { observerLabelAllowed, LABEL_REACH_KM } = await import('../src/universe/observerLabels.js');
+assert(observerLabelAllowed(1e8));
+assert(!observerLabelAllowed(2.5e6 * 9460730472580.8), 'Solar labels cannot leak into M31 closeups');
+assert(!observerLabelAllowed(2.5e6 * 9460730472580.8, 'stellar'), 'Remote MW guide labels disappear at M31');
+assert(observerLabelAllowed(2.5e6 * 9460730472580.8, 'stellar', true), 'An explicitly selected named destination keeps its guide');
+assert(observerLabelAllowed(LABEL_REACH_KM.stellar * .9, 'stellar'));
