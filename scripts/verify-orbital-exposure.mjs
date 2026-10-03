@@ -11,7 +11,7 @@ const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);};
 const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'orbital-motion-qa',enforce:'pre',transform(source,id){
  if(!id.split('?')[0].endsWith('/src/main.js'))return;
  const marker='const firstFrameT0 = perfStart();';assert.equal(source.split(marker).length,2);
- return source.replace(marker,'G.t=0;G.paused=true;resetEphem();clock.getDelta=()=>window.__qaDt??1/60;'+marker).replace('renderer.setAnimationLoop(frame);','')+`\nwindow.__orbitalFrame=()=>{lastMobileFrame=-Infinity;hudReady=false;nearLabelsReady=false;const start=performance.now();frame();const gl=renderer.getContext();gl.finish();return{ms:performance.now()-start,frameNo,t:G.t};};`;
+ return source.replace(marker,'G.t=0;G.paused=true;resetEphem();clock.getDelta=()=>window.__qaDt??1/60;'+marker).replace('renderer.setAnimationLoop(frame);','')+`\nwindow.__orbitalFrame=()=>{lastMobileFrame=-Infinity;const start=performance.now();frame();const gl=renderer.getContext();gl.finish();return{ms:performance.now()-start,frameNo,t:G.t};};`;
 }}]});
 await server.listen();
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
@@ -23,20 +23,24 @@ try{
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=sun&hidehelp=1&compile=0&np=128`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__orbitalFrame);
  const frames=async(n)=>{for(let i=0;i<n;i++)await page.evaluate(()=>__orbitalFrame());};
- const setup=async(focus,dist,rate)=>{
+ const setup=async(focus,dist,rate,settleFrames=2)=>{
   await page.evaluate(async({focus,dist,rate,mobile})=>{
    const {cam}=await import('/src/scene.js');const {setFocus}=await import('/src/input.js');
    setFocus(focus);cam.dist=dist;cam.distTarget=null;cam.yaw=3.54;cam.pitch=1.2;
    const time=await import('/src/timeCtl.js');time.setWarp(rate||1);time.setPaused(rate===0);__G.gr=false;__qaDt=mobile?1/30:1/60;
-  },{focus,dist,rate,mobile});await frames(2);
+  },{focus,dist,rate,mobile});await frames(settleFrames);
  };
  const capture=async(name)=>{
   const info=await page.evaluate(async()=>{
    const {orbitalExposure}=await import('/src/render/orbitalExposure.js');const {visibleTrajectories:paths}=await import('/src/render/visibleTrajectories.js');const b=await import('/src/bodies.js');const {camera,renderer}=await import('/src/scene.js');const {K,PL}=await import('/src/constants.js');const e=__eph;
-   return {t:__G.t,rate:__G.warp,focus:__G.focus,surfaceActive:b.surfaceExposureState.active,surfaceTurns:{earth:b.earth.material.userData.surfaceRotationExposure?.turns.value,moon:b.moon.material.userData.surfaceRotationExposure?.turns.value},paths:{active:paths.active,samples:paths.samples,ids:paths.ids,note:document.getElementById('motionPathsNote')?.textContent,layers:paths.layers.slice(0,paths.active).map(l=>({id:l.id,model:l.model,horizon:l.horizon,path:l.path.visible,arrow:l.arrow.visible,finite:l.positions.every(Number.isFinite)&&l.arrowPositions.every(Number.isFinite)}))},active:orbitalExposure.active,averaged:orbitalExposure.averaged,samples:orbitalExposure.samples,entries:orbitalExposure.entries.filter(e=>e.line.visible).map(e=>({key:e.key,blend:e.blend,averaged:e.averaged,finite:e.pos.every(Number.isFinite),width:e.line.material.linewidth})),earthMarker:{visible:b.earthG.visible&&b.earthBeacon.visible,opacity:b.earthBeacon.material.opacity,pixels:b.earthBeacon.scale.x* (await import('/src/scene.js')).viewportSize.pxScale/camera.position.distanceTo(b.earthG.position)},earthGuide:{visible:b.earthOrbitRing.visible,opacity:b.earthOrbitRing.material.opacity,centerError:b.earthOrbitRing.position.distanceTo(b.sunPos)},spinExact:b.plSurfaces.every((mesh,i)=>Math.abs(mesh.rotation.y-(PL[i].spin*__G.t)%(Math.PI*2))<1e-12),physicalPositionsExact:b.earthG.position.x===e.earthX*K&&b.moon.position.x===(e.earthX+e.moonX)*K&&b.plGroups.every((p,i)=>p.position.x===(e.earthX+e.plX[i])*K),noteVisible:document.getElementById('orbitalExposureNote')?.getClientRects().length>0,calls:renderer.info.render.calls,geometries:renderer.info.memory.geometries};
+   const {lblE,lblM,lblS}=await import('/src/hud.js');const {viewportSize}=await import('/src/scene.js');
+   const labelRows=[[lblE,b.earthG.position,-8],[lblM,b.moon.position,-8],[lblS,b.sunCore.position,-8],...b.plLabels.map((label,i)=>[label,b.plGroups[i].position,-8]),...b.moonLabels.map((label,i)=>[label,b.moonGroups[i].position,-7])];
+   const labelChecks=labelRows.filter(([label])=>label.style.opacity==='1').map(([label,position,dy])=>{const p=position.clone().project(camera),x=Math.round((p.x*.5+.5)*viewportSize.w+10),y=Math.round((-p.y*.5+.5)*viewportSize.h+dy);const actual=label.style.transform.match(/translate\((-?\d+)px,\s*(-?\d+)px\)/);return{name:label.textContent,current:!!actual&&Number(actual[1])===x&&Number(actual[2])===y};});
+   return {t:__G.t,rate:__G.warp,focus:__G.focus,focusTitle:document.getElementById('exploreObject').textContent,labelChecks,surfaceActive:b.surfaceExposureState.active,surfaceTurns:{earth:b.earth.material.userData.surfaceRotationExposure?.turns.value,moon:b.moon.material.userData.surfaceRotationExposure?.turns.value},paths:{active:paths.active,samples:paths.samples,ids:paths.ids,note:document.getElementById('motionPathsNote')?.textContent,layers:paths.layers.slice(0,paths.active).map(l=>({id:l.id,model:l.model,horizon:l.horizon,path:l.path.visible,arrow:l.arrow.visible,finite:l.positions.every(Number.isFinite)&&l.arrowPositions.every(Number.isFinite)}))},active:orbitalExposure.active,averaged:orbitalExposure.averaged,samples:orbitalExposure.samples,entries:orbitalExposure.entries.filter(e=>e.line.visible).map(e=>({key:e.key,blend:e.blend,averaged:e.averaged,finite:e.pos.every(Number.isFinite),width:e.line.material.linewidth})),earthMarker:{visible:b.earthG.visible&&b.earthBeacon.visible,opacity:b.earthBeacon.material.opacity,pixels:b.earthBeacon.scale.x* (await import('/src/scene.js')).viewportSize.pxScale/camera.position.distanceTo(b.earthG.position)},earthGuide:{visible:b.earthOrbitRing.visible,opacity:b.earthOrbitRing.material.opacity,centerError:b.earthOrbitRing.position.distanceTo(b.sunPos)},spinExact:b.plSurfaces.every((mesh,i)=>Math.abs(mesh.rotation.y-(PL[i].spin*__G.t)%(Math.PI*2))<1e-12),physicalPositionsExact:b.earthG.position.x===e.earthX*K&&b.moon.position.x===(e.earthX+e.moonX)*K&&b.plGroups.every((p,i)=>p.position.x===(e.earthX+e.plX[i])*K),noteVisible:document.getElementById('orbitalExposureNote')?.getClientRects().length>0,calls:renderer.info.render.calls,geometries:renderer.info.memory.geometries};
   });
   report.frames.push({name,...info});
   check(info.paths.active<=10&&info.paths.samples<=330&&info.paths.layers.every(l=>l.finite&&(l.model!=="linear"||l.horizon<=60)),`${name}: bounded visible motion previews and honest linear horizon`);
+  check(info.labelChecks.every(l=>l.current),`${name}: every visible near-body label matches this frame`);
   check(info.spinExact,`${name}: planet spin angles are current on every frame`);
   check(info.physicalPositionsExact,`${name}: all physical render positions remain exact`);
   check(info.entries.every(e=>e.finite)&&info.samples<=31*65,`${name}: finite bounded exposure buffers`);
@@ -48,12 +52,15 @@ try{
  await setup('sun',750000,0);const paused=await capture('00-paused-earth-orbit');
  check(paused.paths.active>0,'Paused Explore defaults to visible motion paths');
  // Real DOM interaction phase: no direct state assignments for these controls.
+ const openedTimeSettings=!(await page.locator('#tdSpeed').isVisible());
+ if(openedTimeSettings)await page.locator('#tdMore').click();
  await page.locator('#tdSpeed').selectOption(String(day));
  for(let i=0;i<8;i++)await page.locator('#tdStepUp').click();
  check(await page.evaluate(()=>__G.warp)===256*day,'Real day/s selection and Faster buttons reach 256 days/s');
  await page.locator('#tdPause').click();check(await page.evaluate(()=>!__G.paused),'Real Play control resumes');
  await frames(1);await page.locator('#tdRev').click();check(await page.evaluate(()=>__G.warp)===-256*day,'Real Reverse control changes direction');
  await page.locator('#tdPause').click();check(await page.evaluate(()=>__G.paused),'Real Pause control freezes playback');
+ if(openedTimeSettings)await page.locator('#tdMore').click();
  await frames(1);await capture('00-real-controls-paused');
  report.interactions={speedSelection:true,play:true,reverse:true,pause:true,driver:'Real DOM events; rendered with the controlled frame clock.'};
 
@@ -82,9 +89,9 @@ try{
  await setup('earth',1500,256*day);for(let i=0;i<4;i++){await frames(1);await capture(`05-earth-moon-${i}`);}
  await setup(3,6500,256*day);for(let i=0;i<4;i++){await frames(1);await capture(`06-jupiter-moons-${i}`);}
  check(report.frames.at(-1).averaged>0,'Fast planetary moons become continuous orbit bands');
- await setup('moon',14,256*day);for(let i=0;i<4;i++){await frames(1);await capture(`07-focused-moon-${i}`);}
+ await setup('moon',14,256*day,1);const firstMoon=await capture('07-transition-moon-first-frame');check(firstMoon.focusTitle.toLowerCase()==='moon','Moon selection updates HUD on the first real frame');for(let i=0;i<4;i++){await frames(1);await capture(`07-focused-moon-${i}`);}
  check(!report.frames.at(-1).entries.some(e=>e.key==='moon'),'Focused resolved Moon remains exact and legible');
- await setup('earth',60,256*day);for(let i=0;i<4;i++){await frames(1);await capture(`08-focused-earth-${i}`);}
+ await setup('earth',60,256*day,1);const firstEarth=await capture('08-transition-earth-first-frame');check(firstEarth.focusTitle.toLowerCase()==='earth','Earth selection updates HUD on the first real frame');for(let i=0;i<4;i++){await frames(1);await capture(`08-focused-earth-${i}`);}
  check(!report.frames.at(-1).entries.some(e=>e.key==='earth'),'Focused resolved Earth remains exact and legible');
  check(report.frames.at(-1).surfaceActive>0&&report.frames.at(-1).surfaceTurns.earth===1,'256 days/s resolves Earth rotation as phase-independent longitude exposure');
  await setup('earth',60,-256*day);await capture('08-earth-reverse');

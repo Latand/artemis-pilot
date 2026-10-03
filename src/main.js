@@ -1359,6 +1359,7 @@ let beltCursor = 0, kuiperCursor = 0;
 const arrC = [0, 0, 0];
 const fv = [0, 0, 0];
 let placed = false, frameNo = 0, grB = 0, exAcc = 0, exAnyAlive = false, hudReady = false, nearLabelsReady = false, nearVisualReady = false;
+let hudLastFocus, hudLastMode, hudLastWarp, hudLastPaused;
 const DIR_FADE_START_KMS = 55, DIR_FADE_END_KMS = 90;
 let prevHeadingVis = null, prevVelAngleVis = null;
 function angleDelta(a, b) {
@@ -1542,10 +1543,10 @@ function hudCadence(cabinActive, aMag) {
     return G.warp > 600 ? 6 : 2;
 }
 function nearLabelCadence() {
-    if (renderQuality.mobile) return G.warp > 600 ? 6 : G.warp > 60 ? 4 : 2;
-    if (G.warp > 3600) return 6;
-    if (G.warp > 600) return 4;
-    return 2;
+    // This is the bounded local-body list, not the star catalog. Positions
+    // must follow every rendered body/camera frame, especially after focus
+    // changes and at high warp; setLabelState avoids unchanged DOM writes.
+    return 1;
 }
 const BODY_SURFACE_MIN_PX_DESKTOP = 1.35, BODY_SURFACE_MIN_PX_MOBILE = 2.0;
 const BODY_DETAIL_MIN_PX = 10;
@@ -2019,8 +2020,12 @@ function frameStep() {
     cam.dist = Math.max(minD, cam.dist);
     const cabinActive = updateCabinHUD(cosmicView, oi);
     const hudEvery = hudCadence(cabinActive, aMag);
-    const hudDue = !hudReady || frameNo % hudEvery === 0;
-    if (hudDue) hudReady = true;
+    const hudInputChanged = hudLastFocus !== G.focus || hudLastMode !== G.uiMode || hudLastWarp !== G.warp || hudLastPaused !== G.paused;
+    const hudDue = !hudReady || hudInputChanged || frameNo % hudEvery === 0;
+    if (hudDue) {
+        hudReady = true; hudLastFocus = G.focus; hudLastMode = G.uiMode;
+        hudLastWarp = G.warp; hudLastPaused = G.paused;
+    }
     if (VR.active) {
         // rigs follow the ship (or the god transform); the desktop camera is
         // re-pointed at the VR eye so camera-dependent systems keep working
