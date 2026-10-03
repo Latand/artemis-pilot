@@ -56,7 +56,7 @@ jobs:
         env:
           # Freeze the integrated #55 foundation used by this slice. A moving
           # feature-branch base must not silently introduce unrelated fixes.
-          BASE_SHA: 1d8044568c486811b9879d4f571f8a6096accef0
+          BASE_SHA: 09863eedda25eef36d79e9cf88daa4ff3e377875
         run: |
           git worktree add --detach "$RUNNER_TEMP/travel-base" "$BASE_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/travel-base/node_modules"

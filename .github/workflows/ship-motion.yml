@@ -6,6 +6,7 @@ on:
       - 'src/curvatureDrive.js'
       - 'src/audio.js'
       - 'scripts/*curvature-drive*'
+      - 'scripts/*context-*'
       - 'src/warpRiver.js'
       - 'src/river.js'
       - 'src/main.js'
@@ -30,7 +31,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-ship-model.mjs && node scripts/smoke-ship-motion.mjs && node scripts/smoke-curvature-drive.mjs
+      - run: node scripts/smoke-context-recovery-qa.mjs && node scripts/smoke-ship-model.mjs && node scripts/smoke-ship-motion.mjs && node scripts/smoke-curvature-drive.mjs
       - run: npm test && npm run smoke:science-copy && npm run smoke:river-visual && npm run smoke:physics3d && npm run smoke:xrperf && npm run smoke:reltravel && npm run smoke:relview && npm run smoke:gravity-inspector
       - run: npm run build
   capture:

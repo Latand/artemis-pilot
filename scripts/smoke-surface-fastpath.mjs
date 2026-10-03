@@ -3,6 +3,15 @@ import * as THREE from 'three';
 import { earthSurfaceMaterial, updateEarthSurfaceExposure } from '../src/render/planetAppearance.js';
 import { surfaceExposurePreparation } from '../src/render/surfaceRotationExposure.js';
 import { applyTerrellToMaterial } from '../src/relView.js';
+import { coldExactPrograms, oneActiveExposureProgram } from './surface-fastpath-policy.mjs';
+
+const exactPrograms={variant:false,programId:2,programCacheKey:'lambert,alpha,light1',cachedPrograms:[{id:1,key:'lambert,noalpha,light1'},{id:2,key:'lambert,alpha,light1'}]};
+const averagedPrograms={variant:true,programId:3,programCacheKey:'lambert,SURFACE_ROTATION_EXPOSURE,1,alpha,light1',cachedPrograms:[...exactPrograms.cachedPrograms,{id:3,key:'lambert,SURFACE_ROTATION_EXPOSURE,1,alpha,light1'}]};
+assert(coldExactPrograms(exactPrograms),'historical inactive material features do not imply a prewarmed exposure');
+assert(oneActiveExposureProgram(exactPrograms,averagedPrograms),'exactly one matching active exposure program is added');
+assert(!coldExactPrograms({...exactPrograms,cachedPrograms:averagedPrograms.cachedPrograms}),'any pre-existing averaged program invalidates cold evidence');
+assert(!oneActiveExposureProgram(exactPrograms,{...averagedPrograms,programCacheKey:'lambert,SURFACE_ROTATION_EXPOSURE,1,alpha,light2'}),'different lighting features do not pass as the same program pair');
+assert(!oneActiveExposureProgram(exactPrograms,{...averagedPrograms,cachedPrograms:[...averagedPrograms.cachedPrograms,{id:4,key:'extra'}]}),'extra program growth fails');
 
 const map = new THREE.DataTexture(new Uint8Array(512 * 256 * 4).fill(128), 512, 256, THREE.RGBAFormat);
 map.needsUpdate = true;

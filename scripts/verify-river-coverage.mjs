@@ -74,11 +74,22 @@ try{
  // 15,376-particle allocation do not switch to mobile. Key evidence uses the original
  // full viewport with exactly the same aspect ratio and one fresh app draw.
  const setViewportStable=async size=>{
+  // Playwright polls the predicate's immediate truthiness: an async
+  // predicate returns a truthy Promise even when it resolves to false.
+  // Import first, then keep every layout/renderer check synchronous.
+  await page.evaluate(async()=>{window.__coverageScene??=await import('/src/scene.js');});
   await page.setViewportSize(size);
   // ResizeObserver runs after layout, independently of the disabled app
   // loop. Rendering before it fires leaves a freshly cleared canvas in the
   // screenshot. Wait for the real renderer/camera viewport to catch up.
-  await page.waitForFunction(async size=>{const s=await import('/src/scene.js');return s.viewportSize.w===size.width&&s.viewportSize.h===size.height;},size);
+  await page.waitForFunction(size=>{
+   const s=window.__coverageScene,pr=s.renderer.getPixelRatio();
+   return s.cvHost.clientWidth===size.width&&s.cvHost.clientHeight===size.height
+    &&s.viewportSize.w===size.width&&s.viewportSize.h===size.height
+    &&Math.abs(s.camera.aspect-size.width/size.height)<1e-9
+    &&s.renderer.domElement.width===Math.floor(size.width*pr)
+    &&s.renderer.domElement.height===Math.floor(size.height*pr);
+  },size);
  };
  const screenshot=async name=>{
   await setViewportStable(captureViewport);

@@ -203,7 +203,9 @@ try {
   await page.waitForFunction(() => window.__G.uiMode === "direct");
   const direct = await dockGeometry(page);
   check(direct.dockDisplay !== "none", "DIRECT shows the Time Dock", direct);
-  check(direct.hudDisplay !== "none" && direct.overlap === 0, "DIRECT keeps the Time Dock clear of the flight strip", direct);
+  // Create deliberately hides the flight strip in the production UI contract
+  // (explorerUI.css, established before this motion change).
+  check(direct.hudDisplay === "none" && direct.overlap === 0, "DIRECT keeps the flight strip hidden and the Time Dock clear", direct);
   check(direct.scaleDisplay !== "none" && direct.scaleOpacity === "1" && direct.scaleOverlap === 0,
     "DIRECT keeps the visible cosmic scale clear of the Time Dock", direct);
 
@@ -211,8 +213,18 @@ try {
   await page.waitForFunction(() => document.body.classList.contains("mode-xr"));
   const xr = await dockGeometry(page);
   check(xr.dockDisplay !== "none", "simulated XR shows the Time Dock", xr);
-  check(xr.hudDisplay !== "none" && xr.overlap === 0, "simulated XR keeps the Time Dock clear of the flight strip", xr);
+  check(xr.hudDisplay === "none" && xr.overlap === 0, "XR entered from DIRECT retains the hidden flight strip", xr);
   await page.evaluate(async () => (await import("/src/uiMode.js")).setXrPresenting(false));
+  await page.evaluate(async () => (await import("/src/uiMode.js")).setUiMode("pilot", false));
+  await page.waitForFunction(() => window.__G.uiMode === "pilot");
+  await page.evaluate(async () => (await import("/src/uiMode.js")).setXrPresenting(true));
+  await page.waitForFunction(() => document.body.classList.contains("mode-xr"));
+  const pilotXr = await dockGeometry(page);
+  check(pilotXr.dockDisplay !== "none" && pilotXr.hudDisplay !== "none" && pilotXr.overlap === 0,
+    "XR entered from PILOT keeps its visible flight strip clear of the Time Dock", pilotXr);
+  await page.evaluate(async () => {
+    const mode = await import("/src/uiMode.js"); mode.setXrPresenting(false); mode.setUiMode("direct", false);
+  });
 
   await page.evaluate(() => window.__cinematic.setCleanRender(true));
   await page.waitForFunction(() => document.body.classList.contains("mode-clean"));
