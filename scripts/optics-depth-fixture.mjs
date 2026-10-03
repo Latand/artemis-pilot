@@ -23,25 +23,44 @@ export async function verifyDepthCoverageFixture(page) {
         gl.uniformMatrix4fv(location('uViewToRing'),false,new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,-16.5,0,110,1]));
         gl.uniformMatrix3fv(location('uRingMapTransform'),false,new Float32Array([1,0,0,0,1,0,0,0,1]));
         texture(2,gl.RGBA8,gl.UNSIGNED_BYTE,new Uint8Array(256*256*4)); // a real zero-alpha ring gap
+        const setBodyProxy = (z,radius) => {
+            const ring=window.qa.ring;
+            const matrix=window.qa.s.camera.matrixWorld.clone().makeTranslation(.15*z,0,-z);
+            const inverse=matrix.clone().invert(),projection=matrix.clone().identity();
+            const a=ring.ringSamplingUniforms.uRingBodyConicA.value.clone();
+            const b=ring.ringSamplingUniforms.uRingBodyConicB.value.clone();
+            const center=ring.ringSamplingUniforms.uRingBodyConicCenter.value.clone();
+            const bounds=ring.ringSamplingUniforms.uRingBodyBounds.value.clone();
+            ring.bodySilhouetteConic(a,b,center,inverse,matrix,projection,radius,256,256);
+            ring.bodyUvBounds(bounds,matrix,projection,radius,256,256,1);
+            gl.uniform3fv(location('uRingBodyConicA'),a.toArray());
+            gl.uniform4fv(location('uRingBodyConicB'),b.toArray());
+            gl.uniform3fv(location('uRingBodyConicCenter'),center.toArray());
+            gl.uniform4fv(location('uRingBodyBounds'),bounds.toArray());
+            gl.uniform2f(location('uRingBodyDepth'),z,radius);
+            gl.uniformMatrix4fv(location('uViewToRing'),false,inverse.elements);
+        };
         const results=[],images={};
-        for(const name of ['near-aa','ring-gap','foreground','unrelated-distant']){
+        for(const name of ['near-aa','ring-gap','foreground','unrelated-distant','foreground-aa']){
             const colour=new Uint8Array(256*256*4),depth=new Float32Array(256*256*4).fill(1);
-            const z=name==='near-aa'?110:name==='foreground'?50:1e5;
-            const cx=name==='near-aa'||name==='foreground' ? .15 : name==='unrelated-distant' ? .5 : .19,r=.025*z;
+            const z=name==='near-aa'?110:name.startsWith('foreground')?50:1e5;
+            const cx=name==='near-aa'||name.startsWith('foreground') ? .15 : name==='unrelated-distant' ? .5 : .19,r=.025*z;
             for(let y=0;y<256;y++)for(let x=0;x<256;x++){
                 const px=(x+.5)/128-1,py=(y+.5)/128-1;
                 const a=px*px+py*py+1,b=-cx*z*px-z,d=b*b-a*((cx*z)**2+z*z-r*r),i=(y*256+x)*4;
                 colour[i+3]=255;
                 if(d>=0){const t=(-b-Math.sqrt(d))/a;colour[i]=colour[i+2]=255;depth[i]=1e6*(t-1)/(t*(1e6-1));}
             }
-            if(name==='near-aa')for(let y=1;y<255;y++)for(let x=1;x<255;x++){
+            if(name==='near-aa'||name==='foreground-aa')for(let y=1;y<255;y++)for(let x=1;x<255;x++){
                 const i=(y*256+x)*4;
                 if(colour[i]&&[-4,4,-256*4,256*4].some(d=>!colour[i+d])){depth[i]=1;colour[i]=colour[i+2]=230;}
             }
             texture(0,gl.RGBA8,gl.UNSIGNED_BYTE,colour);texture(1,gl.RGBA32F,gl.FLOAT,depth);
+            const bodyZ=name.startsWith('foreground')?50:110,bodyRadius=bodyZ*.025;
+            setBodyProxy(bodyZ,bodyRadius);
             const samples=[];
             for(const enabled of [false,true]){
-                gl.uniform1f(location('uRingBodyRadius'),enabled?2.75:0);
+                gl.uniform1f(location('uRingBodyRadius'),enabled?bodyRadius:0);
                 gl.drawArrays(gl.TRIANGLES,0,3);
                 const pixels=new Uint8Array(256*256*4);gl.readPixels(0,0,256,256,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
                 if(gl.getError()!==gl.NO_ERROR)throw new Error('Depth fixture GL error');
@@ -49,9 +68,11 @@ export async function verifyDepthCoverageFixture(page) {
                 samples.push({enabled,detached,pixels});images[`${name}-${enabled?'on':'off'}`]=canvas.toDataURL('image/png');
             }
             const same=samples[0].pixels.every((x,i)=>x===samples[1].pixels[i]);
-            if(name==='near-aa'&&!(samples[0].detached>0&&samples[1].detached===0))throw new Error('AA silhouette fixture did not eliminate detached edges');
-            if(name!=='near-aa'&&!same)throw new Error(`Coverage lookup changed protected fixture: ${name}`);
-            results.push({name,same,detachedOff:samples[0].detached,detachedOn:samples[1].detached});
+            if((name==='near-aa'||name==='foreground-aa')&&!(samples[0].detached>0&&samples[1].detached===0))throw new Error('AA silhouette fixture did not eliminate detached edges');
+            if(name!=='near-aa'&&name!=='foreground-aa'&&!same)throw new Error(`Coverage lookup changed protected fixture: ${name}`);
+            const foregroundAaRestored=name!=='foreground-aa'||samples[1].pixels.every((x,i)=>x===colour[i]);
+            if(!foregroundAaRestored)throw new Error('AA foreground edge pixels were lost or shifted');
+            results.push({name,same,foregroundAaRestored,detachedOff:samples[0].detached,detachedOn:samples[1].detached});
         }
         textures.forEach(t=>gl.deleteTexture(t));gl.deleteBuffer(buffer);gl.deleteProgram(program);gl.deleteShader(vertex);gl.deleteShader(fragment);
         gl.getExtension('WEBGL_lose_context')?.loseContext();

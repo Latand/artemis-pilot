@@ -17,6 +17,9 @@ export const ringSamplingUniforms = {
     uRingBodyRadius: { value: 0 },
     uRingBodyDepth: { value: new THREE.Vector2() },
     uRingBodyBounds: { value: new THREE.Vector4() },
+    uRingBodyConicA: { value: new THREE.Vector3() },
+    uRingBodyConicB: { value: new THREE.Vector4() },
+    uRingBodyConicCenter: { value: new THREE.Vector3() },
 };
 let samplingCamera = null;
 let samplingNear = 0;
@@ -35,6 +38,46 @@ export function bodyUvBounds(out, matrix, projection, radius, width, height, nea
     const bottom=Math.min((y-ry)/a,(y-ry)/b),top=Math.max((y+ry)/a,(y+ry)/b);
     return out.set(l*p[0]*.5+.5-3/width,bottom*p[5]*.5+.5-3/height,
                    r*p[0]*.5+.5+3/width,top*p[5]*.5+.5+3/height);
+}
+
+// The transformed sphere silhouette is a conic in image space. Form the
+// ray/sphere discriminant once per actual ring draw, rather than repeatedly
+// per output pixel in the lens solver. Coordinates stay near the body's
+// projected centre to avoid cancellation for an off-axis source.
+export function bodySilhouetteConic(a, b, center, inverse, matrix, projection, radius, width, height) {
+    const m=matrix.elements,v=inverse.elements,p=projection.elements;
+    const z=-m[14],rawX=z>0 ? m[12]*p[0]/z*.5+.5 : .5,rawY=z>0 ? m[13]*p[5]/z*.5+.5 : .5;
+    // A near-clipped, side-on body can project its centre thousands of
+    // viewports away. Keep the polynomial expansion inside the image so
+    // float32 uv-centre subtraction cannot erase the visible silhouette.
+    const cx=Math.max(0,Math.min(1,rawX)),cy=Math.max(0,Math.min(1,rawY));
+    const centered=z>0&&cx===rawX&&cy===rawY;
+    const ax=v[0]*2/p[0],ay=v[1]*2/p[0],az=v[2]*2/p[0];
+    const bx=v[4]*2/p[5],by=v[5]*2/p[5],bz=v[6]*2/p[5];
+    const ox=v[12],oy=v[13],oz=v[14],rr=radius*radius;
+    const rx=centered ? -ox/z : ax*(cx-.5)+bx*(cy-.5)-v[8];
+    const ry=centered ? -oy/z : ay*(cx-.5)+by*(cy-.5)-v[9];
+    const rz=centered ? -oz/z : az*(cx-.5)+bz*(cy-.5)-v[10];
+    // D = R²|ray|² - |origin × ray|² avoids subtracting two enormous
+    // almost-equal dot products for a distant, small projected body.
+    const cax=oy*az-oz*ay,cay=oz*ax-ox*az,caz=ox*ay-oy*ax;
+    const cbx=oy*bz-oz*by,cby=oz*bx-ox*bz,cbz=ox*by-oy*bx;
+    const crx=centered ? 0 : oy*rz-oz*ry,cry=centered ? 0 : oz*rx-ox*rz,crz=centered ? 0 : ox*ry-oy*rx;
+    const xx=rr*(ax*ax+ay*ay+az*az)-(cax*cax+cay*cay+caz*caz);
+    const xy=rr*(ax*bx+ay*by+az*bz)-(cax*cbx+cay*cby+caz*cbz);
+    const yy=rr*(bx*bx+by*by+bz*bz)-(cbx*cbx+cby*cby+cbz*cbz);
+    const lx=rr*(ax*rx+ay*ry+az*rz)-(cax*crx+cay*cry+caz*crz);
+    const ly=rr*(bx*rx+by*ry+bz*rz)-(cbx*crx+cby*cry+cbz*crz);
+    const cc=rr*(rx*rx+ry*ry+rz*rz)-(crx*crx+cry*cry+crz*crz);
+    const scale=Math.max(Math.abs(xx),Math.abs(xy),Math.abs(yy),Math.abs(lx),Math.abs(ly),Math.abs(cc),1e-30);
+    a.set(xx/scale,xy/scale,yy/scale);
+    // Quadratic remainder bounds every point within two Euclidean pixels.
+    // This keeps the band conservative even for a tiny or elongated sphere.
+    const remainder=4*Math.max(Math.abs(a.x)/(width*width)+Math.abs(a.y)/(width*height),Math.abs(a.z)/(height*height)+Math.abs(a.y)/(width*height));
+    b.set(lx/scale,ly/scale,cc/scale,remainder);
+    const depthExtent=radius*Math.hypot(m[2],m[6],m[10]);
+    const depthPad=2*Math.max(0,z+depthExtent)*Math.max(2/(width*p[0]),2/(height*p[5]));
+    center.set(cx,cy,depthPad);
 }
 
 export function beginRingSamplingDepth(camera = null) {
@@ -69,6 +112,8 @@ export function trackRingSamplingMaterial(material, bodyRadius = 0) {
         renderer.getDrawingBufferSize(drawingBuffer);
         bodyUvBounds(u.uRingBodyBounds.value,object.modelViewMatrix,camera.projectionMatrix,
             bodyRadius,drawingBuffer.x,drawingBuffer.y,camera.near);
+        bodySilhouetteConic(u.uRingBodyConicA.value,u.uRingBodyConicB.value,u.uRingBodyConicCenter.value,
+            u.uViewToRing.value,object.modelViewMatrix,camera.projectionMatrix,bodyRadius,drawingBuffer.x,drawingBuffer.y);
         u.uRingPresent.value = 1;
     };
     return material;
@@ -84,6 +129,8 @@ export const RING_SAMPLING_DEPTH_GLSL = /* glsl */`
     uniform float uRingBodyRadius;
     uniform vec2 uRingBodyDepth;
     uniform vec4 uRingBodyBounds;
+    uniform vec3 uRingBodyConicA, uRingBodyConicCenter;
+    uniform vec4 uRingBodyConicB;
     float bodyCoverageSourceDepth(vec2 uv, float opaqueZ) {
         if (opaqueZ < 1e29 || uRingPresent == 0 || uRingBodyRadius <= 0.0) return opaqueZ;
         if (any(lessThan(uv,uRingBodyBounds.xy)) || any(greaterThan(uv,uRingBodyBounds.zw))) return opaqueZ;
@@ -91,29 +138,21 @@ export const RING_SAMPLING_DEPTH_GLSL = /* glsl */`
         // whose resolved opaque depth is clear. Search only the immediate
         // two inward pixels on the DRAWN Saturn ellipsoid's silhouette;
         // never dilate depth across the sky, ring gaps or unrelated bodies.
-        vec3 origin = uViewToRing[3].xyz;
-        mat3 inverseBasis = mat3(uViewToRing);
-        vec3 ray = inverseBasis * vec3((uv*2.0-1.0)/uRingProjection,-1.0);
-        float t = -dot(origin,ray)/max(dot(ray,ray),1e-20);
-        if (t <= uNear || t >= uFar) return opaqueZ;
         vec2 texel = 1.0/vec2(textureSize(tDepth,0));
-        float footprint = t*max(length(inverseBasis[0])*2.0*texel.x/uRingProjection.x,
-                                length(inverseBasis[1])*2.0*texel.y/uRingProjection.y);
-        if (abs(length(origin+ray*t)-uRingBodyRadius) > footprint*2.0) return opaqueZ;
-        float viewFootprint = t*max(2.0*texel.x/uRingProjection.x,2.0*texel.y/uRingProjection.y);
-        // Gradient of squared local distance at the closest ray point:
-        // its derivative through t vanishes because closest is normal to ray.
-        // Step inward in PIXEL coordinates, preserving nonuniform/TDE axes.
-        vec3 closest = origin+ray*t;
-        vec2 gradient = vec2(dot(closest,inverseBasis[0])*texel.x/uRingProjection.x,
-                             dot(closest,inverseBasis[1])*texel.y/uRingProjection.y);
+        vec2 p = uv-uRingBodyConicCenter.xy;
+        vec3 a = uRingBodyConicA;
+        vec2 halfGradient = vec2(a.x*p.x+a.y*p.y,a.y*p.x+a.z*p.y)+uRingBodyConicB.xy;
+        float value = dot(p,halfGradient+uRingBodyConicB.xy)+uRingBodyConicB.z;
+        vec2 gradient = halfGradient*texel;
+        if (abs(value) > 4.0*length(gradient)+uRingBodyConicB.w) return opaqueZ;
+        // Positive discriminant is inside; its gradient points inward.
         vec2 stepUv = texel*gradient/max(length(gradient),1e-20);
-        float depth = texture2D(tDepth,clamp(uv-stepUv,0.0,1.0)).x;
+        float depth = texture2D(tDepth,clamp(uv+stepUv,0.0,1.0)).x;
         float z = uNear*uFar/max(uFar-depth*(uFar-uNear),1e-20);
-        if (depth < 1.0 && abs(z-uRingBodyDepth.x) <= uRingBodyDepth.y+viewFootprint*2.0) return z;
-        depth = texture2D(tDepth,clamp(uv-stepUv*2.0,0.0,1.0)).x;
+        if (depth < 1.0 && abs(z-uRingBodyDepth.x) <= uRingBodyDepth.y+uRingBodyConicCenter.z) return z;
+        depth = texture2D(tDepth,clamp(uv+stepUv*2.0,0.0,1.0)).x;
         z = uNear*uFar/max(uFar-depth*(uFar-uNear),1e-20);
-        if (depth < 1.0 && abs(z-uRingBodyDepth.x) <= uRingBodyDepth.y+viewFootprint*2.0) return z;
+        if (depth < 1.0 && abs(z-uRingBodyDepth.x) <= uRingBodyDepth.y+uRingBodyConicCenter.z) return z;
         return opaqueZ;
     }
     float ringSourceDepth(vec2 uv, float opaqueZ) {

@@ -117,8 +117,18 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
                     vec2 sampleUv = clamp(vec2(q.x/uAspect,q.y)*.5+.5,0.0,1.0);
                     dq = texture2D(tDepth,sampleUv).x;
                     sourceZ = dq < 1.0 ? uNear*uFar/(uFar-dq*(uFar-uNear)) : 1e30;
-                    sourceZ = ringSourceDepth(sampleUv, bodyCoverageSourceDepth(sampleUv, sourceZ));
+                    // The last lookup stays opaque until both endpoint
+                    // sampling hints are resolved together below.
+                    if (iteration < 2) sourceZ = ringSourceDepth(sampleUv, sourceZ);
                 }
+            }
+            // The initial pixel already protected foreground coverage. Resolve the
+            // other endpoint at the final sampled ray: incoherence then rejects a colour/depth
+            // mismatch without inserting expensive silhouette work into each
+            // tentative iteration. Actual opaque dz/dq stay untouched.
+            if (uHasDepth == 1) {
+                vec2 finalUv = clamp(vec2(q.x/uAspect,q.y)*.5+.5,0.0,1.0);
+                sourceZ = ringSourceDepth(finalUv,bodyCoverageSourceDepth(finalUv,sourceZ));
             }
             // Validate the FINAL sampled depth, not the previous step. A
             // silhouette first encountered on the last lookup can otherwise

@@ -1,0 +1,76 @@
+name: Optical endpoint mobile preflight
+on:
+  push:
+    branches: [diagnostic/optics-endpoint-preflight]
+permissions:
+  contents: read
+jobs:
+  mobile-direct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-optics-conic.mjs && node scripts/smoke-optics-crossing.mjs && node scripts/smoke-ring-sampling-depth.mjs && node scripts/smoke-hole-appearance.mjs && node scripts/smoke-hole-precision.mjs && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact full baseline source
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/optics-before-edge" 531da641fe5d61b4cdc7130285418c218299d263
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/optics-before-edge/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/optics-before-edge" >> "$GITHUB_ENV"
+      - name: Strict frozen pixels and depth controls
+        id: pixels
+        continue-on-error: true
+        env:
+          DEVICE: mobile
+          BLOOM: '0'
+          ARTEMIS_EVIDENCE: evidence/optics-crossing
+        run: node scripts/probe-optics-crossing.mjs
+      - name: Complete full-source five-trial cost
+        id: performance
+        continue-on-error: true
+        env:
+          OPTICS_BENCH: '1'
+          DEVICE: mobile
+          BLOOM: '0'
+          PAIRED_CPU_PROFILE: '0'
+        run: |
+          node scripts/benchmark-explored-systems.mjs --validate
+          node scripts/benchmark-explored-systems.mjs . evidence/optics-paired
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: endpoint-preflight-metrics
+          path: |
+            evidence/optics-crossing/report.json
+            evidence/optics-crossing/depth-fixture-*.png
+            evidence/optics-paired/report.json
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: endpoint-preflight-saturn
+          path: evidence/optics-crossing/saturn-*.png
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: endpoint-preflight-disk
+          path: evidence/optics-crossing/disk-*.png
+          if-no-files-found: error
+          retention-days: 14
+      - name: Require both unchanged gates
+        if: always()
+        env:
+          PIXEL_OUTCOME: ${{ steps.pixels.outcome }}
+          PERFORMANCE_OUTCOME: ${{ steps.performance.outcome }}
+        run: test "$PIXEL_OUTCOME" = success && test "$PERFORMANCE_OUTCOME" = success
