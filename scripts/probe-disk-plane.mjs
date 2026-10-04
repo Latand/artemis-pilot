@@ -13,6 +13,7 @@ import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled,
     recoveredGpuIsHealthy, pausedRecoveryPassed } from './context-recovery-qa.mjs';
 import { atomicDiskReport, initializeDiskReport, finalizeDiskProbe } from './disk-plane-finalize.mjs';
 import { installNativeRingProof } from './native-ring-proof.mjs';
+import { installLensResizeObserver, wantsResizeDiagnostic, RESIZE_DIAGNOSTIC_PLAN, captureWithResizeEvidence, removeResizeObservers } from './lens-resize-observer.mjs';
 
 const candidateRoot = resolve(process.env.CANDIDATE_ROOT || fileURLToPath(new URL('..', import.meta.url)));
 const baselineRoot = process.env.BASE_ROOT && resolve(process.env.BASE_ROOT);
@@ -28,7 +29,7 @@ const matrixEntry = `${device}-${bloom ? 'bloom' : 'direct'}`;
 const hookChecks = [validateDiskPlaneHooks(candidateRoot)];
 if (baselineRoot) hookChecks.unshift(validateDiskPlaneHooks(baselineRoot));
 if (hooksOnly) {
-    console.log(JSON.stringify({ mode: 'hooks-only', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, browserStarted: false,
+    console.log(JSON.stringify({ mode: 'hooks-only', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, resizeDiagnosticPlan: RESIZE_DIAGNOSTIC_PLAN, browserStarted: false,
         sourceBound: false, runtimeAcceptance: false }, null, 2));
     process.exit(0);
 }
@@ -39,7 +40,7 @@ const bindSources = () => ({ main: verifyDiskSource(baselineRoot, 'A', diskInput
     candidate: verifyDiskSource(candidateRoot, 'B', process.env.EXPECTED_CANDIDATE_REVISION) });
 const sourceBindingBefore = bindSources();
 if (validateOnly) {
-    console.log(JSON.stringify({ mode: 'source-validation', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, sourceBindingBefore,
+    console.log(JSON.stringify({ mode: 'source-validation', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, resizeDiagnosticPlan: RESIZE_DIAGNOSTIC_PLAN, sourceBindingBefore,
         sourceBindingAfter: bindSources(), browserStarted: false, runtimeAcceptance: false }, null, 2));
     process.exit(0);
 }
@@ -53,6 +54,7 @@ const viewport = mobile ? { width: 390, height: 700 } : { width: 960, height: 64
 const alternateViewport = mobile ? { width: 430, height: 760 } : { width: 840, height: 600 };
 const report = { schema: 1, matrixEntry, matrix: MATRIX, mobile, bloom, completed: false,
     operationBudget: QA_OPERATION_BUDGET,
+    resizeDiagnosticPlan: RESIZE_DIAGNOSTIC_PLAN,
     sourceBindingBefore, sourceBindingAfter: null, diagnosticOnly: true,
     scope: 'Issue50 disk-plane continuity only; exact main paired with disk-only candidate.',
     ringEvidence: 'Actual ring draw program/sampler/filter state plus disk-off/TDE-off unchanged pixels. No alpha-gap or source-depth repair claim.',
@@ -62,7 +64,7 @@ const report = { schema: 1, matrixEntry, matrix: MATRIX, mobile, bloom, complete
         'This diagnostic is not a performance benchmark or a full-source acceptance run.'],
     omissions: ['unrelated cosmic background, HYG/tier-1 catalogs, merger worker, gravity-flow overlay'],
     variants: {}, pairedControls: [] };
-let browser, server, originalError, hadOriginalError=false;
+let browser, server, observedPage, originalError, hadOriginalError=false;
 const mainControls = new Map();
 const flush = options => atomicDiskReport(resolve(out, 'report.json'),report,options);
 
@@ -87,7 +89,7 @@ function configureCase({ scenario, pitch }) {
 
 // Every readback comes from the production direct/composer path. The only
 // bloom-disabled draws are the two foreground opacity comparisons.
-function captureCase({ scenario, pitch, includeImages = true }) {
+function captureCase({ scenario, pitch, includeImages = true, resizeDiagnosticPhase = null }) {
     const { s, st, b, bh, c, sat, tde, lens, hole, bloom, rings } = window.qa;
     const foreground = scenario === 'saturn-foreground-lens';
     const m = bh.BH_META[0], disk = m.optics.disk, state = tde.tidalState(sat);
@@ -126,7 +128,9 @@ function captureCase({ scenario, pitch, includeImages = true }) {
         }
     };
     try {
-        const observed = scenario.startsWith('saturn-') ? window.__diskPlaneNativeRingProof(s.renderer, rings, () => draw()) : { value: draw(), proof: null };
+        const productionCapture = () => scenario.startsWith('saturn-') ? window.__diskPlaneNativeRingProof(s.renderer, rings, () => draw()) : { value: draw(), proof: null };
+        const diagnostic = resizeDiagnosticPhase ? window.__diskPlaneObserveLensResize(resizeDiagnosticPhase, productionCapture) : null;
+        const observed = diagnostic ? diagnostic.value : productionCapture();
         const production = observed.value, noLens = draw({ lensed: false }), noTides = draw({ tides: false });
         const plain = draw({ lensed: false, tides: false }), noDisk = draw({ diskOn: false });
         const ringControl = scenario.startsWith('saturn-') ? draw({ diskOn: false, tides: false }) : null;
@@ -171,7 +175,7 @@ function captureCase({ scenario, pitch, includeImages = true }) {
             generateMipmaps: ring.material.map.generateMipmaps, anisotropy: ring.material.map.anisotropy,
             wrapS: ring.material.map.wrapS, wrapT: ring.material.map.wrapT, colorSpace: ring.material.map.colorSpace,
             mapName: ring.material.map.name, mapSize: [ring.material.map.image.width, ring.material.map.image.height] }));
-        return { scenario, pitch, metrics, nativeRingState: ringState, nativeRingProof: observed.proof,
+        return { scenario, pitch, metrics, nativeRingState: ringState, nativeRingProof: observed.proof, resizeDiagnostic: diagnostic?.trace || null,
             images: includeImages ? { production: production.png, 'no-lens': noLens.png, 'no-tides': noTides.png,
                 plain: plain.png, 'no-disk': noDisk.png, ...(ringControl ? { 'disk-off-tde-off': ringControl.png, 'disk-off-tde-off-ring-absent': ringAbsent.png } : {}),
                 ...(foreground ? { 'opaque-lensed': opaqueLensed.png, 'opaque-identity-reference': opaqueIdentity.png } : {}) } : {},
@@ -249,11 +253,32 @@ function assertLiveCase(result) {
     }
 }
 
+async function saveResizeDiagnostic(trace, variant, stem) {
+    if (trace) {
+        for (const [index, pass] of trace.lensPasses.entries()) {
+            if (!pass.sourceColor?.rgbaBase64) continue;
+            const bytes = Buffer.from(pass.sourceColor.rgbaBase64, 'base64');
+            const file = `${stem}-pre-lens-source-${index}.rgba`;
+            await writeFile(resolve(out, variant, file), bytes);
+            delete pass.sourceColor.rgbaBase64;
+            Object.assign(pass.sourceColor, { file, bytes: bytes.length, sha256: hash(bytes) });
+        }
+        await writeFile(resolve(out, variant, `${stem}-resize-diagnostic.json`), JSON.stringify(trace, null, 2));
+    }
+}
+
 async function saveCase(page, variant, test, phase) {
-    const result = await page.evaluate(captureCase, { ...test, includeImages: true });
-    assertLiveCase(result);
+    const resizeDiagnosticPhase = wantsResizeDiagnostic({ variant, mobile, bloom, phase, ...test }) ? phase : null;
     const key = `${phase}/${test.scenario}/${test.pitch}`;
     const stem = `${phase}-${test.scenario}-${test.pitch}`;
+    const result = await captureWithResizeEvidence({
+        selected: !!resizeDiagnosticPhase,
+        capture: () => page.evaluate(captureCase, { ...test, includeImages: true, resizeDiagnosticPhase }),
+        recover: () => page.evaluate(() => window.__diskPlaneLastResizeTrace || null),
+        save: trace => saveResizeDiagnostic(trace, variant, stem),
+        onPersistenceError: error => { (report.resizeDiagnosticPersistenceErrors ||= []).push({ phase, error: error.stack || String(error) }); },
+    });
+    assertLiveCase(result);
     for (const [kind, png] of Object.entries(result.images)) {
         if (phase !== 'original' || COARSE_PITCHES.includes(test.pitch) || kind === 'production')
             await writeFile(resolve(out, variant, `${stem}-${kind}.png`), Buffer.from(png.split(',')[1], 'base64'));
@@ -342,6 +367,10 @@ try {
             qa.initialHole = { x: qa.st.BH.x[0], y: qa.st.BH.y[0] };
         });
         await page.evaluate(installNativeRingProof);
+        if (variant === 'main' && !mobile && bloom) {
+            observedPage = page;
+            await page.evaluate(installLensResizeObserver);
+        }
         await prepareContextRecoveryQA(page);
         for (const test of DISK_PLANE_CASES) {
             local.assets.push({ phase: 'original', ...test, ...await settleAssets(page, test) });
@@ -409,6 +438,11 @@ try {
             }
         }
         assert.deepEqual(local.errors, [], 'No page/shader/GPU errors');
+        if (observedPage === page) {
+            report.resizeObserverCleanup = await removeResizeObservers(page);
+            assert(report.resizeObserverCleanup.complete && report.resizeObserverCleanup.activeListeners === 0);
+            observedPage = null;
+        }
         await page.close(); await server.close(); server = null;
         await flush();
     }
@@ -418,6 +452,18 @@ try {
 } catch (error) {
     originalError = error; hadOriginalError=true;
 } finally {
+    if (observedPage) {
+        try {
+            report.resizeObserverCleanup = await removeResizeObservers(observedPage);
+            assert(report.resizeObserverCleanup.complete && report.resizeObserverCleanup.activeListeners === 0);
+        } catch (error) {
+            report.resizeObserverCleanup = { complete: false, error: error.stack || String(error) };
+            if (!hadOriginalError) { originalError = error; hadOriginalError = true; }
+        }
+        observedPage = null;
+    }
+    // Observer cleanup is bounded independently; the original resource
+    // finalizer still attempts browser/server closure and preserves failures.
     await finalizeDiskProbe({report,originalError,hadOriginalError,
         verifySources:()=>{report.sourceBindingAfter = bindSources();assert.deepEqual(report.sourceBindingAfter,sourceBindingBefore);},
         flush,closeBrowser:()=>browser?.close(),closeServer:()=>server?.close()});
