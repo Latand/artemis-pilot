@@ -15,13 +15,13 @@ export function verifyDiskSource(root,label,expectedHead){
     assert(['A','B'].includes(label));assert.match(expectedHead,/^[a-f0-9]{40}$/);
     assert.equal(realpathSync(git(root,'rev-parse','--show-toplevel').trim()),realpathSync(root));
     assert.equal(git(root,'rev-parse','HEAD').trim(),expectedHead);
-    if(label==='A')assert.equal(expectedHead,diskInputs.baseline);
+    if(label==='A'){assert.equal(expectedHead,diskInputs.baseline);assert.equal(git(root,'rev-parse',expectedHead+'^{tree}').trim(),diskInputs.baselineTree);}
     git(root,'merge-base','--is-ancestor',diskInputs.baseline,expectedHead);
     const paths=[...diskInputs.productionPaths,'scripts'];
     git(root,'diff','--exit-code','--cached','HEAD','--',...paths);git(root,'diff','--exit-code','--',...paths);
     assert.equal(git(root,'ls-files','--others','--',...paths),'','No ignored/untracked served/config/harness inputs');
     const fingerprint=hash(execFileSync('git',['ls-files','--stage','-z','--',...diskInputs.productionPaths],{cwd:root}));
-    assert.equal(fingerprint,diskInputs.fingerprints[label],'Only the declared disk block may differ from main');
+    assert.equal(fingerprint,diskInputs.fingerprints[label],'Only the reviewed disk support/fast-path source may differ from main');
     const entries=new Map(git(root,'ls-tree','-rz','HEAD').split('\0').filter(Boolean).map(record=>{
         const tab=record.indexOf('\t');return [record.slice(tab+1),record.slice(0,tab).split(' ')];
     }));
@@ -33,10 +33,16 @@ export function verifyDiskSource(root,label,expectedHead){
     assert(!existsSync(join(root,'src/render/ringSamplingDepth.js')),'No ring-depth proxy in either disk-only source');
     const changed=git(root,'diff','--name-only',diskInputs.baseline,'HEAD','--','src').trim().split('\n').filter(Boolean);
     assert.deepEqual(changed,label==='A'?[]:['src/holeOptics.js']);
+    const sourceRevision=git(root,'log','-1','--format=%H',expectedHead,'--','src/holeOptics.js').trim();
+    const sourceTree=git(root,'rev-parse',sourceRevision+'^{tree}').trim();
+    if(label==='B'){
+        assert.equal(sourceTree,diskInputs.reviewedSourceTree,'Source-producing ancestor must be the exact independently reviewed tree');
+        assert.equal(git(root,'rev-parse',sourceRevision+':src/holeOptics.js').trim(),diskInputs.reviewedSourceHoleBlob,'Reviewed source ancestor blob must match');
+    }
     const hole=readFileSync(join(root,'src/holeOptics.js'));
     if(label==='A')assert.deepEqual(hole,execFileSync('git',['show',diskInputs.baseline+':src/holeOptics.js'],{cwd:root}));
-    else assert.equal(hash(hole),diskInputs.candidateHoleSha256,'Exact frozen normalized disk shader required');
-    return {revision:expectedHead,tree:git(root,'rev-parse','HEAD^{tree}').trim(),fingerprint,protectedBlobs,
+    else assert.equal(hash(hole),diskInputs.candidateHoleSha256,'Exact reviewed disk support/fast-path source required');
+    return {revision:expectedHead,sourceRevision,sourceTree,tree:git(root,'rev-parse','HEAD^{tree}').trim(),fingerprint,protectedBlobs,
         holeSha256:hash(hole),lensSha256:hash(readFileSync(join(root,'src/lensing.js'))),
         planetAppearanceSha256:hash(readFileSync(join(root,'src/render/planetAppearance.js'))),ringSamplingDepthAbsent:true};
 }

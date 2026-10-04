@@ -1,6 +1,6 @@
 # Issue #50: disk-plane continuity only
 
-This candidate starts from actual main 6179f23661591bb4dee89a0bf8e686233e1ba280. Its only production change is the disk-support block in `src/holeOptics.js`. Main's lens solver, planet appearance, native ring rendering, physical state and other optical layers remain unchanged. There is no ring-depth proxy module. Issue #49 and the held PR #52 ring/lens stack remain unresolved.
+This candidate starts from actual main 6179f23661591bb4dee89a0bf8e686233e1ba280. Its only production change is the normalized disk support and conservative uniform shortcut in `src/holeOptics.js`. Main's lens solver, planet appearance, native ring rendering, physical state and other optical layers remain unchanged. There is no ring-depth proxy module. Issue #49 and the held PR #52 ring/lens stack remain unresolved.
 
 ## Sampling change
 
@@ -26,9 +26,47 @@ Two complete camera/resize cycles compare their settled frozen images. Two actua
 
 Probe finalization retains the original capture failure, independently attempts both resource closes with deadlines, and publishes atomic report snapshots. Completion stays false until source verification and cleanup succeed. A failed or timed-out report write cannot later publish a stale success, and an existing evidence destination is refused before browser resources start. Exact-finalizer negative controls cover report/close failures, hangs, late aborted writes and preservation of the original thrown value. The far-annulus scalar regression establishes arithmetic stability, not GPU visibility.
 
-The corrected source-derived pixel budget is 629 explicit render/readback calls per root, 1258 per paired configuration and 5032 across four configurations, plus 62 saved captures, 26 stability captures, 132 healthy app-frame calls, one startup frame and eight intentionally lost app-frame calls per root. Every baseline control must occur exactly once in the union of strict pairs and the three declared overlap diagnostics; omissions, duplicates and misclassification fail. Composer internals expand these into more GPU passes. These counts are a bounded diagnostic plan, not a timing or performance result. The correction has not been run in a browser.
+The corrected source-derived pixel budget is 629 explicit render/readback calls per root, 1258 per paired configuration and 5032 across four configurations, plus 62 saved captures, 26 stability captures, 132 healthy app-frame calls, one startup frame and eight intentionally lost app-frame calls per root. Every baseline control must occur exactly once in the union of strict pairs and the three declared overlap diagnostics; omissions, duplicates and misclassification fail. Composer internals expand these into more GPU passes. These counts remain the bounded diagnostic plan, not a performance result. The prior v3 source completed all four pixel/lifecycle modes; the changed source still requires its own native validation.
 
 The first disk-only run, [37224058358](https://github.com/Latand/artemis-pilot/actions/runs/37224058358), is retained as failed. At actual 3abeb711, mobile/bloom completed its crossing and lifecycle gates, but desktop/direct and mobile/direct stopped at the original overlapping disk's paired opaque comparison (387 and 557 changed pixels). All 557 mobile changes were +1 blue from correctly foreground disk support; every disk-off control was byte-identical. Separately, desktop/bloom failed repeated resize equality on main before candidate execution. The four cost pairs were gated off. These failures are not acceptance, and correcting the occlusion fixture does not resolve the separate baseline resize mismatch.
+
+## One changed-source cohort after v3
+
+The reviewed fast-path source tree is `9eed5a6094daf8cce6424dd18be3e786a3f0fbb4`.
+Its complete-frustum proof includes derivative helper lanes and defaults to the
+normalized path for uncertain cameras, clipping or compiled precision. The
+source proof is documented in [disk-unclipped-proof.md](disk-unclipped-proof.md).
+Only actual `onBeforeCompile` precision is authoritative; an uncertain compiled
+variant permanently rejects the shortcut for that material/renderer, including
+cached-program reselection. Capability queries do not certify native IEEE
+operation rounding.
+
+Exactly one changed-source cohort is proposed: four pointer-controlled paired
+pixel/lifecycle modes, then four five-trial active-cost pairs only if every
+pixel mode passes. The same trusted-pointer policy and all original frames,
+readbacks, exact foreground/ring comparisons, dense crossing bounds, resize
+and native recovery gates remain. Ordinary inclined production captures must
+also match main exactly, with nonvacuous native fast-path evidence. Native
+program/uniform observations use existing untimed draws and preserve callback,
+program-cache and GL binding behavior. They do not add app frames, warming,
+render passes or readPixels calls. No retry or extra setup is authorized.
+
+The immutable cost runner remains unchanged except its previously reviewed
+absent-file inventory adapter. It does not record pointer/hover assertions or
+the disk uniform during timed frames. Native compiled-precision/eligibility
+proof comes from the paired pixel/setup fixture with the same active pose and
+pinned runtime; it is not observation of every timed cost draw, nor a new timing
+attribution. Different jobs may use different runner hardware.
+
+The v3 run [37232097341](https://github.com/Latand/artemis-pilot/actions/runs/37232097341)
+at `c933da57` remains failed despite all four pixel/lifecycle and p95 gates
+passing. Its mandatory failures are desktop/direct maximum task 548 > 515.55 ms,
+desktop/bloom maximum 448 > 431.55 ms and mobile/bloom total blocking 42099 > 41945 ms.
+Both desktop maxima came from one task each; the mobile failure is aggregate
+blocking, not a maximum outlier. All trials and the older ring/lens, invariant,
+baseline equality and inconclusive observation reports remain retained. A new
+result establishes only its own outcome and cannot retrospectively explain
+those failures. Issue #49 and the held PR #52 stack remain open.
 
 ## Fresh cost plan
 

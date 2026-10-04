@@ -14,6 +14,8 @@ import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled,
 import { atomicDiskReport, initializeDiskReport, finalizeDiskProbe } from './disk-plane-finalize.mjs';
 import { installNativeRingProof } from './native-ring-proof.mjs';
 import { installPointerAudit, parkNeutralPointer, assertPointerCaptures, POINTER_FIXTURE_POLICY } from './disk-pointer-fixture.mjs';
+import { installNativeDiskFastPathProof, NATIVE_DISK_POLICY, validateNativeDiskHooks, assertNativeDiskBatch, assertNativeInclinedParity, assertNativeDiskLifecycle,
+    boundedNativeOperation, closeNativeDiskResources } from './native-disk-proof.mjs';
 
 const candidateRoot = resolve(process.env.CANDIDATE_ROOT || fileURLToPath(new URL('..', import.meta.url)));
 const baselineRoot = process.env.BASE_ROOT && resolve(process.env.BASE_ROOT);
@@ -27,9 +29,10 @@ assert(['0', '1'].includes(bloomOption), 'BLOOM must be 0 or 1');
 const mobile = device === 'mobile', bloom = bloomOption === '1';
 const matrixEntry = `${device}-${bloom ? 'bloom' : 'direct'}`;
 const hookChecks = [validateDiskPlaneHooks(candidateRoot)];
+const nativeDiskHookCheck = validateNativeDiskHooks(candidateRoot);
 if (baselineRoot) hookChecks.unshift(validateDiskPlaneHooks(baselineRoot));
 if (hooksOnly) {
-    console.log(JSON.stringify({ mode: 'hooks-only', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, pointerFixture: POINTER_FIXTURE_POLICY, browserStarted: false,
+    console.log(JSON.stringify({ mode: 'hooks-only', hookChecks, nativeDiskHookCheck, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, pointerFixture: POINTER_FIXTURE_POLICY, nativeDiskPolicy: NATIVE_DISK_POLICY, browserStarted: false,
         sourceBound: false, runtimeAcceptance: false }, null, 2));
     process.exit(0);
 }
@@ -40,7 +43,7 @@ const bindSources = () => ({ main: verifyDiskSource(baselineRoot, 'A', diskInput
     candidate: verifyDiskSource(candidateRoot, 'B', process.env.EXPECTED_CANDIDATE_REVISION) });
 const sourceBindingBefore = bindSources();
 if (validateOnly) {
-    console.log(JSON.stringify({ mode: 'source-validation', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, pointerFixture: POINTER_FIXTURE_POLICY, sourceBindingBefore,
+    console.log(JSON.stringify({ mode: 'source-validation', hookChecks, nativeDiskHookCheck, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, pointerFixture: POINTER_FIXTURE_POLICY, nativeDiskPolicy: NATIVE_DISK_POLICY, sourceBindingBefore,
         sourceBindingAfter: bindSources(), browserStarted: false, runtimeAcceptance: false }, null, 2));
     process.exit(0);
 }
@@ -55,6 +58,7 @@ const alternateViewport = mobile ? { width: 430, height: 760 } : { width: 840, h
 const report = { schema: 1, matrixEntry, matrix: MATRIX, mobile, bloom, completed: false,
     operationBudget: QA_OPERATION_BUDGET,
     pointerFixture: POINTER_FIXTURE_POLICY,
+    nativeDiskPolicy: NATIVE_DISK_POLICY,
     sourceBindingBefore, sourceBindingAfter: null, diagnosticOnly: true,
     scope: 'Issue50 disk-plane continuity only; exact main paired with disk-only candidate.',
     ringEvidence: 'Actual ring draw program/sampler/filter state plus disk-off/TDE-off unchanged pixels. No alpha-gap or source-depth repair claim.',
@@ -63,13 +67,14 @@ const report = { schema: 1, matrixEntry, matrix: MATRIX, mobile, bloom, complete
         'No physical model, ring filter, planet appearance, lensing, or silhouette-edge change is accepted by this probe.',
         'This diagnostic is not a performance benchmark or a full-source acceptance run.'],
     omissions: ['unrelated cosmic background, HYG/tier-1 catalogs, merger worker, gravity-flow overlay'],
-    variants: {}, pairedControls: [], overlappingDiskDiagnostics: [] };
-let browser, server, originalError, hadOriginalError=false;
+    variants: {}, pairedControls: [], overlappingDiskDiagnostics: [], nativeInclinedParity: [] };
+let browser, server, activePage, activeVariant, nativeStopPromise, originalError, hadOriginalError=false;
 const mainControls = new Map();
 const flush = options => atomicDiskReport(resolve(out, 'report.json'),report,options);
 
 // Runs inside the page: configure only the frozen diagnostic camera/hole.
 function configureCase({ scenario, pitch }) {
+    window.qa.nativeDiskObserver?.label({ kind: 'configure', scenario, pitch });
     const { s, st, b, bh, c, sat, enc, e } = window.qa;
     const foreground = scenario === 'saturn-foreground-lens';
     const overlapping = scenario === 'saturn-overlapping-disk';
@@ -129,6 +134,8 @@ function captureCase({ scenario, pitch, includeImages = true }) {
         return btoa(binary);
     };
     const draw = ({ lensed = true, tides = true, diskOn = true, ringsOn = true, opacityControl = false, identity = false, diskDepthTest = original.diskDepthTest } = {}) => {
+        qa.nativeDiskObserver?.label({ kind: 'capture', scenario, pitch, draw: pointerSnapshots.length,
+            lensed, tides, diskOn, ringsOn, opacityControl, identity, diskDepthTest });
         const pointer = { draw: pointerSnapshots.length, options: { lensed, tides, diskOn, ringsOn, opacityControl, identity, diskDepthTest },
             before: window.__diskPlanePointerSnapshot(), after: null };
         pointerSnapshots.push(pointer);
@@ -224,6 +231,7 @@ function captureCase({ scenario, pitch, includeImages = true }) {
             wrapS: ring.material.map.wrapS, wrapT: ring.material.map.wrapT, colorSpace: ring.material.map.colorSpace,
             mapName: ring.material.map.name, mapSize: [ring.material.map.image.width, ring.material.map.image.height] }));
         return { scenario, pitch, metrics, nativeRingState: ringState, nativeRingProof: observed.proof, pointerSnapshots,
+            nativeDiskProof: qa.nativeDiskObserver?.drain() || null,
             images: includeImages ? { production: production.png, 'no-lens': noLens.png, 'no-tides': noTides.png,
                 plain: plain.png, 'no-disk': noDisk.png, ...(ringControl ? { 'disk-off-tde-off': ringControl.png, 'disk-off-tde-off-ring-absent': ringAbsent.png } : {}),
                 ...(foreground ? { 'opaque-lensed': opaqueLensed.png, 'opaque-identity-reference': opaqueIdentity.png, 'opaque-disk-off': opaqueDiskOff.png } : {}),
@@ -322,6 +330,8 @@ async function preservePointerCaptures(variant, test, phase, captures) {
         captures: captures.map(result => ({ frameSuccess: result.state.frameSuccess, readbacks: result.state.readbacks,
             snapshots: result.pointerSnapshots })) };
     entries.push(entry);
+    for (const [captureIndex,result] of captures.entries()) if (result.nativeDiskProof)
+        report.variants[variant].nativeDiskEvidence.push({ phase, ...test, captureIndex, proof: result.nativeDiskProof });
     // Persist real input/glyph evidence before any pointer acceptance assertion.
     await flush();
     return entry;
@@ -340,6 +350,7 @@ function acceptPointerCaptures(evidence) {
 async function saveCase(page, variant, test, phase) {
     const result = await page.evaluate(captureCase, { ...test, includeImages: true });
     const pointerEvidence = await preservePointerCaptures(variant, test, phase, [result]);
+    if (variant === 'candidate') assertNativeDiskBatch(result.nativeDiskProof);
     acceptPointerCaptures(pointerEvidence);
     assertLiveCase(result);
     result.pointerEvidenceId = pointerEvidence.id;
@@ -352,6 +363,11 @@ async function saveCase(page, variant, test, phase) {
     }
     result.productionSha256 = hash(Buffer.from(result.images.production.split(',')[1], 'base64'));
     delete result.images;
+    result.phase = phase;
+    if (variant === 'candidate' && phase === 'original' && Math.abs(test.pitch) === .48) {
+        const main = report.variants.main.samples.find(s => s.phase === phase && s.scenario === test.scenario && s.pitch === test.pitch);
+        report.nativeInclinedParity.push(assertNativeInclinedParity(main, result));
+    }
     for (const [name, control] of Object.entries(result.controls)) {
         const controlKey = `${key}/${name}`;
         if (variant === 'main') mainControls.set(controlKey, { ...control, nativeRingState: result.nativeRingState, nativeRingProof: result.nativeRingProof });
@@ -367,7 +383,7 @@ async function saveCase(page, variant, test, phase) {
         }
     }
     delete result.controls;
-    result.phase = phase;
+    delete result.nativeDiskProof; // Native records are retained once in nativeDiskEvidence.
     report.variants[variant].samples.push(result);
     await flush();
     return result;
@@ -377,6 +393,7 @@ async function assertStableControl(page, variant, test) {
     const a = await page.evaluate(captureCase, { ...test, includeImages: false });
     const b = await page.evaluate(captureCase, { ...test, includeImages: false });
     const pointerEvidence = await preservePointerCaptures(variant, test, 'original-stability', [a, b]);
+    if (variant === 'candidate') { assertNativeDiskBatch(a.nativeDiskProof); assertNativeDiskBatch(b.nativeDiskProof); }
     acceptPointerCaptures(pointerEvidence);
     assert.deepEqual(a.controls, b.controls, 'Settled frozen controls are stable across repeated draws');
     assert.deepEqual(a.metrics, b.metrics, 'No transient asset/frame mismatch in paired metrics');
@@ -392,12 +409,21 @@ async function recoverySnapshot(page) {
 }
 
 await initializeDiskReport(resolve(out,'report.json'),report);
+async function stopNativeDiskObserver() {
+    if (!activePage || activeVariant !== 'candidate') return;
+    nativeStopPromise ||= boundedNativeOperation('native-disk-observer-stop', async signal => {
+        const proof = await activePage.evaluate(() => window.qa?.nativeDiskObserver?.stop() || null);
+        signal.throwIfAborted();
+        if (proof) { report.variants.candidate.nativeDiskEvidence.push({ phase: 'observer-stop', proof }); await flush({ signal }); }
+    });
+    return nativeStopPromise;
+}
 try {
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined,
         args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
     for (const [variant, root] of [['main', baselineRoot], ['candidate', candidateRoot]]) {
         const local = report.variants[variant] = { revision: sourceBindingBefore[variant].revision,
-            errors: [], samples: [], assets: [], stability: [], recoveries: [], pointerParks: [], pointerEvidence: [], crossingAcceptance: null };
+            errors: [], samples: [], assets: [], stability: [], recoveries: [], pointerParks: [], pointerEvidence: [], nativeDiskEvidence: [], crossingAcceptance: null };
         await mkdir(resolve(out, variant), { recursive: true });
         server = await createServer({ root, configFile: false, logLevel: 'error',
             server: { host: '127.0.0.1', port: 0, hmr: false }, plugins: [{ name: 'disk-plane-diagnostic', enforce: 'pre',
@@ -406,6 +432,7 @@ try {
                 transform: transformDiskPlaneSource }] });
         await server.listen();
         const page = await browser.newPage({ viewport, deviceScaleFactor: 1, isMobile: mobile, hasTouch: mobile });
+        activePage = page; activeVariant = variant; nativeStopPromise = null;
         page.setDefaultTimeout(180000);
         page.on('pageerror', e => local.errors.push(e.stack || e.message));
         page.on('console', message => {
@@ -420,7 +447,8 @@ try {
         await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=saturn&dist=600&bloom=${bloom ? 1 : 0}&river=0&field=0&realsky=0&tier1=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&hidehelp=1&planetmaps=1&earthnight=0`, { waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.__AP_READY && window.__celestialFrame);
         local.pointerParks.push({ phase: 'before-hole-setup', ...await parkNeutralPointer(page) });
-        await page.evaluate(async () => {
+        if (variant === 'candidate') await page.evaluate(installNativeDiskFastPathProof);
+        await page.evaluate(async ({ observeNativeDisk }) => {
             window.qa = { bloom: !!window.__qaBloom, readbacks: 0, s: await import('/src/scene.js'),
                 st: await import('/src/state.js'), b: await import('/src/bodies.js'), bh: await import('/src/blackholes.js'),
                 c: await import('/src/constants.js'), e: await import('/src/ephemeris.js'), tde: await import('/src/tdeVisuals.js'),
@@ -436,11 +464,19 @@ try {
             qa.bh.clearBlackHoles();
             qa.bh.addBlackHole(qa.e.eph.plX[qa.sat] - 150000, qa.e.eph.plY[qa.sat] - 100000,
                 50000, 0, 0, true, null, 1, 0, qa.e.eph.plZ[qa.sat], 0);
+            if (observeNativeDisk) qa.nativeDiskObserver = window.__createNativeDiskFastPathProof(qa.s.renderer,
+                qa.bh.BH_META[0].optics.disk, qa.hole.diskSupportUnclipped,
+                () => ({ losses: qa.s.renderContext.losses, restores: qa.s.renderContext.restores,
+                    contextLost: qa.s.renderContext.isLost(), frameSuccess: window.__diskPlaneFrameSuccess || 0, paused: qa.st.G.paused, t: qa.st.G.t }));
             await window.__celestialEnsureLensing();
             if (qa.bloom) await qa.s.ensurePostProcessing(qa.lens.lensingPass);
             for (let i = 0; i < 8; i++) window.__celestialFrame();
             qa.initialHole = { x: qa.st.BH.x[0], y: qa.st.BH.y[0], z: qa.st.BH.z[0] };
-        });
+        }, { observeNativeDisk: variant === 'candidate' });
+        if (variant === 'candidate') {
+            const proof = await page.evaluate(() => qa.nativeDiskObserver.drain());
+            local.nativeDiskEvidence.push({ phase: 'setup', proof }); await flush(); assertNativeDiskBatch(proof);
+        }
         await page.evaluate(installNativeRingProof);
         await prepareContextRecoveryQA(page);
         for (const test of DISK_PLANE_CASES) {
@@ -511,7 +547,13 @@ try {
         }
         assert.deepEqual(local.errors, [], 'No page/shader/GPU errors');
         assert.equal(local.pointerParks.length, POINTER_FIXTURE_POLICY.movesPerRoot, 'Only the five planned real pointer moves');
+        if (variant === 'candidate') {
+            await stopNativeDiskObserver();
+            local.nativeDiskLifecycle = assertNativeDiskLifecycle(local.nativeDiskEvidence);
+            assert.equal(report.nativeInclinedParity.length, 8, 'All eight ordinary signed inclined whole-frame pairs use native fast path');
+        }
         await page.close(); await server.close(); server = null;
+        activePage = null; activeVariant = null; nativeStopPromise = null;
         await flush();
     }
     assert(report.pairedControls.some(control => control.label.endsWith('/ring') && control.applicable), 'Paired unchanged ring pixels were actually sampled');
@@ -523,5 +565,5 @@ try {
 } finally {
     await finalizeDiskProbe({report,originalError,hadOriginalError,
         verifySources:()=>{report.sourceBindingAfter = bindSources();assert.deepEqual(report.sourceBindingAfter,sourceBindingBefore);},
-        flush,closeBrowser:()=>browser?.close(),closeServer:()=>server?.close()});
+        flush,closeBrowser:()=>closeNativeDiskResources(stopNativeDiskObserver,()=>browser?.close()),closeServer:()=>server?.close()});
 }

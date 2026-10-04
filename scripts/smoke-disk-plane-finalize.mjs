@@ -65,7 +65,7 @@ try{
     assert.equal(await readFile(path,'utf8'),before,'An aborted late success cannot overwrite the failure checkpoint');tested++;
     const source=readFileSync(new URL('./probe-disk-plane.mjs',import.meta.url),'utf8');
     assert(source.includes('await finalizeDiskProbe({report,originalError,hadOriginalError,'),'The actual probe uses the tested finalizer');
-    assert(source.includes('flush,closeBrowser:()=>browser?.close(),closeServer:()=>server?.close()'));
+    assert(source.includes('flush,closeBrowser:()=>closeNativeDiskResources(stopNativeDiskObserver,()=>browser?.close()),closeServer:()=>server?.close()'));
     assert(source.indexOf('await initializeDiskReport(')<source.indexOf('browser = await chromium.launch('),'Fresh false marker precedes all browser resources');
     console.log(JSON.stringify({test:'Exact disk probe finalizer',cases:tested,originalErrorPreserved:true,independentBoundedCloseAttempts:true,atomicCompletionMarker:true,browserStarted:false}));
 }finally{await rm(directory,{recursive:true,force:true});}
