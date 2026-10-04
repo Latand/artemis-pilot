@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
-// A compact-support art deformation, not a metric, force or advection term.
+// Display-only projection of the commanded local field envelope.
+// The physical centre gradient lives in curvatureDrive.js; this is not a metric.
 // Used ONLY by the local-sample draw vertex shader. No texture feedback receives this result.
 export const WARP_DRAW_GLSL = /* glsl */`
 uniform vec3 uWarpShip, uWarpAxis;
@@ -13,9 +14,10 @@ vec3 warpDrawPosition(vec3 p) {
     float envelope = pow(1.0 - r2, 3.0);
     float axial = dot(q, uWarpAxis);
     vec3 radial = q - uWarpAxis * axial;
-    // Bow compression, aft extension, a restrained twist beside the rings.
-    vec3 bend = radial * 1.5 + cross(uWarpAxis, radial) * .7
-              - uWarpAxis * (.52 + axial * .3);
+    // Cyan-facing bow compression / aft expansion follows the delivered
+    // acceleration axis, including reverse and lateral commands.
+    vec3 bend = radial * (-1.5 * axial) + cross(uWarpAxis, radial) * .25
+              - uWarpAxis * (.3 + axial * .18);
     return p + bend * (uWarpRadius * uWarpStrength * envelope);
 }
 `;
@@ -72,7 +74,7 @@ export function createWarpRiverLayer(uniforms, mobile) {
         blending: THREE.AdditiveBlending,
     });
     const layer = new THREE.LineSegments(geometry, material);
-    layer.name = 'Speculative local river samples';
+    layer.name = 'Commanded curvature field river guide';
     layer.frustumCulled = false;
     layer.renderOrder = 1;
     layer.visible = false;

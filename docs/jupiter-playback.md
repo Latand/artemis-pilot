@@ -8,7 +8,7 @@ The initial state is a genuine three-dimensional hyperbolic encounter in Jupiter
 
 The ship is a test particle: Jupiter's immeasurably small recoil is not applied. Planet-relative energy/angular momentum have small solar perturbations. The changing Sun-relative velocity is a real consequence of passing the moving planet, not a camera animation. Equal-radius entry/exit speed readouts are shown as measured, not claimed to be asymptotic velocities.
 
-The hull is enlarged as a navigation illustration. The existing river shows the natural gravity velocity field; it is not evidence of physical space flowing or a warp propulsion system. No speculative propulsion is engaged by this ballistic scenario.
+The hull is enlarged as a navigation illustration. The existing river shows the natural gravity velocity field; it is not evidence of physical space flowing or a warp propulsion system. No speculative propulsion is engaged by this ballistic scenario. During this guided view, natural-flow strokes use a bounded presentation gain and respect opaque-body depth, so the field can illustrate the encounter without overwriting the planet or hull. Particle populations, source sampling, physical field equations and compute cadence are unchanged. Exit returns to the ordinary display policy; the user’s gravity toggle and style preferences are retained.
 
 ## Playback contract
 

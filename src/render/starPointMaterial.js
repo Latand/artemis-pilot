@@ -17,6 +17,7 @@
 //                while its epoch and the arms where it is allow it
 // Relativistic observer effects (relView.js): aberration, Doppler recolour,
 // and point-source beaming D^2 (see viewBrightness.js RELATIVISTIC_VIEW_GLSL).
+import { CATALOG_MOTION_GLSL, catalogMotionUniforms } from "../universe/catalogMotion.js";
 import * as THREE from "three";
 import { K, PC_KM } from "../constants.js";
 import { stellarExposure, STELLAR_VISIBILITY_GLSL, STELLAR_PSF_GLSL } from "./stellarAppearance.js";
@@ -90,6 +91,9 @@ vec3 starMotion(vec3 d, out float vis) {
     return vec3(rd + rr, d.z);
 }
 #endif
+#ifdef STAR_CATALOG_MOTION
+${CATALOG_MOTION_GLSL}
+#endif
 varying vec3 vColor;
 varying float vHdr;
 uniform float uBasePx, uMagRef, uMinPx, uMaxPx, uMagLimit, uPcScene, uMagPenalty;
@@ -106,7 +110,11 @@ void main() {
     vec4 mvPosition = modelViewMatrix * vec4(starMotion(position, motionVis), 1.0);
     keep = motionVis;
 #else
+#ifdef STAR_CATALOG_MOTION
+    vec4 mvPosition = modelViewMatrix * vec4(catalogMotion(position), 1.0);
+#else
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+#endif
 #endif
     // Depth-tier fence (scene.js tierDepthRange): drawn in exactly one pass.
     float viewDepth = -mvPosition.z;
@@ -161,12 +169,13 @@ void main() {
 
 // motion: the moving disk stars of the procedural field; `uniforms` adds or
 // shares uniform objects (their per-epoch and per-mesh state).
-export function makeStarPointMaterial({ dim = 1, magPenalty = 0, hidden = false, radius = false, resolveLimit = true, motion = false, uniforms = null } = {}) {
+export function makeStarPointMaterial({ dim = 1, magPenalty = 0, hidden = false, radius = false, resolveLimit = true, motion = false, catalogMotion = false, uniforms = null } = {}) {
     const defines = {};
     if (hidden) defines.STAR_HIDDEN = "";
     if (radius) defines.STAR_RADIUS = "";
     if (resolveLimit) defines.STAR_RESOLVE_LIMIT = "";
     if (motion) defines.STAR_MOTION = "";
+    if (catalogMotion) defines.STAR_CATALOG_MOTION = "";
     const mat = new THREE.ShaderMaterial({
         defines,
         uniforms: {
@@ -186,6 +195,7 @@ export function makeStarPointMaterial({ dim = 1, magPenalty = 0, hidden = false,
             uMagPenalty: { value: magPenalty },
             uBeta: relUniforms.uBeta,
             uBoostDirView: relUniforms.uBoostDirView,
+            ...(catalogMotion ? catalogMotionUniforms : {}),
             ...(uniforms || {}),
         },
         vertexShader: VERT,

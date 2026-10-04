@@ -1,0 +1,12 @@
+import assert from 'node:assert/strict';
+import { boundedDiagnostic } from './qa-bounded-diagnostic.mjs';
+assert.deepEqual(await boundedDiagnostic(() => 42), { ok: true, value: 42 });
+assert.match((await boundedDiagnostic(() => { throw new Error('original'); })).error, /original/);
+const start = performance.now();
+assert.match((await boundedDiagnostic(() => new Promise(() => {}), 20)).error, /timed out/);
+assert(performance.now() - start < 250, 'Blocked diagnostics return within the declared deadline');
+let rejectLate;
+assert.equal((await boundedDiagnostic(() => new Promise((_, reject) => { rejectLate = reject; }), 5)).ok, false);
+rejectLate(new Error('late renderer failure'));
+await new Promise(resolve => setTimeout(resolve, 0));
+console.log('Time Dock diagnostics: success, error, blocked renderer and late rejection passed');

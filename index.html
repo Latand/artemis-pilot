@@ -67,7 +67,7 @@
 
       <div class="chips">
         <div id="warpLine" class="chip chip--warp">⏩ —</div>
-        <div id="engineLine" class="chip chip--engine">ENGINE OFF</div>
+        <div id="engineLine" class="chip chip--engine">FIELD IDLE</div>
       </div>
 
       <div id="scaleLadder" class="chips">
@@ -81,7 +81,7 @@
       </div>
 
       <div class="gauge">
-        <div class="gauge__label">PROPELLANT <span id="fuelTxt"></span></div>
+        <div class="gauge__label">DRIVE Δv BUDGET <span id="fuelTxt"></span></div>
         <div id="fuelBar"><div id="fuelFill"></div></div>
       </div>
       <div id="throttleLine" class="metric">THROTTLE 100%</div>
@@ -94,7 +94,7 @@
       </div>
     </div>
 
-    <div id="warpVisualNote" class="warpVisualNote" data-warp-note hidden>SPECULATIVE WARP VISUAL · river view only<br>No propulsion or gravity changes</div>
+    <div id="warpVisualNote" class="warpVisualNote" data-warp-note hidden>FICTIONAL CURVATURE DRIVE<br>Effective field model · no GR solver</div>
     <div id="hoverTip"></div>
     <div id="cosmicScale">COSMIC SCALE</div>
 
@@ -167,8 +167,8 @@
         <div id="bhActiveList"></div>
       </div>
 
-      <div id="shipVisualControls"><button class="warpVisualControl" data-warp-visual type="button" aria-pressed="false" title="Speculative visual only. No propulsion or gravity changes. Requires river view.">Warp visual · OFF</button></div>
-      <div id="dWarpVisualNote" class="warpVisualNote" data-warp-note hidden>SPECULATIVE WARP VISUAL · river view only<br>No propulsion or gravity changes</div>
+      <div id="shipVisualControls"><button class="warpVisualControl" data-warp-visual type="button" aria-pressed="true" title="Show the field guide. Drive remains active when hidden. Fictional effective field, not general relativity.">Field guide · ON</button></div>
+      <div id="dWarpVisualNote" class="warpVisualNote" data-warp-note hidden>FICTIONAL CURVATURE DRIVE<br>Effective field model · no GR solver</div>
       <div id="toasts"></div>
     </div>
 
@@ -280,10 +280,10 @@
           <div class="kb"><span class="kb__k">SPACE / , .</span><span class="kb__d">pause time / change its speed; use Events for time jumps</span></div>
           <div class="kb"><span class="kb__k">TAB</span><span class="kb__d">move keyboard focus between controls</span></div>
           <div class="kb__sec">FLIGHT</div>
-          <div class="kb"><span class="kb__k">W / ↑</span><span class="kb__d">main engine: thrust along the nose</span></div>
-          <div class="kb"><span class="kb__k">S / ↓</span><span class="kb__d">reverse thrust</span></div>
+          <div class="kb"><span class="kb__k">W / ↑</span><span class="kb__d">engage curvature field along the nose</span></div>
+          <div class="kb"><span class="kb__k">S / ↓</span><span class="kb__d">reverse the field (brake when facing prograde)</span></div>
           <div class="kb"><span class="kb__k">A / D, ← / →</span><span class="kb__d">rotate ship</span></div>
-          <div class="kb"><span class="kb__k">Q / E</span><span class="kb__d">RCS lateral translation</span></div>
+          <div class="kb"><span class="kb__k">Q / E</span><span class="kb__d">lateral field translation</span></div>
           <div class="kb"><span class="kb__k">SHIFT</span><span class="kb__d">×4 boost (needed to lift off Earth)</span></div>
           <div class="kb"><span class="kb__k">Z / X</span><span class="kb__d">throttle ÷ / ×; no upper limit</span></div>
           <div class="kb"><span class="kb__k">T / Y</span><span class="kb__d">hold prograde / retrograde</span></div>
@@ -324,10 +324,10 @@
           <div class="kb"><span class="kb__k">V</span><span class="kb__d">remove last black hole</span></div>
 
           <div class="kb__sec">SYSTEM</div>
-          <div class="kb"><span class="kb__k">I</span><span class="kb__d">toggle limited-fuel challenge mode</span></div>
+          <div class="kb"><span class="kb__k">I</span><span class="kb__d">toggle limited drive-budget challenge</span></div>
           <div class="kb"><span class="kb__k">M</span><span class="kb__d">mute sound</span></div>
           <div class="kb"><span class="kb__k">R</span><span class="kb__d">restart in low Earth orbit</span></div>
-          <div class="kb"><span class="kb__k">K / L</span><span class="kb__d">quicksave / quickload (browser storage)</span></div>
+          <div class="kb"><span class="kb__k">K / L</span><span class="kb__d">quicksave / quickload (Shift+L: expedition log)</span></div>
           <div class="kb"><span class="kb__k">SHIFT+S</span><span class="kb__d">travel simulations menu</span></div>
           <div class="kb"><span class="kb__k">H</span><span class="kb__d">this help</span></div>
         </div>
@@ -340,7 +340,7 @@
         </div>
         <div class="help__note">
           <p>Planet and Moon motion comes from Solar System ephemerides advanced by KDK or velocity-Verlet integration; the sim hands off to analytic osculating Kepler orbits at high warp so planets stay on their tracks. RK4 advances your ship from all Solar System bodies and player-placed holes, plus a capped, priority-ranked subset of nearby stellar sources. A separate RK4 path advances player-placed holes from Solar System bodies, gravitational debris, and other placed holes. Deep-time events such as galaxy passages and stellar eras follow reduced-order equations: simplified models with fixed parameters.</p>
-          <p>The optional violet warp visual adds a speculative, ship-local deformation of the displayed river. It has no spacetime solver or propulsion model. Ring rotation follows HUD speed with a capped real-time rate; pause freezes it. It does not alter forces, predictions or relativistic travel.</p>
+          <p>The fictional curvature drive applies a bounded local effective-field gradient to the ship through RK4. Its delivered command controls ring motion, the cyan compressed bow, the violet expanded aft and quiet cabin feedback. Release translation controls for ballistic coast. The field guide starts on and can be hidden independently. This is a playable phenomenological model with no general-relativistic spacetime solver or FTL rule; natural planetary gravity is unchanged.</p>
           <p>The spacetime river is a velocity-field visualization, an honest picture of the pulls around you. Player-placed holes use the Paczynski-Wiita pseudo-Newtonian approximation. Catalog and special-object black holes, including SGR A*, use the capped active-star Newtonian field. Limited 1PN corrections cover weak-field motion near the Sun. Collisions are classified between simple spheres, with no melting or fragments. Only the Sun evolves as a star, changing its appearance and contact radius. Merger energy loss is bookkeeping; the engine carries no gravitational waveforms.</p>
           <p>Galaxy-scale views skip galaxy-wide N-body integration, and the Milky Way and Andromeda dates play one modeled scenario whose real outcome stays uncertain. Shift+O toggles the modeled NFW dark-matter halo; its applied strength is under physics review and currently changes little inside the galactic disk. Drag to orbit the camera; scroll to zoom. You can land on the rocky planets. Aim for the Moon, capture orbit, land, and come home, or dive into something dark.</p>
         </div>
@@ -394,8 +394,8 @@
           <button id="mYawR" class="mTouch mHold" type="button" aria-label="Rotate right"><b>↻</b></button>
         </div>
         <div class="mAttRow mAttRow--rcs">
-          <button id="mRcsL" class="mTouch mHold mTiny" type="button" aria-label="RCS strafe left"><b>◂</b><i>RCS</i></button>
-          <button id="mRcsR" class="mTouch mHold mTiny" type="button" aria-label="RCS strafe right"><b>▸</b><i>RCS</i></button>
+          <button id="mRcsL" class="mTouch mHold mTiny" type="button" aria-label="Lateral field left"><b>◂</b><i>FIELD</i></button>
+          <button id="mRcsR" class="mTouch mHold mTiny" type="button" aria-label="Lateral field right"><b>▸</b><i>FIELD</i></button>
         </div>
         <button id="mBoost" class="mTouch mHold mBoost" type="button" aria-label="Boost ×4">BOOST ×4</button>
       </div>
@@ -429,7 +429,7 @@
             <button id="mCatalog" class="mMItem" type="button"><b>★</b><i>STAR CATALOG</i></button>
             <button id="mPredict" class="mMItem mTgl" type="button"><b>P</b><i>PREDICT</i></button>
             <button id="mRiver" class="mMItem mTgl" type="button"><b>G</b><i>RIVER</i></button>
-            <button id="mWarpVisual" class="warpVisualControl" data-warp-visual type="button" aria-pressed="false">Warp visual · OFF</button>
+            <button id="mWarpVisual" class="warpVisualControl" data-warp-visual type="button" aria-pressed="true">Field guide · ON</button>
             <button id="mConst" class="mMItem mTgl" type="button"><b>✦</b><i>GUIDES</i></button>
             <button id="mAuto" class="mMItem" type="button"><b>➤</b><i>AUTOPILOT</i></button>
             <button id="mApOff" class="mMItem" type="button"><b>⊘</b><i>AP OFF</i></button>

@@ -1,3 +1,4 @@
+import { resetDrive } from './curvatureDrive.js';
 import { apOff } from "./autopilot.js";
 import { cam } from "./scene.js";
 import { getOrigin } from "./universe/renderOrigin.js";
@@ -37,6 +38,7 @@ const G_FIELDS = [
     "cabin",
 ];
 const SERIAL_STAR_FIELDS = [
+    "epochPosition", "distanceEstimated",
     "name", "dLy", "x", "y", "z", "color", "mass", "R", "catalog", "hygIndex",
     "hip", "hd", "hr", "spect", "mag", "absMag", "lumSolar", "tempK", "estimated",
 ];
@@ -156,6 +158,7 @@ export async function loadState() {
     apOff();
     relResetState();
     Object.assign(G, data.g);
+    resetDrive(); // legacy saves resume in exact coast, never with a stale command
     if (data.v >= 10 && data.log) restoreLog(data.log);
     else restoreLog(null);
     if (data.focusCatalog && Number.isFinite(Number(data.focusCatalog.hygIndex))) {

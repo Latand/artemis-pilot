@@ -6,12 +6,15 @@ import { BH_MAX, C_LIGHT, DARK_ENERGY, FLOW, LY_SCENE, MU_E, MU_M, MU_S, PL, K, 
 import { G, BH, WORLD } from "./state.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { dotTexture } from "./textures.js";
-import { scene, renderer, camera, cam, renderQuality, registerNearTierOnly } from "./scene.js";
-import { ACTIVE_STARS } from "./universe/activeStars.js";
+import { scene, renderer, camera, cam, renderQuality, registerNearTierOnly, TIER_SPLIT_UNITS } from "./scene.js";
+import { ACTIVE_STARS, activeStarSetRevision } from "./universe/activeStars.js";
 import { flowCtx } from "./flowfield.js";
 import { PERF, markPerf } from "./perf.js";
-import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW, shipFrameW, frameVelToScene, RIVER_VIS } from "./riverMath.js";
+import { pulsePhaseRate, shellStep, shellOuterRadius, shellDotSize, frameBlendW, shipFrameW, frameVelToScene, spawnReach as sourceSpawnReach, RIVER_VIS } from "./riverMath.js";
 import { eph } from "./ephemeris.js";
+import { publishRiverSourcePositions } from "./riverSourceCache.js";
+import { haloSamplingRadius, haloViewWeight, refreshProbability } from "./riverCoverageMath.js";
+import { sourceSampleInkGain, OWNED_SAMPLE_FRACTION } from "./riverRadianceMath.js";
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
 // Positions live in a float texture advected by a compute pass; the analytic
@@ -26,13 +29,15 @@ import { eph } from "./ephemeris.js";
 // are float32, but a warped ship can sit at scene coordinates many orders of
 // magnitude beyond float32's ~7-digit precision (e.g. after tens of Gyr of
 // dark-energy expansion). So nothing scene-absolute ever reaches the GPU:
-// every position (bodies, camera, the dark-energy origin, the particles
-// themselves) is expressed relative to `smoothCenter`, a float64 JS number
+// bodies, camera, the dark-energy origin and ambient particles are expressed
+// relative to `smoothCenter`, a float64 JS number
 // that tracks the camera and is subtracted on the CPU before upload. Because
 // `smoothCenter` itself moves every frame, the persistent particle-position
 // texture is re-based each frame by `uCenterShift` (this frame's center minus
 // last computed texture's, computed in float64) so stored positions keep meaning across
-// frames instead of drifting. See WP22 deep-time fix.
+// frames instead of drifting. Mass-owned samples instead store a small
+// offset from their current source and follow it even on skipped computes.
+// No absolute world coordinate is stored in either population. See WP22.
 const SEGS = renderQuality.mobile ? 1 : 2;
 // Desktop's default particle count is traded down (176 -> 124, ~1/sqrt(2))
 // so total line-vertex-shader work (particles * VPP, each vertex running the
@@ -58,6 +63,10 @@ const MAXB = 3 + PL.length + BH_MAX + RIVER_STAR_SOURCE_MAX;
 
 export const river = {
     enabled: false,
+    sourceRelativeHalos: true,
+    presentationGain: 1,
+    presentationDepthTest: false,
+    visible: false,
     radius: 22,
     count: NPART,
     drawCount: NPART,
@@ -81,6 +90,12 @@ if (typeof window !== "undefined") window.__river = river;
 let seedTex, rtA, rtB, computeScene, computeCam, computeMat, lineMat, lines, dots, warpLines;
 const bodyVals = [], sinkVals = new Array(MAXB).fill(0), rsVals = new Array(MAXB).fill(0), holeVals = new Array(MAXB).fill(0), soiVals = new Array(MAXB).fill(0);
 const colorVals = [];
+const haloVals = Array.from({ length: MAXB }, () => new THREE.Vector4(22, 0, 0, 1));
+const haloReferenceWeights = new Float64Array(MAXB);
+const renderedOwnerShares = new Float64Array(MAXB);
+const renderedReferenceShares = new Float64Array(MAXB);
+const haloViewPos = new THREE.Vector3();
+const haloCameraInverse = new THREE.Quaternion();
 for (let i = 0; i < MAXB; i++) bodyVals.push(new THREE.Vector4());
 for (let i = 0; i < MAXB; i++) colorVals.push(new THREE.Vector3(0.32, 0.58, 0.9));
 const colorTmp = new THREE.Color();
@@ -101,6 +116,7 @@ const uniformsShared = {
     uCenterShift: { value: new THREE.Vector3() },
     uOrigin: { value: new THREE.Vector3() },
     uRadius: { value: 22 },
+    uHalo: { value: haloVals },
     uCam: { value: new THREE.Vector3() },
     uTick: { value: 0 },
     uRespawn: { value: 1 },
@@ -134,6 +150,7 @@ uniform float uRs[${MAXB}];
 uniform float uHole[${MAXB}];
 uniform vec3 uColor[${MAXB}];
 uniform float uRadius;
+uniform vec4 uHalo[${MAXB}]; // radius, visibility, cumulative ownership, display ink gain
 uniform vec3 uOrigin;
 uniform float uDE;
 uniform float uPlaneBias;
@@ -179,6 +196,19 @@ vec3 flowField(vec3 p) {
     // zoom, so the wide view stays the Sun-frame river.
     return mix(normalize(pull) * rawLen, raw, deInk) - uFrameVel * uFrameW;
 }
+// Universal halo rule (one formula, every source): fill at most 1.5x the
+// source's sphere of influence where one is defined (uSoi > 0); where none is
+// (Sun, stars, holes: uSoi = 0) the volume-fraction cap governs. min/max
+// instead of clamp: the lo floor can exceed the SOI cap at survey zoom, and
+// GLSL clamp is undefined for minVal > maxVal.
+float spawnReach(int chosen) {
+    float sink = sourceCore(uSink[chosen], uHole[chosen]);
+    float samplingRadius = uHalo[chosen].x;
+    float lo = samplingRadius * 0.02;
+    float hi = uSoi[chosen] > 0.0 ? min(uSoi[chosen] * 1.5, samplingRadius * 0.22) : samplingRadius * 0.22;
+    return min(max(sink * 30.0, lo), max(hi, sink * 2.0));
+}
+
 float hash13(vec3 p3) {
     p3 = fract(p3 * .1031);
     p3 += dot(p3, p3.zyx + 31.32);
@@ -193,19 +223,8 @@ uniform vec3 uCam;
 uniform vec3 uCenterShift;
 varying vec2 vUv;
 ${FLOW_GLSL}
-// Universal halo rule (one formula, every source): fill at most 1.5x the
-// source's sphere of influence where one is defined (uSoi > 0); where none is
-// (Sun, stars, holes: uSoi = 0) the volume-fraction cap governs. min/max
-// instead of clamp: the lo floor can exceed the SOI cap at survey zoom, and
-// GLSL clamp is undefined for minVal > maxVal.
-float spawnReach(int chosen) {
-    float sink = sourceCore(uSink[chosen], uHole[chosen]);
-    float lo = uRadius * 0.02;
-    float hi = uSoi[chosen] > 0.0 ? min(uSoi[chosen] * 1.5, uRadius * 0.22) : uRadius * 0.22;
-    return min(max(sink * 30.0, lo), max(hi, sink * 2.0));
-}
 void main() {
-    // Positions are stored relative to the river's own float64 center
+    // Ambient positions are stored relative to the river's own float64 center
     // (see uCenterShift's declaration site in river.js), never in absolute
     // scene coordinates, so they stay small — and float32-precise — no
     // matter how far that center has drifted in world space. The center
@@ -214,9 +233,26 @@ void main() {
     // frame's center by subtracting the frame-to-frame shift (computed in
     // float64 on the CPU, where large-magnitude drift is lossless).
     vec4 stored = texture2D(uPos, vUv);
-    vec3 p = stored.xyz - uCenterShift;
     // w: the source whose halo spawned this streak (index + 1; 0 = ambient)
     float owner = stored.w;
+    int own = int(owner + 0.5) - 1;
+    bool halo = own >= 0 && own < uSinkNB && uBody[own].w > 0.0;
+    // Owned samples are offsets from the CURRENT source, even on frames
+    // skipped by the compute cadence. Ambient samples retain their own
+    // float64 camera-relative origin. Sampling support is not a material
+    // trail: translating it with its mass keeps the live field co-located.
+    vec3 p = halo ? stored.xyz + uBody[own].xyz : stored.xyz - uCenterShift;
+    // Stable per-texel strata follow a smoothly varying view-weighted CDF.
+    // Reassign immediately when a source enters/leaves its stratum, rather
+    // than waiting seconds for random death to repopulate a visible halo.
+    int chosen = -1;
+    if (hash13(vec3(vUv * 601.1, 3.3)) < 0.68) {
+        float pick = hash13(vec3(vUv * 811.3, 4.7));
+        for (int i = 0; i < ${MAXB}; i++) {
+            if (i >= uSinkNB) break;
+            if (uHalo[i].y > 0.0 && pick < uHalo[i].z) { chosen = i; break; }
+        }
+    }
     vec3 v = flowField(p);
     vec3 stp = v * uDtSim;
     float sl = length(stp);
@@ -224,8 +260,12 @@ void main() {
     if (sl > cap) stp *= cap / sl;
     vec3 p0 = p;
     p += stp;
-    bool kill = hash13(vec3(vUv * 719.3, uTick + 9.7)) < uRespawn;
-    if (length(p) > uRadius * 1.04) kill = true;
+    bool kill = own != chosen || hash13(vec3(vUv * 719.3, uTick + 9.7)) < uRespawn;
+    // Source-owned samples live in their source halo, not the unrelated
+    // camera-target sphere. Clipping both populations to that sphere erased
+    // an off-center visible Sun and repeatedly respawned invisible samples.
+    if (!halo && length(p) > uRadius * 1.04) kill = true;
+    if (owner > 0.0 && !halo) kill = true;
     for (int i = 0; i < ${MAXB}; i++) {
         if (i >= uSinkNB) break;
         float sink = sourceCore(uSink[i], uHole[i]);
@@ -239,40 +279,15 @@ void main() {
     // a halo streak shows its source's well: once the source has moved on
     // (a planet at high warp crosses its halo in a few frames) it respawns
     // instead of lingering as a wake where the well used to be
-    int own = int(owner + 0.5) - 1;
-    if (own >= 0 && own < uSinkNB && distance(p, uBody[own].xyz) > spawnReach(own) * 1.25) kill = true;
+    if (halo && distance(p, uBody[own].xyz) > spawnReach(own) * 1.25) kill = true;
     if (hash13(vec3(vUv * 913.7, uTick)) < 0.002) kill = true;
     if (kill) {
         float h1 = hash13(vec3(vUv * 127.1, uTick + 0.17));
         float h2 = hash13(vec3(vUv * 311.7, uTick + 1.31));
         float h3 = hash13(vec3(vUv * 74.7, uTick + 2.07));
-        float h4 = hash13(vec3(vUv * 601.1, uTick + 3.3));
         float th = 6.2831853 * h2;
         float yy = h1 * 2.0 - 1.0;
         float rr = sqrt(max(0.0, 1.0 - yy * yy));
-        // Bias most respawns toward a mass-weighted gravity well instead of
-        // spreading uniformly through the whole volume, so particle DENSITY
-        // concentrates where there's something to fall toward — the reported
-        // "activity looks weak near masses" bug (the old uniform-in-volume
-        // spawn plus fast infall near strong sources left them depleted).
-        // sqrt-weighted pick: linear C let the Sun hog ~94% of biased spawns
-        // (starved halos, empty inter-orbit space); sqrt gives ~62/11/8% for
-        // Sun/Jupiter/Saturn (see riverMath pickWeight + the smoke's table).
-        float totalW = 0.0;
-        for (int i = 0; i < ${MAXB}; i++) {
-            if (i >= uSinkNB) break;
-            totalW += sqrt(max(uBody[i].w, 0.0));
-        }
-        int chosen = -1;
-        if (totalW > 1e-6 && h4 < 0.68) {
-            float pick = hash13(vec3(vUv * 811.3, uTick + 4.7)) * totalW;
-            float acc = 0.0;
-            for (int i = 0; i < ${MAXB}; i++) {
-                if (i >= uSinkNB) break;
-                acc += sqrt(max(uBody[i].w, 0.0));
-                if (pick <= acc) { chosen = i; break; }
-            }
-        }
         owner = 0.0;
         if (chosen >= 0) {
             float sink = sourceCore(uSink[chosen], uHole[chosen]);
@@ -294,7 +309,8 @@ void main() {
                 p = uBody[i].xyz + d / max(r, 1e-6) * (sink * (1.2 + 2.0 * h2));
         }
     }
-    gl_FragColor = vec4(p, owner);
+    int finalOwner = int(owner + 0.5) - 1;
+    gl_FragColor = vec4(finalOwner >= 0 ? p - uBody[finalOwner].xyz : p, owner);
 }`;
 
 const LINE_VERT = /* glsl */`
@@ -308,7 +324,9 @@ varying vec3 vColor;
 varying float vAlong, vPhase;
 ${FLOW_GLSL}
 void main() {
-    vec3 p = texture2D(uPos, ref).xyz - uCenterShift;
+    vec4 stored = texture2D(uPos, ref);
+    int own = int(stored.w + 0.5) - 1;
+    vec3 p = own >= 0 && own < uSinkNB ? stored.xyz + uBody[own].xyz : stored.xyz - uCenterShift;
     vec3 v = flowField(p);
     float spd = max(length(v), 1e-12);
     vec3 vDir = v / spd;
@@ -336,6 +354,13 @@ void main() {
     // fades: volume edge, camera proximity, sink proximity
     // (p is already relative to the river's own center — see uCenterShift)
     float fade = clamp(1.0 - (length(p) - uRadius * 0.52) / (uRadius * 0.48), 0.0, 1.0);
+    if (own >= 0 && own < uSinkNB) {
+        // Fade before recycling, in the same source-relative support used
+        // by the compute pass. Crossing the ambient edge cannot blink a halo.
+        float reach = spawnReach(own);
+        fade = (1.0 - smoothstep(reach * 0.8, reach * 1.25, distance(p, uBody[own].xyz)))
+            * step(1e-12, uBody[own].w) * uHalo[own].y;
+    }
     float camBlind = mix(uRadius * 0.045, uRadius * 0.018, uLocalFocus);
     float camFadeBand = mix(uRadius * 0.30, uRadius * 0.16, uLocalFocus);
     fade *= clamp((distance(p, uCam) - camBlind) / max(1e-6, camFadeBand), 0.0, 1.0);
@@ -477,6 +502,10 @@ void main() {
         currents = mix(currents, vec3(0.72, 0.35, 1.0), max(violet, holeInk));
         vColor = currents * max(length(vColor), 0.0) * 1.5;
     }
+    // Sampling density changes presentation, not the field or advection.
+    // Ambient tracers remain unchanged. Apply once after every style gain so
+    // lines and dots receive identical owner-aware compensation.
+    if (own >= 0 && own < uSinkNB) vColor *= uHalo[own].w;
     vAlong = segT;
     vPhase = ph + uPhase * kq;
     gl_PointSize = (2.2 + tVis * 1.6) * uPixelRatio;
@@ -667,6 +696,8 @@ const smoothCenter = new THREE.Vector3();
 // subtract the WHOLE retained shift. Paused camera pans use the same rule.
 const textureCenter = new THREE.Vector3();
 let smoothR = 0;
+let refreshElapsed = 0;
+let haloCoverageDirty = false;
 const bhRiverPos = new THREE.Vector3();
 const riverStarPickIndex = new Int32Array(RIVER_STAR_SOURCE_MAX);
 const riverStarPickScore = new Float64Array(RIVER_STAR_SOURCE_MAX);
@@ -674,6 +705,7 @@ const riverStarPickRefs = new Array(RIVER_STAR_SOURCE_MAX);
 let riverStarPickCountCached = 0;
 let riverStarPickFrame = -9999;
 let riverStarPickActiveCount = -1;
+let riverStarPickActiveRevision = -1;
 let riverStarPickCx = Infinity, riverStarPickCy = Infinity, riverStarPickCz = Infinity, riverStarPickR = 0;
 let riverStarPickRefreshed = true;
 let riverStarUniformOffset = -1, riverStarUniformCount = -1;
@@ -707,6 +739,7 @@ function clearRiverStarPick() {
     for (let p = 0; p < riverStarPickCountCached; p++) riverStarPickRefs[p] = null;
     riverStarPickCountCached = 0;
     riverStarPickActiveCount = ACTIVE_STARS.length;
+    riverStarPickActiveRevision = activeStarSetRevision();
     riverStarPickFrame = river.frame;
     return 0;
 }
@@ -719,7 +752,8 @@ function refreshRiverStarPick(smoothCenter, smoothR, localFocus, renderShed) {
     const radiusDelta = Math.abs(Math.log(Math.max(1e-9, smoothR / Math.max(1e-9, riverStarPickR))));
     const cadence = localFocus > .05 ? 8 : renderShed > .2 ? 16 : 12;
     const moved = move2 > Math.max(80, smoothR * (localFocus > .05 ? .018 : .045));
-    if (ACTIVE_STARS.length === riverStarPickActiveCount &&
+    if (activeStarSetRevision() === riverStarPickActiveRevision &&
+        ACTIVE_STARS.length === riverStarPickActiveCount &&
         river.frame - riverStarPickFrame < cadence &&
         !moved && radiusDelta < .08) {
         riverStarPickRefreshed = false;
@@ -742,6 +776,7 @@ function refreshRiverStarPick(smoothCenter, smoothR, localFocus, renderShed) {
     riverStarPickCountCached = count;
     riverStarPickFrame = river.frame;
     riverStarPickActiveCount = ACTIVE_STARS.length;
+    riverStarPickActiveRevision = activeStarSetRevision();
     riverStarPickCx = smoothCenter.x;
     riverStarPickCy = smoothCenter.y;
     riverStarPickCz = smoothCenter.z;
@@ -749,8 +784,14 @@ function refreshRiverStarPick(smoothCenter, smoothR, localFocus, renderShed) {
     return count;
 }
 // bodies: 0 earth, 1 moon, 2 sun, 3..9 planets, then player holes and stars
-export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0) {
+export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0, presentation = null) {
     river.dtVis = dtSim;
+    // Resolve the draw-only policy even while hidden/disabled, so an Exit to
+    // a cosmic view cannot retain stale guided-policy diagnostics.
+    const requestedGain = Number(presentation?.opacityGain);
+    river.presentationGain = Number.isFinite(requestedGain) ? Math.max(.05, Math.min(1, requestedGain)) : 1;
+    river.presentationDepthTest = presentation?.occludeBodies === true;
+    river.visible = false;
     if (!river.enabled) return;
     warpLines.visible = false;
     river.warpVisible = false;
@@ -765,6 +806,9 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const fEff = fB * zoomFade * (1 - largeScaleFlowBlend(cam.dist));
     lines.visible = fEff > .01 && river.style !== 2;
     dots.visible = fEff > .01 && river.style === 2;
+    river.visible = lines.visible || dots.visible;
+    lineMat.depthTest = river.presentationDepthTest;
+    dots.material.depthTest = lineMat.depthTest;
     if (fEff <= .01) {
         river.computeEvery = 1;
         river.skippedCompute = false;
@@ -796,7 +840,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         const cand = 0.95 * (1 - smooth01(Math.max(8, sink * 1.5), Math.max(90, sink * 34), clear)); surfaceProx = Math.max(surfaceProx, 1 - smooth01(sink * 0.25, sink * 1.2, clear)); if (cand > localFocus) { localFocus = cand; frameKind = 3; frameIdx = i; }
     }
     for (let i = 0; i < BH.n; i++) {
-        bhRiverPos.set(earthV.x + BH.sx[i], earthV.y, earthV.z + BH.sz[i]);
+        bhRiverPos.set(earthV.x + BH.sx[i], BH.sy[i], earthV.z + BH.sz[i]);
         const sink = Math.max(BH.sinkS[i], .45);
         const clear = Math.max(0, camera.position.distanceTo(bhRiverPos) - sink);
         const cand = 0.97 * (1 - smooth01(Math.max(16, sink * 3), Math.max(220, sink * 120), clear)); if (cand > localFocus) { localFocus = cand; frameKind = 4; frameIdx = i; }
@@ -810,7 +854,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     if (frameKind === 1) { fvx += eph.moonVx; fvy += eph.moonVy; fvz += eph.moonVz; }
     else if (frameKind === 2) { fvx += eph.sunVx; fvy += eph.sunVy; fvz += eph.sunVz; }
     else if (frameKind === 3) { fvx += eph.plVx[frameIdx]; fvy += eph.plVy[frameIdx]; fvz += eph.plVz[frameIdx]; }
-    else if (frameKind === 4) { fvx += BH.vx[frameIdx]; fvy += BH.vy[frameIdx]; }
+    else if (frameKind === 4) { fvx += BH.vx[frameIdx]; fvy += BH.vy[frameIdx]; fvz += BH.vz[frameIdx]; }
     else if (frameKind === -1) {
         // no body dominates: ship focus gives the first-person "carried by
         // the river" frame, fading out toward the survey view (planeBias→1)
@@ -833,12 +877,16 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // terrain instead of drawing over it (zoom-ladder earth-5). Toggling the
     // GL depth test needs no shader rebuild and leaves every other view
     // byte-identical.
-    lineMat.depthTest = surfaceProx > 0.5;
+    // A guided-flight policy changes only natural-flow ink and occlusion.
+    // Recompute from the call argument so Exit restores the normal policy;
+    // never scale fEff, particle ownership, gravity or compute cadence here.
+    lineMat.depthTest = surfaceProx > 0.5 || river.presentationDepthTest;
+    river.presentationDepthTest = lineMat.depthTest;
     dots.material.depthTest = lineMat.depthTest;
     uniformsShared.uPixelRatio.value = renderQuality.dpr;
     uniformsShared.uLocalFocus.value = localFocus;
     const mobileOpacity = renderQuality.mobile ? 1.08 : 1;
-    uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + localFocus * .7) * (1 - loadShed * .12);
+    uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + localFocus * .7) * (1 - loadShed * .12) * river.presentationGain;
     river.renderShed = renderShed;
     let drawFrac = Math.max(.52, .56 + localFocus * .30, 1 - renderShed * .44);
     if (renderQuality.mobile) drawFrac = Math.min(drawFrac, renderQuality.loadShed >= 2 ? .72 : .84);
@@ -963,7 +1011,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     }
     let nb = 3 + PL.length;
     for (let i = 0; i < BH.n && nb < MAXB; i++, nb++) {
-        bodyVals[nb].set(earthV.x + BH.sx[i] - smoothCenter.x, earthV.y - smoothCenter.y, earthV.z + BH.sz[i] - smoothCenter.z, BH.c[i] * Math.max(.08, BH.obsT[i] || 1));
+        bodyVals[nb].set(earthV.x + BH.sx[i] - smoothCenter.x, BH.sy[i] - smoothCenter.y, earthV.z + BH.sz[i] - smoothCenter.z, BH.c[i] * Math.max(.08, BH.obsT[i] || 1));
         sinkVals[nb] = BH.sinkS[i];
         rsVals[nb] = BH.rs[i] * K;
         holeVals[nb] = 1;
@@ -1009,16 +1057,12 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     } else {
         flowCtx.starCount = starSourceCount;
     }
-    // flowCtx.star{X,Y,Z} are cached ABSOLUTE positions (also consumed by
-    // flowfield.js's CPU-side flowVel(), which needs absolute coordinates),
-    // refreshed only when the star selection itself changes above. smoothCenter
-    // moves every frame though, so the GPU-facing residual is re-derived here
-    // unconditionally — reusing a stale residual between cache refreshes would
-    // silently drift each star's apparent position in the flow field.
-    for (let p = 0; p < flowCtx.starCount; p++) {
-        const slot = sinkSourceCount + p;
-        bodyVals[slot].set(flowCtx.starX[p] - smoothCenter.x, flowCtx.starY[p] - smoothCenter.y, flowCtx.starZ[p] - smoothCenter.z, flowCtx.starC[p]);
-    }
+    // Selection is throttled, coordinates are not: PR48 publishes a new
+    // epoch into retained active objects between neighbourhood refreshes.
+    // A structural revision above invalidates references when refresh builds
+    // replacement objects even if the total count is unchanged.
+    publishRiverSourcePositions(riverStarPickRefs, flowCtx.starCount, K,
+        flowCtx, bodyVals, sinkSourceCount, smoothCenter);
     nb = sinkSourceCount + flowCtx.starCount;
     uniformsShared.uNB.value = nb;
     uniformsShared.uSinkNB.value = nb;
@@ -1026,6 +1070,33 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     river.starSources = flowCtx.starCount;
     river.starRefreshed = starUniformDirty;
     river.sinkSources = nb;
+    haloCameraInverse.copy(camera.quaternion).invert();
+    const haloEase = 1 - Math.exp(-8 * Math.max(0, dtReal));
+    const tanHalfFov = Math.tan(camera.fov * Math.PI / 360);
+    let haloTotal = 0, haloReferenceTotal = 0, haloCoverageChanged = false;
+    for (let i = 0; i < nb; i++) {
+        haloViewPos.copy(bodyVals[i]).sub(uniformsShared.uCam.value);
+        const d = haloViewPos.length();
+        haloViewPos.applyQuaternion(haloCameraInverse);
+        const wanted = haloSamplingRadius(smoothR, d);
+        const h = haloVals[i];
+        h.x = respawn === 1 ? wanted : h.x + (wanted - h.x) * haloEase;
+        const core = holeVals[i] ? Math.max(sinkVals[i], Math.min(Math.max(smoothR * .0008, .45), 64)) : sinkVals[i];
+        const reach = sourceSpawnReach(core, soiVals[i], h.x);
+        const weight = bodyVals[i].w > 0 ? haloViewWeight(haloViewPos.x, haloViewPos.y, -haloViewPos.z,
+            d, Math.hypot(bodyVals[i].x, bodyVals[i].y, bodyVals[i].z), reach, tanHalfFov, camera.aspect, TIER_SPLIT_UNITS) : 0;
+        // Hard zero is reserved for nonrenderable/precision-unsafe sources.
+        // Visible viewport boundaries themselves have a generous smooth band.
+        if (Math.abs(h.y - weight) > 1e-6) haloCoverageChanged = true;
+        h.y = weight;
+        const massWeight = Math.sqrt(Math.max(0, bodyVals[i].w));
+        haloReferenceWeights[i] = massWeight;
+        haloReferenceTotal += massWeight;
+        haloTotal += massWeight * h.y;
+        h.z = haloTotal;
+    }
+    if (haloTotal > 1e-6) for (let i = 0; i < nb; i++) haloVals[i].z /= haloTotal;
+    else for (let i = 0; i < nb; i++) haloVals[i].z = 0;
     // Universal shell anchor: the source whose river dominates at the volume
     // center (bodyVals are center-relative, and the center tracks cam.tgt).
     // One dominance rule for Moon/Earth/planets/Sun/holes/stars — the shells
@@ -1109,10 +1180,19 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // advection; respawning means it does not promise exact historical replay.
     if (dtVis === 0 || Math.sign(dtVis) !== Math.sign(river.dtAccum)) river.dtAccum = 0;
     river.dtAccum += dtVis;
-    const shouldCompute = (dtVis !== 0 || respawn > .001) &&
+    // Preserve the mobile compute budget. Source-local offsets already
+    // follow the live source on skipped draws; only population reassignment
+    // waits (at most the existing cadence). Keep that request pending even
+    // when a paused camera stops moving before the next scheduled compute.
+    haloCoverageDirty ||= haloCoverageChanged;
+    const shouldCompute = (dtVis !== 0 || respawn > .001 || haloCoverageDirty) &&
         (computeEvery <= 1 || river.frame % computeEvery === 0 || respawn > .08);
     river.skippedCompute = !shouldCompute;
+    refreshElapsed += Math.max(0, Math.min(dtReal, 0.1));
     if (shouldCompute) {
+        uniformsShared.uRespawn.value = respawn === 1 ? 1 : refreshProbability(respawn, refreshElapsed);
+        refreshElapsed = 0;
+        haloCoverageDirty = false;
         const computeDt = river.dtAccum;
         uniformsShared.uDtSim.value = computeDt;
         river.dtVis = computeDt;
@@ -1129,10 +1209,25 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         else if (renderQuality.mobile && computeMs < 6 && river.computeEveryAdaptive > 1) river.computeEveryAdaptive = Math.max(1, river.computeEveryAdaptive - 1);
         else if (!renderQuality.mobile) river.computeEveryAdaptive = 1;
         const sw = rtA; rtA = rtB; rtB = sw;
+        // The compute pass reassigns owners from this CDF. Hold this snapshot
+        // across skipped computes: new camera eligibility must not dim an old,
+        // still-sparse population before its replacement samples exist.
+        let previousShare = 0;
+        for (let i = 0; i < nb; i++) {
+            renderedOwnerShares[i] = Math.max(0, haloVals[i].z - previousShare);
+            previousShare = haloVals[i].z;
+            renderedReferenceShares[i] = haloReferenceTotal > 0 ? haloReferenceWeights[i] / haloReferenceTotal : 0;
+        }
         uniformsShared.uPos.value = rtA.texture;
         textureCenter.copy(smoothCenter);
         uniformsShared.uCenterShift.value.set(0, 0, 0);
-    } else uniformsShared.uDtSim.value = 0;
+    } else {
+        uniformsShared.uDtSim.value = 0;
+        if (dtVis === 0 && respawn === 0) refreshElapsed = 0;
+    }
+    const drawnHaloSamples = river.drawCount * OWNED_SAMPLE_FRACTION;
+    for (let i = 0; i < nb; i++) haloVals[i].w = sourceSampleInkGain(
+        drawnHaloSamples * renderedOwnerShares[i], drawnHaloSamples * renderedReferenceShares[i]);
 }
 
 // ---- collapsing dot-shells near Earth ----
@@ -1194,5 +1289,7 @@ export function resetRiverContext() {
     uniformsShared.uPos.value = seedTex;
     uniformsShared.uRespawn.value = 1;
     river.dtAccum = 0;
+    refreshElapsed = 0;
+    haloCoverageDirty = false;
     smoothR = 0; // force the next visible update to fill its new GPU target
 }

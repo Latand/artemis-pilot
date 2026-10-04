@@ -1,3 +1,6 @@
+import { presentationExposureSeconds } from './render/orbitalExposureMath.js';
+import { updateVisibleTrajectories, hideVisibleTrajectories } from './render/visibleTrajectories.js';
+import { updateOrbitalExposure, hideOrbitalExposure, applyOrbitalExposureMarkers } from './render/orbitalExposure.js';
 import { initShipVisuals, updateShipVisuals } from "./shipVisuals.js";
 import { initRiverStyles } from "./riverStyles.js";
 import { updateGravityInspector } from "./gravityInspector.js";
@@ -22,7 +25,7 @@ import {
     farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
-    buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, moon, moonOrbitRing, moonSoiRing,
+    buildBodies, sunPos, sunLight, sunCore, sunGlow, sunCorona, sky, skyStars, earth, earthG, clouds, earthAtmo, earthOrbitRing, moon, moonOrbitRing, moonSoiRing,
     plGroups, plSurfaces, plGlows, plOrbitRings, plLabels, galaxyBackdrop, sunDirW, updateBodyShaders, scheduleDeferredRealSkyLoad, requestEarthNightTexture,
     moonGroups, moonSurfaces, moonGlows, moonLabels, updateSunView,
 } from "./bodies.js";
@@ -34,7 +37,7 @@ import { AP, apStep, apOff, targetState } from "./autopilot.js";
 import { REL, relCancel } from "./relTravel.js";
 import {
     shipG, craft, dot, flame, plasma, updateHeadingArrow,
-    EXN, exPos, exVel, exLife, exMax, exCol, exPosAttr, exColAttr, exMat, exhaust, spawnExhaust,
+    exhaust,
     XPN, xpPos, xpVel, xpLife, xpCol, xpPosAttr, xpColAttr, xpMat, explosion, xpFlash, xp, triggerExplosion,
 } from "./ship.js";
 import {
@@ -60,7 +63,12 @@ import { starViewUniforms } from "./render/starPointMaterial.js";
 import { eraModulation } from "./universe/cosmicEra.js";
 import { MIN_HOLE_OBSERVER_RS } from "./render/holeAppearance.js";
 import { initBHHooks, updateBHVisuals, addBlackHole, isBHPlacementMode } from "./blackholes.js";
-import { thrustGain, boom } from "./audio.js";
+import { thrustGain, boom, updateDriveAudio } from "./audio.js";
+import { DRIVE, stepDrive, sampleDriveGradient } from "./curvatureDrive.js";
+import { shipPresentation } from "./shipPresentation.js";
+const driveAcceleration = new Float64Array(3);
+// Guided framing keeps the physical field visible without burying the subjects.
+const GUIDED_RIVER_PRESENTATION = Object.freeze({ occludeBodies: true, opacityGain: .22 });
 import { initAmbient, updateAmbient } from "./ambientAudio.js";
 import { award, toast, renderObjectives } from "./achievements.js";
 import {
@@ -934,20 +942,23 @@ function updateStarLabels(w, h) {
     return { showStarLabels, starLabelsDue, starLabelBatch };
 }
 // Near-field label declutter: labels claim screen slots in priority order
-// (SHIP > SUN > EARTH > MOON > planets > moons > holes); anything whose
-// anchor lands within 26 px of an already-placed label hides instead of
-// overprinting.
+// (EARTH > SUN > MOON > planets > SHIP > moons > holes). Compare the
+// actual text position, including its offset. Ship callouts can try another
+// offset so a co-located hull never erases Earth from an overview.
 const labelSlots = [];
 const _slotP = [0, 0];
 function putUnlessCrowded(el, v3, dy, w, h) {
     const p = projectTo(v3, w, h, _slotP);
-    if (!p) { hideLabel(el); return; }
+    if (!p) { hideLabel(el); return false; }
+    const sx = p[0] + 10, sy = p[1] + dy;
+    if (sy < 2 || sy > h - 18) { hideLabel(el); return false; }
     for (let k = 0; k < labelSlots.length; k += 2) {
-        const dx = p[0] - labelSlots[k], dyy = p[1] - labelSlots[k + 1];
-        if (dx * dx + dyy * dyy < 26 * 26) { hideLabel(el); return; }
+        const dx = sx - labelSlots[k], dyy = sy - labelSlots[k + 1];
+        if (dx * dx + dyy * dyy < 26 * 26) { hideLabel(el); return false; }
     }
-    labelSlots.push(p[0], p[1]);
+    labelSlots.push(sx, sy);
     put(el, v3, dy, w, h);
+    return true;
 }
 function starLabelCadence() {
     if (renderQuality.mobile) return 8;
@@ -1341,6 +1352,7 @@ const moonBeacon = new THREE.Sprite(new THREE.SpriteMaterial({
     map: dotTexture("rgba(220,230,245,1)", "rgba(150,170,200,0)"),
     color: 0xaeb9c8, transparent: true, opacity: .5, depthWrite: false,
 }));
+moonBeacon.name = "Moon selection beacon";
 moonBeacon.visible = false;
 scene.add(moonBeacon);
 const camPrevTgt = new THREE.Vector3(), camDelta = new THREE.Vector3();
@@ -1358,7 +1370,8 @@ const minorOortStep = { start: 0, count: 0, nextIdx: 0 };
 let beltCursor = 0, kuiperCursor = 0;
 const arrC = [0, 0, 0];
 const fv = [0, 0, 0];
-let placed = false, frameNo = 0, grB = 0, exAcc = 0, exAnyAlive = false, hudReady = false, nearLabelsReady = false, nearVisualReady = false;
+let placed = false, frameNo = 0, grB = 0, hudReady = false, nearLabelsReady = false, nearVisualReady = false;
+let hudLastFocus, hudLastMode, hudLastWarp, hudLastPaused;
 const DIR_FADE_START_KMS = 55, DIR_FADE_END_KMS = 90;
 let prevHeadingVis = null, prevVelAngleVis = null;
 function angleDelta(a, b) {
@@ -1542,10 +1555,10 @@ function hudCadence(cabinActive, aMag) {
     return G.warp > 600 ? 6 : 2;
 }
 function nearLabelCadence() {
-    if (renderQuality.mobile) return G.warp > 600 ? 6 : G.warp > 60 ? 4 : 2;
-    if (G.warp > 3600) return 6;
-    if (G.warp > 600) return 4;
-    return 2;
+    // This is the bounded local-body list, not the star catalog. Positions
+    // must follow every rendered body/camera frame, especially after focus
+    // changes and at high warp; setLabelState avoids unchanged DOM writes.
+    return 1;
 }
 const BODY_SURFACE_MIN_PX_DESKTOP = 1.35, BODY_SURFACE_MIN_PX_MOBILE = 2.0;
 const BODY_DETAIL_MIN_PX = 10;
@@ -1598,6 +1611,7 @@ function updateBodySurfaceLod(cosmicView, detailShed) {
 let bodyLodReady = false, bodyLodLastDist = 0, bodyLodLastFocus = null, bodyLodLastCosmic = false, bodyLodLastDetail = false;
 
 function renderFrame(showCockpit) {
+    applyOrbitalExposureMarkers(moonBeacon, { earth: lblE, moon: lblM, planets: plLabels, moons: moonLabels });
     if (renderContext.isLost()) return;
     if (VR.active) { renderVRFrame(showCockpit && VR.mode === "ship"); return; }
     const renderT0 = perfStart();
@@ -1715,7 +1729,7 @@ function frameStep() {
     if ((rotIn || mainIn || latIn) && AP.mode !== "off") apOff("pilot override", toast);
     if ((rotIn || mainIn || latIn) && REL.active) relCancel("pilot override", toast);
     let atx = 0, aty = 0, atz = 0, aMag = 0;
-    const canThrust = !G.dead && !G.paused && (G.infinite || G.fuel > 0);
+    const canThrust = !scenarioPlaybackActive() && !G.dead && !G.paused && G.warp > 0 && (G.infinite || G.fuel > 0);
     if (canThrust && AP.mode !== "off" && !mainIn && !latIn) {
         const ap = apStep(dtR, dtR * G.warp, orbitInfo(), { toast });
         if (ap && ap.aMag > 0) { atx = ap.atx; aty = ap.aty; atz = ap.atz || 0; aMag = ap.aMag; mainIn = ap.mainIn; }
@@ -1752,6 +1766,13 @@ function frameStep() {
             hideBanner();
         }
     }
+    // Commanded local potential -> its centre gradient -> the existing RK4
+    // path. The same field state controls the envelope, river guide and sound.
+    stepDrive(DRIVE, atx, aty, atz, dtR, canThrust);
+    sampleDriveGradient(driveAcceleration, 0, 0, 0, DRIVE.ax, DRIVE.ay, DRIVE.az);
+    [atx, aty, atz] = driveAcceleration;
+    aMag = DRIVE.magnitude;
+    updateDriveAudio(DRIVE.level, dtR, G.muted || G.paused || G.dead);
     // ---- physics ----
     const physicsT0 = perfStart();
     let advanced = 0, activeStarsFresh = false;
@@ -1879,10 +1900,12 @@ function frameStep() {
             plGroups[i].position.set(px, py, pz);
             plGlows[i].position.set(px, py, pz);
             flowCtx.plScX[i] = px; flowCtx.plScZ[i] = pz;
+            // Spin phase is cheap and must match this frame, even when
+            // slower surface/detail bookkeeping is load-shed.
+            plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
             if (nearVisualDue) {
                 plOrbitRings[i].position.copy(sunPos);
                 plGroups[i].rotation.z = PL[i].visualTilt || 0;
-                plSurfaces[i].rotation.y = (PL[i].spin * G.t) % (Math.PI * 2);
             }
         }
         for (let i = 0; i < MOONS.length; i++) {
@@ -1921,6 +1944,10 @@ function frameStep() {
     perfEnd("scene.bodies", sceneBodiesT0, PERF.enabled ? { nearFieldDue, nearVisualDue, cosmicView } : null);
     const sceneFocusT0 = perfStart();
     const sunCamDist = Math.max(1e-9, camera.position.distanceTo(sunPos));
+    const earthOrbitGuide = smooth01(6, 24, AU_KM * K * viewportSize.pxScale / sunCamDist);
+    earthOrbitRing.position.copy(sunPos);
+    earthOrbitRing.visible = !WORLD.earthDestroyed && !WORLD.sunDestroyed && earthOrbitGuide > .01;
+    earthOrbitRing.material.opacity = .5 * earthOrbitGuide;
     for (let i = 0; i < PL.length; i++) {
         plGroups[i].visible = !WORLD.plDestroyed[i] && !cosmicView;
         // Orbit rings and planet markers are guides: they fade out as the
@@ -1970,7 +1997,7 @@ function frameStep() {
     const focusedSystem = getExploredSystem(G.focus, nearestActiveStar(eph.earthX + G.x, eph.earthY + G.y, G.z).star, G.t);
     const activePlanetFocus = planetFocusIndex(G.focus);
     const activePlanetMoonFocus = planetMoonFocusIndex(G.focus);
-    updateSystemRender(focusedSystem, G.t, camera, G.focus);
+    updateSystemRender(focusedSystem, G.t, camera, G.focus, G.paused ? 0 : presentationExposureSeconds(advanced, rawDtR));
     updateNebulae(camera, dtR);
     {
         const cp = Math.cos(G.pitch || 0);
@@ -2021,8 +2048,12 @@ function frameStep() {
     updateScenarioCamera();
     const cabinActive = updateCabinHUD(cosmicView, oi);
     const hudEvery = hudCadence(cabinActive, aMag);
-    const hudDue = !hudReady || frameNo % hudEvery === 0;
-    if (hudDue) hudReady = true;
+    const hudInputChanged = hudLastFocus !== G.focus || hudLastMode !== G.uiMode || hudLastWarp !== G.warp || hudLastPaused !== G.paused;
+    const hudDue = !hudReady || hudInputChanged || frameNo % hudEvery === 0;
+    if (hudDue) {
+        hudReady = true; hudLastFocus = G.focus; hudLastMode = G.uiMode;
+        hudLastWarp = G.warp; hudLastPaused = G.paused;
+    }
     if (VR.active) {
         // rigs follow the ship (or the god transform); the desktop camera is
         // re-pointed at the VR eye so camera-dependent systems keep working
@@ -2076,7 +2107,7 @@ function frameStep() {
         // leaves every star the catalogs hold to them.
         setTier1Fade(1);
         setCatalogStarsFade(1);
-        updateCatalogStars();
+        updateCatalogStars(camWorldKmX, camWorldKmY, camWorldKmZ);
         starViewUniforms.uPxScale.value = viewportSize.pxScale;
         const fieldEra = eraModulation(G.t);
         const t1s = tier1Stats();
@@ -2215,6 +2246,11 @@ function frameStep() {
     updateLargeScaleFlow(advanced, dtR, fB, sunPos);
     updateGravityInspector();
     if (cosmicView) {
+        hideVisibleTrajectories();
+        hideOrbitalExposure();
+        // The local beacon may retain a kpc-view scale after leaving a star.
+        // Its normal visibility update lives below this early return.
+        moonBeacon.visible = false;
         // Hide the local GPU layer even on the cosmic early-return path.
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
         updateShells(0, 0);
@@ -2257,7 +2293,9 @@ function frameStep() {
         (!bloomForced && G.warp > 86400 && G.gr && grB > .18 && cam.dist > LY_SCENE * .05);
     bloomPass.enabled = !bloomDisabled && (cinematic.isPlaying() || bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
     if (bloomPass.enabled && !composer) ensurePostProcessing(lensingPass);
-    updateBodyShaders(camera, G.t);
+    updateBodyShaders(camera, G.t, G.paused ? 0 : presentationExposureSeconds(advanced, rawDtR), _m.om);
+    updateOrbitalExposure(camera, advanced, rawDtR, cabinActive || VR.active);
+    updateVisibleTrajectories(camera, oi, cabinActive || VR.active);
     // the bodies meter the exposure afresh inside a planetary system: keep
     // the diffuse-light cap on it too (see the cosmic layer above)
     stellarExposure.value = Math.min(stellarExposure.value, galaxyVolumeExposureCap());
@@ -2281,53 +2319,18 @@ function frameStep() {
     prevVelAngleVis = velAngle;
     const directionVisualActive = (G.uiMode !== "observe" || VR.active) && G.warp <= 600 && headingRate < 7 && velAngleRate < 7;
     craft.scale.setScalar(cs);
-    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible && G.gr && G.uiMode === "pilot");
-    dot.scale.setScalar(cd * .014);
-    dot.material.opacity = G.dead || scenarioPlaybackActive() ? 0 : (cd > 4 ? 1 : Math.max(0, (cd - 1.2) / 2.8));
-    updateHeadingArrow(oriX, oriY, oriZ, dirV, cd, directionVisualActive && !G.dead && !cosmicView && !cabinActive, directionAlpha);
-    // ---- engine flame & exhaust ----
-    const thrustingMain = aMag > 0 && mainIn !== 0;
-    flame.visible = thrustingMain && !G.dead;
-    if (flame.visible) {
-        const thrVis = Math.min(2, G.throttle); // visuals saturate; physics doesn't
-        const off = -mainIn * cs * 1.05;
-        flame.position.set(dirV.x * off, dirV.y * off, dirV.z * off);
-        flame.scale.setScalar(cs * (.7 + .6 * thrVis * (G.boost ? 1.7 : 1)) * (1 + .2 * Math.sin(performance.now() * .03)));
-        flame.material.opacity = .9;
-        exAcc = Math.min(20, exAcc + Math.min(280, (G.boost ? 170 : 95) * thrVis) * dtR);
-        const epx = oriX + dirV.x * off * 1.05, epy = oriY + dirV.y * off * 1.05, epz = oriZ + dirV.z * off * 1.05;
-        while (exAcc > 1) {
-            exAcc--;
-            spawnExhaust(epx, epy, epz, -dirV.x * mainIn, -dirV.y * mainIn, -dirV.z * mainIn, cs, G.boost);
-        }
+    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible);
+    const shipView = shipPresentation(cd, cs, camera.fov, viewportSize.h);
+    craft.visible = shipView.hullAlpha > .001;
+    for (const material of craft.userData.fadeMaterials) {
+        material.opacity = shipView.hullAlpha;
     }
-    // advect exhaust (real-time, cosmetic)
-    if (exAnyAlive || thrustingMain) {
-        let nextExAnyAlive = false, exTouched = false;
-        for (let i = 0; i < EXN; i++) {
-            const j = i * 3;
-            if (exLife[i] > 0) {
-                exLife[i] -= dtR;
-                exPos[j] += exVel[j] * dtR;
-                exPos[j + 1] += exVel[j + 1] * dtR;
-                exPos[j + 2] += exVel[j + 2] * dtR;
-                const a = Math.max(0, exLife[i] / exMax[i]);
-                exCol[j] = a; exCol[j + 1] = a * .72; exCol[j + 2] = a * .4;
-                nextExAnyAlive = nextExAnyAlive || exLife[i] > 0;
-                exTouched = true;
-            } else if (exCol[j] || exCol[j + 1] || exCol[j + 2]) {
-                exCol[j] = 0; exCol[j + 1] = 0; exCol[j + 2] = 0;
-                exTouched = true;
-            }
-        }
-        exAnyAlive = nextExAnyAlive || thrustingMain;
-        exhaust.visible = exAnyAlive;
-        if (exTouched) {
-            exPosAttr.needsUpdate = true;
-            exColAttr.needsUpdate = true;
-        }
-    } else exhaust.visible = false;
-    exMat.size = Math.max(.002, cs * .4);
+    dot.scale.setScalar(shipView.markerScale);
+    dot.material.opacity = G.dead || scenarioPlaybackActive() ? 0 : shipView.markerAlpha;
+    updateHeadingArrow(oriX, oriY, oriZ, dirV, cd, directionVisualActive && !G.dead && !cosmicView && !cabinActive, directionAlpha);
+    // This drive emits no combustion plume or expelled reaction mass.
+    flame.visible = false;
+    exhaust.visible = false;
     // ---- explosion ----
     if (xp.t >= 0) {
         xp.t += dtR;
@@ -2364,9 +2367,9 @@ function frameStep() {
         } else plasma.visible = false;
     } else plasma.visible = false;
     let cabinShake = 0;
-    if ((shake > .03 || (G.boost && aMag > 0)) && !VR.active) {
+    if (shake > .03 && !VR.active) {
         // in the cabin the camera sits at cockpit scale: a fixed micro-jitter
-        // reads as engine rumble, while cam.dist-scaled shake (external zoom)
+        // represents atmospheric buffeting; cam.dist-scaled shake (external zoom)
         // would hurl the world around the window. In VR the same events go
         // to the controllers as haptic rumble — visual shake is nauseating.
         const s = cabinActive ? Math.max(shake, .12) * .004 : Math.max(shake, .12) * cam.dist * .006;
@@ -2375,7 +2378,7 @@ function frameStep() {
         camera.position.y += (Math.random() - .5) * s;
         camera.position.z += (Math.random() - .5) * s;
     }
-    vrHaptics(aMag, shake);
+    vrHaptics(0, shake); // no combustion rumble from the field drive
     // ---- trails & prediction ----
     if (!G.paused && !G.dead && advanced > 0) { pushTrail(false); pushJourney(); }
     setJourneyOpacity(.48 * smooth01(40, 320, cd));
@@ -2386,7 +2389,7 @@ function frameStep() {
     const fRiver = fB * (1 - smooth01(2.0e7, 7.0e7, cam.dist));
     if (PERF.enabled) {
         const riverT0 = performance.now();
-        updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR);
+        updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR, scenarioPlaybackActive() ? GUIDED_RIVER_PRESENTATION : null);
         markPerf("river.update", performance.now() - riverT0, {
             drawCount: river.drawCount || 0,
             computeEvery: river.computeEvery || 1,
@@ -2405,7 +2408,7 @@ function frameStep() {
         updateShells(Math.max(-900, Math.min(river.dtVis ?? advanced, 900)), fRiver);
         markPerf("river.shells", performance.now() - shellsT0, { visible: fRiver > .01 });
     } else {
-        updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR);
+        updateRiver(advanced, fB, earthV, moonV, sunPos, plPosArr, dtR, scenarioPlaybackActive() ? GUIDED_RIVER_PRESENTATION : null);
         updateShells(Math.max(-900, Math.min(river.dtVis ?? advanced, 900)), fRiver);
     }
     if (fRiver > .01 && hudDue && !renderQuality.mobile) {
@@ -2470,11 +2473,7 @@ function frameStep() {
         hideCosmologyArrows();
     }
     updateFocusVelocityVector(cabinActive || cosmicView || (G.uiMode === "observe" && !VR.active) ? 0 : 1);
-    // ---- audio ----
-    if (thrustGain) {
-        const target = (aMag > 0 && !G.muted) ? Math.min(.22, .04 + .12 * G.throttle * (G.boost ? 1.8 : 1)) : 0;
-        thrustGain.gain.value += (target - thrustGain.gain.value) * Math.min(1, dtR * 12);
-    }
+    // ---- ambient audio ----
     if (frameNo % 20 === 0) {
         ambientPos.wx = eph.earthX + G.x;
         ambientPos.wy = eph.earthY + G.y;
@@ -2592,15 +2591,20 @@ function frameStep() {
     let planetLabelCount = 0, bhLabelCount = 0;
     if (nearLabelsDue) {
         labelSlots.length = 0;
-        if (G.dead) hideLabel(lblO);
-        else putUnlessCrowded(lblO, shipG.position, -22, w, h);
+        if (WORLD.earthDestroyed) hideLabel(lblE); else putUnlessCrowded(lblE, earthG.position, -8, w, h);
         if (WORLD.sunDestroyed || camera.position.distanceTo(sunCore.position) < SUN_RADIUS * 18) hideLabel(lblS);
         else putUnlessCrowded(lblS, sunCore.position, -8, w, h);
-        if (WORLD.earthDestroyed) hideLabel(lblE); else putUnlessCrowded(lblE, earthG.position, -8, w, h);
         if (WORLD.moonDestroyed) hideLabel(lblM); else putUnlessCrowded(lblM, moon.position, -8, w, h);
         for (let i = 0; i < PL.length; i++) {
             if (WORLD.plDestroyed[i]) hideLabel(plLabels[i]);
             else { putUnlessCrowded(plLabels[i], plGroups[i].position, -8, w, h); planetLabelCount++; }
+        }
+        if (G.dead || !shipG.visible) hideLabel(lblO);
+        else {
+            // Keep the body label. Offset the small navigation callout instead.
+            for (const offset of [-22, -40, 24, -66, 50]) {
+                if (putUnlessCrowded(lblO, shipG.position, offset, w, h)) break;
+            }
         }
         for (let i = 0; i < MOONS.length; i++) {
             const m = MOONS[i];

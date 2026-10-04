@@ -170,7 +170,7 @@ const sunInterior = new THREE.DirectionalLight(0xfff2dc, 1.05);
 // console accent: compact glow line tucked under the deck lip
 const panelGlow = new THREE.PointLight(0x6fd8e8, .28, .9);
 panelGlow.position.set(0, -.2, -.62);
-const thrustLight = new THREE.PointLight(0xff8a4a, 0, 4);
+const thrustLight = new THREE.PointLight(0x70baf5, 0, 4);
 thrustLight.position.set(0, -.2, 1.4);
 // dim warm dome light so the rear cabin stays legible in shadow
 const domeLight = new THREE.PointLight(0xffd9b0, .4, 3.4);
@@ -186,13 +186,13 @@ export function updateCockpit(dtR, sunDirWorld, heading, aMag, boost, warn, shak
     _sunLocal.set(sunDirWorld.x * s + sunDirWorld.z * c, .35, -(sunDirWorld.x * c - sunDirWorld.z * s));
     if (_sunLocal.lengthSq() < 1e-9) _sunLocal.set(0, 1, 0);
     sunInterior.position.copy(_sunLocal.normalize().multiplyScalar(5));
-    thrustLight.intensity = aMag > 0 ? (boost ? 1.6 : .8) * (0.85 + .3 * Math.sin(performance.now() * .04)) : 0;
+    thrustLight.intensity = aMag > 0 ? .35 * Math.min(1, Math.sqrt(aMag / .006)) : 0;
     for (const key of Object.keys(warnLights)) {
         const on = !!warn[key];
         const m = warnLights[key].material;
         m.opacity += ((on ? 1 : .12) - m.opacity) * Math.min(1, dtR * 10);
     }
-    // head orientation: cockpit fixed, head rotates; thrust/aero rumble is a
+    // head orientation: cockpit fixed, head rotates; atmospheric buffeting is a
     // millimetre-scale head jitter, matched to the world camera's micro-shake
     cockpitCam.rotation.order = "YXZ";
     cockpitCam.rotation.set(look.pitch, -look.yaw, 0);

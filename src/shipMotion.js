@@ -1,6 +1,6 @@
 // Presentation state only. No simulation, time-warp or physics imports.
 export const RING_MAX_RATE = 1.4; // rad / real second (~13.4 rpm)
-export const RING_FULL_SPEED = 120; // HUD Earth-relative km/s; artistic scale
+export const RING_FULL_SPEED = 120; // legacy input scale; runtime now maps normalized field load onto it
 const TAU = Math.PI * 2;
 export function createShipMotion() { return { angle: 0, rate: 0, level: 0 }; }
 export function stepShipMotion(state, speedKmS, dtReal, paused = false) {

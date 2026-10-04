@@ -1,0 +1,104 @@
+name: Source radiance integration
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package*.json'
+      - 'bun.lock'
+      - 'vite.config.*'
+      - 'scripts/galaxy-preview-plugin.mjs'
+      - '.env*'
+      - 'postcss.config.*'
+      - '.postcssrc*'
+      - 'tsconfig*.json'
+      - 'jsconfig*.json'
+      - 'npm-shrinkwrap.json'
+      - '.npmrc'
+      - 'scripts/*radiance*'
+      - 'scripts/fixtures/*radiance*'
+      - 'scripts/context-recovery-qa.mjs'
+      - 'scripts/smoke-context-recovery-qa.mjs'
+      - '.github/workflows/river-radiance.yml'
+permissions:
+  contents: read
+  actions: read
+jobs:
+  accepted-performance:
+    name: Authenticate and replay all six measured views
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: git worktree add --detach ../radiance-accepted 7d45c681f684da27bd84532e1de1d0ddd3f9564f
+      - run: node scripts/smoke-radiance-acceptance.mjs
+      - name: Require identical production and authenticated successful original jobs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-radiance-acceptance.mjs fetch ../radiance-accepted evidence/accepted
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37164787136
+          name: radiance-recomputed-complete-desktop
+          path: evidence/accepted/desktop
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37164787136
+          name: radiance-recomputed-complete-mobile
+          path: evidence/accepted/mobile
+      - name: Recompute every trial and both device-wide budgets from exact raw reports
+        run: node scripts/verify-radiance-acceptance.mjs replay ../radiance-accepted evidence/accepted
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-acceptance-provenance
+          path: |
+            evidence/accepted/*provenance.json
+            evidence/accepted/metadata.json
+          retention-days: 14
+  final-functional:
+    name: Final radiance ${{ matrix.suite }} ${{ matrix.device }}
+    needs: accepted-performance
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        suite: [transient, lifecycle]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-river-radiance.mjs && node scripts/smoke-river-radiance-qa.mjs && node scripts/smoke-river-radiance-lifecycle.mjs && node scripts/smoke-context-recovery-qa.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise exact final production with the unchanged reviewed browser suite
+        env:
+          DEVICE: ${{ matrix.device }}
+          RADIANCE_SUITE: ${{ matrix.suite }}
+        run: |
+          git worktree add --detach ../radiance-baseline aa13451b503ff59eb1f196632406c66fa0db37b1
+          ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-baseline/node_modules
+          node scripts/verify-river-radiance.mjs ../radiance-baseline . evidence/radiance
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-final-${{ matrix.suite }}-${{ matrix.device }}
+          path: evidence/radiance
+          retention-days: 14

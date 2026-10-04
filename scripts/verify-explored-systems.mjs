@@ -11,6 +11,8 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { systemRenderStatement } from './explored-system-hooks.mjs';
+import { inspectExploredHostPoint } from './explored-point-ownership.mjs';
 
 const quantile = (values, q) => [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * q) - 1)];
 const median = values => quantile(values, .5);
@@ -84,14 +86,16 @@ function once(source, token, replacement) {
 }
 function transform(source, id) {
     id = id.replaceAll('\\', '/').split('?')[0];
-    if (id.endsWith('/src/render/catalogStars.js')) return once(source, 'const start = () => loadTier0();', 'const start = () => {}; // QA: background catalog omitted; explicit HYG loading is exercised separately.');
+    if (id.endsWith('/src/render/catalogStars.js')) return once(source, 'const start = () => loadTier0();', 'const start = () => {}; // QA: background catalog loads only in the later real-HYG retention phase.') +
+        '\nwindow.__exploredCatalogQA={load:loadTier0,row:i=>({loaded:state.loaded,held:state.held.has(i),hidden:state.tier0?.geometry.attributes.hidden.array[i]})};';
+    if (id.endsWith('/src/stars.js')) return source + '\nwindow.__exploredPointOwnership=' + inspectExploredHostPoint.toString() + ';';
     if (id.endsWith('/src/render/bodySurfaceMaterial.js')) return source + '\nexport const exploredSurfaceQueueState=()=>({pending:pending.size,inFlight:!!inFlight});\n';
     if (!id.endsWith('/src/main.js')) return null;
     source = once(source, 'const firstFrameT0 = perfStart();',
         'G.t=0;G.paused=true;G.warp=1;resetEphem();clock.getDelta=()=>1/60;\nconst firstFrameT0 = perfStart();');
     source = once(source, 'renderer.setAnimationLoop(frame);', '// QA: production frame is delivered explicitly.');
-    source = once(source, 'updateSystemRender(focusedSystem, G.t, camera, G.focus);',
-        'updateSystemRender(focusedSystem, G.t, camera, G.focus);window.__exploredCurrentSystem=focusedSystem;');
+    const systemRender = systemRenderStatement(source);
+    source = once(source, systemRender, systemRender + 'window.__exploredCurrentSystem=focusedSystem;');
     return source + `\nwindow.__exploredFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;
         const t=performance.now();frame();const cpu=performance.now()-t;renderer.getContext().finish();
         return {cpuMs:cpu,frameAndFinishMs:performance.now()-t};};\n`;
@@ -100,6 +104,8 @@ const main = await readFile(resolve(root, 'src/main.js'), 'utf8');
 execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(main, '/src/main.js') });
 const surfaces = await readFile(resolve(root, 'src/render/bodySurfaceMaterial.js'), 'utf8');
 execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(surfaces, '/src/render/bodySurfaceMaterial.js') });
+const starsSource = await readFile(resolve(root, 'src/stars.js'), 'utf8');
+execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(starsSource, '/src/stars.js') });
 const catalog = await readFile(resolve(root, 'src/render/catalogStars.js'), 'utf8');
 execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(catalog, '/src/render/catalogStars.js') });
 if (process.argv.includes('--validate')) {
@@ -112,7 +118,7 @@ const report = {
     preloadFlags: { earthnight: '1', clouds: '1', moonmap: '1' },
     preloadReason: 'Load the same normally lazy Earth night/cloud and lunar photographic maps before the first frame, so background fetch/compile does not race measured windows',
     epoch: '2026-10-01T12:00:00.000Z', errors: [], warnings: [], checks: [], routes: [], repeatedRoutes: [], captures: [], benchmark: [],
-    omissions: ['AT-HYG streaming', 'HYG background catalog', 'procedural background field', 'volumetric galaxy', 'galaxy population', 'gravity overlay', 'bloom'],
+    omissions: ['AT-HYG streaming', 'HYG background catalog during timing/routes (real background is loaded for the later HYG retention checks)', 'procedural background field', 'volumetric galaxy', 'galaxy population', 'gravity overlay', 'bloom'],
     identityRepairNote: 'Blank HIP records are excluded from matched fixtures because their formerly colliding host identities are intentionally repaired; real-HYG identity tests cover that change',
     productionPaths: ['main frame and real system selection', 'Shift+F keyboard input', 'body generation and render pool',
         'Explore/Pilot controls', 'camera movement', 'quicksave/quickload', 'body materials and lighting', 'production desktop/mobile quality'],
@@ -530,14 +536,16 @@ try {
         const hygVisual = () => page.evaluate(async () => {
             const q = exploredQA, E = await import('/src/universe/exploredSystem.js'), host = E.getExploredHost();
             const surface = q.s.scene.getObjectByName('TAU PHE photosphere'), group = surface?.parent;
-            const point = group?.children.find(child => child.isPoints);
+            await window.__exploredCatalogQA.load(); window.__exploredFrame();
+            const pointOwnership = window.__exploredPointOwnership({ scene:q.s.scene, camera:q.s.camera, host, group,
+                activeStars:q.a.ACTIVE_STARS, K:q.c.K, catalog:window.__exploredCatalogQA.row(87) });
             const curatedNames = new Set(q.c.STARS.map(star => star.name + ' photosphere')); let dynamicSurfaces = 0;
             q.s.scene.traverse(object => { if (object.name.endsWith(' photosphere') && !curatedNames.has(object.name)) dynamicSurfaces++; });
             return { focus: q.state.G.focus, starId: q.a.getCachedFocusedSystem()?.starId,
                 retainedHygIndex: host?.hygIndex, hostName: host?.name,
                 activeMember: q.a.ACTIVE_STARS.some(star => star.hygIndex === 87), gravityMember: q.a.GRAVITY_STARS.some(star => star.hygIndex === 87),
                 photosphereInScene: !!surface && group?.parent === q.s.scene, photosphereVisible: !!surface?.visible,
-                groupVisible: !!group?.visible, dynamicPoint: !!point && point.geometry.attributes.position.count === 1,
+                groupVisible: !!group?.visible, dynamicPoint: pointOwnership.pass, pointOwnership,
                 dynamicSurfaces, topologyHash: q.hash(q.a.getCachedFocusedSystem()?.planets), ship: q.ship() };
         });
         const retained = await hygVisual();
@@ -577,6 +585,26 @@ try {
         await frames(12); report.hyg.hostFraming = await hygVisual();
         check('Host portrait retains child selection without re-adding HYG host to active stars', report.hyg.hostFraming.focus === hyg.childFocus && !report.hyg.hostFraming.activeMember && report.hyg.hostFraming.photosphereInScene && report.hyg.hostFraming.photosphereVisible);
         await capture('08b-hyg-retained-host-photosphere');
+        const captureUnresolvedHyg = async name => {
+            await page.evaluate(() => {
+                const q = exploredQA, host = q.a.getCachedFocusedSystem().hostStar;
+                const dx = host.x*q.c.K-q.s.cam.tgt.x, dy = (host.z||0)*q.c.K-q.s.cam.tgt.y, dz = -host.y*q.c.K-q.s.cam.tgt.z;
+                const d = Math.hypot(dx,dy,dz); q.s.cam.yaw=Math.atan2(dz,dx); q.s.cam.pitch=Math.asin(dy/d);
+                q.s.cam.dist=d+10000*host.R*q.c.K; q.s.cam.distTarget=null;
+            });
+            await frames(12); const visual = await hygVisual();
+            const pixel = await page.evaluate(() => {
+                const q=exploredQA,host=q.a.getCachedFocusedSystem().hostStar; window.__exploredFrame();
+                const ndc=q.s.camera.position.clone().set(host.x*q.c.K,(host.z||0)*q.c.K,-host.y*q.c.K).project(q.s.camera);
+                const gl=q.s.renderer.getContext(),w=gl.drawingBufferWidth,h=gl.drawingBufferHeight;
+                const x=Math.round((ndc.x+1)*w/2),y=Math.round((ndc.y+1)*h/2),inside=x>=2&&x<w-2&&y>=2&&y<h-2&&ndc.z>=-1&&ndc.z<=1;
+                const bytes=new Uint8Array(5*5*4); if(inside)gl.readPixels(x-2,y-2,5,5,gl.RGBA,gl.UNSIGNED_BYTE,bytes);
+                return {inside,x,y,maxRGB:Math.max(...bytes.filter((_,i)=>i%4!==3))};
+            });
+            check(name+' has exactly one unresolved host point, hidden background twin and rendered pixels', visual.dynamicPoint && !visual.photosphereVisible && pixel.inside && pixel.maxRGB>8, {visual,pixel});
+            await capture(name); return {visual,pixel};
+        };
+        report.hyg.unresolved = await captureUnresolvedHyg('08c-hyg-retained-host-point');
         await focus(`star:${first.starIndex}`); await frames(3); await focus(hyg.childFocus); await frames(12);
         report.hyg.revisited = await hygVisual();
         check('HYG child resolves after selecting another star', report.hyg.revisited.starId === hyg.starId && report.hyg.revisited.retainedHygIndex === 87 && report.hyg.revisited.topologyHash === hyg.topologyHash);
@@ -633,6 +661,7 @@ try {
         await page.waitForFunction(() => exploredQA.body.systemBodyRenderState()[0].mesh.material.userData.surfaceDetailWidth >= 512);
         await frames(3);
         await capture('09-hyg-fresh-page-restored');
+        report.hyg.reloadedUnresolved = await captureUnresolvedHyg('09b-hyg-restored-host-point');
 
         // A failed real binary fetch must be caught by the loader, with a
         // coherent restored save and safe Earth view rather than half a world.

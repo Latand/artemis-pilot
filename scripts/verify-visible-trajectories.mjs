@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+import { createServer } from 'vite';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+const mobile=process.env.DEVICE==='mobile',out=process.env.ARTEMIS_EVIDENCE||`evidence/visible-paths-${mobile?'mobile':'desktop'}`;
+await mkdir(out,{recursive:true});const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),mobile,checks:[],frames:[],errors:[]};
+const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);};
+const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'visible-path-qa',enforce:'pre',transform(source,id){if(!id.split('?')[0].endsWith('/src/main.js'))return;const marker='const firstFrameT0 = perfStart();';assert.equal(source.split(marker).length,2);return source.replace(marker,'G.t=0;G.paused=true;resetEphem();clock.getDelta=()=>window.__qaDt??1/60;'+marker).replace('renderer.setAnimationLoop(frame);','')+'\nwindow.__pathFrame=()=>{lastMobileFrame=-Infinity;frame();renderer.getContext().finish();};';}}]});
+await server.listen();const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+try{
+ const page=await browser.newPage({viewport:mobile?{width:430,height:932}:{width:1280,height:820},isMobile:mobile,hasTouch:mobile,deviceScaleFactor:1});page.setDefaultTimeout(180000);
+ await page.addInitScript(()=>{localStorage.clear();localStorage.setItem('ap_introSeen','1');localStorage.setItem('ap_uiMode','observe');Date.now=()=>Date.UTC(2026,9,3,6);});
+ page.on('pageerror',e=>{report.errors.push(e.stack||e.message);console.error(e.stack||e.message);});page.on('console',m=>{if(m.type()==='error')report.errors.push(m.text());});
+ await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=sun&dist=750000&hidehelp=1&compile=0&np=128`,{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.__AP_READY&&window.__pathFrame);
+ const frames=async(n)=>{for(let i=0;i<n;i++)await page.evaluate(()=>__pathFrame());};
+ const setView=async(focus,dist,rate)=>{await page.evaluate(async({focus,dist,rate,mobile})=>{const {setFocus}=await import('/src/input.js'),{cam}=await import('/src/scene.js');setFocus(focus);cam.dist=dist;cam.distTarget=null;cam.yaw=.4;cam.pitch=1.2;__G.gr=false;__G.warp=rate||1;__G.paused=rate===0;__qaDt=mobile?1/30:1/60;},{focus,dist,rate,mobile});await frames(2);};
+ const capture=async(name)=>{const state=await page.evaluate(async()=>{const {visibleTrajectories:s}=await import('/src/render/visibleTrajectories.js');const b=document.getElementById('motionPathsToggle'),r=b.getBoundingClientRect(),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return{active:s.active,samples:s.samples,ids:s.ids,linear:s.linear,paused:__G.paused,warp:__G.warp,predict:__G.predict,layers:s.layers.slice(0,s.active).map(l=>({id:l.id,model:l.model,horizon:l.horizon,path:l.path.visible,arrow:l.arrow.visible,finite:l.positions.every(Number.isFinite)&&l.arrowPositions.every(Number.isFinite),head:[...l.positions.slice(0,3)],end:[...l.positions.slice(-3)]})),toggle:{inside:r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,hit:hit===b||b.contains(hit),width:r.width},note:document.getElementById('motionPathsNote').textContent};});report.frames.push({name,...state});check(state.active<=10&&state.samples<=330,`${name}: fixed ten-body/330-sample budget`);check(state.layers.every(l=>l.finite&&Math.hypot(...l.head)<.001),`${name}: finite paths start at exact body anchors`);check(state.toggle.inside&&state.toggle.hit&&state.toggle.width>0,`${name}: compact toggle remains visible and clickable`);await page.screenshot({path:`${out}/${name}.png`,timeout:180000});await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));return state;};
+ await setView('sun',750000,0);let paused=await capture('00-paused-system');check(paused.active>0,'Pause shows current directions and short previews');
+ const physical=await page.evaluate(()=>JSON.stringify({G:__G,eph:__eph}));await frames(3);check(await page.evaluate(()=>JSON.stringify({G:__G,eph:__eph}))===physical,'Paused projection does not mutate physical state');
+ await page.locator('#motionPathsToggle').click();await frames(1);let off=await capture('01-toggle-off');check(off.active===0&&off.predict===paused.predict,'Overview toggle leaves ship prediction unchanged');
+ await page.locator('#motionPathsToggle').click();await frames(1);await capture('02-toggle-restored');
+ for(const rate of [1,86400,256*86400]){await setView('sun',750000,rate);await capture(`03-rate-${rate}`);}
+ await setView('sun',750000,-256*86400);for(let i=0;i<3;i++){await frames(1);const r=await capture(`04-reverse-${i}`);check(r.note.includes('reverse'),'Reverse direction is visibly labeled');}
+ await setView(3,6500,0);const jupiter=await capture('05-jupiter-moons');check(jupiter.ids[0]==='planet:3','Selected Jupiter takes first visible priority');
+ await setView('earth',1500,0);await capture('06-earth-moon');
+ const cost=await page.evaluate(async()=>{const {visibleTrajectories:s,updateVisibleTrajectories}=await import('/src/render/visibleTrajectories.js'),{camera,renderer}=await import('/src/scene.js'),{orbitInfo}=await import('/src/physics.js');const oi=orbitInfo(),before={...renderer.info.memory},start=performance.now();for(let i=0;i<120;i++)updateVisibleTrajectories(camera,oi);return{meanMs:(performance.now()-start)/120,before,after:{...renderer.info.memory}};});report.cost=cost;check(cost.meanMs<8&&JSON.stringify(cost.before)===JSON.stringify(cost.after),'Bounded path sampling reuses GPU resources and averages below 8 ms');
+ check(report.errors.length===0,'No JavaScript or shader errors');
+}finally{await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}
