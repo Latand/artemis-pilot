@@ -1,11 +1,12 @@
-# One predeclared corrected cohort; preserve all original failures.
-# No observer readbacks or extra warmup. Repeated equality failure stops it.
-name: Disk-plane continuity corrected validation
+# One predeclared changed-pointer-input cohort; preserve all historical failures.
+# No extra rendering, observer readbacks, or warmup. Active hover or another
+# exact-pixel mismatch stops this cohort; there is no automatic retry.
+name: Disk-plane continuity with fixed pointer
 # One reviewed push launches this bounded issue50-only cohort. No PR, manual,
 # schedule, six-view radiance, deployment or branch-writing trigger is attached.
 on:
   push:
-    branches: ['diagnostic/disk-plane-only-6179-v2']
+    branches: ['diagnostic/disk-plane-only-6179-v3']
 permissions:
   contents: read
 concurrency:
@@ -49,7 +50,7 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '18ffc5dfeb5dfaff5a877dafef0fc9512f97237c'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '166c3c98b4c38f55f329b8c66c14ce79ce1a6ba0'
           git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_PARENT_SHA"
           git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-plane-preflight.yml'
           test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
@@ -59,16 +60,19 @@ jobs:
           d641cf191f63c7ffc6131f44d6f8449b1def6d2b docs/qa/disk-plane-only.md
           cff455547ea07769b51e73ef4f49361028c672e4 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
-          d227982f10c05347edd6db85e467ace86ea4fec2 scripts/disk-plane-qa.mjs
+          3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
           3c5aebfe1134cbc3a915e8fbf61551559802e427 scripts/disk-plane-source-contract.mjs
           8934d52ec809c75c1fee2b774275cea0ed3b1205 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
-          8b96a40551c09a286fd4b897b2f92f561cd57576 scripts/probe-disk-plane.mjs
+          8767735c2023b87a271dac916f50173214b9f7ed scripts/probe-disk-plane.mjs
           140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
           3610cbcf584c593393934a71b4de5dae35a148d2 scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           4a9d2c35b1399e2b1233c45dd556947ac114596a scripts/smoke-disk-plane-support.mjs
           f5e4fcfa4ec596f9cf0775c8f138260c0b24f088 src/holeOptics.js
+          99bd167c75ebe2a5fe636730fa5774204e663ae3 docs/disk-pointer-fixture.md
+          701eba17c955bdd85f907d71fe66d8c8042c4e6b scripts/disk-pointer-fixture.mjs
+          cbcc474ae36b178030b4a21452e1679ce02e8b25 scripts/smoke-disk-pointer-fixture.mjs
           BLOBS
           while read -r expected path; do
             test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
@@ -106,6 +110,7 @@ jobs:
           node scripts/probe-disk-plane.mjs --validate > "$ARTEMIS_EVIDENCE/source-before.json"
           node scripts/smoke-disk-plane-support.mjs --verify-main-scope
           node scripts/smoke-disk-plane-qa.mjs
+          node scripts/smoke-disk-pointer-fixture.mjs
           node scripts/smoke-disk-plane-finalize.mjs
           node scripts/smoke-disk-plane-cost-contract.mjs
           node scripts/smoke-context-recovery-qa.mjs
@@ -289,7 +294,7 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '18ffc5dfeb5dfaff5a877dafef0fc9512f97237c'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '166c3c98b4c38f55f329b8c66c14ce79ce1a6ba0'
           git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_PARENT_SHA"
           git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-plane-preflight.yml'
           test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
@@ -299,16 +304,19 @@ jobs:
           d641cf191f63c7ffc6131f44d6f8449b1def6d2b docs/qa/disk-plane-only.md
           cff455547ea07769b51e73ef4f49361028c672e4 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
-          d227982f10c05347edd6db85e467ace86ea4fec2 scripts/disk-plane-qa.mjs
+          3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
           3c5aebfe1134cbc3a915e8fbf61551559802e427 scripts/disk-plane-source-contract.mjs
           8934d52ec809c75c1fee2b774275cea0ed3b1205 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
-          8b96a40551c09a286fd4b897b2f92f561cd57576 scripts/probe-disk-plane.mjs
+          8767735c2023b87a271dac916f50173214b9f7ed scripts/probe-disk-plane.mjs
           140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
           3610cbcf584c593393934a71b4de5dae35a148d2 scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           4a9d2c35b1399e2b1233c45dd556947ac114596a scripts/smoke-disk-plane-support.mjs
           f5e4fcfa4ec596f9cf0775c8f138260c0b24f088 src/holeOptics.js
+          99bd167c75ebe2a5fe636730fa5774204e663ae3 docs/disk-pointer-fixture.md
+          701eba17c955bdd85f907d71fe66d8c8042c4e6b scripts/disk-pointer-fixture.mjs
+          cbcc474ae36b178030b4a21452e1679ce02e8b25 scripts/smoke-disk-pointer-fixture.mjs
           BLOBS
           while read -r expected path; do
             test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
