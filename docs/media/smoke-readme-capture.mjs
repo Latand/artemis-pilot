@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { harnessPaths, protectedPaths, runCaptureLifecycle, saveReport, verifyCaptureSource } from './capture-support.mjs';
+import { MAIN, harnessPaths, protectedPaths, runCaptureLifecycle, saveReport, verifyCaptureSource } from './capture-support.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const temporary = mkdtempSync(join(tmpdir(), 'readme-capture-smoke-'));
@@ -72,11 +72,12 @@ try {
         const p=join(temporary,'report.json');await saveReport(p,{passed:false});await saveReport(p,{passed:true,videoBytes:12});
         assert.deepEqual(JSON.parse(readFileSync(p)),{passed:true,videoBytes:12});assert(!readdirSync(temporary).includes('report.json.tmp'));
     });
-    await test('all existing workflow triggers leave only the intended capture workflow',()=>{
-        const paths=[...harnessPaths,'README.md','docs/media/andromeda-walkthrough.mp4','docs/media/earth-explore.png'];
+    await test('actual final diff runs its required suites while the recording stays isolated',()=>{
+        const paths=execFileSync('git',['diff','--name-only',MAIN,'HEAD'],{cwd:root,encoding:'utf8'}).trim().split('\n');
+        assert(paths.includes('scripts/smoke-science-copy.mjs'),'Final diff contains the corrected science-copy guard');
         const glob=p=>new RegExp('^'+p.replace(/[.+^${}()|[\]\\]/g,'\\$&').replace(/\*\*/g,'\0').replace(/\*/g,'[^/]*').replace(/\0/g,'.*')+'$');
         const workflows=readdirSync(join(root,'.github/workflows')).filter(n=>/\.ya?ml$/.test(n));
-        function matches(event, branch) {
+        function matches(event, branch, changedPaths = paths) {
             const matched=[];
             for(const file of workflows){
                 const lines=readFileSync(join(root,'.github/workflows',file),'utf8').split('\n');
@@ -91,14 +92,15 @@ try {
                 };
                 const branches=list('branches');if(branches.length&&!branches.some(p=>glob(p).test(branch)))continue;
                 const patterns=list('paths');
-                if(paths.some(p=>!patterns.length||patterns.some(pattern=>glob(pattern).test(p))))matched.push(file);
+                if(changedPaths.some(p=>!patterns.length||patterns.some(pattern=>glob(pattern).test(p))))matched.push(file);
             }
-            return matched;
+            return matched.sort();
         }
-        assert.deepEqual(matches('push','diagnostic/readme-media-20261004'),['readme-media.yml']);
+        assert.deepEqual(matches('push','diagnostic/readme-media-20261004',harnessPaths),['readme-media.yml']);
         assert.deepEqual(matches('push','docs/refresh-readme-media-20261004'),[]);
-        assert.deepEqual(matches('pull_request','docs/refresh-readme-media-20261004'),[]);
-        console.log(`Enumerated ${workflows.length} workflows: only the exact diagnostic push launches README capture; final PR/push launch none`);
+        const expected=['foreign-river-validation.yml','galaxy-rendering.yml','navigation-visuals.yml'];
+        assert.deepEqual(matches('pull_request','docs/refresh-readme-media-20261004'),expected);
+        console.log(`Enumerated ${workflows.length} workflows against ${paths.length} final changed paths: PR runs ${expected.join(', ')}; recording remains exact diagnostic push-only`);
         const source=readFileSync(join(root,'.github/workflows/readme-media.yml'),'utf8');
         assert(source.includes('npm install --ignore-scripts --no-package-lock'));
         assert(source.includes('timeout-minutes: 35'));assert(source.includes('timeout-minutes: 40'));
