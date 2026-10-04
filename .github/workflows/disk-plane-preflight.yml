@@ -1,9 +1,11 @@
-name: Disk-plane continuity isolated validation
+# One predeclared corrected cohort; preserve all original failures.
+# No observer readbacks or extra warmup. Repeated equality failure stops it.
+name: Disk-plane continuity corrected validation
 # One reviewed push launches this bounded issue50-only cohort. No PR, manual,
 # schedule, six-view radiance, deployment or branch-writing trigger is attached.
 on:
   push:
-    branches: ['diagnostic/disk-plane-only-6179-v1']
+    branches: ['diagnostic/disk-plane-only-6179-v2']
 permissions:
   contents: read
 concurrency:
@@ -17,7 +19,7 @@ jobs:
   pixels:
     name: Disk-only pixels and recovery ${{ matrix.device }} / bloom-${{ matrix.bloom }}
     runs-on: ubuntu-latest
-    # Fixed step caps total52 minutes, leaving8 for scheduling/cleanup.
+    # Fixed step caps total56 minutes, leaving4 for scheduling/cleanup.
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -47,24 +49,24 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'c93f628a1af19d20494deac3d162d89e9890b227'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '18ffc5dfeb5dfaff5a877dafef0fc9512f97237c'
           git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_PARENT_SHA"
           git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-plane-preflight.yml'
           test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
           # Full checkout history must contain the immutable native optical harness.
           git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
           cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
-          194798bc4002e9c64562d0ce6ee21be1147a7801 docs/qa/disk-plane-only.md
+          d641cf191f63c7ffc6131f44d6f8449b1def6d2b docs/qa/disk-plane-only.md
           cff455547ea07769b51e73ef4f49361028c672e4 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
-          fcb81da36f52499abdcd5da67294710b220f4471 scripts/disk-plane-qa.mjs
+          d227982f10c05347edd6db85e467ace86ea4fec2 scripts/disk-plane-qa.mjs
           3c5aebfe1134cbc3a915e8fbf61551559802e427 scripts/disk-plane-source-contract.mjs
           8934d52ec809c75c1fee2b774275cea0ed3b1205 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
-          f43bdc9b7c564d180aef87c2c0e4280c20807b4d scripts/probe-disk-plane.mjs
+          8b96a40551c09a286fd4b897b2f92f561cd57576 scripts/probe-disk-plane.mjs
           140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
           3610cbcf584c593393934a71b4de5dae35a148d2 scripts/smoke-disk-plane-finalize.mjs
-          0d6e88017cc10a1b333762620b577bac067a5c74 scripts/smoke-disk-plane-qa.mjs
+          9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           4a9d2c35b1399e2b1233c45dd556947ac114596a scripts/smoke-disk-plane-support.mjs
           f5e4fcfa4ec596f9cf0775c8f138260c0b24f088 src/holeOptics.js
           BLOBS
@@ -150,8 +152,24 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-main-original-saturn-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
-          path: evidence/disk-pixels/main/original-saturn-*.png
+          name: disk-plane-main-original-saturn-near-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          path: evidence/disk-pixels/main/original-saturn-near-lens-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-main-original-saturn-foreground-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          path: evidence/disk-pixels/main/original-saturn-foreground-lens-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-main-original-saturn-overlapping-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          path: evidence/disk-pixels/main/original-saturn-overlapping-disk-*.png
           if-no-files-found: warn
           retention-days: 14
       - uses: actions/upload-artifact@v4
@@ -190,8 +208,24 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-candidate-original-saturn-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
-          path: evidence/disk-pixels/candidate/original-saturn-*.png
+          name: disk-plane-candidate-original-saturn-near-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          path: evidence/disk-pixels/candidate/original-saturn-near-lens-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-candidate-original-saturn-foreground-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          path: evidence/disk-pixels/candidate/original-saturn-foreground-lens-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-candidate-original-saturn-overlapping-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          path: evidence/disk-pixels/candidate/original-saturn-overlapping-disk-*.png
           if-no-files-found: warn
           retention-days: 14
       - uses: actions/upload-artifact@v4
@@ -255,24 +289,24 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'c93f628a1af19d20494deac3d162d89e9890b227'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '18ffc5dfeb5dfaff5a877dafef0fc9512f97237c'
           git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_PARENT_SHA"
           git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-plane-preflight.yml'
           test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
           # Full checkout history must contain the immutable native optical harness.
           git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
           cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
-          194798bc4002e9c64562d0ce6ee21be1147a7801 docs/qa/disk-plane-only.md
+          d641cf191f63c7ffc6131f44d6f8449b1def6d2b docs/qa/disk-plane-only.md
           cff455547ea07769b51e73ef4f49361028c672e4 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
-          fcb81da36f52499abdcd5da67294710b220f4471 scripts/disk-plane-qa.mjs
+          d227982f10c05347edd6db85e467ace86ea4fec2 scripts/disk-plane-qa.mjs
           3c5aebfe1134cbc3a915e8fbf61551559802e427 scripts/disk-plane-source-contract.mjs
           8934d52ec809c75c1fee2b774275cea0ed3b1205 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
-          f43bdc9b7c564d180aef87c2c0e4280c20807b4d scripts/probe-disk-plane.mjs
+          8b96a40551c09a286fd4b897b2f92f561cd57576 scripts/probe-disk-plane.mjs
           140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
           3610cbcf584c593393934a71b4de5dae35a148d2 scripts/smoke-disk-plane-finalize.mjs
-          0d6e88017cc10a1b333762620b577bac067a5c74 scripts/smoke-disk-plane-qa.mjs
+          9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           4a9d2c35b1399e2b1233c45dd556947ac114596a scripts/smoke-disk-plane-support.mjs
           f5e4fcfa4ec596f9cf0775c8f138260c0b24f088 src/holeOptics.js
           BLOBS
