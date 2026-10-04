@@ -8,10 +8,13 @@ import { clearBlackHoles, addBlackHole } from './blackholes.js';
 import { serializeEncounterState, restoreEncounterState } from './bhEncounters.js';
 import { serializeNebulae, restoreNebulae } from './render/nebulae.js';
 import { invalidateGasDynamics } from './universe/gasDynamics.js';
+import { serializeUniverseJournal, restoreUniverseJournal } from './universe/universeJournal.js';
+import { serializeExploredSystem, restoreExploredSystem } from './universe/exploredSystem.js';
 import { clearTrail, pushTrail, computePrediction } from './trails.js';
 import { hideBanner } from './hud.js';
 import { serializeLog, restoreLog } from './discoveryLog.js';
 import { shipVisuals } from './shipVisuals.js';
+import { resetDrive } from './curvatureDrive.js';
 import { setPaused, setWarp, onTimeControl, jumpActive, cancelTimeJump } from './timeCtl.js';
 import { setUiMode } from './uiMode.js';
 import { jupiterEncounterSeed, createPlaybackPlan, playbackStep, playbackPhase, playheadAtSimulation, encounterCameraDistance } from './scenarioPlaybackMath.js';
@@ -33,9 +36,12 @@ const restoreRecord = (target, source) => {
 export function captureScenarioReturnState() {
     return { g:clone(G), world:clone(WORLD), bh:clone(BH), gs:clone(GS), eph:snapshotEphem(), clockLo:simTimeLo(), warpVisualEnabled:shipVisuals.enabled,
         ap:clone(AP), rel:clone(REL), log:serializeLog(), neb:serializeNebulae(G.t), encounters:serializeEncounterState(),
-        camera:{yaw:cam.yaw,pitch:cam.pitch,dist:cam.dist,distTarget:cam.distTarget,tgt:cam.tgt.toArray()} };
+        universeJournal:serializeUniverseJournal(), exploredSystem:serializeExploredSystem(),
+        camera:{yaw:cam.yaw,pitch:cam.pitch,dist:cam.dist,distTarget:cam.distTarget,tgt:cam.tgt.toArray(),
+            preciseTarget:cam.preciseTarget ? {origin:cam.preciseTarget.origin.toArray(),offset:cam.preciseTarget.offset.toArray()} : null} };
 }
 function releaseInput() {
+    resetDrive();
     keys.clear(); G.thrustMain=0; G.thrustLat=0; G.boost=false;
     window.dispatchEvent(new Event('ap:releaseflightinput'));
 }
@@ -48,8 +54,10 @@ function restoreReturnState(saved) {
     restoreRecord(WORLD,saved.world);
     GS.splice(0,GS.length,...clone(saved.gs));
     restoreRecord(G,saved.g);
+    restoreUniverseJournal(saved.universeJournal);
     setSimTime(saved.g.t); advanceSimTime(saved.clockLo);
     loadEphemSnapshot(saved.eph);
+    G.focus=restoreExploredSystem(saved.exploredSystem,G.focus);
     restoreRecord(AP,saved.ap); restoreRecord(REL,saved.rel);
     restoreLog(saved.log);
     shipVisuals.enabled=saved.warpVisualEnabled;
@@ -58,6 +66,8 @@ function restoreReturnState(saved) {
     setUiMode(saved.g.uiMode,false);
     Object.assign(cam,{yaw:saved.camera.yaw,pitch:saved.camera.pitch,dist:saved.camera.dist,distTarget:saved.camera.distTarget});
     cam.tgt.fromArray(saved.camera.tgt);
+    const precise=saved.camera.preciseTarget;
+    cam.preciseTarget=precise ? {origin:cam.tgt.clone().fromArray(precise.origin),offset:cam.tgt.clone().fromArray(precise.offset)} : null;
     releaseInput(); hideBanner(); clearTrail(); pushTrail(true); computePrediction();
 }
 export function exitScenarioPlayback() {
@@ -92,6 +102,7 @@ export function beginJupiterPlayback(returnState, restart) {
     cam.pitch=1.18;
     cam.yaw=Math.atan2(-seed.tangent[1],seed.tangent[0])+.45;
     cam.distTarget=null;
+    cam.preciseTarget=null;
     document.body.classList.add('scenario-playing');
     panel.hidden=false;
     updateScenarioCamera(); renderPanel(true);
@@ -114,7 +125,7 @@ export function initScenarioPlayback() {
     panel=document.createElement('section');
     panel.id='scenarioPlayback'; panel.hidden=true;
     panel.setAttribute('aria-label','Guided Jupiter slingshot');
-    panel.innerHTML='<div class="spEyebrow">GUIDED FLIGHT · ABOUT 60 SECONDS</div><div class="spTitle">Jupiter slingshot</div><div id="spPhase" role="status"></div><progress id="spProgress" max="60" value="0" aria-label="Scenario progress"></progress><div id="spTelemetry"></div><p id="spNarration"></p><div class="spLegend">Engines off · ship enlarged · gravity-flow illustration.</div><div class="spActions"><button id="spToggle" type="button">Start flight</button><button id="spRestart" type="button">Restart</button><button id="spExit" type="button">Exit</button></div>';
+    panel.innerHTML='<div class="spEyebrow">GUIDED FLIGHT · ABOUT 60 SECONDS</div><div class="spTitle">Jupiter slingshot</div><div id="spPhase" role="status"></div><progress id="spProgress" max="60" value="0" aria-label="Scenario progress"></progress><div id="spTelemetry"></div><p id="spNarration"></p><div class="spLegend">Drive off · ship enlarged · gravity-flow illustration.</div><div class="spActions"><button id="spToggle" type="button">Start flight</button><button id="spRestart" type="button">Restart</button><button id="spExit" type="button">Exit</button></div>';
     document.getElementById('root').appendChild(panel);
     document.getElementById('spToggle').onclick=togglePlayback;
     document.getElementById('spRestart').onclick=restartPlayback;

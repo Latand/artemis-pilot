@@ -2,6 +2,8 @@
 // is separately exercised by smoke-scenario-playback and the full browser QA.
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { DRIVE, stepDrive } from '../src/curvatureDrive.js';
 globalThis.window=new EventTarget();
 const elements=new Map();
 const element=id=>{if(!elements.has(id))elements.set(id,{id,hidden:false,textContent:'',value:0,disabled:false,appendChild(){},setAttribute(){},onclick:null});return elements.get(id);};
@@ -20,30 +22,31 @@ const mock={
  './render/nebulae.js':`export const serializeNebulae=()=>structuredClone(globalThis.__scenarioMock.neb);export function restoreNebulae(s){globalThis.__scenarioMock.neb=structuredClone(s);}`,
  './universe/gasDynamics.js':`export function invalidateGasDynamics(){}`,
  './trails.js':`export function clearTrail(){} export function pushTrail(){} export function computePrediction(){}`,
- './hud.js':`export function hideBanner(){}`,
+ './hud.js':`const banner=globalThis.__scenarioMock.banner={visible:false,hideCalls:0,showCalls:0};export function hideBanner(){banner.visible=false;banner.hideCalls++;} export function showBanner(){banner.visible=true;banner.showCalls++;}`,
+ './achievements.js':`export function toast(){}`,
  './shipVisuals.js':`export const shipVisuals=globalThis.__scenarioMock.shipVisuals;`,
  './discoveryLog.js':`export const serializeLog=()=>structuredClone(globalThis.__scenarioMock.log);export function restoreLog(log){globalThis.__scenarioMock.log=structuredClone(log);}`,
- './timeCtl.js':`import {G} from '${new URL('../src/state.js',import.meta.url)}';export function setWarp(w,s){for(const fn of globalThis.__scenarioMock.listeners)fn('warp',s);G.warp=w;}export function setPaused(p){G.paused=p;}export function onTimeControl(fn){globalThis.__scenarioMock.listeners.add(fn);}export const jumpActive=()=>globalThis.__scenarioMock.jump;export function cancelTimeJump(){globalThis.__scenarioMock.jump=false;}`,
+ './timeCtl.js':`import {G} from '${new URL('../src/state.js',import.meta.url)}';export function setWarp(w,s){for(const fn of globalThis.__scenarioMock.listeners)fn('warp',s);G.warp=w;}export function setPaused(p){G.paused=p;}export function onTimeControl(fn){globalThis.__scenarioMock.listeners.add(fn);}export const jumpActive=()=>globalThis.__scenarioMock.jump;export const jumpSaveWarp=()=>G.warp;export function cancelTimeJump(){globalThis.__scenarioMock.jump=false;}`,
  './uiMode.js':`export function setUiMode(){}`,
  './scenarioPlayback.css':'',
 };
-const hook=registerHooks({resolve(spec,ctx,next){if(ctx.parentURL?.endsWith('/scenarioPlayback.js')&&spec in mock)return{url:'scenario-test:'+spec,shortCircuit:true};return next(spec,ctx);},load(url,ctx,next){if(url.startsWith('scenario-test:'))return{format:'module',source:mock[url.slice(14)],shortCircuit:true};return next(url,ctx);}});
+const hook=registerHooks({resolve(spec,ctx,next){if((ctx.parentURL?.endsWith('/scenarioPlayback.js')||ctx.parentURL?.endsWith('/saves.js'))&&spec in mock)return{url:'scenario-test:'+spec,shortCircuit:true};return next(spec,ctx);},load(url,ctx,next){if(url.startsWith('scenario-test:'))return{format:'module',source:mock[url.slice(14)],shortCircuit:true};return next(url,ctx);}});
 const runtime=await import('../src/scenarioPlayback.js');
 runtime.initScenarioPlayback();
 const reboot=()=>{resetShip();resetEphem();};
 G.warp=321;G.paused=true;G.focus='earth';G.uiMode='observe';G.tau=120;G.driveMode='curvature';
 BH.n=1;BH.x[0]=123;BH.rs[0]=.3;BH.ev[0]=[{t:0,dmu:5}];WORLD.muScale[0]=.7;GS.push({t:Infinity,x:5});
 const original=runtime.captureScenarioReturnState();
-reboot();runtime.beginJupiterPlayback(original,reboot);
+reboot();stepDrive(DRIVE,.01,0,0,1/60);runtime.beginJupiterPlayback(original,reboot);assert.equal(DRIVE.magnitude,0,'scenario start disconnects a held actuator');
 assert.equal(G.paused,true);assert.equal(G.focus,'ship');assert.equal(m.AP.mode,'off');assert.equal(m.neb.length,0);
 assert.equal(runtime.tickScenarioPlayback(.1).advanceSec,0,'ready awaits start');assert.equal(m.shipVisuals.enabled,false,'ballistic excursion disables legacy speculative field');
-element('spToggle').onclick();assert.equal(G.paused,false);
+element('spToggle').onclick();assert.equal(G.paused,false);assert.equal(G.gr,true,'natural gravitational flow remains enabled');
 const first=runtime.tickScenarioPlayback(.1);assert.ok(first.advanceSec>0);G.t+=first.advanceSec;runtime.settleScenarioPlayback();
 element('spToggle').onclick();const paused=G.t;assert.equal(runtime.tickScenarioPlayback(.1).advanceSec,0);assert.equal(G.t,paused);
 element('spToggle').onclick();assert.ok(runtime.tickScenarioPlayback(.1).advanceSec>0);
 element('spRestart').onclick();assert.equal(G.t,0);assert.equal(G.paused,true);assert.equal(element('spToggle').textContent,'Start flight');
 m.log.entries.push({id:'temporary-discovery'});
-assert.ok(runtime.exitScenarioPlayback());assert.ok(!runtime.scenarioPlaybackActive());
+stepDrive(DRIVE,.01,0,0,1/60);assert.ok(runtime.exitScenarioPlayback());assert.equal(DRIVE.magnitude,0,'exit does not restore stale held drive input');assert.ok(!runtime.scenarioPlaybackActive());
 for(const k of ['t','tau','x','y','z','vx','vy','vz','warp','paused','focus','uiMode','driveMode'])assert.deepEqual(G[k],original.g[k],`return ${k}`);
 assert.deepEqual([...WORLD.muScale],[...original.world.muScale]);assert.deepEqual(BH,original.bh);assert.deepEqual(GS,original.gs);assert.deepEqual(m.AP,original.ap);assert.deepEqual(m.neb,original.neb);assert.deepEqual(m.cam.tgt.toArray(),original.camera.tgt);
 assert.equal(m.shipVisuals.enabled,true,'legacy visual preference restored');assert.deepEqual(snapshotEphem(),original.eph);assert.deepEqual(m.log,original.log,'discovery history is restored');
@@ -53,4 +56,123 @@ reboot();runtime.beginJupiterPlayback(original,reboot);for(const fn of m.listene
 reboot();runtime.beginJupiterPlayback(original,reboot);element('spToggle').onclick();const interrupted=runtime.tickScenarioPlayback(.1,true);assert.equal(interrupted.advanceSec,0,'interruption frame cannot burn on restored flight');assert.equal(G.x,original.g.x);
 reboot();runtime.beginJupiterPlayback(original,reboot);window.dispatchEvent(new Event('ap:replace-universe'));assert.ok(!runtime.scenarioPlaybackActive());assert.equal(G.x,original.g.x);
 reboot();runtime.beginJupiterPlayback(original,reboot);m.jump=true;assert.equal(runtime.tickScenarioPlayback(.1).advanceSec,0);assert.ok(!runtime.scenarioPlaybackActive());assert.equal(m.jump,false,'a competing event jump cannot resume after returning to a different clock');
+// A guided excursion must preserve the new foreign-world state as well as
+// the original Solar return snapshot, including free-camera sub-km offsets.
+const { Vector3 } = await import('three');
+const F = await import('../src/universe/foreignStars.js');
+const E = await import('../src/universe/exploredSystem.js');
+const J = await import('../src/universe/universeJournal.js');
+const foreign = F.foreignStarById('gx:m31:2654435769:1249:0:-1:28', 0);
+assert(foreign);
+E.getExploredSystem('proc:' + foreign.id);
+J.recordStarImpulse(foreign.id, 1, [2, -3, 4]);
+G.focus='free';
+const precise={origin:new Vector3(foreign.x*.001,foreign.z*.001,-foreign.y*.001),offset:new Vector3(.125,-.375,.625)};
+Object.assign(m.cam,{tgt:precise.origin.clone().add(precise.offset),preciseTarget:precise,dist:179.762,distTarget:100});
+const foreignReturn=runtime.captureScenarioReturnState();
+const foreignJournal=JSON.parse(JSON.stringify(J.serializeUniverseJournal()));
+reboot();runtime.beginJupiterPlayback(foreignReturn,reboot);
+assert.equal(m.cam.preciseTarget,null,'guided camera releases the foreign split target');
+assert.equal(J.serializeUniverseJournal().events.length,0,'excursion has its own reset world');
+E.getExploredSystem('star:0');
+runtime.exitScenarioPlayback();
+assert.equal(G.focus,'free');
+assert.deepEqual(m.cam.preciseTarget.origin.toArray(),foreignReturn.camera.preciseTarget.origin);
+assert.deepEqual(m.cam.preciseTarget.offset.toArray(),foreignReturn.camera.preciseTarget.offset);
+assert.equal(m.cam.distTarget,100,'existing approach controller state is restored');
+assert.deepEqual(E.serializeExploredSystem(),foreignReturn.exploredSystem);
+assert.deepEqual(J.serializeUniverseJournal(),foreignJournal,'excursion never erases persistent interventions');
+
+// Exercise the real save/load functions and the real replacement listener.
+// The saved universe deliberately differs from the excursion return state.
+const storage=new Map();
+globalThis.localStorage={getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,String(value))};
+const saves=await import('../src/saves.js');
+const {getSeed,setSeed}=await import('../src/universe/galaxy.js');
+const {galaxyWorldKm}=await import('../src/universe/galaxyRegistry.js');
+const P=await import('../src/universe/planetarySystem.js');
+const slot='artemis.quicksave.v1';
+assert(saves.saveState());const singleEventSave=localStorage.getItem(slot);
+const returnTarget={origin:m.cam.preciseTarget.origin.clone(),offset:m.cam.preciseTarget.offset.clone()};
+J.recordStarImpulse(foreign.id,3,[4,5,6]);
+assert(saves.saveState());const returnSave=localStorage.getItem(slot);
+assert.deepEqual(JSON.parse(singleEventSave).universeJournal.events.map(e=>e.sequence),[1]);
+assert.deepEqual(JSON.parse(returnSave).universeJournal.events.map(e=>e.sequence),[1,2]);
+J.restoreUniverseJournal(null);assert(saves.saveState());const emptyJournalSave=localStorage.getItem(slot);
+setSeed(getSeed()+1);J.restoreUniverseJournal(null);
+const loadStar=F.sampleForeignStars(galaxyWorldKm('m31',[10000,0,0],0),0).find(star=>P.generateSystem(star).planets.length);
+assert(loadStar);
+const loadSystem=E.getExploredSystem('proc:'+loadStar.id,null,0);
+G.focus=P.planetFocusValue(0,loadSystem);setSimTime(123456);G.paused=true;
+J.recordStarImpulse(loadStar.id,2,[-7,8,9]);
+const loadTarget={origin:new Vector3(loadStar.x*.001,loadStar.z*.001,-loadStar.y*.001),offset:new Vector3(13.25,-17.5,21.75)};
+Object.assign(m.cam,{tgt:loadTarget.origin.clone().add(loadTarget.offset),preciseTarget:loadTarget,dist:123.5,yaw:.7,pitch:.2,distTarget:null});
+assert(saves.saveState());const differentUniverseSave=localStorage.getItem(slot);
+for(const loadCase of [{blob:differentUniverseSave,target:loadTarget},{blob:singleEventSave,target:returnTarget},{blob:emptyJournalSave,target:returnTarget}]) {
+ const loadSave=loadCase.blob,expectedLoad=JSON.parse(loadSave);
+ for(const phase of ['ready','playing','paused','complete']) {
+    localStorage.setItem(slot,returnSave);assert(await saves.loadState());
+    const prior=runtime.captureScenarioReturnState();reboot();runtime.beginJupiterPlayback(prior,reboot);
+    if(phase!=='ready')element('spToggle').onclick();
+    if(phase==='paused')element('spToggle').onclick();
+    if(phase==='complete'){setSimTime(1e12);runtime.settleScenarioPlayback();assert.equal(element('spToggle').textContent,'Finished');}
+    assert(runtime.scenarioPlaybackActive());
+    const invalid=JSON.parse(loadSave);invalid.universeJournal={version:1,events:[{},{}]};
+    localStorage.setItem(slot,JSON.stringify(invalid));
+    assert.equal(await saves.loadState(),false,'Invalid save preflight preserves the active excursion');
+    assert(runtime.scenarioPlaybackActive());
+    localStorage.setItem(slot,loadSave);assert(await saves.loadState());
+    assert.equal(runtime.scenarioPlaybackActive(),false,phase+' relinquishes ownership before replacement');
+    assert.equal(getSeed(),expectedLoad.galaxySeed);assert.equal(G.t,expectedLoad.g.t);
+    assert.equal(G.focus,expectedLoad.g.focus);assert.deepEqual(E.serializeExploredSystem(),expectedLoad.exploredSystem);
+    assert.deepEqual(J.serializeUniverseJournal(),expectedLoad.universeJournal,phase+' keeps the loaded journal, not the return journal');
+    assert.equal(m.cam.dist,expectedLoad.camera.dist);assert.equal(m.cam.yaw,expectedLoad.camera.yaw);assert.equal(m.cam.pitch,expectedLoad.camera.pitch);
+    assert(m.cam.preciseTarget.origin.distanceTo(loadCase.target.origin)<4);
+    assert(m.cam.preciseTarget.offset.distanceTo(loadCase.target.offset)<1e-9,phase+' retains the loaded split camera residual');
+    assert.equal(runtime.exitScenarioPlayback(),false,'No later exit can overwrite the loaded world');
+    assert.deepEqual(J.serializeUniverseJournal(),expectedLoad.universeJournal);
+ }
+}
+// Real save/load and the real delayed-entry branch. Rendering is irrelevant
+// here; the nearest-survivor focus operation is the observable consequence.
+const mainSource=readFileSync(new URL('../src/main.js',import.meta.url),'utf8');
+const observerFunction=mainSource.slice(mainSource.indexOf('function enterObserverMode() {'),mainSource.indexOf('function bindBodyLabel('));
+const delayedBranch=mainSource.split('\n').find(line=>line.includes('if (G.dead && !G.observerMode && performance.now() - G.deathRt >= 2000)'));
+assert(observerFunction.includes('focusNearestSurvivor()'));assert(delayedBranch);
+let wallTime=0,transitions=0;
+const hud=await import('scenario-test:./hud.js');
+const delayedEntry=new Function('G','performance','hideBanner','focusNearestSurvivor','toast',observerFunction+';return ()=>{'+delayedBranch+'};')(
+ G,{now:()=>wallTime},hud.hideBanner,()=>{transitions++;G.focus='earth';m.cam.preciseTarget=null;m.cam.dist=509.68;return 'Earth';},()=>{});
+localStorage.setItem(slot,differentUniverseSave);assert(await saves.loadState());
+G.dead=true;G.observerMode=true;G.focus='free';assert(saves.saveState());
+const observerSave=localStorage.getItem(slot);assert.equal(JSON.parse(observerSave).g.observerMode,true);
+const cameraSnapshot=()=>JSON.stringify({focus:G.focus,camera:m.cam,host:E.serializeExploredSystem(),journal:J.serializeUniverseJournal()});
+for(const legacy of [false,true]) {
+ const data=JSON.parse(observerSave);if(legacy)delete data.g.observerMode;else data.g.observerMode=false;
+ localStorage.setItem(slot,JSON.stringify(data));assert(await saves.loadState());assert.equal(G.observerMode,false);
+ assert(m.banner.visible,'Ordinary and legacy dead-ship loads show the death banner pending entry');const hides=m.banner.hideCalls;
+ const count=transitions;wallTime=G.deathRt+1999;delayedEntry();assert.equal(transitions,count);
+ wallTime=G.deathRt+2100;delayedEntry();assert.equal(transitions,count+1);assert.equal(G.focus,'earth');assert.equal(G.observerMode,true);
+ assert.equal(m.banner.visible,false);assert.equal(m.banner.hideCalls,hides+1,'Delayed entry hides the death banner once');
+ delayedEntry();assert.equal(transitions,count+1,'Ordinary and legacy observer entry happens exactly once');
+ assert.equal(m.banner.hideCalls,hides+1);
+}
+localStorage.setItem(slot,observerSave);assert(await saves.loadState());const retained=cameraSnapshot(),count=transitions;
+assert.equal(m.banner.visible,false,'Completed observer loads keep the death banner hidden');const retainedHud=structuredClone(m.banner);
+wallTime=G.deathRt+2100;delayedEntry();assert.equal(transitions,count);assert.equal(cameraSnapshot(),retained,'A completed observer retains the loaded foreign camera after the real delay branch');
+assert.deepEqual(m.banner,retainedHud,'Completed observer needs no later hide transition');
+const bannerLine=readFileSync(new URL('../src/saves.js',import.meta.url),'utf8').split('\n').find(line=>line.includes('if (G.dead && !G.observerMode) showBanner('));assert(bannerLine);
+new Function('G','showBanner','fmtMET',bannerLine.replace('G.dead && !G.observerMode','G.dead'))(G,hud.showBanner,()=> 'test');
+delayedEntry();assert(m.banner.visible,'The old unconditional banner remains visible indefinitely for a completed observer');hud.hideBanner();
+G.observerMode=false;delayedEntry();assert.notEqual(cameraSnapshot(),retained,'The old unconditional observer reset reproduces the delayed camera failure');
+for(const badValue of [null,0,1,'true','false',[],{}]) {
+ localStorage.setItem(slot,observerSave);assert(await saves.loadState());const before=runtime.captureScenarioReturnState();
+ const beforeHud=structuredClone(m.banner);
+ const data=JSON.parse(observerSave);data.g.observerMode=badValue;localStorage.setItem(slot,JSON.stringify(data));
+ assert.equal(await saves.loadState(),false);assert.deepEqual(runtime.captureScenarioReturnState(),before,'Invalid observer flag is rejected before mutation');
+ assert.deepEqual(m.banner,beforeHud,'Rejected loads preserve HUD state too');
+}
+const alive=JSON.parse(observerSave);alive.g.dead=false;localStorage.setItem(slot,JSON.stringify(alive));assert(await saves.loadState());
+assert.equal(G.observerMode,false,'An alive ship cannot restore a dead-ship observer mode');
+console.log('Real quickload preserves completed observers; ordinary/legacy delayed entry, invalid flags and old-code negative pass');
 hook.deregister();console.log('Scenario ready/start/pause/resume/restart/exit, interruption and full return snapshot checks passed');

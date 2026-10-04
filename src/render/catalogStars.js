@@ -20,7 +20,10 @@ import * as THREE from "three";
 import { K, PC_KM, STARS } from "../constants.js";
 import { loadHygCatalogData } from "../universe/catalogData.js";
 import { registerHygCatalog } from "../universe/hygActiveCatalog.js";
-import { getOrigin, worldToResidualArr } from "../universe/renderOrigin.js";
+import { catalogIdentityKeys } from "../universe/catalogIdentity.js";
+import { CATALOG_MYR_S, catalogMotionFor, createCatalogMotion, catalogEvalTime, setCatalogMotionTime } from "../universe/catalogMotion.js";
+import { galacticFrameTime } from "../universe/galacticClock.js";
+import { getOrigin } from "../universe/renderOrigin.js";
 import { makeStarPointMaterial } from "./starPointMaterial.js";
 import { linearStarColor } from "./stellarAppearance.js";
 import { CURATED_PHOTOMETRY } from "./curatedPhotometry.js";
@@ -50,7 +53,8 @@ const _col = new THREE.Color();
 export function curatedAbsMagV(star) {
     if (Number.isFinite(star.absMag)) return star.absMag;
     const phot = CURATED_PHOTOMETRY[star.name];
-    const dPc = Math.hypot(star.x, star.y, star.z || 0) / PC_KM;
+    const epoch = catalogMotionFor(star);
+    const dPc = Math.hypot(epoch.x, epoch.y, epoch.z) / PC_KM;
     if (phot && Number.isFinite(phot.mag)) return absMagFromApparent(phot.mag, dPc);
     if (star.lumSolar > 0) return absMagVFromL(star.lumSolar, curatedTeff(star));
     return NaN;
@@ -59,7 +63,7 @@ export function curatedTeff(star) {
     return star.tempK || CURATED_PHOTOMETRY[star.name]?.tempK || (Number.isFinite(star.bv) ? bvToTeff(star.bv) : 5800);
 }
 
-function makeLayer(count, withHidden) {
+function makeLayer(count, withHidden, motion = false) {
     const geometry = new THREE.BufferGeometry();
     const pos = new THREE.BufferAttribute(new Float32Array(count * 3), 3);
     pos.setUsage(THREE.DynamicDrawUsage);
@@ -73,7 +77,8 @@ function makeLayer(count, withHidden) {
         h.setUsage(THREE.DynamicDrawUsage);
         geometry.setAttribute("hidden", h);
     }
-    const mesh = new THREE.Points(geometry, makeStarPointMaterial({ hidden: withHidden, radius: true }));
+    if (motion) geometry.setAttribute("catalogOrbit", new THREE.BufferAttribute(new Float32Array(count * 4), 4));
+    const mesh = new THREE.Points(geometry, makeStarPointMaterial({ hidden: withHidden, radius: true, catalogMotion: motion }));
     mesh.frustumCulled = false;
     mesh.renderOrder = -3;
     return { mesh, geometry, worldKm: new Float64Array(count * 3), count };
@@ -86,11 +91,13 @@ function setColor(arr, i, teff) {
 }
 
 function placeAtOrigin(layer) {
-    const o = getOrigin();
+    const o = layer.anchor || getOrigin();
     layer.mesh.position.set(o.x * K, o.z * K, -o.y * K);
     const pos = layer.geometry.attributes.position;
     for (let i = 0; i < layer.count; i++) {
-        worldToResidualArr(layer.worldKm[i * 3], layer.worldKm[i * 3 + 1], layer.worldKm[i * 3 + 2], pos.array, i * 3, K);
+        pos.array[i * 3] = (layer.worldKm[i * 3] - o.x) * K;
+        pos.array[i * 3 + 1] = (layer.worldKm[i * 3 + 2] - o.z) * K;
+        pos.array[i * 3 + 2] = -(layer.worldKm[i * 3 + 1] - o.y) * K;
     }
     pos.needsUpdate = true;
 }
@@ -117,6 +124,8 @@ function buildNamed() {
     }
     layer.mesh.name = "curated destinations";
     layer.starsLen = STARS.length;
+    layer.rows = rows;
+    layer.evalT = NaN;
     placeAtOrigin(layer);
     state.named = layer;
     state.parent.add(layer.mesh);
@@ -136,9 +145,11 @@ async function loadTier0() {
         const iAbs = fi("absMag", -1), iLum = fi("lumSolar", -1), iTemp = fi("tempK", -1), iRad = fi("radiusSolar", -1);
         const count = Math.floor(vals.length / stride);
         // Curated twins (world pc, same frame as the rotated catalog values).
+        const knownKeys = new Set(STARS.flatMap(catalogIdentityKeys));
         const sup = [];
-        for (const s of STARS) if (!s.bh) sup.push(s.x / PC_KM, s.y / PC_KM, (s.z || 0) / PC_KM);
-        const layer = makeLayer(count, true);
+        for (const s of STARS) if (!s.bh) { const p = catalogMotionFor(s); sup.push(p.x / PC_KM, p.y / PC_KM, p.z / PC_KM); }
+        const layer = makeLayer(count, true, true);
+        const labels = new Map((meta.labels || []).map(row => [row[0], row]));
         layer.slotOfRow = new Int32Array(count);
         layer.baseHidden = new Uint8Array(count);
         const g = layer.geometry.attributes;
@@ -148,6 +159,9 @@ async function loadTier0() {
             const x = vals[j + iX], y = vals[j + iY], z = vals[j + iZ];
             layer.slotOfRow[i] = i;
             layer.worldKm[i * 3] = x * PC_KM; layer.worldKm[i * 3 + 1] = y * PC_KM; layer.worldKm[i * 3 + 2] = z * PC_KM;
+            const row = labels.get(i);
+            const orbit = createCatalogMotion(x * PC_KM, y * PC_KM, z * PC_KM, { hygIndex: i, hip: row?.[2], hd: row?.[3], hr: row?.[4] });
+            g.catalogOrbit.array.set([orbit.xp, orbit.yp, orbit.zp, orbit.omega * CATALOG_MYR_S], i * 4);
             const dPc = Math.hypot(x, y, z);
             const temp = iTemp >= 0 ? vals[j + iTemp] : NaN;
             const teff = temp > 0 ? temp : bvToTeff(vals[j + iBv]);
@@ -164,7 +178,7 @@ async function loadTier0() {
             g.radiusKm.array[i] = iRad >= 0 && vals[j + iRad] > 0 ? vals[j + iRad] * 696340 : 0;
             setColor(g.color.array, i, teff);
             // The Sun's own row (distance 0) is drawn by bodies.js.
-            let hide = !(dPc > 1e-6);
+            let hide = !(dPc > 1e-6) || catalogIdentityKeys({name:row?.[1],hip:row?.[2],hd:row?.[3],hr:row?.[4]}).some(key => knownKeys.has(key));
             for (let k = 0; !hide && k < sup.length; k += 3) {
                 const dx = x - sup[k], dy = y - sup[k + 1], dz = z - sup[k + 2];
                 if (dx * dx + dy * dy + dz * dz <= r2) hide = true;
@@ -181,6 +195,7 @@ async function loadTier0() {
         state.tier0 = layer;
         state.parent.add(layer.mesh);
         state.loaded = true;
+        hidePromotedTwins();
         if (PERF.enabled) markPerf("catalogStars.load", performance.now() - t0, { count });
     } catch (err) {
         state.error = err?.message || String(err);
@@ -199,12 +214,30 @@ export function initCatalogStars(parent) {
     else setTimeout(start, 0);
 }
 
-// Per-frame: keep the curated cloud in step with runtime promotions (rare).
-export function updateCatalogStars() {
+// Small named buffer follows the authoritative runtime objects. The large
+// catalog moves in the shader from the same immutable epochs and parameters.
+export function updateCatalogStars(observerX, observerY, observerZ) {
+    setCatalogMotionTime(catalogEvalTime(galacticFrameTime()), getOrigin());
     if (!state.parent) return;
     if (state.named && state.named.starsLen !== STARS.length) {
         buildNamed();
         hidePromotedTwins();
+    }
+    const layer = state.named;
+    const t = catalogEvalTime(galacticFrameTime());
+    const old = layer?.anchor;
+    const observer = Number.isFinite(observerX) && Number.isFinite(observerY) && Number.isFinite(observerZ);
+    const moved = observer && (!old || old.x !== observerX || old.y !== observerY || old.z !== observerZ);
+    if (layer && (layer.evalT !== t || moved)) {
+        // A local residual stays precise even when the host has travelled kpc.
+        // This small point layer does not depend on the optional global rebase.
+        if (observer) { layer.anchor ||= {}; Object.assign(layer.anchor, { x: observerX, y: observerY, z: observerZ }); }
+        for (let i = 0; i < layer.rows.length; i++) {
+            const s = layer.rows[i];
+            layer.worldKm[i * 3] = s.x; layer.worldKm[i * 3 + 1] = s.y; layer.worldKm[i * 3 + 2] = s.z || 0;
+        }
+        placeAtOrigin(layer);
+        layer.evalT = t;
     }
 }
 
@@ -240,6 +273,7 @@ export function holdCatalogRow(row, held) {
 }
 
 export function refreshCatalogResiduals() {
+    setCatalogMotionTime(catalogEvalTime(galacticFrameTime()), getOrigin());
     if (state.tier0) placeAtOrigin(state.tier0);
     if (state.named) placeAtOrigin(state.named);
 }

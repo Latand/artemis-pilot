@@ -61,7 +61,7 @@ jobs:
             ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/thrust-base/node_modules"
             echo "BASE_ROOT=$RUNNER_TEMP/thrust-base" >> "$GITHUB_ENV"
           fi
-      - run: node scripts/smoke-context-recovery.mjs && node scripts/smoke-context-cleanup.mjs && npm test && npm run smoke:physics3d && npm run smoke:xrperf && node scripts/smoke-ship-model.mjs && npm run build
+      - run: node scripts/smoke-context-recovery-qa.mjs && node scripts/smoke-context-recovery.mjs && node scripts/smoke-context-cleanup.mjs && npm test && npm run smoke:physics3d && npm run smoke:xrperf && node scripts/smoke-ship-model.mjs && npm run build
       - name: Actual-app thrust and forced loss/recovery
         env:
           ARTEMIS_EVIDENCE: evidence/capture

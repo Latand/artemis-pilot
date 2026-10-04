@@ -47,7 +47,7 @@ jobs:
           mkdir -p evidence/sources
           git rev-parse HEAD > evidence/sources/head-sha.txt
           git -C "$RUNNER_TEMP/explored-base" rev-parse HEAD > evidence/sources/base-sha.txt
-          cp package-lock.json scripts/verify-explored-systems.mjs scripts/benchmark-explored-systems.mjs evidence/sources/
+          cp package-lock.json scripts/verify-explored-systems.mjs scripts/benchmark-explored-systems.mjs scripts/explored-point-ownership.mjs scripts/explored-warm-resources.mjs evidence/sources/
       - name: Validate hooks against both production revisions
         run: |
           node scripts/verify-explored-systems.mjs --validate
@@ -57,6 +57,8 @@ jobs:
         if: matrix.device == 'desktop'
         run: |
           node scripts/smoke-explored-baseline-routing.mjs
+          node scripts/smoke-explored-point-ownership.mjs
+          node scripts/smoke-explored-warm-resources.mjs
           npm test
           npm run smoke:explored-systems
           npm run smoke:planetary-systems

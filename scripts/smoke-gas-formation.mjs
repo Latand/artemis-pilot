@@ -14,6 +14,7 @@ const ephem = await import('../src/ephemeris.js');
 const physics = await import('../src/physics.js');
 const { strongestActiveStarWell } = await import('../src/universe/starDominance.js');
 const { stellarSurfaceHit } = await import('../src/universe/stellarContact.js');
+const galacticClock = await import('../src/universe/galacticClock.js');
 const originalStars = STARS.slice(), originalCatalog = JSON.stringify(STARS);
 const clone = value => JSON.parse(JSON.stringify(value));
 let passed = 0, failed = 0;
@@ -304,11 +305,24 @@ test('empty and initialized numerical preparation preserve signed sub-ULP clock 
         assert.equal(neb.nextFormationBoundary(t, dt), dt);
     }
 });
-test('reset removes numerical sources, retains cosmetic nebulae, and leaves STARS immutable', () => {
-    neb.restoreNebulaRecords([[LY_KM, 0, 0, LY_KM, 1, 1234]]); neb.addNebulaRecord(record()); neb.clearFormingNebulaRecords();
+test('reset preserves catalog identity/genesis and same-time state while removing numerical sources', () => {
+    neb.restoreNebulaRecords([[LY_KM, 0, 0, LY_KM, 1, 1234]]); neb.addNebulaRecord(record());
+    // Earlier refresh fixtures deliberately visited other epochs. Catalog
+    // positions now move; compare cleanup at one epoch, then verify the exact
+    // genesis snapshot and round-trip back, rather than discarding positions.
+    const timeBefore = galacticClock.galacticFrameTime();
+    const catalogBefore = JSON.stringify(STARS);
+    const scenarioBefore = clone({ G: state.G, WORLD: state.WORLD, BH: state.BH, GS: state.GS });
+    neb.clearFormingNebulaRecords();
     assert.equal(neb.NEBULAE.length, 1); assert.equal(neb.NEBULAE[0].formation, undefined);
     assert.equal(STARS.length, originalStars.length); assert.ok(STARS.every((s, i) => s === originalStars[i]));
-    assert.equal(JSON.stringify(STARS), originalCatalog);
+    assert.equal(galacticClock.galacticFrameTime(), timeBefore, 'Gas cleanup cannot alter the published clock');
+    assert.equal(JSON.stringify(STARS), catalogBefore, 'Gas cleanup cannot change catalog fields or positions at the same time');
+    assert.deepEqual(clone({ G: state.G, WORLD: state.WORLD, BH: state.BH, GS: state.GS }), scenarioBefore, 'Unrelated scenario state is preserved');
+    galacticClock.syncGalacticFrame(0);
+    assert.equal(JSON.stringify(STARS), originalCatalog, 'Identity, immutable genesis and canonical epoch coordinates survive all gas fixtures');
+    galacticClock.syncGalacticFrame(timeBefore);
+    assert.equal(JSON.stringify(STARS), catalogBefore, 'Catalog state is the exact canonical sample at the original time');
 });
 
 console.log('\nNumerical sink force and contact integration');

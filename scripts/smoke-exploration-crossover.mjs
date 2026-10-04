@@ -88,8 +88,36 @@ check('recorder copies arguments, wraps extension calls and leaves calls disable
     assert.equal(sandbox.result.sameContext, true); assert.equal(sandbox.result.tapes, 1);
     assert.equal(sandbox.result.pixels.contextLost, false); assert.equal(sandbox.result.pixels.error, 0);
 });
-const original = await readFile(new URL('./benchmark-explored-systems.mjs', import.meta.url));
-check('acceptance harness byte-identical', () => assert.equal(createHash('sha256').update(original).digest('hex'), 'f694be002c24deaf7c805976461dc917e4b4dc80f49a658dd6d1c3beb70b657f'));
+const original = await readFile(new URL('./benchmark-explored-systems.mjs', import.meta.url), 'utf8');
+// PR34 adds the fifth surface-exposure argument to the production call.
+// Normalize only its reviewed hook adapter; the pinned baseline digest still
+// protects every timing sample, assertion, criterion and other byte.
+const adapterImport = "import { systemRenderStatement } from './explored-system-hooks.mjs';\n";
+const adapterCall = "['systemRender', systemRenderStatement(body)]";
+const originalCall = "['systemRender', 'updateSystemRender(focusedSystem, G.t, camera, G.focus);']";
+function assertUnchangedAcceptanceHarness(source) {
+    const imports = source.split(adapterImport).length - 1;
+    const calls = source.split(adapterCall).length - 1;
+    if (imports || calls) {
+        assert.equal(imports, 1, 'Exactly one explicit hook import');
+        assert.equal(calls, 1, 'Exactly one explicit hook use');
+        source = source.replace(adapterImport, '').replace(adapterCall, originalCall);
+    }
+    assert.equal(createHash('sha256').update(source).digest('hex'), 'f694be002c24deaf7c805976461dc917e4b4dc80f49a658dd6d1c3beb70b657f');
+}
+check('acceptance harness unchanged outside reviewed exact render-hook adapter', () => assertUnchangedAcceptanceHarness(original));
+check('pinned original harness remains accepted', () => assertUnchangedAcceptanceHarness(original.replace(adapterImport, '').replace(adapterCall, originalCall)));
+for (const [name, altered] of [
+    ['unknown change', original + '\n// undeclared edit\n'],
+    ['duplicate hook import', original + adapterImport],
+    ['duplicate hook call', original + adapterCall],
+    ['missing hook import', original.replace(adapterImport, '')],
+    ['unknown hook call', original.replace(adapterCall, "['systemRender', systemRenderStatement(body, true)]")],
+    ['performance threshold change', original.replace('scenario.medianPairedRatio <= 1.05', 'scenario.medianPairedRatio <= 1.06')],
+]) check(`harness guard rejects ${name}`, () => {
+    assert.notEqual(altered, original, 'Fixture must mutate the current production harness');
+    assert.throws(() => assertUnchangedAcceptanceHarness(altered));
+});
 const runner = await readFile(new URL('./diagnose-exploration-crossover.mjs', import.meta.url), 'utf8');
 check('command instrumentation strictly after all timing', () => {
     assert(runner.indexOf('report.timingComplete = true') < runner.indexOf('context.addInitScript(installCommandRecorder)'));

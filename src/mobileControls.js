@@ -38,7 +38,7 @@ function setActive(el, active) {
     activeCache.set(el, active);
 }
 
-// ---- hold buttons: rotate / RCS / boost map straight onto the key set ----
+// ---- hold buttons: rotate / lateral field / boost map straight onto the key set ----
 const holdButtons = [
     ["mYawL", "KeyA"], ["mYawR", "KeyD"],
     ["mRcsL", "KeyQ"], ["mRcsR", "KeyE"],
@@ -70,7 +70,7 @@ function bindTap(id, fn) {
     el.addEventListener("click", e => { e.preventDefault(); fn(); syncMobileButtons(); });
 }
 
-// ---- throttle lever: drag up = main engine, down = retro; springs back on release.
+// ---- throttle lever: drag up = forward field, down = reverse field; springs back on release.
 // vertical offset sets the throttle level so it reads like a real analog lever ----
 function initThrottle() {
     const track = $("mThrTrack"), knob = $("mThrKnob"), fill = $("mThrFill"), cap = $("mThrCap");
@@ -99,7 +99,7 @@ function initThrottle() {
             keys.add("KeyW");
             knob.classList.add("up");
             G.throttle = Math.max(.05, Math.min(100, (off - dead) / (1 - dead) * 2.4 + 0.12));
-            if (cap) cap.textContent = "THRUST " + pctOf + "%";
+            if (cap) cap.textContent = "FIELD " + pctOf + "%";
         } else if (off < -dead) {
             keys.add("KeyS");
             knob.classList.add("down");
@@ -196,7 +196,7 @@ export function updateMobileControls(oi, sp, aMag) {
     setText(mWarp, warpLabel(G.warp));
     setText(mWarpVal, warpLabel(G.warp));
     if (mMode) {
-        setText(mMode, G.dead ? "LOST" : G.paused ? "PAUSED" : aMag > 0 ? "BURN" : G.landed ? "LANDED" : "COAST");
+        setText(mMode, G.dead ? "LOST" : G.paused ? "PAUSED" : aMag > 0 ? "FIELD" : G.landed ? "LANDED" : "COAST");
         setClass(mMode, aMag > 0 ? "burn" : G.paused || G.dead ? "warn" : "");
     }
     syncMobileButtons();

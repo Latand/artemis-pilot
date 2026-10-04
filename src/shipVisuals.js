@@ -1,8 +1,13 @@
 import { createShipMotion, stepShipMotion } from './shipMotion.js';
 import './shipVisuals.css';
+import { DRIVE } from './curvatureDrive.js';
+import { createDriveField } from './shipDriveField.js';
+import * as THREE from 'three';
+const axis = new THREE.Vector3(), up = new THREE.Vector3(0,1,0);
+let field = null;
 
 export const shipVisuals = {
-    enabled: false, motion: createShipMotion(),
+    enabled: true, motion: createShipMotion(),
     x: 0, y: 0, z: 0, dx: 0, dy: 1, dz: 0, radius: .07,
     strength: 0, visible: false,
 };
@@ -12,7 +17,7 @@ export function initShipVisuals() {
     const sync = () => {
         for (const button of buttons) {
             button.setAttribute('aria-pressed', String(shipVisuals.enabled));
-            button.textContent = `Warp visual · ${shipVisuals.enabled ? 'ON' : 'OFF'}`;
+            button.textContent = `Field guide · ${shipVisuals.enabled ? 'ON' : 'OFF'}`;
         }
         for (const note of notes) note.hidden = !shipVisuals.enabled;
     };
@@ -25,11 +30,23 @@ export function initShipVisuals() {
 }
 export function updateShipVisuals(craft, position, direction, scale, speedKmS, dtReal, paused, visible) {
     const s = shipVisuals;
-    stepShipMotion(s.motion, speedKmS, dtReal, paused);
+    // Ring motion and all distortion use the delivered drive field, never
+    // passive orbital speed. speedKmS remains in the API for old view callers.
+    const level = DRIVE.level;
+    stepShipMotion(s.motion, level * 120, dtReal, paused);
     for (const rotor of craft.userData.rotors) rotor.rotation.y = s.motion.angle;
     s.x = position.x; s.y = position.y; s.z = position.z;
-    s.dx = direction.x; s.dy = direction.y; s.dz = direction.z;
+    axis.set(DRIVE.ax, DRIVE.az, -DRIVE.ay);
+    if (axis.lengthSq() > 1e-20) axis.normalize(); else axis.copy(direction);
+    s.dx = axis.x; s.dy = axis.y; s.dz = axis.z;
     s.radius = Math.min(10, Math.max(.036, scale * 3));
     s.visible = visible;
-    s.strength = s.enabled && visible ? s.motion.level : 0;
+    s.strength = s.enabled && visible ? level : 0;
+    if (!field) { field = createDriveField(); craft.parent.add(field); }
+    field.visible = s.strength > .001;
+    field.quaternion.setFromUnitVectors(up, axis);
+    field.scale.setScalar(s.radius);
+    field.material.uniforms.level.value = s.strength;
+    field.material.uniforms.phase.value = s.motion.angle;
+    s.fieldVisible = field.visible;
 }

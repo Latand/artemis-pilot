@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "historicalHarness": "7d45c681f684da27bd84532e1de1d0ddd3f9564f",
+  "historicalTree": "ac6dae441e7adf7d7d74f3b1d1d0df05b54eaa4e",
+  "baseline": "ab51029827cf9324eb737673e46c49ab74aa1718",
+  "baselineTree": "7b185b45a344738d6299856362b455b18c8a9484",
+  "productionPaths": [
+    "src",
+    "public",
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "bun.lock",
+    "vite.config.*",
+    "scripts/galaxy-preview-plugin.mjs",
+    ".env*",
+    "postcss.config.*",
+    ".postcssrc*",
+    "tsconfig*.json",
+    "jsconfig*.json",
+    "npm-shrinkwrap.json",
+    ".npmrc"
+  ],
+  "productionFingerprints": {
+    "A": "5509822d3cdc9bee3f72b8ae08990f004f0e637911f44ecd3a3eb4825ef1fff8",
+    "B": "baf24e53f5fa2a89bd1a3352af30cff34385e31169c7d803eef4c1ff54facbc6"
+  },
+  "frozenProductionReference": "15ce237732cf43ce14ccb1b7bca76946f7082578"
+}

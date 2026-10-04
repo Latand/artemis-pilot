@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {publishRiverSourcePositions} from '../src/riverSourceCache.js';
+const retained=[{x:10,y:20,z:30},{x:40,y:50,z:60}];
+const flow={starX:[],starY:[],starZ:[],starC:[7,8]};
+const body=Array.from({length:4},()=>({values:[],set(...v){this.values=v;}}));
+const center={x:1,y:2,z:3};
+publishRiverSourcePositions(retained,2,.001,flow,body,2,center);
+assert.deepEqual(body[2].values,[-.99,-1.97,-3.02,7]);
+retained[0].x+=10000;retained[0].z-=2000;
+publishRiverSourcePositions(retained,2,.001,flow,body,2,center);
+assert.deepEqual(body[2].values,[9.01,-3.9699999999999998,-3.02,7]);
+assert.equal(flow.starX[0],10.01);assert.equal(flow.starY[0],-1.97);
+const src=readFileSync(new URL('../src/river.js',import.meta.url),'utf8');
+assert(src.includes('activeStarSetRevision() === riverStarPickActiveRevision'));
+assert(src.includes('publishRiverSourcePositions(riverStarPickRefs, flowCtx.starCount'));
+console.log('Selected river source positions publish without reranking; structural replacements invalidate references');

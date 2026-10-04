@@ -1,3 +1,5 @@
+import { moveExplorationTarget } from './universe/explorationCamera.js';
+import { initGalaxyTravel } from './galaxyTravel.js';
 import { initGravityInspector, closeGravityInspector } from './gravityInspector.js';
 import { largeFlowStatus } from './render/largeScaleFlow.js';
 import { NEBULAE } from "./universe/nebulaeData.js";
@@ -33,6 +35,7 @@ function visit(focus) {
 
 export function initExplorerUI(options) {
     hooks=options;
+    initGalaxyTravel();
     initCompactExplorer({ stopMovement: () => { movement = null; } });
     initGravityInspector({togglePrediction:options.toggleGravityPrediction,predictionNote:options.gravityPredictionNote,predictionActive:options.gravityPredictionActive});
     document.querySelectorAll('[data-ui-mode]').forEach(btn => btn.addEventListener('click',()=>setUiMode(btn.dataset.uiMode)));
@@ -98,7 +101,7 @@ export function moveExplorerCamera(dt) {
     right.setFromMatrixColumn(camera.matrixWorld,0);up.setFromMatrixColumn(camera.matrixWorld,1);
     delta.copy(forward).multiplyScalar(z).addScaledVector(right,x).addScaledVector(up,y).normalize();
     const speed=Math.max(.03,cam.dist)*Math.min(dt,.06)*(keys.has('ShiftLeft')||keys.has('ShiftRight')?2.5:.65);
-    cam.tgt.addScaledVector(delta,speed);cam.distTarget=null;G.focus='free';
+    moveExplorationTarget(cam,delta,speed);cam.distTarget=null;G.focus='free';
 }
 
 // Alongside the display name this carries the raw records the fact rows are
@@ -106,6 +109,8 @@ export function moveExplorerCamera(dt) {
 // epistemic tier those numbers belong to. A body that simply has no record for
 // a quantity carries no field for it, and bodyFacts then omits that row.
 function selectedBody() {
+    if (G.focus === 'galaxy:m31') return {name:'Andromeda',kind:'Accelerated camera approach · modeled stellar population',basis:'modeled'};
+    if (G.focus === 'galaxy:mw') return {name:'Milky Way',kind:'Accelerated camera return',basis:'modeled'};
     const ni = /^neb:(\d+)$/.exec(String(G.focus));
     if (ni && NEBULAE[+ni[1]]?.formation) {
         const n = NEBULAE[+ni[1]], s = gasStateAt(n,G.t);
@@ -122,7 +127,7 @@ function selectedBody() {
     // MOONS[i].mu is the parent planet's, kept for the analytic orbit, so a
     // planetary moon passes only its own radius and shows no mass or gravity.
     const mi=moonFocusIndex(G.focus);if(mi>=0)return {name:MOONS[mi].name,kind:'Moon',R:MOONS[mi].R,basis:'measured'};
-    const si=/^star:(\d+)$/.exec(String(G.focus));if(si&&STARS[+si[1]]){const st=STARS[+si[1]];return {...st,R:st.bh?null:st.R,kind:st.bh?'Black hole':'Catalog star',star:st.bh?null:st,rs:st.rs,bhMass:st.bh?bhMassLabel(st.rs):null,basis:st.bh?'modeled':'measured'};}
+    const si=/^star:(\d+)$/.exec(String(G.focus));if(si&&STARS[+si[1]]){const st=STARS[+si[1]];return {...st,R:st.bh?null:st.R,kind:st.bh?'Black hole':'Catalog star',star:st.bh?null:st,rs:st.rs,bhMass:st.bh?bhMassLabel(st.rs):null,basis:st.bh||st.estimated||st.distanceEstimated?'modeled':'measured'};}
     const active=activeStarForFocus(G.focus);if(active)return {...active,kind:'Stellar destination',star:active,basis:active.estimated||active.procedural?'modeled':'measured'};
     const childMoon=planetMoonFocusIndex(G.focus),pi=childMoon?.planetIndex??planetFocusIndex(G.focus),sys=getSystemForTarget(G.focus),p=sys?.planets?.[pi];
     const satellite=childMoon&&p?.moons?.[childMoon.moonIndex];

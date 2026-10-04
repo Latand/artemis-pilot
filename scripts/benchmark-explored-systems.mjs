@@ -6,11 +6,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { systemRenderStatement } from './explored-system-hooks.mjs';
 
 const args = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const root = resolve(args[0] || '.'), baselineRoot = resolve(process.env.BASE_ROOT || '');
@@ -36,6 +37,16 @@ const quantile = (values, p) => [...values].sort((a, b) => a - b)[Math.max(0, Ma
 const summarize = values => ({ count: values.length, min: Math.min(...values), p50: quantile(values, .5),
     p95: quantile(values, .95), max: Math.max(...values), mean: values.reduce((a, b) => a + b, 0) / values.length });
 const revision = cwd => execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
+async function proveBaselineAbsence(cwd, path) {
+    const git = args => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+    assert.equal(await realpath(git(['rev-parse', '--show-toplevel'])), await realpath(cwd),
+        'The absent-source baseline must be the declared Git worktree root');
+    const commit = git(['rev-parse', 'HEAD^{commit}']);
+    assert.match(commit, /^[a-f0-9]{40}$/);
+    assert.equal(git(['ls-tree', '-z', commit, '--', path]), '',
+        `Baseline ${commit} tracks ${path}; a missing worktree file is not a source absence`);
+    return { commit, tree: git(['rev-parse', `${commit}^{tree}`]) };
+}
 function once(source, token, replacement) {
     assert.equal(source.split(token).length, 2, `Paired benchmark hook changed: ${token}`);
     return source.replace(token, replacement);
@@ -54,7 +65,7 @@ function fineFrameSource(source) {
         ['kuiper', 'kuiperCursor = advanceMinorSwarm(minorSwarms.kuiper, minorRenderers.kuiper, kuiperCursor, Math.ceil(minorRenderers.kuiper.capacity / 6), minorKuiperStep);'],
         ['curated.propagate', 'propagateInto(minorSwarms.curated, G.t, minorRenderers.curated.worldKm, minorSunWorld, 0, minorRenderers.curated.capacity, minorCuratedStep);'],
         ['curated.upload', 'uploadMinorResiduals(minorRenderers.curated, 0, minorRenderers.curated.capacity);'],
-        ['systemRender', 'updateSystemRender(focusedSystem, G.t, camera, G.focus);'],
+        ['systemRender', systemRenderStatement(body)],
         ['minorVisibility', 'setMinorVisible(cam.dist / K / AU_KM);'],
     ];
     for (const [name, statement] of statements) body = once(body, statement,
@@ -98,21 +109,32 @@ for (const tree of [baselineRoot, root]) for (const path of ['src/main.js', 'src
     execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(source, '/' + path) });
     if (path === 'src/main.js') execFileSync(process.execPath, ['--input-type=module', '--check'], { input: '(' + fineFrameSource(source) + ')' });
 }
-if (process.argv.includes('--validate')) {
-    console.log(JSON.stringify({ hooks: 'valid', device, fixtures, orders, warmupFrames, samplesPerBlock })); process.exit(0);
-}
-await mkdir(out, { recursive: true });
-const sourceHashes = {};
+const sourceHashes = {}, sourceFileAbsences = { A: [], B: [] }, sourceFileAbsenceProofs = { A: {}, B: {} };
 for (const [label, tree] of [['A', baselineRoot], ['B', root]]) {
     sourceHashes[label] = {};
-    for (const path of ['src/universe/minorBodies.js', 'src/universe/renderOrigin.js', 'src/moons.js', ...(optics?['src/lensing.js','src/holeOptics.js','src/render/ringSamplingDepth.js','src/render/planetAppearance.js']:[])])
-        sourceHashes[label][path] = createHash('sha256').update(await readFile(resolve(tree, path))).digest('hex');
+    for (const path of ['src/universe/minorBodies.js', 'src/universe/renderOrigin.js', 'src/moons.js', ...(optics?['src/lensing.js','src/holeOptics.js','src/render/ringSamplingDepth.js','src/render/planetAppearance.js']:[])]) {
+        try {
+            sourceHashes[label][path] = createHash('sha256').update(await readFile(resolve(tree, path))).digest('hex');
+        } catch (error) {
+            // Current main predates this new module. Record its real absence;
+            // never synthesize a baseline file or exempt a missing candidate.
+            if (!(optics && label === 'A' && path === 'src/render/ringSamplingDepth.js' && error.code === 'ENOENT')) throw error;
+            sourceFileAbsenceProofs[label][path] = await proveBaselineAbsence(tree, path);
+            sourceHashes[label][path] = null;
+            sourceFileAbsences[label].push(path);
+        }
+    }
     const mainSource = await readFile(resolve(tree, 'src/main.js'), 'utf8');
     const start = mainSource.indexOf('const sceneBodiesT0 = perfStart();'), end = mainSource.indexOf('const sceneFocusT0 = perfStart();', start);
     sourceHashes[label]['main.sceneBodies'] = createHash('sha256').update(mainSource.slice(start, end)).digest('hex');
 }
 
-const report = { version: 4, device, sourceHashes, mode:optics?'nearby-Saturn-lens':'explored-systems', opticsBloom,
+if (process.argv.includes('--validate')) {
+    console.log(JSON.stringify({ hooks: 'valid', device, fixtures, orders, warmupFrames, samplesPerBlock, sourceHashes, sourceFileAbsences, sourceFileAbsenceProofs })); process.exit(0);
+}
+await mkdir(out, { recursive: true });
+
+const report = { version: 4, device, sourceHashes, sourceFileAbsences, sourceFileAbsenceProofs, mode:optics?'nearby-Saturn-lens':'explored-systems', opticsBloom,
     fixedDiagnosticExperiment: optics?'After all acceptance windows and long-task collection: twenty attribution frames per source revision; no profiler between trials.':'After ALL acceptance fixtures and long-task collection: twenty attribution frames per fixture plus twenty fine-substage Earth frames and one 120-frame Earth CDP CPU profile per revision. No profiler runs between acceptance trials or fixtures', baselineRevision: revision(baselineRoot), candidateRevision: revision(root),
     epoch: '2026-10-01T12:00:00.000Z', query, viewport, deviceScaleFactor: 1, browserArgs, warmupFrames, samplesPerBlock, orders,
     hardware: { platform: os.platform(), release: os.release(), arch: os.arch(), logicalCPUs: os.cpus().length,

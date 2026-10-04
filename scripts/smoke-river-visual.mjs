@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import vm from "node:vm";
 
 globalThis.window = {};   // state.js expects a window handle (same shim as smoke-core.mjs)
 
@@ -131,9 +132,8 @@ const GLSL_SYNC = [
   // WP-R2..R6 append exact literals here
   "float wave = fract(ph + uPhase * kq + segT * 0.5)",
   "0.72 + 0.55 * pow(0.5 + 0.5 * cos(6.2831853 * wave), 3.0)",
-  "totalW += sqrt(max(uBody[i].w, 0.0))",
-  "float lo = uRadius * 0.02",
-  "uSoi[chosen] > 0.0 ? min(uSoi[chosen] * 1.5, uRadius * 0.22) : uRadius * 0.22",
+  "float lo = samplingRadius * 0.02",
+  "uSoi[chosen] > 0.0 ? min(uSoi[chosen] * 1.5, samplingRadius * 0.22) : samplingRadius * 0.22",
   "min(max(sink * 30.0, lo), max(hi, sink * 2.0))",
   "pow(h3, 1.6)",
   "mix(0.25, 2.6, pow(tVis, 0.6))",
@@ -149,4 +149,40 @@ for (const lit of GLSL_SYNC) {
   assert(src.includes(lit), "river.js GLSL out of sync with riverMath, missing literal: " + lit);
 }
 
-console.log("river visual smoke passed (" + GLSL_SYNC.length + " sync literals)");
+// The reviewed radiance patch names the same sqrt mass once so it can retain
+// the unweighted reference distribution alongside the visible-source CDF.
+// Pin and execute that exact production block; do not accept arbitrary rewrites.
+const haloWeightBlock = `const massWeight = Math.sqrt(Math.max(0, bodyVals[i].w));
+        haloReferenceWeights[i] = massWeight;
+        haloReferenceTotal += massWeight;
+        haloTotal += massWeight * h.y;
+        h.z = haloTotal;`;
+function requireHaloWeightBlock(source) {
+  assert(source.split(haloWeightBlock).length === 2, "one exact reviewed halo-weight block required");
+  for (const pattern of [/const massWeight\s*=/g, /haloReferenceWeights\[i\]\s*=/g,
+    /haloReferenceTotal\s*\+=/g, /haloTotal\s*\+=/g, /h\.z\s*=\s*haloTotal/g])
+    assert((source.match(pattern) || []).length === 1, "duplicate halo-weight operation", String(pattern));
+  return haloWeightBlock;
+}
+const actualWeightBlock = requireHaloWeightBlock(src);
+for (const coefficient of [-10, 0, 1e-12, ...cs, 1e8]) for (const visibility of [0, .2, 1]) {
+  const state = { bodyVals: [{ w: coefficient }], i: 0, h: { y: visibility }, haloReferenceWeights: [0], haloReferenceTotal: 7, haloTotal: 11 };
+  vm.runInNewContext(actualWeightBlock, state);
+  const weight = rm.pickWeight(coefficient);
+  assert(state.haloReferenceWeights[0] === weight && state.haloReferenceTotal === 7 + weight, "reference distribution must retain the unweighted mass");
+  assert(state.haloTotal === 11 + weight * visibility && state.h.z === state.haloTotal, "visible CDF must retain the original sqrt-weighted law");
+}
+for (const mutation of [
+  source => source.replace('Math.sqrt(Math.max(0, bodyVals[i].w))', 'Math.max(0, bodyVals[i].w)'),
+  source => source.replace('haloTotal += massWeight * h.y', 'haloTotal += massWeight'),
+  source => source.replace('haloReferenceTotal += massWeight', 'haloReferenceTotal += massWeight * h.y'),
+  source => source.replace('h.z = haloTotal', 'h.z = haloReferenceTotal'),
+  source => source.replace(haloWeightBlock, ''),
+  source => source + '\n' + haloWeightBlock,
+  source => source + '\nhaloTotal += 1;',
+]) {
+  let rejected = false;
+  try { requireHaloWeightBlock(mutation(src)); } catch { rejected = true; }
+  assert(rejected, "unknown, missing or duplicate weight operations must fail closed");
+}
+console.log("river visual smoke passed (" + GLSL_SYNC.length + " sync literals; exact mass/reference/CDF behavior and mutation guards)");

@@ -1,3 +1,4 @@
+import { foreignCameraStars } from './render/foreignStarField.js';
 import * as THREE from "three";
 import { STARS, K, LY_SCENE, MU_S } from "./constants.js";
 import { CURATED_PHOTOMETRY } from "./render/curatedPhotometry.js";
@@ -8,10 +9,10 @@ import { teffToRGB, bvToTeff, absMagVFromL } from "./render/viewBrightness.js";
 import { makeStarPointMaterial, starPointAlpha } from "./render/starPointMaterial.js";
 import { curatedAbsMagV, holdCatalogRow } from "./render/catalogStars.js";
 import { dotTexture } from "./textures.js";
-import { renderQuality, scene, viewportSize } from "./scene.js";
+import { renderQuality, scene, camera, viewportSize } from "./scene.js";
 import { smooth01 } from "./format.js";
 import { getExploredHost } from "./universe/exploredSystem.js";
-import { ACTIVE_STARS, activeStarsTime } from "./universe/activeStars.js";
+import { ACTIVE_STARS, activeStarsTime, activeForeignStarsStamp, activeStarSetRevision } from "./universe/activeStars.js";
 import { applyTerrellToMaterial } from "./relView.js";
 import { holeRoot, makeHoleOptics, updateHoleOptics } from "./holeOptics.js";
 import { namedHoleAppearance } from "./render/holeAppearance.js";
@@ -119,7 +120,6 @@ function disposeMaterial(material) {
 
 function disposeStarVisual(entry) {
     const textures = new Set();
-    if (entry.star.activeCatalog) holdCatalogRow(entry.star.hygIndex, false);
     entry.g.traverse(obj => {
         if (obj.geometry) obj.geometry.dispose();
         if (obj.material === activePointMaterial) return;
@@ -138,6 +138,7 @@ export function addStarVisual(star) {
     }
     if (existing) {
         existing.star = star;
+        if (existing.photosphere) existing.photosphere.frustumCulled = !star.galaxyId;
         if (star.tempK > 0 && existing.photosphere) {
             existing.tempK = star.tempK;
             linearStarColor(teffToRGB(star.tempK, starRGB), existing.photosphere.material.color);
@@ -164,6 +165,9 @@ export function addStarVisual(star) {
         const color = tempK ? linearStarColor(teffToRGB(tempK, starRGB)) : new THREE.Color(star.color);
         photosphere = new THREE.Mesh(sphere(star.R * K, 64, 48, 32, 24), applyTerrellToMaterial(photosphereMaterial(color, null, { ...star, tempK })));
         photosphere.name = star.name + " photosphere";
+        // The bounded active-visual/LOD gates still own visibility. A global
+        // CPU frustum can reject an M31 surface before its split view transform.
+        photosphere.frustumCulled = !star.galaxyId;
         g.userData.appearance = photosphere.material.userData.photosphere.profile.provenance;
         g.add(photosphere);
     }
@@ -174,9 +178,8 @@ export function addStarVisual(star) {
         }))
         : null;
     if (glow) g.add(glow);
-    const point = !star.bh && (star.activeCatalog || star.formedStar) ? activeStarPoint(absMag, tempK, star.R) : null;
+    const point = !star.bh && star.formedStar ? activeStarPoint(absMag, tempK, star.R) : null;
     if (point) g.add(point);
-    if (star.activeCatalog) holdCatalogRow(star.hygIndex, true);
     g.position.set(star.x * K, (star.z || 0) * K, -star.y * K);
     // a hole's own light sits at the lens: drawn unbent after it (lensing.js)
     (star.bh ? holeRoot : scene).add(g);
@@ -202,6 +205,7 @@ let activeVisualSynced = false;
 let activeVisualSyncAge = Infinity, lastExploredVisualId = "";
 const activeVisualKeep = new Set();
 const activeVisualCands = [];
+const activeVisualSeen = new Set();
 function syncActiveStarVisuals(camera, dtR = 0) {
     const exploredHost = getExploredHost();
     const exploredId = exploredHost ? starVisualId(exploredHost) : "";
@@ -210,7 +214,11 @@ function syncActiveStarVisuals(camera, dtR = 0) {
     if (activeVisualSyncAge < ACTIVE_VISUAL_SYNC_S && moved < ACTIVE_VISUAL_MOVE_SYNC && exploredId === lastExploredVisualId) return;
     activeVisualKeep.clear();
     activeVisualCands.length = 0;
-    for (const star of ACTIVE_STARS) {
+    activeVisualSeen.clear();
+    for (const star of [...ACTIVE_STARS, ...foreignCameraStars()]) {
+        const visualId = starVisualId(star);
+        if (activeVisualSeen.has(visualId)) continue;
+        activeVisualSeen.add(visualId);
         if (!star.procedural && !star.activeCatalog && !star.formedStar) continue;
         _procPos.set(star.x * K, (star.z || 0) * K, -star.y * K);
         const d = camera.position.distanceTo(_procPos);
@@ -243,17 +251,33 @@ function syncActiveStarVisuals(camera, dtR = 0) {
     lastExploredVisualId = exploredId;
 }
 
-// All procedural active stars as one point layer, re-synced whenever the
-// active set or its evaluation time changes. Offsets from the first star keep
+// All procedural and HYG active stars as one point layer, re-synced whenever the
+// active set or its evaluation time changes. Camera-relative offsets keep
 // float32 precision independent of the distance to the Sun.
 const activeProc = { mesh: null, capacity: 0, sig: "" };
+const pooledCatalogRows = new Set();
 export function syncActiveProceduralPoints() {
-    const n0 = ACTIVE_STARS.length;
-    const sig = activeStarsTime() + ":" + n0 + ":" + (n0 ? ACTIVE_STARS[0].id || ACTIVE_STARS[0].name : "") + ":" + (n0 ? ACTIVE_STARS[n0 - 1].id || ACTIVE_STARS[n0 - 1].name : "");
-    if (sig === activeProc.sig) return;
+    const pointStars = [...ACTIVE_STARS];
+    const explored = getExploredHost();
+    if (explored?.activeCatalog && !pointStars.some(s => s.id === explored.id)) pointStars.push(explored);
+    const n0 = pointStars.length;
+    const sig = activeStarSetRevision() + ":" + (explored?.id || "") + ":" + activeForeignStarsStamp() + ":" + activeStarsTime() + ":" + n0 + ":" + (n0 ? pointStars[0].id || pointStars[0].name : "") + ":" + (n0 ? pointStars[n0 - 1].id || pointStars[n0 - 1].name : "");
+    if (sig === activeProc.sig) {
+        if (activeProc.mesh && !activeProc.mesh.position.equals(camera.position)) placeActivePoints(pointStars);
+        return;
+    }
     activeProc.sig = sig;
     let n = 0;
-    for (const s of ACTIVE_STARS) if (s.procedural && !s.bh) n++;
+    const nextRows = new Set();
+    for (const s of pointStars) {
+        if ((s.procedural || s.activeCatalog) && !s.bh) n++;
+        if (s.activeCatalog) nextRows.add(s.hygIndex);
+    }
+    // Active HYG points use the exact CPU source position well before a close
+    // approach; the GPU's float32 background is never a second local source.
+    for (const row of pooledCatalogRows) if (!nextRows.has(row)) holdCatalogRow(row, false);
+    for (const row of nextRows) if (!pooledCatalogRows.has(row)) holdCatalogRow(row, true);
+    pooledCatalogRows.clear(); for (const row of nextRows) pooledCatalogRows.add(row);
     if (!activeProc.mesh || n > activeProc.capacity) {
         if (activeProc.mesh) { scene.remove(activeProc.mesh); activeProc.mesh.geometry.dispose(); }
         const cap = Math.max(64, Math.ceil(n * 1.5));
@@ -265,20 +289,17 @@ export function syncActiveProceduralPoints() {
         geo.setAttribute("radiusKm", new THREE.BufferAttribute(new Float32Array(cap), 1));
         activePointMaterial ||= makeStarPointMaterial({ radius: true });
         activeProc.mesh = new THREE.Points(geo, activePointMaterial);
-        activeProc.mesh.name = "active procedural stars";
+        activeProc.mesh.name = "active procedural stars"; // includes exact active HYG points
         activeProc.mesh.frustumCulled = false;
         activeProc.mesh.renderOrder = -3;
         activeProc.capacity = cap;
         scene.add(activeProc.mesh);
     }
     const a = activeProc.mesh.geometry.attributes;
-    let i = 0, cx = 0, cy = 0, cz = 0;
-    for (const s of ACTIVE_STARS) {
-        if (!s.procedural || s.bh) continue;
-        if (i === 0) { cx = s.x; cy = s.y; cz = s.z || 0; }
-        a.position.array[i * 3] = (s.x - cx) * K;
-        a.position.array[i * 3 + 1] = ((s.z || 0) - cz) * K;
-        a.position.array[i * 3 + 2] = -(s.y - cy) * K;
+    let i = 0;
+    for (const s of pointStars) {
+        if ((!s.procedural && !s.activeCatalog) || s.bh) continue;
+
         const teff = s.tempK || 5800;
         const m = activeAbsMagV(s, teff);
         a.absMag.array[i] = Number.isFinite(m) ? m : 99;
@@ -288,9 +309,24 @@ export function syncActiveProceduralPoints() {
         a.color.array[i * 3] = _ptColor.r; a.color.array[i * 3 + 1] = _ptColor.g; a.color.array[i * 3 + 2] = _ptColor.b;
         i++;
     }
-    activeProc.mesh.position.set(cx * K, cz * K, -cy * K);
+    placeActivePoints(pointStars);
     activeProc.mesh.geometry.setDrawRange(0, i);
     for (const key of ["position", "color", "absMag", "teffK", "radiusKm"]) a[key].needsUpdate = true;
+}
+
+function placeActivePoints(stars) {
+    const attr = activeProc.mesh.geometry.attributes.position;
+    const cx = camera.position.x / K, cy = -camera.position.z / K, cz = camera.position.y / K;
+    let i = 0;
+    for (const s of stars) {
+        if ((!s.procedural && !s.activeCatalog) || s.bh) continue;
+        attr.array[i * 3] = (s.x - cx) * K;
+        attr.array[i * 3 + 1] = ((s.z || 0) - cz) * K;
+        attr.array[i * 3 + 2] = -(s.y - cy) * K;
+        i++;
+    }
+    activeProc.mesh.position.copy(camera.position);
+    attr.needsUpdate = true;
 }
 
 // A black hole's own light and its sky beacon: a fixed-angle marker that

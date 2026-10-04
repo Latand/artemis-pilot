@@ -49,11 +49,12 @@ try {
     if(k%10) return null;
     const {shipG,craft}=await import('/src/ship.js');const {plGroups}=await import('/src/bodies.js');
     const {eph}=await import('/src/ephemeris.js');const {PL}=await import('/src/constants.js');
+    const {river}=await import('/src/river.js');
     const {camera,renderer}=await import('/src/scene.js');
     const p=shipG.position.clone().project(camera),j=plGroups[3].position.clone().project(camera);
-    return {k,t:window.__G.t,warp:window.__G.warp,paused:window.__G.paused,shipVisible:shipG.visible,scale:craft.scale.x,ship:[p.x,p.y,p.z],jupiter:[j.x,j.y,j.z],distanceRj:Math.hypot(window.__G.x-eph.plX[3],window.__G.y-eph.plY[3],window.__G.z-eph.plZ[3])/PL[3].R,panel:(()=>{const r=document.getElementById('scenarioPlayback').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height};})(),drawCalls:renderer.info.render.calls};
+    return {k,naturalFlow:{enabled:window.__G.gr,visible:river.visible,gain:river.presentationGain,depthTest:river.presentationDepthTest,count:river.count,drawCount:river.drawCount},t:window.__G.t,warp:window.__G.warp,paused:window.__G.paused,shipVisible:shipG.visible,scale:craft.scale.x,ship:[p.x,p.y,p.z],jupiter:[j.x,j.y,j.z],distanceRj:Math.hypot(window.__G.x-eph.plX[3],window.__G.y-eph.plY[3],window.__G.z-eph.plZ[3])/PL[3].R,panel:(()=>{const r=document.getElementById('scenarioPlayback').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height};})(),drawCalls:renderer.info.render.calls};
    },k);
-   if(sample){frames.push(sample);assert.ok(sample.shipVisible,'ship visible throughout');assert.ok(Math.abs(sample.ship[0])<.9&&Math.abs(sample.ship[1])<.9,'ship inside frame');assert.ok(Math.abs(sample.jupiter[0])<.9&&Math.abs(sample.jupiter[1])<.9,'Jupiter inside frame');for(const point of [sample.ship,sample.jupiter]){const x=(1+point[0])*width/2,y=(1-point[1])*height/2,p=sample.panel;assert.ok(x<p.x-30||x>p.x+p.width+30||y<p.y-30||y>p.y+p.height+30,'guided controls leave the subjects unobscured');}}
+   if(sample){frames.push(sample);assert.ok(sample.naturalFlow.enabled&&sample.naturalFlow.visible,'natural gravity field remains enabled');assert.equal(sample.naturalFlow.gain,.22,'guided display gain is bounded and stable');assert.equal(sample.naturalFlow.depthTest,true,'natural flow respects opaque subjects');assert.ok(sample.naturalFlow.count>0&&sample.naturalFlow.drawCount>0,'natural particle population retained');assert.ok(sample.shipVisible,'ship visible throughout');assert.ok(Math.abs(sample.ship[0])<.9&&Math.abs(sample.ship[1])<.9,'ship inside frame');assert.ok(Math.abs(sample.jupiter[0])<.9&&Math.abs(sample.jupiter[1])<.9,'Jupiter inside frame');for(const point of [sample.ship,sample.jupiter]){const x=(1+point[0])*width/2,y=(1-point[1])*height/2,p=sample.panel;assert.ok(x<p.x-30||x>p.x+p.width+30||y<p.y-30||y>p.y+p.height+30,'guided controls leave the subjects unobscured');}}
    if([150,240,300,360,450,600].includes(k)) await page.screenshot({path:resolve(out,`${label}-${String(k/10).padStart(2,'0')}-flight.png`)});
    if(k===80){
     await page.locator('#spToggle').click();const pausedT=await page.evaluate(()=>window.__G.t);await page.evaluate(()=>window.__scenarioFrame(.1));assert.equal(await page.evaluate(()=>window.__G.t),pausedT,'pause holds clock');await page.locator('#spToggle').click();
@@ -76,6 +77,7 @@ try {
   assert.deepEqual(restored.cam,saved.cam,'restored camera');
   assert.deepEqual(restored.log,saved.log,'no permanent excursion discoveries or records');assert.equal(restored.objectives,saved.objectives,'no permanent excursion achievements');
   await page.evaluate(()=>window.__scenarioFrame(0));
+  await page.evaluate(async()=>{const {river}=await import('/src/river.js');if(river.presentationGain!==1)throw Error('Exit must restore natural-flow display gain even when the field is hidden');});
   const bounds=await page.locator('#scenarioPlayback').evaluate(el=>({hidden:el.hidden,width:document.documentElement.scrollWidth,viewport:innerWidth}));assert.ok(bounds.hidden&&bounds.width===bounds.viewport,'hidden panel and no horizontal overflow');
   report.push({label,frames,restored:true});await page.close();
  }

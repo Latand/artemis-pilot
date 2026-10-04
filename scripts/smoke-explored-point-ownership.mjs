@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { inspectExploredHostPoint } from './explored-point-ownership.mjs';
+const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(), group = new THREE.Group(); scene.add(group);
+const host = { id: 'hyg:87', hygIndex: 87, activeCatalog: true, x: 10, y: 20, z: 30, R: 1000, tempK: 4500, absMag: 6 };
+const other = { ...host, id: 'hyg:88', hygIndex: 88, x: 99 };
+const attrs = rows => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(rows.flatMap(s => [s.x, s.z, -s.y]), 3));
+    for (const [key, field] of [['radiusKm','R'],['teffK','tempK'],['absMag','absMag']]) g.setAttribute(key, new THREE.Float32BufferAttribute(rows.map(s => s[field]), 1));
+    g.setDrawRange(0, rows.length); return g;
+};
+const pool = new THREE.Points(attrs([other,host]), new THREE.PointsMaterial()); pool.name = 'active procedural stars'; scene.add(pool);
+const catalog = { loaded: true, held: true, hidden: 1 };
+const inspect = () => inspectExploredHostPoint({ scene, camera, host, group, activeStars: [other], K: 1, catalog });
+assert(inspect().pass, 'One retained pooled host with exact slot and hidden background passes');
+pool.geometry.setDrawRange(0,1); assert(!inspect().pass, 'Missing host draw slot fails'); pool.geometry.setDrawRange(0,2);
+pool.geometry = attrs([other,host,host]); assert(!inspect().pass, 'Duplicate pooled host fails'); pool.geometry = attrs([other,host]);
+pool.geometry.attributes.radiusKm.array[1] = 2; assert(!inspect().pass, 'Mismatched photometry fails'); pool.geometry = attrs([other,host]);
+pool.visible = false; assert(!inspect().pass, 'Hidden host layer fails'); pool.visible = true;
+catalog.hidden = 0; assert(!inspect().pass, 'Unsuppressed background twin fails'); catalog.hidden = 1;
+catalog.loaded = false; assert(!inspect().pass, 'Unobserved background cannot pass'); catalog.loaded = true;
+const individual = new THREE.Points(attrs([host]), new THREE.PointsMaterial()); group.add(individual);
+assert(!inspect().pass, 'Simultaneous individual and pooled host fails');
+scene.remove(pool); assert(inspect().pass, 'Baseline individual host representation remains valid');
+group.remove(individual); assert(!inspect().pass, 'Missing host in either architecture fails');
+console.log('Explored point ownership rejects missing/duplicate/stale/hidden host representations and background twins');

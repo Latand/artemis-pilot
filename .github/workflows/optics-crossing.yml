@@ -5,6 +5,7 @@ on:
       - 'scripts/probe-optics-crossing.mjs'
       - 'scripts/probe-optics-partial-release.mjs'
       - 'scripts/smoke-optics-partial-release.mjs'
+      - 'scripts/smoke-optics-baseline.mjs'
       - 'scripts/optics-deferred-edge-fixture.mjs'
       - 'scripts/smoke-optics-crossing.mjs'
       - 'src/lensing.js'
@@ -41,7 +42,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-optics-crossing.mjs && node scripts/smoke-optics-partial-release.mjs && node scripts/smoke-hole-appearance.mjs && node scripts/smoke-hole-precision.mjs && npm run build
+      - run: node scripts/smoke-optics-crossing.mjs && node scripts/smoke-optics-partial-release.mjs && node scripts/smoke-optics-baseline.mjs && node scripts/smoke-hole-appearance.mjs && node scripts/smoke-hole-precision.mjs && npm run build
       - run: npx playwright install --with-deps chromium
       - name: Frozen Saturn and disk plane-crossing ablations
         env:
@@ -73,7 +74,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
   paired-performance:
-    name: Optics full old-head pair ${{ matrix.device }} / bloom-${{ matrix.bloom }}
+    name: Optics current-main pair ${{ matrix.device }} / bloom-${{ matrix.bloom }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -92,12 +93,17 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - name: Preserve exact pre-edge optical source
+      - name: Preserve the reviewed current-main baseline
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          OPTICS_BASE_SHA: 'ab51029827cf9324eb737673e46c49ab74aa1718'
         run: |
-          git worktree add --detach "$RUNNER_TEMP/optics-before-edge" 531da641fe5d61b4cdc7130285418c218299d263
-          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/optics-before-edge/node_modules"
-          echo "BASE_ROOT=$RUNNER_TEMP/optics-before-edge" >> "$GITHUB_ENV"
-      - name: Full baseline and candidate Saturn lens performance
+          # Base changes need a new reviewed comparison, not silent rebasing.
+          test "$PR_BASE_SHA" = "$OPTICS_BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/optics-current-main" "$OPTICS_BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/optics-current-main/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/optics-current-main" >> "$GITHUB_ENV"
+      - name: Full current-main and candidate Saturn lens performance
         env:
           OPTICS_BENCH: '1'
           DEVICE: ${{ matrix.device }}

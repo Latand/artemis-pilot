@@ -139,7 +139,10 @@ body.bh-place-mode #gl canvas { cursor: crosshair; }
 /* ---------- body labels ---------- */
 .lbl { position: absolute; left: 0; top: 0; font-family: var(--font-ui); font-size: 9px; font-weight: 600;
   letter-spacing: .16em; color: #9fb0c2; opacity: 0; pointer-events: auto; cursor: pointer;
-  text-shadow: 0 1px 4px #000; transition: opacity .2s, color .15s; z-index: 3; }
+  text-shadow: 0 1px 4px #000; transition: color .15s; z-index: 3; }
+/* Local-body hides must take effect in the same frame as their projection.
+   Otherwise cleared transforms flash fading labels at the screen origin.
+   Star labels retain their separate opacity transition below. */
 .lbl:hover { color: #fff; }
 .starLbl { font-size: 14px; font-weight: 700; letter-spacing: .14em; filter: brightness(1.55);
   text-shadow: 0 0 20px rgba(255,236,200,.95), 0 0 9px currentColor, 0 0 3px currentColor, 0 1px 3px #000;
