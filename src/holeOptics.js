@@ -88,7 +88,7 @@ const analyticFragment = /* glsl */`
     uniform mat4 uInverseProjection;
     uniform float uAspect, uTanFov, uShadowCos, uDistance, uNear, uFar, uRsUnits;
     uniform float uDiskOn, uRout, uTmax, uGain, uPhaseA, uPhaseB, uWA, uFrameOrbits;
-    uniform float uJetLength, uJetI;
+    uniform float uJetLength, uJetI, uDiskUnclipped;
     varying vec2 vScreen;
     ${GLSL_BLACKBODY}
     ${GLSL_NOISE}
@@ -119,17 +119,23 @@ const analyticFragment = /* glsl */`
             // ray, so all disk emission vanished for one side-crossing frame.
             // A normalized, clipped interval gives fractional coverage inside;
             // it is sampling regularization, not a new accretion model.
-            float halfSupport = clamp(uDistance * max(length(dFdx(ray)),length(dFdy(ray))) * .5, .001, .02);
-            // Center the interval on the original plane hit. Subtracting two
-            // large ray distances can erase a thin support in float32; bounded
-            // offsets preserve unit coverage and that exact hit when unclipped.
-            float planeHit = -ro.z/rd.z;
-            float halfWidth = halfSupport/abs(rd.z);
-            float depthPerRs = max(1e-12,uRsUnits*dot(uViewDepth,ray));
-            float entry = max(-1.0,(max(0.0,uNear/depthPerRs)-planeHit)/halfWidth);
-            float exitHit = min(1.0,(uFar/depthPerRs-planeHit)/halfWidth);
-            float coverage = clamp((exitHit-entry)*.5,0.0,1.0);
-            float hit = planeHit+halfWidth*((entry+exitHit)*.5);
+            float hit = -ro.z/rd.z, coverage = 1.0;
+            float entry = -1.0, exitHit = 1.0;
+            // One uniform decision for the complete draw: no derivative is
+            // moved into a per-fragment fast-path branch.
+            if (uDiskUnclipped < .5) {
+                float halfSupport = clamp(uDistance * max(length(dFdx(ray)),length(dFdy(ray))) * .5, .001, .02);
+                // Center the interval on the original plane hit. Subtracting two
+                // large ray distances can erase a thin support in float32; bounded
+                // offsets preserve unit coverage and that exact hit when unclipped.
+                float planeHit = -ro.z/rd.z;
+                float halfWidth = halfSupport/abs(rd.z);
+                float depthPerRs = max(1e-12,uRsUnits*dot(uViewDepth,ray));
+                entry = max(-1.0,(max(0.0,uNear/depthPerRs)-planeHit)/halfWidth);
+                exitHit = min(1.0,(uFar/depthPerRs-planeHit)/halfWidth);
+                coverage = clamp((exitHit-entry)*.5,0.0,1.0);
+                hit = planeHit+halfWidth*((entry+exitHit)*.5);
+            }
             if (exitHit > entry && hit > 0.0) {
                 vec3 p = ro+hit*rd;
                 float r = length(p.xy), x = r/3.0;
@@ -211,6 +217,75 @@ const analyticFragment = /* glsl */`
     }
 `;
 
+// Conservative all-frustum proof for the raster support interval. This is an
+// eligibility optimization only; every rejected/uncertain camera uses the
+// normalized shader path. See docs/qa/disk-unclipped-proof.md for the bounds.
+export function diskSupportUnclipped(input) {
+    if (!input || typeof input!=='object') return false;
+    const f = Math.fround, u = 2 ** -24, gamma = n => n*u/(1-n*u);
+    const array = value => Array.isArray(value) || ArrayBuffer.isView(value) ? Array.from(value,f) : [];
+    const vector = value => value && typeof value==='object' && !Array.isArray(value) && !ArrayBuffer.isView(value)
+        ? [f(value.x),f(value.y),f(value.z)] : array(value);
+    const origin=vector(input.origin), normal=vector(input.normal), view=vector(input.viewDepth);
+    const rotation=array(input.rotation), projection=array(input.inverseProjection);
+    const near=f(input.near), far=f(input.far), rs=f(input.rsUnits);
+    const width=input.viewportWidth, height=input.viewportHeight;
+    if (![width,height].every(x=>Number.isInteger(x) && x>=4 && x<=32768)) return false;
+    const values=[...origin,...normal,...view,...rotation,...projection,near,far,rs];
+    if (origin.length!==3 || normal.length!==3 || view.length!==3 || rotation.length!==9 || projection.length!==16
+        || !values.every(Number.isFinite) || values.some(x=>Math.abs(x)>2**70)
+        || !(near>0 && far>near && rs>=2**-32 && rs<=2**32)) return false;
+    // Deliberately reject asymmetric/orthographic/custom projection forms.
+    // At NDC z=0, the accepted inverse gives (a*x,b*y,-1,w).
+    if (![1,2,3,4,6,7,8,9,10,12,13].every(i=>projection[i]===0)
+        || projection[14]!==-1 || !(projection[0]>0 && projection[0]<=2 && projection[5]>0 && projection[5]<=2)
+        || !(projection[15]>=2**-32 && projection[15]<=2**32)) return false;
+    // Include two pixels beyond each viewport edge for derivative helper
+    // lanes. The visible fragment and its native derivative neighborhood must
+    // both retain the same plane hit, not just the central sampled ray.
+    const extentX=projection[0]*(1+4/width), extentY=projection[5]*(1+4/height);
+    if (extentX>2 || extentY>2) return false;
+    const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+    const columns=[rotation.slice(0,3),rotation.slice(3,6),rotation.slice(6,9)];
+    let gramError2=0, frobenius2=0;
+    for(let i=0;i<3;i++) for(let j=0;j<3;j++) {
+        const error=dot(columns[i],columns[j])-(i===j?1:0);
+        gramError2+=error*error;
+    }
+    for(const value of rotation) frobenius2+=value*value;
+    const gramError=Math.sqrt(gramError2)+64*Number.EPSILON;
+    if (!(gramError<1e-5 && Math.abs(dot(normal,normal)-1)<1e-5 && Math.abs(dot(view,view)-1)<1e-5)) return false;
+    const lo=Math.sqrt(1-gramError), hi=Math.sqrt(1+gramError);
+    // IEEE float32 model: gamma(2) covers projected multiplication/division;
+    // gamma(5), sqrt and division cover each normalize. The matrix product
+    // has three products/two sums; the final dot gets its own gamma(5).
+    const qError=gamma(2);
+    const normError=Math.max(Math.sqrt(1+gamma(5))*(1+u)-1,1-Math.sqrt(1-gamma(5))*(1-u));
+    const normalizeError=(normError+u)/(1-normError);
+    const viewError=2*qError/(1-qError)+normalizeError;
+    const worldError=hi*viewError+gamma(5)*Math.sqrt(frobenius2)*(1+viewError);
+    const rayError=2*worldError/(lo-worldError)+normalizeError;
+    const qMax=Math.hypot(extentX,extentY,1);
+    const bounds=axis=>{
+        const coefficients=columns.map(column=>dot(axis,column));
+        const spread=Math.abs(coefficients[0])*extentX+Math.abs(coefficients[1])*extentY;
+        const a=-coefficients[2]-spread, b=-coefficients[2]+spread;
+        const error=Math.hypot(...axis)*(rayError+gamma(5)*(1+rayError))+128*Number.EPSILON;
+        return [Math.min(a/lo,a/(hi*qMax))-error,Math.max(b/lo,b/(hi*qMax))+error];
+    };
+    const originZ=dot(origin,normal), originError=gamma(5)*origin.reduce((sum,x,i)=>sum+Math.abs(x*normal[i]),0)+128*Number.EPSILON;
+    const heightLo=Math.abs(originZ)-originError, heightHi=Math.abs(originZ)+originError;
+    const support=f(.02), radial=bounds(normal), depth=bounds(view);
+    const slope=originZ>0 ? [-radial[1],-radial[0]] : radial;
+    if (!(heightLo>2*support && slope[0]>.001 && depth[0]>0 && rs*depth[0]>2e-12)) return false;
+    // The factor-two interior is a fail-closed numerical margin, not changed
+    // physical clipping. It dominates rounding in hit/width/clip divisions.
+    // Rays outside this proven interior keep the original clipped interval.
+    const first=(heightLo-support)/slope[1]*rs*depth[0];
+    const last=(heightHi+support)/slope[0]*rs*depth[1];
+    return Number.isFinite(first) && Number.isFinite(last) && first>2*near && last<far/2;
+}
+
 export function makeHoleOptics() {
     const uniforms = {
         uOrigin:{value:new THREE.Vector3()}, uViewDepth:{value:new THREE.Vector3(0,0,-1)}, uDepthProjection:{value:new THREE.Vector4()}, uAxisX:{value:new THREE.Vector3(1,0,0)},
@@ -219,7 +294,7 @@ export function makeHoleOptics() {
         uShadowCos:{value:1}, uDistance:{value:100}, uNear:{value:.02}, uFar:{value:1e20}, uRsUnits:{value:1},
         uDiskOn:{value:0}, uRout:{value:20}, uTmax:{value:6500}, uGain:{value:0},
         uPhaseA:{value:0}, uPhaseB:{value:0}, uWA:{value:1}, uFrameOrbits:{value:0},
-        uJetLength:{value:0}, uJetI:{value:0},
+        uJetLength:{value:0}, uJetI:{value:0}, uDiskUnclipped:{value:0},
     };
     const makeLayer = layer => {
         const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2,2), new THREE.ShaderMaterial({
@@ -237,9 +312,25 @@ export function makeHoleOptics() {
         return mesh;
     };
     const shadow=makeLayer(0), disk=makeLayer(1), ring=makeLayer(2), jet=makeLayer(3);
-    const center=new THREE.Vector3(), eye=new THREE.Vector3(), forward=new THREE.Vector3(), rotation=new THREE.Matrix4();
+    // Verify the arithmetic model when this material is compiled, including
+    // recompilation after native context restoration. Unknown/lower precision
+    // keeps the normalized path; no capability query enters the draw hot path.
+    const diskPrecision=new WeakMap();
+    disk.material.onBeforeCompile=(_shader,renderer)=>{
+        uniforms.uDiskUnclipped.value=0;
+        if (!renderer || typeof renderer!=='object') return;
+        let supported=false;
+        try {
+            const gl=renderer.getContext();
+            const format=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);
+            supported=(disk.material.precision ?? renderer.capabilities.precision)==='highp'
+                && format?.precision>=23 && format.rangeMin>=126 && format.rangeMax>=127;
+        } catch { /* Unknown capabilities use normalized support. */ }
+        diskPrecision.set(renderer,supported);
+    };
+    const center=new THREE.Vector3(), eye=new THREE.Vector3(), forward=new THREE.Vector3(), rotation=new THREE.Matrix4(), viewport=new THREE.Vector4();
     const o={shadow,ring,disk,jet,rsUnits:1};
-    const prepare=(mesh,camera)=>{
+    const prepare=(mesh,camera,renderer)=>{
         mesh.parent.getWorldPosition(center); eye.setFromMatrixPosition(camera.matrixWorld);
         const orbit=camera.userData.preciseOrbit;
         if (orbit && orbit.worldPosition.equals(eye)) {
@@ -262,13 +353,25 @@ export function makeHoleOptics() {
         // Each component has its own depth test and active-tier fence. A rear
         // disk cannot cover a foreground planet using the hole centre's depth.
         const layer=mesh.userData.holeLayer;
+        if (layer===1) {
+            uniforms.uDiskUnclipped.value=0;
+            if (uniforms.uDiskOn.value>.5 && diskPrecision.get(renderer)===true
+                && (disk.material.precision ?? renderer?.capabilities?.precision)==='highp' && camera.isPerspectiveCamera && !camera.parent && typeof renderer?.getCurrentViewport==='function') {
+                renderer.getCurrentViewport(viewport);
+                uniforms.uDiskUnclipped.value = diskSupportUnclipped({
+                    origin:uniforms.uOrigin.value, normal:uniforms.uNormal.value, viewDepth:uniforms.uViewDepth.value,
+                    rotation:uniforms.uCameraRotation.value.elements, inverseProjection:uniforms.uInverseProjection.value.elements,
+                    near:camera.near, far:camera.far, rsUnits:o.rsUnits, viewportWidth:viewport.z, viewportHeight:viewport.w,
+                }) ? 1 : 0;
+            }
+        }
         const enabled=layer===1 ? uniforms.uDiskOn.value>.5 : layer===3 ? uniforms.uJetLength.value>0 && uniforms.uJetI.value>0 : true;
         const extent=layer===1 ? 3*uniforms.uRout.value : layer===3 ? uniforms.uJetLength.value : SHADOW_RS*1.5;
         forward.set(0,0,-1).transformDirection(rotation);
         const z=-uniforms.uOrigin.value.dot(forward);
         mesh.geometry.setDrawRange(0,enabled && (d<extent*2 || (z>0 && extent/d/uniforms.uTanFov.value>1e-5)) ? 6 : 0);
     };
-    for (const mesh of [shadow,disk,ring,jet]) mesh.onBeforeRender=(_r,_s,camera)=>prepare(mesh,camera);
+    for (const mesh of [shadow,disk,ring,jet]) mesh.onBeforeRender=(renderer,_s,camera)=>prepare(mesh,camera,renderer);
     return o;
 }
 

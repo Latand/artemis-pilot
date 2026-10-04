@@ -33,7 +33,7 @@ assert.match(source, /if \(z < uNear \|\| z > uFar\) discard;/, 'the final view-
 // small expression parser rounds every scalar operation in float32 mode; it
 // does not substitute a second hand-copied implementation of the shader.
 const scalarText = disk.slice(disk.indexOf('            float halfSupport'), disk.indexOf('            if (exitHit'));
-const declarations = [...scalarText.matchAll(/float (\w+) = ([^;]+);/g)].map(([, name, expr]) => ({ name, expr }));
+const declarations = [...scalarText.replace(/^[ \t]+(entry|exitHit|coverage|hit) = /gm, '            float $1 = ').matchAll(/float (\w+) = ([^;]+);/g)].map(([, name, expr]) => ({ name, expr }));
 assert.deepEqual(declarations.map(({ name }) => name), ['halfSupport', 'planeHit', 'halfWidth', 'depthPerRs', 'entry', 'exitHit', 'coverage', 'hit']);
 
 function parse(expression) {
@@ -338,7 +338,28 @@ if (process.argv.includes('--verify-main-scope')) {
     assert.equal(halfSupportLine(disk), halfSupportLine(diskBlock(reviewed)), 'raster footprint bounds match the previously reviewed blob');
     const shadingTail = text => text.slice(text.indexOf('                vec3 p = ro+hit*rd;'));
     assert.equal(shadingTail(disk).replace(' * coverage;', ';'), shadingTail(diskBlock(main)), 'disk shading after hit selection differs from exact main only by coverage');
-    assert.equal(source.replace(disk, diskBlock(main)), main, 'all hole optics outside disk support are exact main');
+    // Audit only the explicit fast-path helper/uniform/callback integration;
+    // numerical and lifecycle tests validate the removed implementation.
+    const helperStart=source.indexOf('// Conservative all-frustum proof');
+    const helperEnd=source.indexOf('export function makeHoleOptics()',helperStart);
+    assert.ok(helperStart>0 && helperEnd>helperStart);
+    let outside=source.slice(0,helperStart)+source.slice(helperEnd);
+    const precisionStart=outside.indexOf('    // Verify the arithmetic model');
+    const precisionEnd=outside.indexOf('    const center=',precisionStart);
+    assert.ok(precisionStart>0 && precisionEnd>precisionStart);
+    outside=outside.slice(0,precisionStart)+outside.slice(precisionEnd);
+    const guardStart=outside.indexOf('        if (layer===1) {');
+    const guardEnd=outside.indexOf('        const enabled=',guardStart);
+    assert.ok(guardStart>0 && guardEnd>guardStart);
+    outside=outside.slice(0,guardStart)+outside.slice(guardEnd);
+    for (const [from,to] of [
+        ['uniform float uJetLength, uJetI, uDiskUnclipped;', 'uniform float uJetLength, uJetI;'],
+        ['uJetI:{value:0}, uDiskUnclipped:{value:0},','uJetI:{value:0},'],
+        ['rotation=new THREE.Matrix4(), viewport=new THREE.Vector4();','rotation=new THREE.Matrix4();'],
+        ['const prepare=(mesh,camera,renderer)=>{','const prepare=(mesh,camera)=>{'],
+        ['mesh.onBeforeRender=(renderer,_s,camera)=>prepare(mesh,camera,renderer);','mesh.onBeforeRender=(_r,_s,camera)=>prepare(mesh,camera);'],
+    ]) { assert.equal(outside.split(from).length,2,`one explicit integration: ${from}`); outside=outside.replace(from,to); }
+    assert.equal(outside.replace(disk,diskBlock(main)),main,'outside normalized support and bounded fast-path integration, hole optics remain exact main');
     const baselineFiles = git('ls-tree', '-r', '--name-only', mainCommit, '--', 'src').trim().split('\n').filter(Boolean);
     for (const path of baselineFiles) {
         if (path === 'src/holeOptics.js') continue;
@@ -350,7 +371,7 @@ if (process.argv.includes('--verify-main-scope')) {
     }
     assert.deepEqual(walk('src').sort(), baselineFiles.sort(), 'no unrelated source files were added or removed');
     assert.ok(!existsSync(new URL('../src/render/ringSamplingDepth.js', import.meta.url)), 'ringSamplingDepth remains absent, as on main');
-    console.log(`Disk-only source scope: normalized support/coverage only; ${baselineFiles.length - 1} unchanged source blobs and all other holeOptics content match ${mainCommit}`);
+    console.log(`Disk-only source scope: normalized support/coverage and conservative uniform eligibility only; ${baselineFiles.length - 1} unchanged source blobs and remaining holeOptics content match ${mainCommit}`);
 }
 
 console.log(`Disk plane support: ${comparisons} float64/float32 oracle comparisons; ${reflected} reflection cases; ${unchanged} ordinary outside-support hits; ${partitions} clipped-integral partitions passed`);

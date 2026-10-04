@@ -1,0 +1,589 @@
+{
+  "schema": 1,
+  "run": 37232097341,
+  "head": "c933da57dd26eba35deadb77f09783ca94ec042f",
+  "sourceFixture": "scripts/probe-disk-plane.mjs configureCase; src/scene.js applyCamera",
+  "limitation": "Physical scalar/vector values are captured. Camera matrices are reconstructed from pinned FOV/yaw/pitch/viewport settings, not native matrix readbacks. No new GPU run.",
+  "cases": [
+    {
+      "label": "desktop/bloom0/saturn-near-lens/0.48",
+      "reportSha256": "3e5f42e2b5c5e462c8a50a38c52aaa8766c84a54c5e883c7566f809adf5bf7d4",
+      "productionPngSha256": "1038a1043d181fc7609c29f83d849e372ca7f51d1325813e37cd9874f7c0bdbf",
+      "captured": {
+        "origin": [
+          1.4999999999953437,
+          5.541350106497794,
+          8.643939073351408
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0.48,
+        "distance": 600
+      },
+      "expectedEligible": true
+    },
+    {
+      "label": "desktop/bloom0/saturn-near-lens/-0.48",
+      "reportSha256": "3e5f42e2b5c5e462c8a50a38c52aaa8766c84a54c5e883c7566f809adf5bf7d4",
+      "productionPngSha256": "3ac6950799bedaa54225b67302dd636f933eacbd54821cd4659045e41a0942af",
+      "captured": {
+        "origin": [
+          1.4999999999953437,
+          -5.541350106497794,
+          8.643939073351408
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": -0.48,
+        "distance": 600
+      },
+      "expectedEligible": true
+    },
+    {
+      "label": "desktop/bloom0/disk-crossing/0",
+      "reportSha256": "3e5f42e2b5c5e462c8a50a38c52aaa8766c84a54c5e883c7566f809adf5bf7d4",
+      "productionPngSha256": "f87b11c2425acfb908594efd02f7e919d3edb57cbac58762d6505747566c8b29",
+      "captured": {
+        "origin": [
+          -4.656123014357733e-12,
+          0,
+          8
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "desktop/bloom0/disk-crossing/0.0006",
+      "reportSha256": "3e5f42e2b5c5e462c8a50a38c52aaa8766c84a54c5e883c7566f809adf5bf7d4",
+      "productionPngSha256": "a684a92faa4c7ef59b8c5c1cbc96eb19cd8282adbda871caadab23ed5c1ba530",
+      "captured": {
+        "origin": [
+          -4.6561230144459075e-12,
+          0.004799999712000005,
+          7.999998560000043
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0.0006,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "desktop/bloom0/disk-crossing/-0.0006",
+      "reportSha256": "3e5f42e2b5c5e462c8a50a38c52aaa8766c84a54c5e883c7566f809adf5bf7d4",
+      "productionPngSha256": "e7410d443e52e4072a95f58f4d8d74663a4901b93d71d21a6d526e191833ddaf",
+      "captured": {
+        "origin": [
+          -4.6561230144459075e-12,
+          -0.004799999712000005,
+          7.999998560000043
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": -0.0006,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "desktop/bloom1/saturn-near-lens/0.48",
+      "reportSha256": "53d3d0b878df27a53283a0208746e4ce003a91ef70276a47de0ea0504c13c510",
+      "productionPngSha256": "56f6869767f1af05428bf0425e35cfefcc643470f40d850a3811808c91b701b1",
+      "captured": {
+        "origin": [
+          1.4999999999953437,
+          5.541350106497794,
+          8.643939073351408
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0.48,
+        "distance": 600
+      },
+      "expectedEligible": true
+    },
+    {
+      "label": "desktop/bloom1/saturn-near-lens/-0.48",
+      "reportSha256": "53d3d0b878df27a53283a0208746e4ce003a91ef70276a47de0ea0504c13c510",
+      "productionPngSha256": "f175cea08b38585946338946d3a429080957cfdd7d33aa89404b0280186c4159",
+      "captured": {
+        "origin": [
+          1.4999999999953437,
+          -5.541350106497794,
+          8.643939073351408
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": -0.48,
+        "distance": 600
+      },
+      "expectedEligible": true
+    },
+    {
+      "label": "desktop/bloom1/disk-crossing/0",
+      "reportSha256": "53d3d0b878df27a53283a0208746e4ce003a91ef70276a47de0ea0504c13c510",
+      "productionPngSha256": "f9443681f1622f389d18359e01f14c08d101a9d92550ca78c2d81165eaed8182",
+      "captured": {
+        "origin": [
+          -4.656123014357733e-12,
+          0,
+          8
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "desktop/bloom1/disk-crossing/0.0006",
+      "reportSha256": "53d3d0b878df27a53283a0208746e4ce003a91ef70276a47de0ea0504c13c510",
+      "productionPngSha256": "b46d005b516bb8cf2cf2cfa6f1f0dac5c6003703a52f93c9e01c900db94b6a82",
+      "captured": {
+        "origin": [
+          -4.6561230144459075e-12,
+          0.004799999712000005,
+          7.999998560000043
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0.0006,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "desktop/bloom1/disk-crossing/-0.0006",
+      "reportSha256": "53d3d0b878df27a53283a0208746e4ce003a91ef70276a47de0ea0504c13c510",
+      "productionPngSha256": "7fdf710b773abcaf92dce8d4632ff867624fe0e276b2d1115a017983b3b193a2",
+      "captured": {
+        "origin": [
+          -4.6561230144459075e-12,
+          -0.004799999712000005,
+          7.999998560000043
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 960,
+        "viewportHeight": 640
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": -0.0006,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "mobile/bloom0/saturn-near-lens/0.48",
+      "reportSha256": "10a0d8d73cdafe93fbfeea68baf905ada02d50ecffa32c25c404a761e44d99fc",
+      "productionPngSha256": "b3d5bbb747771fb86585ab8fe1b060ff4152d2ddd9800e1ea61d3dce13219947",
+      "captured": {
+        "origin": [
+          1.4999999999953437,
+          5.541350106497794,
+          8.643939073351408
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0.48,
+        "distance": 600
+      },
+      "expectedEligible": true
+    },
+    {
+      "label": "mobile/bloom0/saturn-near-lens/-0.48",
+      "reportSha256": "10a0d8d73cdafe93fbfeea68baf905ada02d50ecffa32c25c404a761e44d99fc",
+      "productionPngSha256": "08c9e4b8a11e36acf96ee350078f8a77306f86e10cf567f0e6a55d39c99b4a09",
+      "captured": {
+        "origin": [
+          1.4999999999953437,
+          -5.541350106497794,
+          8.643939073351408
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": -0.48,
+        "distance": 600
+      },
+      "expectedEligible": true
+    },
+    {
+      "label": "mobile/bloom0/disk-crossing/0",
+      "reportSha256": "10a0d8d73cdafe93fbfeea68baf905ada02d50ecffa32c25c404a761e44d99fc",
+      "productionPngSha256": "fe75fc84f300154c90dcdb412c1725456e5f2b3d6339dbf62d64581a677b2a2e",
+      "captured": {
+        "origin": [
+          -4.656123014357733e-12,
+          0,
+          8
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "mobile/bloom0/disk-crossing/0.0006",
+      "reportSha256": "10a0d8d73cdafe93fbfeea68baf905ada02d50ecffa32c25c404a761e44d99fc",
+      "productionPngSha256": "4d151b64b8cc882de30fabcbcb5bba81a6dbba5d215ed65f5255d97cabb3ed6c",
+      "captured": {
+        "origin": [
+          -4.6561230144459075e-12,
+          0.004799999712000005,
+          7.999998560000043
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0.0006,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "mobile/bloom0/disk-crossing/-0.0006",
+      "reportSha256": "10a0d8d73cdafe93fbfeea68baf905ada02d50ecffa32c25c404a761e44d99fc",
+      "productionPngSha256": "d554d8a3837b9bce842c3df02c223eee4f850613f2806450446decec2883d7e0",
+      "captured": {
+        "origin": [
+          -4.6561230144459075e-12,
+          -0.004799999712000005,
+          7.999998560000043
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": -0.0006,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "mobile/bloom1/saturn-near-lens/0.48",
+      "reportSha256": "87c35ff914711287b051681e0291f1826ba2019f21b96bba97ee29c2bea778d0",
+      "productionPngSha256": "0e5ac2b3e857d92592bf50dfac806cd925166b568df5e9dc211fb8fdbbe1ff3e",
+      "captured": {
+        "origin": [
+          1.4999999999953437,
+          5.541350106497794,
+          8.643939073351408
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0.48,
+        "distance": 600
+      },
+      "expectedEligible": true
+    },
+    {
+      "label": "mobile/bloom1/saturn-near-lens/-0.48",
+      "reportSha256": "87c35ff914711287b051681e0291f1826ba2019f21b96bba97ee29c2bea778d0",
+      "productionPngSha256": "400e2940fd6ac7226fbd0cb96053e4745de7c7c8dddece6df2cb08f0e96c5b1a",
+      "captured": {
+        "origin": [
+          1.4999999999953437,
+          -5.541350106497794,
+          8.643939073351408
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": -0.48,
+        "distance": 600
+      },
+      "expectedEligible": true
+    },
+    {
+      "label": "mobile/bloom1/disk-crossing/0",
+      "reportSha256": "87c35ff914711287b051681e0291f1826ba2019f21b96bba97ee29c2bea778d0",
+      "productionPngSha256": "29548420a621069816340a8acdb4627a29d8088f2fad51daca2697c77eb0c200",
+      "captured": {
+        "origin": [
+          -4.656123014357733e-12,
+          0,
+          8
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "mobile/bloom1/disk-crossing/0.0006",
+      "reportSha256": "87c35ff914711287b051681e0291f1826ba2019f21b96bba97ee29c2bea778d0",
+      "productionPngSha256": "ec62f4d4c29a133f21b57e0e835699e59f33ff94e9f5431cf91bb0af1015c115",
+      "captured": {
+        "origin": [
+          -4.6561230144459075e-12,
+          0.004799999712000005,
+          7.999998560000043
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": 0.0006,
+        "distance": 400
+      },
+      "expectedEligible": false
+    },
+    {
+      "label": "mobile/bloom1/disk-crossing/-0.0006",
+      "reportSha256": "87c35ff914711287b051681e0291f1826ba2019f21b96bba97ee29c2bea778d0",
+      "productionPngSha256": "7bc4856b3bb6a0ae3edb358aa1c6762571d8e93888bbc1b2869ea0407c959a8c",
+      "captured": {
+        "origin": [
+          -4.6561230144459075e-12,
+          -0.004799999712000005,
+          7.999998560000043
+        ],
+        "normal": [
+          0,
+          1,
+          0
+        ],
+        "near": 0.02,
+        "far": 19157979206976123000,
+        "rsUnits": 50.00000000000001,
+        "viewportWidth": 390,
+        "viewportHeight": 700
+      },
+      "reconstructedCamera": {
+        "fov": 48,
+        "yaw": 1.5707963267948966,
+        "pitch": -0.0006,
+        "distance": 400
+      },
+      "expectedEligible": false
+    }
+  ]
+}
