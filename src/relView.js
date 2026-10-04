@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { REL } from "./relState.js";
 import { RELATIVISTIC_VIEW_GLSL } from "./render/viewBrightness.js";
+import { isBodyBoundsHookSafe, registerBodyBoundsHook } from './render/bodyBoundsHooks.js';
 
 let _betaOverride = null;
 
@@ -52,6 +53,7 @@ export function applyTerrellToMaterial(material) {
     if (material.userData._terrell) return material;
     material.userData._terrell = true;
     const prev = material.onBeforeCompile;
+    const boundsSafe = isBodyBoundsHookSafe(material, 'onBeforeCompile');
     material.onBeforeCompile = (shader) => {
         if (prev) prev(shader);
         shader.uniforms.uBeta = relUniforms.uBeta;
@@ -63,6 +65,9 @@ export function applyTerrellToMaterial(material) {
                 "#include <project_vertex>\n{ float _dD; mvPosition.xyz = relApplyView(mvPosition.xyz, 5772.0, _dD); gl_Position = projectionMatrix * mvPosition; }"
             );
     };
+    // This wrapper preserves positions at beta=0. Cloud guarding rejects
+    // every nonzero-beta projection before consulting hook registrations.
+    if (boundsSafe) registerBodyBoundsHook(material, 'onBeforeCompile');
     material.needsUpdate = true;
     return material;
 }

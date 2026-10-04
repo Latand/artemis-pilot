@@ -1,7 +1,8 @@
 import { updateSurfaceRotationExposure } from './render/surfaceRotationExposure.js';
+import { registerEarthCloudGround } from './render/cloudDepthGuard.js';
 import * as THREE from "three";
 import { R_EARTH, R_MOON, A_MOON, E_MOON, SOI_M, SUN_RADIUS, PL, K, PC_KM, C_LIGHT, AU_KM, E_EARTH, VARPI_EARTH, OMEGA_EARTH } from "./constants.js";
-import { updateEarthSurfaceExposure, earthSurfaceMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
+import { updateEarthSurfaceExposure, earthSurfaceMaterial, createEarthCloudMaterial, atmosphereMaterial, photosphereMaterial, ringMaterial, EARTH_CLOUD_HEIGHT_KM, EARTH_ATMOSPHERE_HEIGHT_KM } from "./render/planetAppearance.js";
 import { stellarExposure, meteredSkyExposure, linearStarColor, updatePhotosphereAppearance } from "./render/stellarAppearance.js";
 import { makeStarPointMaterial } from "./render/starPointMaterial.js";
 import { MOONS } from "./moons.js";
@@ -16,7 +17,7 @@ import { renderQuality, scene, viewportSize } from "./scene.js";
 import { initRealSky, realSkyReady, realSkyStatus, updateRealSkyFade } from "./realSky.js";
 import { teffToRGB, absMagVFromL, SUN_TEFF_K } from "./render/viewBrightness.js";
 import { applyTerrellToMaterial } from "./relView.js";
-import { G } from "./state.js";
+import { G, BH } from "./state.js";
 import { sunStateAt, AGB_TIP_R_RSUN } from "./universe/sunEvolution.js";
 
 export const sunPos = new THREE.Vector3();
@@ -483,8 +484,13 @@ export function buildBodies(maps) {
     shaderTick.earthUniforms = earthMat.uniforms;
     earth = new THREE.Mesh(sphere(radius, 96, 72, 48, 32), earthMat);
     clouds = new THREE.Mesh(
-        sphere((R_EARTH + EARTH_CLOUD_HEIGHT_KM) * K, 96, 72, 48, 32),
-        applyTerrellToMaterial(new THREE.MeshLambertMaterial({color:0xffffff, alphaMap:maps.clouds, transparent:true, opacity:0.92, depthWrite:false})));
+        // This independently rotating 6 km shell must enclose the ground at
+        // every phase. 48x32 facets cut inside Earth; 96x64 retain >0.66 km
+        // clearance even to an ideal ground sphere. Only cloud tessellation
+        // changes: physical height, spin, ground and atmosphere stay exact.
+        sphere((R_EARTH + EARTH_CLOUD_HEIGHT_KM) * K, 96, 72, 96, 64),
+        applyTerrellToMaterial(createEarthCloudMaterial(maps.clouds, () => BH.n > 0)));
+    registerEarthCloudGround(clouds, earth);
     earthAtmo = new THREE.Mesh(
         sphere((R_EARTH + EARTH_ATMOSPHERE_HEIGHT_KM) * K, 96, 72, 48, 32), atmosphereMaterial(R_EARTH));
     shaderTick.atmoUniforms = earthAtmo.material.uniforms;
