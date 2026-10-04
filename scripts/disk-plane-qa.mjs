@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { transformCelestialSource } from './celestial-detail-fixtures.mjs';
+import { appendReadOnlyHoverInspection } from './disk-pointer-fixture.mjs';
 
 export const MAIN_REVISION = '6179f23661591bb4dee89a0bf8e686233e1ba280';
 export const COARSE_PITCHES = [.48, .08, .005, 0, -.005, -.08, -.48];
@@ -52,8 +53,8 @@ export function transformDiskPlaneSource(source, id) {
     id = id.replaceAll('\\', '/').split('?')[0];
     if (id.endsWith('/src/main.js')) {
         // Count only frames reaching the end of the actual render function.
-        return replaceOnce(source, '    sampleMemory();',
-            '    sampleMemory();\n    window.__diskPlaneFrameSuccess = (window.__diskPlaneFrameSuccess || 0) + 1;', 'successful rendered frame');
+        return appendReadOnlyHoverInspection(replaceOnce(source, '    sampleMemory();',
+            '    sampleMemory();\n    window.__diskPlaneFrameSuccess = (window.__diskPlaneFrameSuccess || 0) + 1;', 'successful rendered frame'));
     }
     if (id.endsWith('/src/render/bodySurfaceMaterial.js')) {
         for (const hook of ['const pending = new Map();', 'let scheduled = false, surfaceWorker = null, workerFailed = false, inFlight = null;'])

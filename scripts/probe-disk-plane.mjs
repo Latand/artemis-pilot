@@ -13,6 +13,7 @@ import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled,
     recoveredGpuIsHealthy, pausedRecoveryPassed } from './context-recovery-qa.mjs';
 import { atomicDiskReport, initializeDiskReport, finalizeDiskProbe } from './disk-plane-finalize.mjs';
 import { installNativeRingProof } from './native-ring-proof.mjs';
+import { installPointerAudit, parkNeutralPointer, assertPointerCaptures, POINTER_FIXTURE_POLICY } from './disk-pointer-fixture.mjs';
 
 const candidateRoot = resolve(process.env.CANDIDATE_ROOT || fileURLToPath(new URL('..', import.meta.url)));
 const baselineRoot = process.env.BASE_ROOT && resolve(process.env.BASE_ROOT);
@@ -28,7 +29,7 @@ const matrixEntry = `${device}-${bloom ? 'bloom' : 'direct'}`;
 const hookChecks = [validateDiskPlaneHooks(candidateRoot)];
 if (baselineRoot) hookChecks.unshift(validateDiskPlaneHooks(baselineRoot));
 if (hooksOnly) {
-    console.log(JSON.stringify({ mode: 'hooks-only', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, browserStarted: false,
+    console.log(JSON.stringify({ mode: 'hooks-only', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, pointerFixture: POINTER_FIXTURE_POLICY, browserStarted: false,
         sourceBound: false, runtimeAcceptance: false }, null, 2));
     process.exit(0);
 }
@@ -39,7 +40,7 @@ const bindSources = () => ({ main: verifyDiskSource(baselineRoot, 'A', diskInput
     candidate: verifyDiskSource(candidateRoot, 'B', process.env.EXPECTED_CANDIDATE_REVISION) });
 const sourceBindingBefore = bindSources();
 if (validateOnly) {
-    console.log(JSON.stringify({ mode: 'source-validation', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, sourceBindingBefore,
+    console.log(JSON.stringify({ mode: 'source-validation', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, pointerFixture: POINTER_FIXTURE_POLICY, sourceBindingBefore,
         sourceBindingAfter: bindSources(), browserStarted: false, runtimeAcceptance: false }, null, 2));
     process.exit(0);
 }
@@ -53,6 +54,7 @@ const viewport = mobile ? { width: 390, height: 700 } : { width: 960, height: 64
 const alternateViewport = mobile ? { width: 430, height: 760 } : { width: 840, height: 600 };
 const report = { schema: 1, matrixEntry, matrix: MATRIX, mobile, bloom, completed: false,
     operationBudget: QA_OPERATION_BUDGET,
+    pointerFixture: POINTER_FIXTURE_POLICY,
     sourceBindingBefore, sourceBindingAfter: null, diagnosticOnly: true,
     scope: 'Issue50 disk-plane continuity only; exact main paired with disk-only candidate.',
     ringEvidence: 'Actual ring draw program/sampler/filter state plus disk-off/TDE-off unchanged pixels. No alpha-gap or source-depth repair claim.',
@@ -119,6 +121,7 @@ function captureCase({ scenario, pitch, includeImages = true }) {
     const m = bh.BH_META[0], disk = m.optics.disk, state = tde.tidalState(sat);
     const original = { tidalActive: state.active, diskVisible: disk.visible, diskDepthTest: disk.material.depthTest, ringVisible: rings.map(r => r.visible) };
     const gl = s.renderer.getContext(), width = gl.drawingBufferWidth, height = gl.drawingBufferHeight;
+    const pointerSnapshots = [];
     if (gl.isContextLost() || s.renderContext.isLost()) throw Error('Cannot capture a lost GPU context');
     const encode = bytes => {
         let binary = '';
@@ -126,6 +129,9 @@ function captureCase({ scenario, pitch, includeImages = true }) {
         return btoa(binary);
     };
     const draw = ({ lensed = true, tides = true, diskOn = true, ringsOn = true, opacityControl = false, identity = false, diskDepthTest = original.diskDepthTest } = {}) => {
+        const pointer = { draw: pointerSnapshots.length, options: { lensed, tides, diskOn, ringsOn, opacityControl, identity, diskDepthTest },
+            before: window.__diskPlanePointerSnapshot(), after: null };
+        pointerSnapshots.push(pointer);
         state.active = tides && original.tidalActive; disk.visible = diskOn;
         disk.material.depthTest = diskDepthTest;
         rings.forEach((ring, i) => { ring.visible = ringsOn && original.ringVisible[i]; });
@@ -154,10 +160,16 @@ function captureCase({ scenario, pitch, includeImages = true }) {
             return { bytes, png: includeImages ? s.renderer.domElement.toDataURL('image/png') : null,
                 glError, usedLensCount, witnessDepthTest, bloomEnabled: !!s.bloomPass.enabled, target: s.renderer.getRenderTarget() === null };
         } finally {
-            lens.lensingPass.uniforms.uN.value = lensCount;
-            s.bloomPass.enabled = bloomEnabled;
-            disk.material.depthTest = original.diskDepthTest;
-            disk.onAfterRender = diskAfterRender;
+            // POINTER_AFTER_CLEANUP_BEGIN: inspection must never skip cleanup.
+            try { pointer.after = window.__diskPlanePointerSnapshot(); }
+            catch (error) { pointer.afterReadError = error.stack || String(error); }
+            finally {
+                lens.lensingPass.uniforms.uN.value = lensCount;
+                s.bloomPass.enabled = bloomEnabled;
+                disk.material.depthTest = original.diskDepthTest;
+                disk.onAfterRender = diskAfterRender;
+            }
+            // POINTER_AFTER_CLEANUP_END
         }
     };
     try {
@@ -211,7 +223,7 @@ function captureCase({ scenario, pitch, includeImages = true }) {
             generateMipmaps: ring.material.map.generateMipmaps, anisotropy: ring.material.map.anisotropy,
             wrapS: ring.material.map.wrapS, wrapT: ring.material.map.wrapT, colorSpace: ring.material.map.colorSpace,
             mapName: ring.material.map.name, mapSize: [ring.material.map.image.width, ring.material.map.image.height] }));
-        return { scenario, pitch, metrics, nativeRingState: ringState, nativeRingProof: observed.proof,
+        return { scenario, pitch, metrics, nativeRingState: ringState, nativeRingProof: observed.proof, pointerSnapshots,
             images: includeImages ? { production: production.png, 'no-lens': noLens.png, 'no-tides': noTides.png,
                 plain: plain.png, 'no-disk': noDisk.png, ...(ringControl ? { 'disk-off-tde-off': ringControl.png, 'disk-off-tde-off-ring-absent': ringAbsent.png } : {}),
                 ...(foreground ? { 'opaque-lensed': opaqueLensed.png, 'opaque-identity-reference': opaqueIdentity.png, 'opaque-disk-off': opaqueDiskOff.png } : {}),
@@ -268,6 +280,7 @@ async function settleAssets(page, test) {
 }
 
 function assertLiveCase(result) {
+    assertPointerCaptures(result.pointerSnapshots);
     assert.equal(result.glError, 0); assert.equal(result.state.nativeContextLost, false);
     assert.equal(result.state.lifecycleContextLost, false); assert(result.state.canvasTarget);
     assert(result.state.frameSuccess > 0 && result.state.readbacks > 0 && result.state.drawCalls > 0, 'Live GPU and rendered-frame evidence');
@@ -303,9 +316,34 @@ function assertLiveCase(result) {
     }
 }
 
+async function preservePointerCaptures(variant, test, phase, captures) {
+    const entries = report.variants[variant].pointerEvidence;
+    const entry = { id: entries.length, phase, ...test, pointerAccepted: null,
+        captures: captures.map(result => ({ frameSuccess: result.state.frameSuccess, readbacks: result.state.readbacks,
+            snapshots: result.pointerSnapshots })) };
+    entries.push(entry);
+    // Persist real input/glyph evidence before any pointer acceptance assertion.
+    await flush();
+    return entry;
+}
+
+function acceptPointerCaptures(evidence) {
+    try {
+        for (const capture of evidence.captures) assertPointerCaptures(capture.snapshots);
+        evidence.pointerAccepted = true;
+    } catch (error) {
+        evidence.pointerAccepted = false; evidence.failure = error.stack || String(error);
+        throw error;
+    }
+}
+
 async function saveCase(page, variant, test, phase) {
     const result = await page.evaluate(captureCase, { ...test, includeImages: true });
+    const pointerEvidence = await preservePointerCaptures(variant, test, phase, [result]);
+    acceptPointerCaptures(pointerEvidence);
     assertLiveCase(result);
+    result.pointerEvidenceId = pointerEvidence.id;
+    delete result.pointerSnapshots;
     const key = `${phase}/${test.scenario}/${test.pitch}`;
     const stem = `${phase}-${test.scenario}-${test.pitch}`;
     for (const [kind, png] of Object.entries(result.images)) {
@@ -335,12 +373,15 @@ async function saveCase(page, variant, test, phase) {
     return result;
 }
 
-async function assertStableControl(page, test) {
+async function assertStableControl(page, variant, test) {
     const a = await page.evaluate(captureCase, { ...test, includeImages: false });
     const b = await page.evaluate(captureCase, { ...test, includeImages: false });
+    const pointerEvidence = await preservePointerCaptures(variant, test, 'original-stability', [a, b]);
+    acceptPointerCaptures(pointerEvidence);
     assert.deepEqual(a.controls, b.controls, 'Settled frozen controls are stable across repeated draws');
     assert.deepEqual(a.metrics, b.metrics, 'No transient asset/frame mismatch in paired metrics');
-    return { identical: true, readbackDelta: b.state.readbacks - a.state.readbacks, nativeRingState: a.nativeRingState };
+    return { identical: true, readbackDelta: b.state.readbacks - a.state.readbacks, nativeRingState: a.nativeRingState,
+        pointerEvidenceId: pointerEvidence.id };
 }
 
 async function recoverySnapshot(page) {
@@ -356,7 +397,7 @@ try {
         args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
     for (const [variant, root] of [['main', baselineRoot], ['candidate', candidateRoot]]) {
         const local = report.variants[variant] = { revision: sourceBindingBefore[variant].revision,
-            errors: [], samples: [], assets: [], stability: [], recoveries: [], crossingAcceptance: null };
+            errors: [], samples: [], assets: [], stability: [], recoveries: [], pointerParks: [], pointerEvidence: [], crossingAcceptance: null };
         await mkdir(resolve(out, variant), { recursive: true });
         server = await createServer({ root, configFile: false, logLevel: 'error',
             server: { host: '127.0.0.1', port: 0, hmr: false }, plugins: [{ name: 'disk-plane-diagnostic', enforce: 'pre',
@@ -374,9 +415,11 @@ try {
             window.__qaBloom = bloom; Date.now = () => Date.UTC(2026, 9, 3, 12);
             localStorage.clear(); localStorage.setItem('ap_introSeen', '1');
         }, bloom);
+        await page.addInitScript(installPointerAudit);
         await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.fulfill({ contentType: 'text/css', body: '' }));
         await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=saturn&dist=600&bloom=${bloom ? 1 : 0}&river=0&field=0&realsky=0&tier1=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&hidehelp=1&planetmaps=1&earthnight=0`, { waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.__AP_READY && window.__celestialFrame);
+        local.pointerParks.push({ phase: 'before-hole-setup', ...await parkNeutralPointer(page) });
         await page.evaluate(async () => {
             window.qa = { bloom: !!window.__qaBloom, readbacks: 0, s: await import('/src/scene.js'),
                 st: await import('/src/state.js'), b: await import('/src/bodies.js'), bh: await import('/src/blackholes.js'),
@@ -402,7 +445,7 @@ try {
         await prepareContextRecoveryQA(page);
         for (const test of DISK_PLANE_CASES) {
             local.assets.push({ phase: 'original', ...test, ...await settleAssets(page, test) });
-            if (test.scenario.startsWith('saturn-')) local.stability.push({ ...test, ...await assertStableControl(page, test) });
+            if (test.scenario.startsWith('saturn-')) local.stability.push({ ...test, ...await assertStableControl(page, variant, test) });
             await saveCase(page, variant, test, 'original');
         }
         local.crossingAcceptance = assertCrossingAcceptance(local.samples.filter(s => s.phase === 'original'), variant);
@@ -420,6 +463,7 @@ try {
                         s.renderer.domElement.height === Math.floor(s.cvHost.clientHeight * s.renderer.getPixelRatio());
                 });
                 const phase = `resize-${cycle}-${sizeName}`;
+                local.pointerParks.push({ phase, ...await parkNeutralPointer(page) });
                 for (const test of RESIZE_CASES) {
                     await settleAssets(page, test);
                     const sample = await saveCase(page, variant, test, phase);
@@ -466,6 +510,7 @@ try {
             }
         }
         assert.deepEqual(local.errors, [], 'No page/shader/GPU errors');
+        assert.equal(local.pointerParks.length, POINTER_FIXTURE_POLICY.movesPerRoot, 'Only the five planned real pointer moves');
         await page.close(); await server.close(); server = null;
         await flush();
     }
@@ -474,6 +519,7 @@ try {
     report.completed = true;
 } catch (error) {
     originalError = error; hadOriginalError=true;
+    if (error.pointerEvidence) report.pointerFixtureFailure = error.pointerEvidence;
 } finally {
     await finalizeDiskProbe({report,originalError,hadOriginalError,
         verifySources:()=>{report.sourceBindingAfter = bindSources();assert.deepEqual(report.sourceBindingAfter,sourceBindingBefore);},
