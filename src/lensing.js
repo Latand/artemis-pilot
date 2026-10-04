@@ -101,16 +101,27 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
             // lookup oscillate, the framebuffer has no coherent source for
             // that ray: retain the original pixel rather than invent a ghost.
             float sourceZ = zv, dq = dz, zBent = 1e30;
+            // The original pixel and lens geometry stay fixed throughout the
+            // lookup. Reuse those terms without reassociating the source-depth
+            // multiply/divide or changing any sampled-depth/texture operation.
+            vec3 lensGeometry[${MAXL}];
+            bool lensEligible[${MAXL}];
+            for (int i = 0; i < ${MAXL}; i++) {
+                if (i >= uN) break;
+                lensEligible[i] = !(zv < uDist[i]);
+                vec2 d = p - uC[i];
+                lensGeometry[i] = vec3(d, max(dot(d, d), 1e-9));
+                if (lensEligible[i]) zBent = min(zBent, uDist[i]);
+            }
             for (int iteration = 0; iteration < 3; iteration++) {
                 vec2 nextQ = p;
                 for (int i = 0; i < ${MAXL}; i++) {
                     if (i >= uN) break;
-                    if (zv < uDist[i]) continue;
-                    vec2 d = p - uC[i];
-                    float r2 = max(dot(d, d), 1e-9);
+                    if (!lensEligible[i]) continue;
+                    vec2 d = lensGeometry[i].xy;
+                    float r2 = lensGeometry[i].z;
                     float finiteSource = clamp(1.0 - uDist[i] / max(sourceZ, 1e-9), 0.0, 1.0);
                     nextQ -= d * (uT2[i] * finiteSource / r2);
-                    zBent = min(zBent, uDist[i]);
                 }
                 q = nextQ;
                 if (uHasDepth == 1) {
@@ -126,10 +137,10 @@ export const lensingPass = new LensPass(new THREE.ShaderMaterial({
             vec2 verifiedQ = p;
             for (int i = 0; i < ${MAXL}; i++) {
                 if (i >= uN) break;
-                if (zv < uDist[i]) continue;
-                vec2 d = p-uC[i];
+                if (!lensEligible[i]) continue;
+                vec2 d = lensGeometry[i].xy;
                 float finiteSource = clamp(1.0-uDist[i]/max(sourceZ,1e-9),0.0,1.0);
-                verifiedQ -= d*(uT2[i]*finiteSource/max(dot(d,d),1e-9));
+                verifiedQ -= d*(uT2[i]*finiteSource/lensGeometry[i].z);
             }
             float coherenceWeight = 1.0-smoothstep(.002,.01,length(q-verifiedQ));
             q.x /= uAspect;

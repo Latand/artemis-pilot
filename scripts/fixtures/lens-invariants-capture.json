@@ -1,0 +1,25 @@
+{
+  "sourceCommit": "48a9da40a05b28cfd0d125b6107a771999fb784d",
+  "sourceLensingSha256": "802f50e4071930884adc5d2789d26e1546097e91b3894fe54f78e0bb55f70416",
+  "run": 37213450176,
+  "artifact": 11307357889,
+  "artifactZipSha256": "082e22152217cb387a774130fc3f8b91382d9a30b6b50ff9af447344f1c0b55a",
+  "nativeUniforms": {
+    "uN": 1,
+    "uHasDepth": 1,
+    "uNear": 0.019999999552965164,
+    "uFar": 189214608,
+    "uDist[0]": 511.3005065917969,
+    "uC[0]": [
+      -0.32945939898490906,
+      -0.20284998416900635
+    ],
+    "uT2[0]": 0.264838308095932,
+    "uAspect": 0.46137338876724243
+  },
+  "viewport": {
+    "width": 430,
+    "height": 932
+  },
+  "scope": "Actual GL uniform capture from candidate B after both timing orders. Depth/ring samplers in the parity test are synthetic adversarial fields, not a captured framebuffer."
+}

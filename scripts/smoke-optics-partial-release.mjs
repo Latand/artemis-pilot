@@ -43,10 +43,14 @@ console.log('Transparent ring sampling transform, tier, reset, and material inva
 
 import {execFileSync} from 'node:child_process';
 import {readFileSync} from 'node:fs';
+import {referenceLensSource} from './smoke-lens-invariants.mjs';
 const baseline='531da641fe5d61b4cdc7130285418c218299d263';
 for(const path of ['src/lensing.js','src/holeOptics.js','src/render/ringSamplingDepth.js']){
  const expected=execFileSync('git',['show',baseline+':'+path],{encoding:'utf8'});
- assert.equal(readFileSync(new URL('../'+path,import.meta.url),'utf8'),expected,'partial optical production stays on the reviewed disk/ring source: '+path);
+ // The lens may add only the source-bound, numerically checked invariant
+ // cache. Reversing that exact delta must recover the reviewed partial source.
+ const actual=path==='src/lensing.js'?referenceLensSource:readFileSync(new URL('../'+path,import.meta.url),'utf8');
+ assert.equal(actual,expected,'partial optics retain reviewed disk/ring behavior outside the invariant cache: '+path);
 }
 // Planet appearance is shared with surface-rotation work. Pin only this
 // optical factory, not unrelated Earth/cloud/surface presentation functions.
