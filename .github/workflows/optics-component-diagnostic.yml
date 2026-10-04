@@ -1,0 +1,173 @@
+name: Optical component attribution diagnostic (not acceptance)
+
+# Publishing this exact reviewed branch is the launch gate. No PR, manual,
+# schedule, deployment or full-matrix trigger is attached to this experiment.
+on:
+  push:
+    branches: ['diagnostic/optics-components-48a9da4-v1']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: optics-components-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/diagnostic/optics-components-48a9da4-v1'
+    name: One mobile/direct component diagnostic; no acceptance verdict
+    runs-on: ubuntu-latest
+    # Sum of step caps: 46 minutes. Four additional minutes protect cleanup
+    # and scheduling overhead; artifact upload has its own five-minute cap.
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: bash
+    env:
+      REVIEWED_HARNESS_TREE: '95dc5abd9aadffa7ec7e847d9b1a6b63d3b4071e'
+      OPTICS_BASE_SHA: 'ab51029827cf9324eb737673e46c49ab74aa1718'
+      OPTICS_BASE_TREE: '7b185b45a344738d6299856362b455b18c8a9484'
+      OPTICS_CANDIDATE_SHA: '48a9da40a05b28cfd0d125b6107a771999fb784d'
+      OPTICS_CANDIDATE_TREE: '117adc60b590e235eeb345eb1079a5f7a2ed6232'
+      ARTEMIS_EVIDENCE: '${{ github.workspace }}/evidence/optics-components'
+
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        timeout-minutes: 2
+        with:
+          node-version: '22.23.3'
+
+      - name: Verify reviewed blobs and create immutable source worktrees
+        id: provenance
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTEMIS_EVIDENCE"
+          # Rerunning an attempt is not an authorized replacement experiment.
+          test "$GITHUB_RUN_ATTEMPT" = '1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          # API publication may give the reviewed harness a different commit
+          # ID. Its exact first-parent tree and reviewed blobs remain fixed.
+          HARNESS_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
+          test "$(git rev-parse "$HARNESS_PARENT_SHA^{tree}")" = "$REVIEWED_HARNESS_TREE"
+          git merge-base --is-ancestor "$OPTICS_CANDIDATE_SHA" "$HARNESS_PARENT_SHA"
+          git rev-parse "$HARNESS_PARENT_SHA" "$HARNESS_PARENT_SHA^{tree}" > "$ARTEMIS_EVIDENCE/harness-parent-commit-tree.txt"
+          # The execution commit may add only this workflow to the reviewed QA.
+          git diff --exit-code "$HARNESS_PARENT_SHA" "$GITHUB_SHA" -- . \
+            ':(exclude).github/workflows/optics-component-diagnostic.yml'
+          cat > "$ARTEMIS_EVIDENCE/reviewed-harness-blobs.txt" <<'BLOBS'
+          e30af5415f19709bf3665394996b45ec5fb8d61b scripts/diagnose-optics-components.mjs
+          64fc69d1eade4a7f98c3d18cf0767732c48c7979 scripts/optics-component-contract.mjs
+          dbeb917c5bff1e79013190840191a5bae41017a7 scripts/optics-component-browser.mjs
+          cd5b7805d77534ebc25b2c78d4920553596c04ab scripts/smoke-optics-components.mjs
+          5282e5f6fd90c0aba4f635abcfb4263e0cfd88ce docs/optics-component-diagnostic.md
+          BLOBS
+          while read -r expected path; do
+            test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
+            test "$(git hash-object "$path")" = "$expected"
+          done < "$ARTEMIS_EVIDENCE/reviewed-harness-blobs.txt"
+          git rev-parse HEAD HEAD^{tree} > "$ARTEMIS_EVIDENCE/execution-commit-tree.txt"
+          cp .github/workflows/optics-component-diagnostic.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
+          sha256sum scripts/diagnose-optics-components.mjs scripts/optics-component-contract.mjs \
+            scripts/optics-component-browser.mjs scripts/smoke-optics-components.mjs \
+            docs/optics-component-diagnostic.md > "$ARTEMIS_EVIDENCE/reviewed-harness-sha256.txt"
+          git worktree add --detach "$RUNNER_TEMP/optics-component-main" "$OPTICS_BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/optics-component-candidate" "$OPTICS_CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/optics-component-main" rev-parse HEAD)" = "$OPTICS_BASE_SHA"
+          test "$(git -C "$RUNNER_TEMP/optics-component-main" rev-parse HEAD^{tree})" = "$OPTICS_BASE_TREE"
+          test "$(git -C "$RUNNER_TEMP/optics-component-candidate" rev-parse HEAD)" = "$OPTICS_CANDIDATE_SHA"
+          test "$(git -C "$RUNNER_TEMP/optics-component-candidate" rev-parse HEAD^{tree})" = "$OPTICS_CANDIDATE_TREE"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/optics-component-main/node_modules"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/optics-component-candidate/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/optics-component-main" >> "$GITHUB_ENV"
+          echo "CANDIDATE_ROOT=$RUNNER_TEMP/optics-component-candidate" >> "$GITHUB_ENV"
+
+      - name: Browser-free negative controls and native source validation
+        id: validation
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          node scripts/smoke-optics-components.mjs 2>&1 | tee "$ARTEMIS_EVIDENCE/contract-controls.log"
+          node scripts/smoke-optics-crossing.mjs 2>&1 | tee "$ARTEMIS_EVIDENCE/native-optics-controls.log"
+          node scripts/diagnose-optics-components.mjs --validate 2>&1 | tee "$ARTEMIS_EVIDENCE/native-hook-validation.log"
+
+      - uses: oven-sh/setup-bun@v2
+        timeout-minutes: 2
+        with:
+          bun-version: '1.2.23'
+
+      - name: Install one frozen dependency tree without new lock or config inputs
+        id: dependencies
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile --ignore-scripts 2>&1 | tee "$ARTEMIS_EVIDENCE/dependency-install.log"
+          git diff --exit-code -- package.json bun.lock
+          test ! -e package-lock.json
+          test "$(realpath "$BASE_ROOT/node_modules")" = "$(realpath node_modules)"
+          test "$(realpath "$CANDIDATE_ROOT/node_modules")" = "$(realpath node_modules)"
+          node --input-type=module <<'NODE' | tee "$ARTEMIS_EVIDENCE/dependency-versions.json"
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const expected={three:'0.164.1',vite:'5.4.21',playwright:'1.60.0','playwright-core':'1.60.0'};
+          const actual={};
+          for(const [name,version] of Object.entries(expected)){
+            actual[name]=JSON.parse(readFileSync(`node_modules/${name}/package.json`,'utf8')).version;
+            assert.equal(actual[name],version,`${name} must match the frozen lock`);
+          }
+          console.log(JSON.stringify({node:process.version,packages:actual}));
+          NODE
+          # Recheck ignored/untracked config and all immutable source bytes
+          # after installation and before any browser process is started.
+          node scripts/diagnose-optics-components.mjs --validate 2>&1 | tee "$ARTEMIS_EVIDENCE/post-install-validation.log"
+
+      - name: Install Chromium from the same pinned Playwright package
+        id: chromium
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          node node_modules/playwright/cli.js install --with-deps chromium 2>&1 | tee "$ARTEMIS_EVIDENCE/chromium-install.log"
+
+      - name: Complete the separately gated diagnostic, retaining any partial failure
+        id: measurement
+        if: success() && steps.provenance.outcome == 'success' && steps.validation.outcome == 'success' && steps.dependencies.outcome == 'success' && steps.chromium.outcome == 'success'
+        # The unchanged supervisor stops at 20 minutes and writes partial
+        # evidence. This outer cap leaves two minutes for process cleanup.
+        timeout-minutes: 22
+        run: |
+          set -euo pipefail
+          node scripts/diagnose-optics-components.mjs --run 2>&1 | tee "$ARTEMIS_EVIDENCE/diagnostic.log"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const report=JSON.parse(readFileSync(`${process.env.ARTEMIS_EVIDENCE}/report.json`,'utf8'));
+          assert.equal(report.status,'complete-diagnostic');
+          assert.equal(report.acceptance,null);
+          assert.deepEqual(report.errors,[]);
+          assert.equal(report.blocks.flatMap(block=>block.samples).length,120);
+          console.log('Complete valid diagnostic evidence. No performance acceptance verdict.');
+          NODE
+          echo 'Complete valid optical component diagnostic evidence; this is not performance acceptance.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain metrics, provenance, logs and available PNGs (including partial runs)
+        if: always()
+        timeout-minutes: 5
+        uses: actions/upload-artifact@v4
+        with:
+          name: optics-components-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/optics-components/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
+          overwrite: false
+          # v4 artifacts are immutable. No repository, Pages, or source-ref
+          # writes are granted. Upload never uses continue-on-error, and an
+          # earlier diagnostic failure remains a failed job after upload.
