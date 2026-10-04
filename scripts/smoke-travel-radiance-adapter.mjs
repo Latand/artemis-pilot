@@ -13,7 +13,7 @@ const temporary = mkdtempSync(join(tmpdir(), 'travel-radiance-tests-'));
 let checks = 0;
 const test = (name, fn) => { fn(); checks++; console.log('PASS', name); };
 const uuid = '12345678-1234-1234-1234-123456789abc';
-const inventory = variant => ({ variant, objects: variant === 'A' ? [] : [{ uuid, geometryUuid: uuid, materialUuid: uuid,
+const inventory = variant => ({ variant, objects: [{ uuid, geometryUuid: uuid, materialUuid: uuid,
   type: 'Points', materialType: 'ShaderMaterial', visible: false, drawRange: { start: 0, count: 0 },
   geometryUsers: 1, materialUsers: 1, attributes: structuredClone(foreignAttributes) }] });
 
@@ -24,7 +24,7 @@ try {
   const { runLimits } = await import(pathToFileURL(join(harness, 'scripts/river-radiance-run-budget.mjs')));
   const fixtures = await import(pathToFileURL(join(reference, 'scripts/river-radiance-test-fixtures.mjs')));
   const decorate = (state, label) => ({ ...state, travelInventory: inventory(label),
-    sceneObjects: { objects: 100 + (label === 'B'), geometries: 50 + (label === 'B'), materials: 20 + (label === 'B') },
+    sceneObjects: { objects: 101, geometries: 51, materials: 21 },
     render: { geometries: 50, textures: 20, programs: 10 } });
   function rows() {
     return p.protocol.fixtures.map(fixture => {
@@ -79,7 +79,8 @@ try {
     ['raw field mismatch', r => { r[0].scenarios[0].before.B.river.textureHash = 'b'.repeat(64); }],
     ['catalog row mismatch', r => { r[0].scenarios[0].before.B.layers.catalogRows.hash = 'b'.repeat(64); }],
     ['missing candidate foreign object', r => { r[0].scenarios[0].before.B.travelInventory.objects = []; }],
-    ['unexpected baseline object', r => { r[0].scenarios[0].before.A.travelInventory.objects = inventory('B').objects; }],
+    ['missing baseline foreign object', r => { r[0].scenarios[0].before.A.travelInventory.objects = []; }],
+    ['unexpected baseline object', r => { r[0].scenarios[0].before.A.travelInventory.objects.push(inventory('A').objects[0]); }],
     ['foreign object replacement', r => { r[0].scenarios[0].before.B.travelInventory.objects[0].uuid = 'abcdefab-cdef-abcd-efab-cdefabcdefab'; }],
   ]) test('reject ' + name, () => { const r = rows(); mutate(r); assert.throws(() => aggregate(r)); });
   for (const [name, mutate] of [
@@ -87,9 +88,9 @@ try {
     ['wrong capacity', o => { o.attributes.position[1]++; }], ['shared geometry', o => { o.geometryUsers = 2; }],
     ['shared material', o => { o.materialUsers = 2; }], ['wrong material', o => { o.materialType = 'MeshBasicMaterial'; }],
   ]) test('reject ' + name, () => { const i = inventory('B'); mutate(i.objects[0]); assert.throws(() => validateTravelInventory(i)); });
-  test('normalization preserves raw inventory and exact GPU accounting', () => {
+  test('comparison preserves raw inventory and exact CPU/GPU accounting', () => {
     const state = decorate(fixtures.state(), 'B'), before = structuredClone(state), normalized = comparableTravelState(state);
-    assert.deepEqual(state, before); assert.equal(normalized.sceneObjects.geometries, 50); assert.deepEqual(normalized.render, state.render);
+    assert.deepEqual(state, before); assert.deepEqual(normalized.sceneObjects, state.sceneObjects); assert.deepEqual(normalized.render, state.render);
   });
   test('no historical reuse or legacy-budget modes', () => {
     for (const options of [{ reuseComplete: true }, { legacy: true }, { reuseSunOnly: true }])
@@ -116,6 +117,13 @@ try {
   const commit = () => git('-c', 'user.name=QA fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'Synthetic input');
   commit(); const original = git('rev-parse', 'HEAD'), paths = inputs.productionPaths, fingerprint = productionFingerprint(fixture, paths);
   test('clean frozen source passes', () => requireProduction(fixture, original, fingerprint, paths));
+  test('all fresh workflow roots use the reviewed actual PR base', () => {
+    const workflow = readFileSync(join(root, '.github/workflows/river-radiance.yml'), 'utf8');
+    assert(workflow.includes(`REVIEWED_BASE_REVISION: '${inputs.baseline}'`));
+    assert.equal(workflow.split('test "$PR_BASE_REVISION" = "$REVIEWED_BASE_REVISION"').length - 1, 3);
+    assert.equal(workflow.split(`git worktree add --detach ../travel-main ${inputs.baseline}`).length - 1, 2);
+    assert(workflow.includes(`git worktree add --detach ../radiance-baseline ${inputs.baseline}`));
+  });
   test('clean-runner dependency installation preserves protected inputs; old lock creation fails preflight', () => {
     const workflow = readFileSync(join(root, '.github/workflows/river-radiance.yml'), 'utf8');
     const commands = [...workflow.matchAll(/^\s*- run: (npm install[^\n]*)$/gm)].map(match => match[1]);

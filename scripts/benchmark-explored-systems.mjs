@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
@@ -17,6 +17,7 @@ const args = process.argv.slice(2).filter(value => !value.startsWith('--'));
 const root = resolve(args[0] || '.'), baselineRoot = resolve(process.env.BASE_ROOT || '');
 assert(process.env.BASE_ROOT, 'BASE_ROOT must name the exact baseline worktree');
 const device = process.env.DEVICE || 'desktop', mobile = device === 'mobile';
+const optics = process.env.OPTICS_BENCH === '1', opticsBloom = optics && process.env.BLOOM === '1';
 assert(['desktop', 'mobile'].includes(device));
 const out = resolve(args[1] || `evidence/explored/paired-${device}`);
 const viewport = mobile ? { width: 430, height: 932 } : { width: 1200, height: 800 };
@@ -24,18 +25,28 @@ const browserArgs = ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader'
     '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding'];
 const samplesPerBlock = 60, warmupFrames = 120;
 const orders = ['ABBA', 'BAAB', 'ABBA', 'BAAB', 'ABBA'];
-const fixtures = [
+const fixtures = optics ? [{name:'saturn-hole-near',focus:'free',distance:600,yaw:Math.PI/2,pitch:.48,optics:true}] : [
     { name: 'earth-near', focus: 'earth', distance: 25, yaw: -.4, pitch: .45 },
     { name: 'catalog-star', focus: 'star:2', distance: null, yaw: -.4, pitch: .45 },
     { name: 'system-overview', focus: 'star:4', distance: 1500000, yaw: -.4, pitch: .45 },
 ];
 const query = { focus: 'earth', dist: '25', hidehelp: '1', dpr: '1', tier1: '0', realsky: '0', field: '0',
-    galaxyvol: '0', galaxies: '0', galaxy: '0', river: '0', bloom: '0', compile: '0', galadapt: '0',
+    galaxyvol: '0', galaxies: '0', galaxy: '0', river: '0', bloom: opticsBloom?'1':'0', compile: '0', galadapt: '0',
     earthnight: '1', clouds: '1', moonmap: '1' };
 const quantile = (values, p) => [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * p) - 1)];
 const summarize = values => ({ count: values.length, min: Math.min(...values), p50: quantile(values, .5),
     p95: quantile(values, .95), max: Math.max(...values), mean: values.reduce((a, b) => a + b, 0) / values.length });
 const revision = cwd => execFileSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).trim();
+async function proveBaselineAbsence(cwd, path) {
+    const git = args => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
+    assert.equal(await realpath(git(['rev-parse', '--show-toplevel'])), await realpath(cwd),
+        'The absent-source baseline must be the declared Git worktree root');
+    const commit = git(['rev-parse', 'HEAD^{commit}']);
+    assert.match(commit, /^[a-f0-9]{40}$/);
+    assert.equal(git(['ls-tree', '-z', commit, '--', path]), '',
+        `Baseline ${commit} tracks ${path}; a missing worktree file is not a source absence`);
+    return { commit, tree: git(['rev-parse', `${commit}^{tree}`]) };
+}
 function once(source, token, replacement) {
     assert.equal(source.split(token).length, 2, `Paired benchmark hook changed: ${token}`);
     return source.replace(token, replacement);
@@ -79,7 +90,7 @@ function transform(source, id) {
     // Chromium WebGL finish() is only Flush(); readPixels establishes completion:
     // https://chromium.googlesource.com/chromium/src/third_party/+/master/blink/renderer/modules/webgl/webgl_rendering_context_base.cc#3557
     const fine = fineFrameSource(source);
-    return source + `\nconst pairedReadbackPixel=new Uint8Array(4);\nwindow.__pairedFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;
+    return source + `\nwindow.__pairedEnsureLensing=ensureLensingModule;\nconst pairedReadbackPixel=new Uint8Array(4);\nwindow.__pairedFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;
         const start=performance.now();frame();const cpu=performance.now()-start;const gl=renderer.getContext();
         const finishStart=performance.now();gl.finish();const finishMs=performance.now()-finishStart;
         const readbackStart=performance.now();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pairedReadbackPixel);
@@ -98,32 +109,43 @@ for (const tree of [baselineRoot, root]) for (const path of ['src/main.js', 'src
     execFileSync(process.execPath, ['--input-type=module', '--check'], { input: transform(source, '/' + path) });
     if (path === 'src/main.js') execFileSync(process.execPath, ['--input-type=module', '--check'], { input: '(' + fineFrameSource(source) + ')' });
 }
-if (process.argv.includes('--validate')) {
-    console.log(JSON.stringify({ hooks: 'valid', device, fixtures, orders, warmupFrames, samplesPerBlock })); process.exit(0);
-}
-await mkdir(out, { recursive: true });
-const sourceHashes = {};
+const sourceHashes = {}, sourceFileAbsences = { A: [], B: [] }, sourceFileAbsenceProofs = { A: {}, B: {} };
 for (const [label, tree] of [['A', baselineRoot], ['B', root]]) {
     sourceHashes[label] = {};
-    for (const path of ['src/universe/minorBodies.js', 'src/universe/renderOrigin.js', 'src/moons.js'])
-        sourceHashes[label][path] = createHash('sha256').update(await readFile(resolve(tree, path))).digest('hex');
+    for (const path of ['src/universe/minorBodies.js', 'src/universe/renderOrigin.js', 'src/moons.js', ...(optics?['src/lensing.js','src/holeOptics.js','src/render/ringSamplingDepth.js','src/render/planetAppearance.js']:[])]) {
+        try {
+            sourceHashes[label][path] = createHash('sha256').update(await readFile(resolve(tree, path))).digest('hex');
+        } catch (error) {
+            // Current main predates this new module. Record its real absence;
+            // never synthesize a baseline file or exempt a missing candidate.
+            if (!(optics && label === 'A' && path === 'src/render/ringSamplingDepth.js' && error.code === 'ENOENT')) throw error;
+            sourceFileAbsenceProofs[label][path] = await proveBaselineAbsence(tree, path);
+            sourceHashes[label][path] = null;
+            sourceFileAbsences[label].push(path);
+        }
+    }
     const mainSource = await readFile(resolve(tree, 'src/main.js'), 'utf8');
     const start = mainSource.indexOf('const sceneBodiesT0 = perfStart();'), end = mainSource.indexOf('const sceneFocusT0 = perfStart();', start);
     sourceHashes[label]['main.sceneBodies'] = createHash('sha256').update(mainSource.slice(start, end)).digest('hex');
 }
 
-const report = { version: 4, device, sourceHashes,
-    fixedDiagnosticExperiment: 'After ALL acceptance fixtures and long-task collection: twenty attribution frames per fixture plus twenty fine-substage Earth frames and one 120-frame Earth CDP CPU profile per revision. No profiler runs between acceptance trials or fixtures', baselineRevision: revision(baselineRoot), candidateRevision: revision(root),
+if (process.argv.includes('--validate')) {
+    console.log(JSON.stringify({ hooks: 'valid', device, fixtures, orders, warmupFrames, samplesPerBlock, sourceHashes, sourceFileAbsences, sourceFileAbsenceProofs })); process.exit(0);
+}
+await mkdir(out, { recursive: true });
+
+const report = { version: 4, device, sourceHashes, sourceFileAbsences, sourceFileAbsenceProofs, mode:optics?'nearby-Saturn-lens':'explored-systems', opticsBloom,
+    fixedDiagnosticExperiment: optics?'After all acceptance windows and long-task collection: twenty attribution frames per source revision; no profiler between trials.':'After ALL acceptance fixtures and long-task collection: twenty attribution frames per fixture plus twenty fine-substage Earth frames and one 120-frame Earth CDP CPU profile per revision. No profiler runs between acceptance trials or fixtures', baselineRevision: revision(baselineRoot), candidateRevision: revision(root),
     epoch: '2026-10-01T12:00:00.000Z', query, viewport, deviceScaleFactor: 1, browserArgs, warmupFrames, samplesPerBlock, orders,
     hardware: { platform: os.platform(), release: os.release(), arch: os.arch(), logicalCPUs: os.cpus().length,
         cpuModels: [...new Set(os.cpus().map(cpu => cpu.model))], totalMemoryBytes: os.totalmem(), node: process.version },
-    authority: 'Paired trials are the performance acceptance measurement because the sequential independent-browser timings confound revision with machine-time drift. Sequential raw reports and their comparison remain available as diagnostics; they are not deleted or relabeled as passing',
+    authority: optics?'One browser measures two complete exact source revisions with the same active nearby lens; includes new CPU bounds/uniform work as well as shader work.':'Paired trials are the performance acceptance measurement because the sequential independent-browser timings confound revision with machine-time drift. Sequential raw reports and their comparison remain available as diagnostics; they are not deleted or relabeled as passing',
     scheduling: 'Both pages disable background timer/render throttling, have no automatic render loop, and are foregrounded before each measured block. The other page executes no application frames',
     method: 'One Chromium instance; two actual full-app pages; serial alternating ABBA/BAAB blocks; each measured frame is delivered by a normal setTimeout browser task including GPU finish plus a synchronous 1-pixel RGBA readback, never directly in a DevTools evaluation task',
     gpuSynchronization: 'Prior finish-only evidence contained severe stalls inside arbitrary WebGL calls; this experiment tests explicit readback synchronization. Every frame now reads one pixel into one reusable 4-byte array, forcing completed framebuffer work before the next sample; readback time is included and separately reported',
     gate: 'For each fixture, median of all five paired trial p95 ratios must be <=1.05. Every trial is mandatory, no outlier removal, replacement trials or selective reruns',
     limitations: 'CI headless Chromium/SwiftShader, not physical desktop/mobile hardware; matched app view with declared unrelated layers disabled',
-    omissions: ['AT-HYG streaming', 'background HYG layer', 'procedural background field', 'volumetric galaxy', 'galaxy population', 'gravity overlay', 'bloom'],
+    omissions: ['AT-HYG streaming', 'background HYG layer', 'procedural background field', 'volumetric galaxy', 'galaxy population', 'gravity overlay', ...(opticsBloom?[]:['bloom'])],
     errors: [], scenarios: [], pages: {}, workerEvents: [], passed: false };
 const save = () => writeFile(resolve(out, 'report.json'), JSON.stringify(report, null, 2) + '\n');
 let browser;
@@ -162,10 +184,28 @@ async function state(page) {
             background: { galaxy: q.galaxyRender.galaxyPopulationStatus(), volume: q.volume.galaxyVolumeStats(), tides: q.tides.mergerTidesStatus(), field: q.field.resolvedFieldStatus(), surfaceQueue: q.surfaces.pairedSurfaceQueue() },
             ship: [q.G.x, q.G.y, q.G.z, q.G.vx, q.G.vy, q.G.vz],
             camera: { distance: cam.dist, yaw: cam.yaw, pitch: cam.pitch, target: cam.tgt.toArray(), position: camera.position.toArray(), quaternion: camera.quaternion.toArray(), fov: camera.fov },
+            optics:q.optics?{lensEnabled:q.optics.lens.lensingPass.enabled,lensCount:q.optics.lens.lensingPass.uniforms.uN.value,hole:q.optics.bh.BH_META[0].g.position.toArray(),saturn:q.bodies.plGroups[q.optics.sat].position.toArray(),saturnMap:q.bodies.plSurfaces[q.optics.sat].material.map?.image?.width||0}:null,
             render: { ...renderer.info.memory, programs: renderer.info.programs.length },
             maps: { night: q.bodies.shaderTick.earthUniforms.uHasNight.value, clouds: q.bodies.shaderTick.earthUniforms.uHasClouds.value, moon: !!q.bodies.moon.material.map } };
     });
 }
+async function configureFixture(page,fixture) {
+    await page.evaluate(async fixture=>{
+        const q=pairedQA;
+        if(fixture.optics&&!q.optics){
+            const [bh,e,c,lens]=await Promise.all([import('/src/blackholes.js'),import('/src/ephemeris.js'),import('/src/constants.js'),import('/src/lensing.js')]);
+            const sat=c.PL.findIndex(p=>p.name==='SATURN');
+            q.input.setFocus(sat); // request the normal photographic map before warmup
+            bh.clearBlackHoles();bh.addBlackHole(e.eph.plX[sat]-150000,e.eph.plY[sat]-100000,50000,0,0,true,null,1,0,e.eph.plZ[sat],0);
+            q.optics={bh,e,c,lens,sat};await __pairedEnsureLensing();
+        }
+        q.input.setFocus(fixture.focus);
+        if(fixture.optics){q.G.gr=false;q.scene.cam.tgt.copy(q.bodies.plGroups[q.optics.sat].position);q.scene.cam.tgt.x-=75;}
+        if(fixture.distance!==null)q.scene.cam.dist=fixture.distance;
+        q.scene.cam.distTarget=null;q.scene.cam.yaw=fixture.yaw;q.scene.cam.pitch=fixture.pitch;
+    },fixture);
+}
+
 try {
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined,
         args: browserArgs });
@@ -236,17 +276,14 @@ try {
         const scenario = { fixture, warmup: {}, trials: [], diagnostics: {}, loadAverageBefore: os.loadavg() }; report.scenarios.push(scenario);
         for (const label of ['A', 'B']) {
             const page = pages[label]; await activate(page);
-            await page.evaluate(fixture => {
-                const q = pairedQA; q.input.setFocus(fixture.focus);
-                if (fixture.distance !== null) q.scene.cam.dist = fixture.distance;
-                q.scene.cam.distTarget = null; q.scene.cam.yaw = fixture.yaw; q.scene.cam.pitch = fixture.pitch;
-            }, fixture);
+            await configureFixture(page, fixture);
             scenario.warmup[label] = await frames(page, warmupFrames);
             await page.waitForFunction(() => { const s = pairedQA.surfaces.pairedSurfaceQueue(); return !s.pending && !s.inFlight; });
             scenario.warmup[label].push(...await frames(page, 4));
         }
         scenario.before = { A: await state(pages.A), B: await state(pages.B) };
         scenario.activeWorkersBefore = Object.fromEntries(['A', 'B'].map(label => [label, pages[label].workers().map(worker => worker.url())]));
+        if(optics){assert.deepEqual(scenario.before.A.optics,scenario.before.B.optics,'matched live lens, body and map');assert(scenario.before.A.optics.lensEnabled&&scenario.before.A.optics.lensCount>0&&scenario.before.A.optics.saturnMap>0,'nearby lens and textured Saturn must actually render');}
         assert.equal(scenario.before.A.seed, scenario.before.B.seed); assert.equal(scenario.before.A.epoch, scenario.before.B.epoch);
         assert.deepEqual(scenario.before.A.workload, scenario.before.B.workload, 'Exact seed, minor-swarm records, capacities and frame cadence must match');
         assert.deepEqual(scenario.before.A.camera, scenario.before.B.camera, `${fixture.name}: matched camera pose`);
@@ -315,11 +352,7 @@ try {
         const { fixture } = scenario;
         for (const label of ['A', 'B']) {
             await activate(pages[label]);
-            await pages[label].evaluate(fixture => {
-                const q = pairedQA; q.input.setFocus(fixture.focus);
-                if (fixture.distance !== null) q.scene.cam.dist = fixture.distance;
-                q.scene.cam.distTarget = null; q.scene.cam.yaw = fixture.yaw; q.scene.cam.pitch = fixture.pitch;
-            }, fixture);
+            await configureFixture(pages[label], fixture);
             await frames(pages[label], warmupFrames);
             await pages[label].waitForFunction(() => { const s = pairedQA.surfaces.pairedSurfaceQueue(); return !s.pending && !s.inFlight; });
             await frames(pages[label], 4);

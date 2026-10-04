@@ -1,18 +1,20 @@
-# Fresh radiance performance for the travel integration
+# Fresh radiance performance for optics on travel-enabled main
 
-The historical radiance acceptance requires identical production. Travel is a
-different production tree, so those measurements cannot stand in for this run.
+The historical radiance acceptance requires identical production. The optical
+integration is a different production tree, so neither the historical radiance
+measurements nor the accepted travel measurements can stand in for this run.
 The historical manifests and verifier remain unchanged. The workflow uses the
 immutable runner and protocol at `7d45c681f684da27bd84532e1de1d0ddd3f9564f` as
 code, with no historical raw-report substitution.
 
-The adapter compares actual main `3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6`
+The adapter compares actual main `ab51029827cf9324eb737673e46c49ab74aa1718`
 against the exact reported candidate HEAD. The candidate's complete served and
-build input fingerprint is frozen from reviewed local foreign-river repair
-`c372284c`, including the captured photosphere culling, pre-discovery
-point-layer startup and completed-observer quickload corrections. Reports of
-the preceding `d6ea8834` / `8663be59` / `e90481cd` production do not
-qualify for the changed source. The immutable
+build input fingerprint is frozen from local merge `15ce2377`, preserving all
+actual-main travel fixes and the reviewed partial disk/ring correction. The
+baseline fingerprint is `5509822d3cdc9bee3f72b8ae08990f004f0e637911f44ecd3a3eb4825ef1fff8`;
+the candidate fingerprint is `baf24e53f5fa2a89bd1a3352af30cff34385e31169c7d803eef4c1ff54facbc6`.
+This binding requires independent review before publication or hosted execution.
+The workflow rejects a PR-base change before preparing either root. The immutable
 fingerprint remains valid across QA-only commits. Source checks cover `src`,
 `public`, entry HTML, dependency manifests/locks, the Vite preview dependency,
 automatic environment and build configs, and untracked/ignored inputs. They
@@ -27,14 +29,16 @@ Every original and effective helper hash, adapter hash, both measured source
 trees and the effective source files are retained. Original files are never
 rewritten. Historical reuse and legacy-budget modes fail explicitly.
 
-The new travel scene has one `persistent Andromeda stars` Points object even in
-the three Milky Way fixtures. Its raw inventory remains in every snapshot. The
-only comparison adjustment subtracts this one CPU object, its uniquely owned
-geometry and material after proving that it is hidden, has zero draw range,
-exactly the five production attributes at capacity 420, and stable UUIDs. The
-baseline must lack it. No GPU memory/program count, active layer, field texture,
-source, camera, quality, cadence or particle count is relaxed. Radiance gains,
-previously the intentional difference, now must also match exactly.
+Both current-main roots have one `persistent Andromeda stars` Points object even
+in the three Milky Way fixtures. Its raw inventory remains in every snapshot.
+Both variants must prove that this object is hidden, has zero draw range, owns
+its geometry and material uniquely, has exactly the five production attributes
+at capacity 420, and retains stable UUIDs. The earlier CPU-count subtraction is
+removed: raw object, geometry and material counts now match exactly. Per-page
+UUIDs remain excluded from cross-page equality and checked for within-page
+stability. No GPU memory/program count, active layer, field texture, source,
+camera, quality, cadence or particle count is relaxed. Radiance gains also match
+exactly. Missing/extra baseline objects and any CPU/GPU-count mismatch fail.
 
 Each desktop/mobile Proxima, Sun and black-hole view keeps 120 synchronous
 warmup frames per side and five trials in ABBA/BAAB/ABBA/BAAB/ABBA order, with

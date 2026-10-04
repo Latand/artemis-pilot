@@ -2,9 +2,8 @@
   "version": 1,
   "historicalHarness": "7d45c681f684da27bd84532e1de1d0ddd3f9564f",
   "historicalTree": "ac6dae441e7adf7d7d74f3b1d1d0df05b54eaa4e",
-  "baseline": "3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6",
-  "baselineTree": "9612897732b3edc2baa16eeb211fc7da6c7753c9",
-  "frozenTravelReference": "c372284cfc4d0bcbdd2aa35228e1b28020ad661b",
+  "baseline": "ab51029827cf9324eb737673e46c49ab74aa1718",
+  "baselineTree": "7b185b45a344738d6299856362b455b18c8a9484",
   "productionPaths": [
     "src",
     "public",
@@ -23,7 +22,8 @@
     ".npmrc"
   ],
   "productionFingerprints": {
-    "A": "2fe9672842e5f7104610c9439fde3473d0301c03b6e4f217a67457feb5367f72",
-    "B": "5509822d3cdc9bee3f72b8ae08990f004f0e637911f44ecd3a3eb4825ef1fff8"
-  }
+    "A": "5509822d3cdc9bee3f72b8ae08990f004f0e637911f44ecd3a3eb4825ef1fff8",
+    "B": "baf24e53f5fa2a89bd1a3352af30cff34385e31169c7d803eef4c1ff54facbc6"
+  },
+  "frozenProductionReference": "15ce237732cf43ce14ccb1b7bca76946f7082578"
 }

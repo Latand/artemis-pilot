@@ -24,6 +24,9 @@ on:
 permissions:
   contents: read
   actions: read
+env:
+  REVIEWED_BASE_REVISION: 'ab51029827cf9324eb737673e46c49ab74aa1718'
+  PR_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
 jobs:
   fresh-performance:
     name: Fresh radiance ${{ matrix.device }} ${{ matrix.fixture }}
@@ -50,8 +53,9 @@ jobs:
       - run: npm install --ignore-scripts --no-package-lock
       - name: Prepare immutable protocol and actual main baseline
         run: |
+          test "$PR_BASE_REVISION" = "$REVIEWED_BASE_REVISION"
           git worktree add --detach ../radiance-accepted 7d45c681f684da27bd84532e1de1d0ddd3f9564f
-          git worktree add --detach ../travel-main 3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6
+          git worktree add --detach ../travel-main ab51029827cf9324eb737673e46c49ab74aa1718
           ln -s "$GITHUB_WORKSPACE/node_modules" ../travel-main/node_modules
           ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-accepted/node_modules
       - name: Require unchanged guards, adapter negative controls and both production hooks
@@ -99,8 +103,9 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts --no-package-lock
       - run: |
+          test "$PR_BASE_REVISION" = "$REVIEWED_BASE_REVISION"
           git worktree add --detach ../radiance-accepted 7d45c681f684da27bd84532e1de1d0ddd3f9564f
-          git worktree add --detach ../travel-main 3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6
+          git worktree add --detach ../travel-main ab51029827cf9324eb737673e46c49ab74aa1718
       - uses: actions/download-artifact@v4
         with:
           pattern: travel-radiance-fresh-${{ matrix.device }}-*
@@ -144,7 +149,8 @@ jobs:
           DEVICE: ${{ matrix.device }}
           RADIANCE_SUITE: ${{ matrix.suite }}
         run: |
-          git worktree add --detach ../radiance-baseline 3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6
+          test "$PR_BASE_REVISION" = "$REVIEWED_BASE_REVISION"
+          git worktree add --detach ../radiance-baseline ab51029827cf9324eb737673e46c49ab74aa1718
           ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-baseline/node_modules
           node scripts/verify-river-radiance.mjs ../radiance-baseline . evidence/radiance
       - uses: actions/upload-artifact@v4

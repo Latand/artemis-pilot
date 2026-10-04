@@ -114,12 +114,24 @@ const analyticFragment = /* glsl */`
         // box cannot expose triangle edges or its rectangular support plane.
         #if HOLE_LAYER == 1
         if (uDiskOn > 0.5 && abs(rd.z) > 1e-7) {
-            float hit = -ro.z/rd.z;
-            if (hit > 0.0) {
+            // Raster-footprint support for an otherwise razor-thin plane.
+            // A camera exactly in that plane previously got hit=0 on every
+            // ray, so all disk emission vanished for one side-crossing frame.
+            // A normalized, clipped interval gives fractional coverage inside;
+            // it is sampling regularization, not a new accretion model.
+            float halfSupport = clamp(uDistance * max(length(dFdx(ray)),length(dFdy(ray))) * .5, .001, .02);
+            float aHit = (-halfSupport-ro.z)/rd.z;
+            float bHit = (halfSupport-ro.z)/rd.z;
+            float depthPerRs = max(1e-12,uRsUnits*dot(uViewDepth,ray));
+            float entry = max(uNear/depthPerRs,max(0.0,min(aHit,bHit)));
+            float exitHit = min(uFar/depthPerRs,max(aHit,bHit));
+            float coverage = clamp((exitHit-entry)*abs(rd.z)/(2.0*halfSupport),0.0,1.0);
+            float hit = (entry+exitHit)*.5;
+            if (exitHit > entry && hit > 0.0) {
                 vec3 p = ro+hit*rd;
                 float r = length(p.xy), x = r/3.0;
                 float dx = max(fwidth(x), .001);
-                float mask = smoothstep(1.0,1.0+dx,x) * (1.0-smoothstep(uRout*.82,uRout,x));
+                float mask = smoothstep(1.0,1.0+dx,x) * (1.0-smoothstep(uRout*.82,uRout,x)) * coverage;
                 // Near-side emission may stand in front of the angular shadow.
                 float behind = step(uDistance*cosAngle, hit);
                 mask *= 1.0-shadow*behind;

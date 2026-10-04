@@ -26,8 +26,8 @@ export function validateTravelInventory(inventory, expectedVariant = inventory?.
   assert(['A', 'B'].includes(expectedVariant), 'Known measured variant required');
   assert.equal(inventory?.variant, expectedVariant);
   assert(Array.isArray(inventory.objects));
-  assert.equal(inventory.objects.length, expectedVariant === 'A' ? 0 : 1, 'Only the declared foreign point layer may differ');
-  if (expectedVariant === 'B') {
+  assert.equal(inventory.objects.length, 1, 'Both current-main revisions require the same foreign point layer');
+  {
     const object = inventory.objects[0];
     for (const key of ['uuid', 'geometryUuid', 'materialUuid']) assert.match(object[key], /^[a-f0-9-]{36}$/);
     assert.equal(object.type, 'Points'); assert.equal(object.materialType, 'ShaderMaterial');
@@ -40,14 +40,12 @@ export function validateTravelInventory(inventory, expectedVariant = inventory?.
 }
 
 export function comparableTravelState(state) {
-  const extra = validateTravelInventory(state.travelInventory);
+  validateTravelInventory(state.travelInventory);
   const { travelInventory, ...result } = state;
-  // The added empty object owns precisely one CPU geometry/material. Keep GPU
-  // memory/program counts, all active layers and every other field exact.
-  result.sceneObjects = { ...state.sceneObjects };
+  // Both roots now contain the same hidden layer. Preserve raw CPU as well as
+  // GPU counts; only per-page object identities stay outside cross-page equality.
   for (const key of ['objects', 'geometries', 'materials']) {
-    assert(Number.isSafeInteger(result.sceneObjects[key]) && result.sceneObjects[key] >= extra);
-    result.sceneObjects[key] -= extra;
+    assert(Number.isSafeInteger(state.sceneObjects[key]) && state.sceneObjects[key] >= 1);
   }
   return result;
 }

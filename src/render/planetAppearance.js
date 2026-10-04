@@ -3,6 +3,7 @@ import {relUniforms} from '../relView.js';
 import {RELATIVISTIC_VIEW_GLSL} from './viewBrightness.js';
 import {updatePhotosphereAppearance} from './stellarAppearance.js';
 import {stabilizeBodyMaterial} from './relativeBodyFrame.js';
+import {trackRingSamplingMaterial} from './ringSamplingDepth.js';
 import {configureSurfaceRotationExposure, updateSurfaceRotationExposure, surfaceExposureTurns, SURFACE_EXPOSURE_GLSL} from './surfaceRotationExposure.js';
 
 export const EARTH_CLOUD_HEIGHT_KM = 6;
@@ -331,5 +332,5 @@ export function ringMaterial(map, radius) {
         `);
     };
     material.customProgramCacheKey = () => 'ring-shadow-' + radius;
-    return material;
+    return trackRingSamplingMaterial(material);
 }
