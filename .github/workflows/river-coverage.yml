@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-river-capture.mjs && node scripts/verify-river-capture-resize.mjs --validate
+      - run: node scripts/smoke-river-capture.mjs && node scripts/smoke-river-resource-policy.mjs && node scripts/verify-river-capture-resize.mjs --validate
       - run: npx playwright install --with-deps chromium
       - name: Select exact production scene for rapid-resize preflight
         env:
@@ -48,6 +48,13 @@ jobs:
           DEVICE: ${{ matrix.device }}
           ARTEMIS_EVIDENCE: evidence/capture-resize
         run: node scripts/verify-river-capture-resize.mjs
+      - name: Require real-scene corona preparation and exact field/input restoration before any soak
+        env:
+          DEVICE: ${{ matrix.device }}
+          ARTEMIS_EVIDENCE: evidence/resource-preparation
+          RIVER_PREPARATION_ONLY: '1'
+          EXPECTED_SOURCE_REF: ${{ matrix.variant == 'before' && github.event.pull_request.base.sha || github.event.pull_request.head.sha }}
+        run: node scripts/verify-river-coverage.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -78,7 +85,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-river-capture.mjs && node scripts/smoke-river-source-alignment.mjs && node scripts/smoke-river-coverage.mjs && npm run smoke:river-visual && npm test && npm run smoke:physics3d && npm run smoke:determinism && npm run build
+      - run: node scripts/smoke-river-capture.mjs && node scripts/smoke-river-resource-policy.mjs && node scripts/smoke-river-source-alignment.mjs && node scripts/smoke-river-coverage.mjs && npm run smoke:river-visual && npm test && npm run smoke:physics3d && npm run smoke:determinism && npm run build
       - run: npx playwright install --with-deps chromium
       - name: Record exact source identities
         env:
@@ -98,6 +105,7 @@ jobs:
         env:
           DEVICE: ${{ matrix.device }}
           ARTEMIS_EVIDENCE: evidence/coverage
+          EXPECTED_SOURCE_REF: ${{ matrix.variant == 'before' && github.event.pull_request.base.sha || github.event.pull_request.head.sha }}
         run: node scripts/verify-river-coverage.mjs
       - uses: actions/upload-artifact@v4
         if: always()

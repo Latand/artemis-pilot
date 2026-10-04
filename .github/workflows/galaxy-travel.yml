@@ -52,11 +52,11 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts
       - run: npx playwright install --with-deps chromium
-      - name: Prepare exact stacked baseline
+      - name: Prepare exact main baseline
         env:
-          # Freeze the integrated #55 foundation used by this slice. A moving
-          # feature-branch base must not silently introduce unrelated fixes.
-          BASE_SHA: 09863eedda25eef36d79e9cf88daa4ff3e377875
+          # Freeze main after the accepted catalog/radiance merge. A moving
+          # branch must not silently change the paired comparison workload.
+          BASE_SHA: 3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6
         run: |
           git worktree add --detach "$RUNNER_TEMP/travel-base" "$BASE_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/travel-base/node_modules"

@@ -1,0 +1,70 @@
+{
+  "run": {
+    "id": 37164787136,
+    "head_sha": "7d45c681f684da27bd84532e1de1d0ddd3f9564f",
+    "run_attempt": 1,
+    "status": "completed",
+    "conclusion": "success",
+    "repository": {
+      "full_name": "Latand/artemis-pilot"
+    }
+  },
+  "jobs": {
+    "total_count": 4,
+    "jobs": [
+      {
+        "id": 111325381088,
+        "name": "verified-reuse",
+        "run_id": 37164787136,
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 111325474984,
+        "name": "Complete mobile sun",
+        "run_id": 37164787136,
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 111336034377,
+        "name": "Recompute full device gate desktop",
+        "run_id": 37164787136,
+        "status": "completed",
+        "conclusion": "success"
+      },
+      {
+        "id": 111336034498,
+        "name": "Recompute full device gate mobile",
+        "run_id": 37164787136,
+        "status": "completed",
+        "conclusion": "success"
+      }
+    ]
+  },
+  "artifacts": {
+    "total_count": 2,
+    "artifacts": [
+      {
+        "id": 11290472520,
+        "name": "radiance-recomputed-complete-desktop",
+        "digest": "sha256:84dc239616407dcdd83e62f18d23b0ef1ed05948cef3cddb90748d8114ca5a27",
+        "expired": false,
+        "workflow_run": {
+          "id": 37164787136,
+          "head_sha": "7d45c681f684da27bd84532e1de1d0ddd3f9564f"
+        }
+      },
+      {
+        "id": 11289988434,
+        "name": "radiance-recomputed-complete-mobile",
+        "digest": "sha256:28d6de74d62d9e5d9c22ee18cb1f617228be033aefb036df77b25235a53d515b",
+        "expired": false,
+        "workflow_run": {
+          "id": 37164787136,
+          "head_sha": "7d45c681f684da27bd84532e1de1d0ddd3f9564f"
+        }
+      }
+    ]
+  }
+}

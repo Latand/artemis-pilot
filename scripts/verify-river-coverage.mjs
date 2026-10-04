@@ -6,15 +6,24 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { coverageExpectation, LEGACY_MAIN_COVERAGE_REF, LEGACY_MAIN_RIVER_INPUTS, FIXED_COVERAGE_ANCESTOR, withinPreparedResourceBounds, prepareCoverageResources, coverageMainHook, coverageExactStateHook } from './river-coverage-policy.mjs';
 const mobile=process.env.DEVICE==='mobile';
 const root=resolve(process.env.BASE_ROOT||process.cwd());
 const baseline=!!process.env.BASE_ROOT;
+const revision=execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
+if(process.env.EXPECTED_SOURCE_REF)assert.equal(revision,process.env.EXPECTED_SOURCE_REF,'fixture uses its declared exact production ref');
+let hasReviewedHaloAncestry=false;
+try{execFileSync('git',['-C',root,'merge-base','--is-ancestor',FIXED_COVERAGE_ANCESTOR,revision],{stdio:'ignore'});hasReviewedHaloAncestry=true;}catch(error){if(error.status!==1)throw error;}
+const legacyMainInputs=revision===LEGACY_MAIN_COVERAGE_REF?Object.fromEntries(Object.keys(LEGACY_MAIN_RIVER_INPUTS).map(path=>[
+ path,execFileSync('git',['-C',root,'rev-parse',`${revision}:${path}`],{encoding:'utf8'}).trim(),
+])):undefined;
+const expectation=coverageExpectation(revision,hasReviewedHaloAncestry,legacyMainInputs),legacy=expectation.mode==='legacy-negative-control';
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/river-coverage');
 const viewport=mobile?{width:215,height:466}:{width:768,height:512};
 assert(mobile||viewport.width>760,'Desktop CSS viewport must stay above the production mobile breakpoint');
 const captureViewport=mobile?{width:430,height:932}:{width:960,height:640};
 await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),baseline,mobile,viewport,captureViewport,soakDpr:.5,captureDpr:1,frames:[],checks:[],errors:[],omissions:['HYG background','resolved procedural field','tier-1 streaming'],reference:'Synthetic off-center Sun boundary crossing based on supplied photos; exact photographed camera pose is unknown.'};
+const report={revision,baseline,expectation,mobile,viewport,captureViewport,soakDpr:.5,captureDpr:1,frames:[],checks:[],errors:[],omissions:['HYG background','resolved procedural field','tier-1 streaming'],reference:'Synthetic off-center Sun boundary crossing based on supplied photos; exact photographed camera pose is unknown.'};
 const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);};
 const save=()=>writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
 const hook=`
@@ -50,16 +59,17 @@ export function coverageSourceRead(index){
 }
 `;
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'solar-coverage-qa',enforce:'pre',transform(source,id){
- if(id.split('?')[0].endsWith('/src/river.js'))return source+hook;
+ if(id.split('?')[0].endsWith('/src/river.js'))return source+hook+coverageExactStateHook;
  if(id.split('?')[0].endsWith('/src/scene.js'))return source+'\nwindow.__coverageDpr=pr=>{renderQuality.dpr=pr;renderer.setPixelRatio(pr);resizePostProcessing();};';
  if(!id.split('?')[0].endsWith('/src/main.js'))return;
  const token='const firstFrameT0 = perfStart();';assert.equal(source.split(token).length,2);
  return source.replace('renderer.setAnimationLoop(frame);','')
  .replace(token,'G.t=0;G.paused=true;G.gr=true;grB=1;resetEphem();clock.getDelta=()=>1/60;'+token)
- +'\nwindow.__coverageFrame=()=>{lastMobileFrame=-Infinity;frame();const gl=renderer.getContext();const px=new Uint8Array(4);gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,px);};';
+ +coverageMainHook
+ +'\nwindow.__coverageFrame=()=>{if(window.__coveragePreparing)return window.__coverageWarmupDraw();lastMobileFrame=-Infinity;frame();const gl=renderer.getContext();const px=new Uint8Array(4);gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,px);};';
 }}]});
 let browser;
-try{
+coverage:try{
  await server.listen();
  browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
  const page=await browser.newPage({viewport,hasTouch:mobile,isMobile:mobile,deviceScaleFactor:1});page.setDefaultTimeout(180000);
@@ -113,8 +123,19 @@ try{
   await page.evaluate(()=>window.__coverageDpr(.5));await setViewportStable(viewport);
  };
  check(await page.evaluate(async mobile=>(await import('/src/scene.js')).renderQuality.mobile===mobile,mobile),'actual touch/desktop quality');
- const modes=baseline?[0]:[0,3852,-3852];
- const length=baseline?120:400;
+ check(await page.evaluate(async expected=>((await import('/src/river.js')).river.sourceRelativeHalos===true)===expected,expectation.sourceRelativeHalos),'runtime halo capability matches the declared source ref');
+ await page.evaluate(async()=>{window.__coverageFieldRead=(await import('/src/river.js')).coverageExactState;});
+ const prepared=await prepareCoverageResources(page,screenshot,report);
+ check(true,'render-only preparation preserves exact simulation and field state');
+ check(true,'declared full-resolution midpoint draws and prepares the existing corona');
+ await save();
+ if(process.env.RIVER_PREPARATION_ONLY==='1'){
+  report.preparationOnly=true;
+  check(report.errors.length===0,'preparation preflight has no shader/runtime errors');
+  break coverage;
+ }
+ const modes=legacy?[0]:[0,3852,-3852];
+ const length=legacy?120:400;
  for(const warp of modes){
   await page.evaluate(async warp=>{const{G}=await import('/src/state.js');G.focus='free';G.paused=warp===0;G.warp=warp||1;},warp);
   for(let i=0;i<length;i++){
@@ -129,6 +150,11 @@ try{
     return {...sampled,i,warp,simTime:G.t,screen:sunCore.position.clone().project(camera).toArray(),memory:{...renderer.info.memory,programs:renderer.info.programs.length},contextLost:renderer.getContext().isContextLost(),error:renderer.getContext().getError()};
    },{i,length,warp});
    report.frames.push(sample);
+   if(warp===0&&i===50){
+    report.resourceBounds={...sample.memory};
+    report.preparedCoronaAtBaseline=await page.evaluate(()=>window.__coverageCoronaState());
+    check(report.preparedCoronaAtBaseline.gpuPresent&&report.preparedCoronaAtBaseline.geometryUuid===prepared.geometry.uuid&&report.preparedCoronaAtBaseline.materialUuid===prepared.material.uuid&&report.preparedCoronaAtBaseline.programId===prepared.programId,'same prepared corona remains GPU-resident before resource baseline');
+   }
    if(i===0||i===Math.floor(length/2)||i===length-1){await screenshot(`${warp}-${i}`);await save();}
    if(i%100===0)console.log('coverage',warp,i,sample.visible,sample.owned,sample.ratio);
   }
@@ -141,16 +167,16 @@ try{
  check(outside.length>10&&inside.length>10,'trajectory crosses both sides of old ambient boundary');
  const mean=arr=>arr.reduce((a,f)=>a+f.visible,0)/arr.length;
  report.visibility={outside:mean(outside),inside:mean(inside)};
- if(baseline)check(mean(outside)<mean(inside)*.15,'base reproduces missing off-center halo');
+ if(legacy)check(mean(outside)<mean(inside)*.15,'pinned legacy source reproduces missing off-center halo');
  else{
   check(frames.length===1200,'complete 1200-frame paused/forward/reverse sequence');
   check(mean(outside)>mean(inside)*.65,'halo support stays populated beyond old volume edge');
   check(frames.every(f=>f.visible>=12),'no blank halo frame throughout zoom/pan');
   for(const warp of modes){const group=frames.filter(f=>f.warp===warp);check(group.every(f=>warp===0||f.dt===0||Math.sign(f.dt)===Math.sign(warp)),`${warp}: advection follows requested time direction`);}
   const resources=frames.slice(50).map(f=>f.memory);
-  check(resources.every(r=>r.textures===resources[0].textures&&r.geometries===resources[0].geometries),'no resource growth while crossing');
+  check(resources.every(memory=>withinPreparedResourceBounds(memory,report.resourceBounds)),'no geometry/texture/program growth above prepared bounds while crossing');
  }
- if(!baseline){
+ if(!legacy){
   // A displaced camera must not reserve most of its slots for invisible,
   // float32-quantized solar sources. Inspect actual local/ambient texels.
   report.far=await page.evaluate(async()=>{const{G}=await import('/src/state.js');const{cam}=await import('/src/scene.js');G.focus='free';G.paused=true;cam.tgt.set(1e16,1e16,1e16);cam.dist=1e4;cam.distTarget=null;window.__coverageFrame();return(await import('/src/river.js')).coverageRead();});

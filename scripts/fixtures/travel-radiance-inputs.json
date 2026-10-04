@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "historicalHarness": "7d45c681f684da27bd84532e1de1d0ddd3f9564f",
+  "historicalTree": "ac6dae441e7adf7d7d74f3b1d1d0df05b54eaa4e",
+  "baseline": "3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6",
+  "baselineTree": "9612897732b3edc2baa16eeb211fc7da6c7753c9",
+  "frozenTravelReference": "d6ea8834ea209d40aa509648fca0a2cca305cbf6",
+  "productionPaths": [
+    "src",
+    "public",
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "bun.lock",
+    "vite.config.*",
+    "scripts/galaxy-preview-plugin.mjs",
+    ".env*",
+    "postcss.config.*",
+    ".postcssrc*",
+    "tsconfig*.json",
+    "jsconfig*.json",
+    "npm-shrinkwrap.json",
+    ".npmrc"
+  ],
+  "productionFingerprints": {
+    "A": "2fe9672842e5f7104610c9439fde3473d0301c03b6e4f217a67457feb5367f72",
+    "B": "696aa132986d64ccfed0c1cd8873b7d5038da46d14df3395711f5b374a1f3b3b"
+  }
+}
