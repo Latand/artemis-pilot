@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "reviewedLocalHead": "6bfee22d1e64104e38935fc9d5c8c92fd85f9ac0",
+  "reviewedLocalTree": "f2d837eebd4681c3d304d0ac7f41652e065f7a57",
+  "requiredAncestor": "8663be59ed26cfed38176895527b9aa1d9bdd4ff",
+  "blobs": {
+    "src/river.js": "dd347cce74da823b4c3e8124f4d57e5440b13470",
+    "src/render/relativeBodyFrame.js": "99be143152be9ea9e2d0cac973df6fdbf6f59a24",
+    "scripts/foreign-river-qa.mjs": "03d64ec795ffe1a71a9df0a4b7ffb93addce8930",
+    "scripts/smoke-foreign-river.mjs": "296b720032c6223077125850354a40dfe0aa8cfa",
+    "scripts/verify-foreign-river.mjs": "83f4438ae6d54a1d6f8242a0ac67cb3a767549a0",
+    "scripts/context-recovery-qa.mjs": "df0ed74ffabfc5d1f3d342ed139638a161e07dae",
+    "scripts/river-radiance-qa.mjs": "9cfc0193ede9dde3ef45fb333d346bc5beabc064",
+    "scripts/river-radiance-lifecycle.mjs": "07b9700ffe238e7562d0609f94ae2fc7d00c9cce",
+    "scripts/verify-river-radiance.mjs": "4796eba4fe1c3f38b4a895c0d44ed2d39fa4ec51"
+  },
+  "fixtureDelta": "Atomic checkpoint and termination reporting added with the bounded workflow; included in its independent review."
+}

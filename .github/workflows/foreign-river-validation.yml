@@ -1,0 +1,56 @@
+name: Foreign river precision validation
+on:
+  push:
+    branches: ['diagnostic/foreign-river-precision']
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - '.github/workflows/foreign-river-validation.yml'
+permissions:
+  contents: read
+jobs:
+  foreign-river:
+    name: Foreign river ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    env:
+      DEVICE: ${{ matrix.device }}
+      EXPECTED_CANDIDATE_REVISION: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: Verify and preserve exact reviewed source and fixture
+        run: |
+          node scripts/verify-foreign-river-inputs.mjs evidence/foreign-river/sources
+          git rev-parse HEAD > evidence/foreign-river/sources/head-sha.txt
+          git rev-parse 'HEAD^{tree}' > evidence/foreign-river/sources/tree-sha.txt
+          git diff 8663be59ed26cfed38176895527b9aa1d9bdd4ff HEAD > evidence/foreign-river/sources/change.diff
+          cp scripts/foreign-river-qa.mjs scripts/smoke-foreign-river.mjs scripts/verify-foreign-river.mjs scripts/context-recovery-qa.mjs scripts/river-radiance-qa.mjs scripts/river-radiance-lifecycle.mjs scripts/verify-river-radiance.mjs evidence/foreign-river/sources/
+      - name: Require old-code negative controls and current production hooks
+        run: |
+          node scripts/smoke-foreign-river.mjs
+          node scripts/verify-foreign-river.mjs . evidence/foreign-river --validate
+      - run: npx playwright install --with-deps chromium
+      - name: Bound the real-provider GPU sequence to fifteen minutes
+        run: timeout --signal=TERM --kill-after=10s 15m node scripts/verify-foreign-river.mjs . evidence/foreign-river
+      - name: Recheck unchanged inputs after execution
+        if: always()
+        run: node scripts/verify-foreign-river-inputs.mjs evidence/foreign-river/sources-after
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: foreign-river-${{ matrix.device }}
+          path: evidence/foreign-river/
+          if-no-files-found: error
+          retention-days: 14

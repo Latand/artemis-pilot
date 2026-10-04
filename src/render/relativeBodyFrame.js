@@ -1,4 +1,13 @@
 import * as THREE from 'three';
+
+// Keep the observer residual until after subtraction from the render origin.
+// A rounded intergalactic camera.position cannot retain kilometre movement.
+export function observerPositionRelativeTo(camera, origin, out) {
+    const orbit = camera.userData.preciseOrbit, anchor = camera.userData.systemAnchor;
+    if (anchor && orbit?.worldPosition.equals(camera.position))
+        return out.copy(anchor.origin).sub(origin).add(anchor.offset).add(orbit.offset);
+    return out.copy(camera.position).sub(origin);
+}
 // WebGLRenderer invokes material.onBeforeRender after composing modelView.
 // Recompose ONLY its translation from small CPU-double residuals. Physics,
 // world transforms and surface normal transforms remain unchanged.
