@@ -152,3 +152,39 @@ uniform values must equal the provider-derived values; GPU values must match
 within float32 upload rounding. Twenty-eight zero/altered force, core and
 provider negative controls cover both eligible and excluded views. Turning
 off visible halo ownership cannot turn off the host's gravitational source.
+
+## Delayed observer quickload and mobile navigation
+
+Run `37190256223` at `f98b6bbc` passed host/planet ownership, independent
+provider/field/GPU strength, free movement and signed epochs on both devices.
+Desktop also passed return, quickload and the actual native context loss and
+restore checks, then refocused Earth on its second post-recovery frame.
+The cause is quickload: the save omitted the completed dead-ship observer
+state, the loader reset it, and the ordinary two-second death transition later
+selected the nearest survivor. GPU restoration did not change the focus.
+Mobile stopped earlier because its Places details element was closed and the
+fixture attempted to click a hidden return button.
+
+Both failures remain preserved: desktop artifact `11298856154`, SHA256
+`835bb4341f9374f05285198a11e00f0a23dcda0ebf4265a7d6d6591d7aec20d7`,
+mobile `11297619860`, SHA256
+`d57e6cf8d411bb10e3309052290eb855051d27c78a5a68aad5f5eb4f48ffb569`.
+The loader now preserves an explicitly saved boolean observer state only for
+a dead ship. Missing legacy flags keep the ordinary transition, invalid flag
+types are rejected before mutation, and alive ships cannot restore that mode.
+The pure regression uses actual save/load plus the actual delayed-entry branch
+and proves that reinstating the old reset reproduces the camera change.
+
+The bounded browser fixture opens the visible Places summary when needed.
+After quickload it waits across the real delayed-entry boundary and asserts
+the retained split camera before testing GPU recovery separately. This adds no
+retry, source substitution or clock override. Its production binding changes
+with the save fix; earlier performance evidence remains attributed to `8663`.
+
+Review also caught the companion banner state: completed observers must not
+redisplay VEHICLE LOST when the delayed transition is intentionally skipped.
+The loader now shows it only for a dead ship still awaiting that transition.
+Stateful HUD regressions check hidden completed observers, shown ordinary and
+legacy states followed by exactly one hide, rejected-load preservation, and an
+old-condition negative that leaves the banner visible. The browser fixture
+also checks the actual DOM banner immediately and after the quickload delay.

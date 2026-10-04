@@ -36,7 +36,7 @@ const G_FIELDS = [
     "t", "x", "y", "z", "vx", "vy", "vz", "heading", "pitch", "throttle", "warp", "paused",
     "fuel", "infinite", "dvUsed", "hold", "landed", "dead", "deadReason",
     "deathT", "leftHome", "maxRE", "gr", "predict", "constellations", "darkEnergy", "darkMatter", "muted", "ambientAudio", "focus",
-    "cabin", "cosmicOverview",
+    "cabin", "cosmicOverview", "observerMode",
 ];
 const SERIAL_STAR_FIELDS = [
     "epochPosition", "distanceEstimated",
@@ -142,6 +142,9 @@ export async function loadState() {
     try { data = JSON.parse(localStorage.getItem(SLOT)); } catch (e) { /* corrupt slot falls through */ }
     if (!data || (data.v < 1 || data.v > 11)) { toast("No saved state · K to save one"); return false; }
     if (!validUniverseJournal(data.universeJournal)) { toast("Saved universe journal is invalid"); return false; }
+    if (data.g?.observerMode !== undefined && typeof data.g.observerMode !== "boolean") {
+        toast("Saved observer state is invalid"); return false;
+    }
     // Catalog readiness is a preflight: no frame may see a loaded ship with
     // the previous world while this network/index operation is pending.
     let exploredCatalogUnavailable = false;
@@ -192,7 +195,10 @@ export async function loadState() {
     if (typeof G.predict !== "boolean") G.predict = false;
     if (typeof G.constellations !== "boolean") G.constellations = true;
     if (typeof G.cabin !== "boolean") G.cabin = false;
-    G.observerMode = false;
+    // A saved observer has already completed the death-to-observer transition.
+    // Restarting it would refocus the camera two seconds after quickload.
+    // Legacy saves omit the flag and retain the ordinary delayed transition.
+    G.observerMode = G.dead === true && data.g.observerMode === true;
     G.deathRt = G.dead ? performance.now() : 0;
     G.boost = false;
     WORLD.earthDestroyed = !!data.world.earth;
@@ -237,7 +243,7 @@ export async function loadState() {
     clearTrail();
     pushTrail(true);
     computePrediction();
-    if (G.dead) showBanner("VEHICLE LOST", G.deadReason + " · MET " + fmtMET(G.t), "R TO REBUILD SHIP");
+    if (G.dead && !G.observerMode) showBanner("VEHICLE LOST", G.deadReason + " · MET " + fmtMET(G.t), "R TO REBUILD SHIP");
     toast("Quickload · MET " + fmtMET(G.t) + (restoredStars.length ? " · HYG " + restoredStars.length : "") +
         (restoredProc.length ? " · PROC " + restoredProc.length : "") +
         (exploredCatalogUnavailable ? " · Catalog host unavailable; view reset to Earth" : ""));

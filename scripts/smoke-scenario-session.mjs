@@ -2,6 +2,7 @@
 // is separately exercised by smoke-scenario-playback and the full browser QA.
 import assert from 'node:assert/strict';
 import { registerHooks } from 'node:module';
+import { readFileSync } from 'node:fs';
 import { DRIVE, stepDrive } from '../src/curvatureDrive.js';
 globalThis.window=new EventTarget();
 const elements=new Map();
@@ -21,7 +22,7 @@ const mock={
  './render/nebulae.js':`export const serializeNebulae=()=>structuredClone(globalThis.__scenarioMock.neb);export function restoreNebulae(s){globalThis.__scenarioMock.neb=structuredClone(s);}`,
  './universe/gasDynamics.js':`export function invalidateGasDynamics(){}`,
  './trails.js':`export function clearTrail(){} export function pushTrail(){} export function computePrediction(){}`,
- './hud.js':`export function hideBanner(){} export function showBanner(){}`,
+ './hud.js':`const banner=globalThis.__scenarioMock.banner={visible:false,hideCalls:0,showCalls:0};export function hideBanner(){banner.visible=false;banner.hideCalls++;} export function showBanner(){banner.visible=true;banner.showCalls++;}`,
  './achievements.js':`export function toast(){}`,
  './shipVisuals.js':`export const shipVisuals=globalThis.__scenarioMock.shipVisuals;`,
  './discoveryLog.js':`export const serializeLog=()=>structuredClone(globalThis.__scenarioMock.log);export function restoreLog(log){globalThis.__scenarioMock.log=structuredClone(log);}`,
@@ -132,4 +133,46 @@ for(const loadCase of [{blob:differentUniverseSave,target:loadTarget},{blob:sing
     assert.deepEqual(J.serializeUniverseJournal(),expectedLoad.universeJournal);
  }
 }
+// Real save/load and the real delayed-entry branch. Rendering is irrelevant
+// here; the nearest-survivor focus operation is the observable consequence.
+const mainSource=readFileSync(new URL('../src/main.js',import.meta.url),'utf8');
+const observerFunction=mainSource.slice(mainSource.indexOf('function enterObserverMode() {'),mainSource.indexOf('function bindBodyLabel('));
+const delayedBranch=mainSource.split('\n').find(line=>line.includes('if (G.dead && !G.observerMode && performance.now() - G.deathRt >= 2000)'));
+assert(observerFunction.includes('focusNearestSurvivor()'));assert(delayedBranch);
+let wallTime=0,transitions=0;
+const hud=await import('scenario-test:./hud.js');
+const delayedEntry=new Function('G','performance','hideBanner','focusNearestSurvivor','toast',observerFunction+';return ()=>{'+delayedBranch+'};')(
+ G,{now:()=>wallTime},hud.hideBanner,()=>{transitions++;G.focus='earth';m.cam.preciseTarget=null;m.cam.dist=509.68;return 'Earth';},()=>{});
+localStorage.setItem(slot,differentUniverseSave);assert(await saves.loadState());
+G.dead=true;G.observerMode=true;G.focus='free';assert(saves.saveState());
+const observerSave=localStorage.getItem(slot);assert.equal(JSON.parse(observerSave).g.observerMode,true);
+const cameraSnapshot=()=>JSON.stringify({focus:G.focus,camera:m.cam,host:E.serializeExploredSystem(),journal:J.serializeUniverseJournal()});
+for(const legacy of [false,true]) {
+ const data=JSON.parse(observerSave);if(legacy)delete data.g.observerMode;else data.g.observerMode=false;
+ localStorage.setItem(slot,JSON.stringify(data));assert(await saves.loadState());assert.equal(G.observerMode,false);
+ assert(m.banner.visible,'Ordinary and legacy dead-ship loads show the death banner pending entry');const hides=m.banner.hideCalls;
+ const count=transitions;wallTime=G.deathRt+1999;delayedEntry();assert.equal(transitions,count);
+ wallTime=G.deathRt+2100;delayedEntry();assert.equal(transitions,count+1);assert.equal(G.focus,'earth');assert.equal(G.observerMode,true);
+ assert.equal(m.banner.visible,false);assert.equal(m.banner.hideCalls,hides+1,'Delayed entry hides the death banner once');
+ delayedEntry();assert.equal(transitions,count+1,'Ordinary and legacy observer entry happens exactly once');
+ assert.equal(m.banner.hideCalls,hides+1);
+}
+localStorage.setItem(slot,observerSave);assert(await saves.loadState());const retained=cameraSnapshot(),count=transitions;
+assert.equal(m.banner.visible,false,'Completed observer loads keep the death banner hidden');const retainedHud=structuredClone(m.banner);
+wallTime=G.deathRt+2100;delayedEntry();assert.equal(transitions,count);assert.equal(cameraSnapshot(),retained,'A completed observer retains the loaded foreign camera after the real delay branch');
+assert.deepEqual(m.banner,retainedHud,'Completed observer needs no later hide transition');
+const bannerLine=readFileSync(new URL('../src/saves.js',import.meta.url),'utf8').split('\n').find(line=>line.includes('if (G.dead && !G.observerMode) showBanner('));assert(bannerLine);
+new Function('G','showBanner','fmtMET',bannerLine.replace('G.dead && !G.observerMode','G.dead'))(G,hud.showBanner,()=> 'test');
+delayedEntry();assert(m.banner.visible,'The old unconditional banner remains visible indefinitely for a completed observer');hud.hideBanner();
+G.observerMode=false;delayedEntry();assert.notEqual(cameraSnapshot(),retained,'The old unconditional observer reset reproduces the delayed camera failure');
+for(const badValue of [null,0,1,'true','false',[],{}]) {
+ localStorage.setItem(slot,observerSave);assert(await saves.loadState());const before=runtime.captureScenarioReturnState();
+ const beforeHud=structuredClone(m.banner);
+ const data=JSON.parse(observerSave);data.g.observerMode=badValue;localStorage.setItem(slot,JSON.stringify(data));
+ assert.equal(await saves.loadState(),false);assert.deepEqual(runtime.captureScenarioReturnState(),before,'Invalid observer flag is rejected before mutation');
+ assert.deepEqual(m.banner,beforeHud,'Rejected loads preserve HUD state too');
+}
+const alive=JSON.parse(observerSave);alive.g.dead=false;localStorage.setItem(slot,JSON.stringify(alive));assert(await saves.loadState());
+assert.equal(G.observerMode,false,'An alive ship cannot restore a dead-ship observer mode');
+console.log('Real quickload preserves completed observers; ordinary/legacy delayed entry, invalid flags and old-code negative pass');
 hook.deregister();console.log('Scenario ready/start/pause/resume/restart/exit, interruption and full return snapshot checks passed');

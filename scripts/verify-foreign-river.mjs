@@ -146,7 +146,8 @@ try {
           arithmeticScale: [...relative.toArray(), ...eye.offset.toArray(), ...orbit.offset.toArray(), ...(own?.offset.toArray() || [])] };
       }
       const result = { ...state, name, hidden, ownershipExpectation: ownership, time: q.state.G.t, paused: q.state.G.paused, focus: q.state.G.focus,
-        completed: window.__foreignCompleted || 0, host: host?.id,
+        completed: window.__foreignCompleted || 0, host: host?.id, dead: q.state.G.dead, observerMode: q.state.G.observerMode,
+        deathBannerVisible: getComputedStyle(document.getElementById('banner')).display !== 'none',
         system: { cachedStarId: cached?.starId, renderedStarId: rendered.starId, renderedHostId: rendered.hostId,
           cachedPlanets: JSON.stringify(cached?.planets), renderedPlanets: JSON.stringify(rendered.planets), slotPlanets: JSON.stringify(rendered.slots) },
         camera: s.camera.position.toArray(), anchor: eye ? { origin: eye.origin.toArray(), offset: eye.offset.toArray() } : null,
@@ -233,6 +234,8 @@ try {
     check('actual river advection has nonzero correct signed dispatch ' + direction, healthyForeignAdvection(phase, direction));
   }
   await page.evaluate(() => { qa.state.G.paused = true; });
+  if (!await page.locator('#exploreDestinations').evaluate(element => element.open))
+    await page.locator('#exploreDestinations > summary').click();
   await page.locator('#exploreMilkyWayReturn').click();
   await sample('return-0', { hidden: true }); await sample('return-1', { hidden: true, capture: true });
   await page.locator('#exploreObject').click(); await page.keyboard.press('l');
@@ -241,6 +244,13 @@ try {
     && JSON.stringify(loaded.ship) === JSON.stringify(saved.ship) && loaded.anchor.origin.every((v, i) => v === saved.anchor.origin[i])
     && loaded.anchor.offset.every((v, i) => Math.abs(v - saved.anchor.offset[i]) <= residualTolerance(saved.anchor.offset)));
   check('live system parameters survive every epoch and reload', sameForeignSystem(loaded, hostFrame));
+  check('quickload retains the completed dead-ship observer transition without a death overlay', loaded.dead && loaded.observerMode && !loaded.deathBannerVisible);
+  // Observe the original two-second delayed-entry boundary before context
+  // recovery, keeping the real wall clock and camera state untouched.
+  await page.waitForFunction(() => performance.now() - qa.state.G.deathRt >= 2100);
+  const settledLoad = await sample('loaded-observer-settled', { capture: true });
+  check('delayed observer entry cannot reset the loaded camera', settledLoad.focus === saved.focus && settledLoad.observerMode && !settledLoad.deathBannerVisible
+    && JSON.stringify(settledLoad.anchor) === JSON.stringify(loaded.anchor));
   const recoveryState = () => page.evaluate(() => __foreignRecoveryState());
   const before = await recoveryState();
   await page.evaluate(() => { window.__foreignLoss = qa.scene.renderer.getContext().getExtension('WEBGL_lose_context'); if (!__foreignLoss) throw Error('GPU loss extension unavailable'); __foreignLoss.loseContext(); });

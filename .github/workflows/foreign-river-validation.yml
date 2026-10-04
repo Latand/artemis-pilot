@@ -41,6 +41,7 @@ jobs:
         run: |
           node scripts/smoke-foreign-river.mjs
           node scripts/smoke-foreign-star-startup.mjs
+          node scripts/smoke-scenario-session.mjs
           node scripts/verify-foreign-river.mjs . evidence/foreign-river --validate
       - run: npx playwright install --with-deps chromium
       - name: Bound the real-provider GPU sequence to fifteen minutes
