@@ -1,0 +1,103 @@
+name: Bounded app-motion capture proof
+on:
+  push:
+    branches: ['diagnostic/app-motion-completed-capture']
+permissions:
+  contents: read
+concurrency:
+  group: app-motion-completed-capture
+  cancel-in-progress: false
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - run: node scripts/smoke-galaxy-app-motion-capture.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: Pin fixture, source worktrees and runtime provenance
+        run: |
+          mkdir -p evidence
+          uname -a > evidence/host.txt
+          lscpu >> evidence/host.txt
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {createHash} from 'node:crypto';
+          import {readFileSync,writeFileSync,symlinkSync} from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          import {resolve} from 'node:path';
+          const git=(...args)=>execFileSync('git',args,{encoding:'utf8'}).trim();
+          const fixtureHead=git('rev-parse','HEAD');assert.equal(fixtureHead,process.env.GITHUB_SHA);
+          git('diff','--exit-code');git('diff','--cached','--exit-code');
+          const fixtures={
+            'scripts/capture-galaxy-app-motion.mjs':'34a0ad75ec61f8e8432591f68096b3c1c29065f27ebb163673304d199b49ac3e',
+            'scripts/galaxy-app-motion-capture.mjs':'781db514a5f7c04c9abbd7f2dcbfb6f455499eb6577071fd5814298f5632e04a',
+            'scripts/smoke-galaxy-app-motion-capture.mjs':'f2e65130d3b683de7d453cfa2fce7f5e5236c8fc0251bded362113a54080293f',
+          };
+          for(const [path,expected] of Object.entries(fixtures)){
+            assert.equal(createHash('sha256').update(execFileSync('git',['show',`HEAD:${path}`])).digest('hex'),expected,'HEAD:'+path);
+            assert.equal(createHash('sha256').update(readFileSync(path)).digest('hex'),expected,path);
+          }
+          const refs={before:'3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6',after:'64e081181a698adb07df34334290066f68bbdf82'};
+          const sources={};
+          for(const [variant,ref] of Object.entries(refs)){
+            const root=resolve(process.env.RUNNER_TEMP,'app-motion-'+variant);
+            git('worktree','add','--detach',root,ref);
+            symlinkSync(resolve('node_modules'),resolve(root,'node_modules'),'dir');
+            sources[variant]={root,ref,tree:git('-C',root,'rev-parse','HEAD^{tree}')};
+          }
+          const packages=Object.fromEntries(['playwright','vite','three'].map(name=>[name,JSON.parse(readFileSync('node_modules/'+name+'/package.json','utf8')).version]));
+          const provenance={fixtureHead,fixtureTree:git('rev-parse','HEAD^{tree}'),fixtures,sources,packages,node:process.version,platform:process.platform,arch:process.arch,runId:process.env.GITHUB_RUN_ID,
+            scope:'Two immutable application sources; 3 settled views plus the original 8 moving steps each. No performance trial or full cohort rerun.'};
+          assert.equal(provenance.fixtureHead,process.env.GITHUB_SHA);
+          writeFileSync('evidence/provenance.json',JSON.stringify(provenance,null,2)+'\n');
+          NODE
+          cat > evidence/check-source.mjs <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,realpathSync} from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          import {resolve} from 'node:path';
+          const variant=process.argv[2],p=JSON.parse(readFileSync('evidence/provenance.json','utf8')).sources[variant];
+          assert(p,'Declared before/after source');
+          const git=(...args)=>execFileSync('git',['-C',p.root,...args],{encoding:'utf8'}).trim();
+          assert.equal(git('rev-parse','HEAD'),p.ref);assert.equal(git('rev-parse','HEAD^{tree}'),p.tree);
+          git('diff','--exit-code');git('diff','--cached','--exit-code');
+          for(const flags of [['--others','--exclude-standard'],['--others','--ignored','--exclude-standard']]){
+            const extra=git('ls-files',...flags).split('\n').filter(Boolean);
+            assert(extra.every(path=>path==='node_modules'||path.startsWith('node_modules/')),'Unexpected untracked/ignored source input: '+extra.join(','));
+          }
+          assert.equal(realpathSync(resolve(p.root,'node_modules')),realpathSync('node_modules'));
+          console.log(variant,p.ref,p.tree,'clean exact source');
+          NODE
+      - name: Capture the two exact eleven-image sequences once
+        run: |
+          failed=0
+          for variant in before after; do
+            node evidence/check-source.mjs "$variant"
+            if timeout --signal=TERM --kill-after=15s 8m node scripts/capture-galaxy-app-motion.mjs "$RUNNER_TEMP/app-motion-$variant" "evidence/$variant"; then
+              echo 0 > "evidence/$variant-exit-code.txt"
+            else
+              result=$?
+              echo "$result" > "evidence/$variant-exit-code.txt"
+              failed=1
+            fi
+            node evidence/check-source.mjs "$variant"
+          done
+          git diff --exit-code
+          git diff --cached --exit-code
+          exit "$failed"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: galaxy-app-motion-completed-recapture
+          path: evidence/
+          if-no-files-found: error
+          retention-days: 14

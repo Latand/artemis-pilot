@@ -118,6 +118,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install
+      - run: node scripts/smoke-galaxy-app-motion-capture.mjs
       - name: Exact application comparison source
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
