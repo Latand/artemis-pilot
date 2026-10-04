@@ -27,7 +27,7 @@ function draw(expected,label,cameraArg=camera) {
     assert.equal(uniforms.uDiskUnclipped.value,expected,label);checks++;
 }
 pose();draw(0,'unverified initial material uses fallback');
-optics.disk.material.onBeforeCompile({},renderer);
+optics.disk.material.onBeforeCompile({precision:'highp'},renderer);
 assert.equal(uniforms.uDiskUnclipped.value,0,'compile leaves first draw on normalized support');checks++;
 draw(1,'ordinary actual draw is eligible');
 viewport.set(0,0,430,932);draw(1,'mobile physical viewport stays eligible');
@@ -55,16 +55,15 @@ camera.scale.setScalar(1);camera.updateMatrixWorld(true);draw(1,'unscaled camera
 const ortho=new THREE.OrthographicCamera(-300,300,200,-200,.02,1e5);ortho.position.copy(camera.position);ortho.lookAt(0,0,0);ortho.updateMatrixWorld(true);
 draw(0,'orthographic camera falls back',ortho);draw(1,'perspective draw after orthographic draw recovers');
 assert.equal(precisionQueries,1,'capability query is outside repeated draw callbacks');
-precision={precision:16,rangeMin:62,rangeMax:62};optics.disk.material.onBeforeCompile({},renderer);draw(0,'lower precision after recompilation rejects fast path');
-precision={precision:23,rangeMin:127,rangeMax:127};optics.disk.material.onBeforeCompile({},renderer);assert.equal(uniforms.uDiskUnclipped.value,0,'recompilation resets eligibility before upload');checks++;draw(1,'verified float32 recompilation restores fast path');
-optics.disk.material.precision='mediump';draw(0,'lower material precision resets eligibility');
-optics.disk.material.precision=null;draw(1,'default high precision recovers');
-const secondRenderer={...renderer,capabilities:{precision:'mediump'}};
-optics.disk.material.onBeforeCompile({},secondRenderer);optics.disk.onBeforeRender(secondRenderer,scene,camera);assert.equal(uniforms.uDiskUnclipped.value,0,'second renderer keeps its own unsupported capability');checks++;
-draw(1,'original renderer retains its own precision proof');
-optics.disk.material.onBeforeCompile({},secondRenderer);draw(1,'unsupported second renderer cannot overwrite the first proof');
+precision={precision:16,rangeMin:62,rangeMax:62};optics.disk.material.onBeforeCompile({precision:'highp'},renderer);draw(0,'lower hardware precision rejects fast path');
+precision={precision:23,rangeMin:127,rangeMax:127};optics.disk.material.onBeforeCompile({precision:'highp'},renderer);assert.equal(uniforms.uDiskUnclipped.value,0,'recompilation resets eligibility before upload');checks++;draw(0,'uncertain earlier variant stays rejected after highp recompilation');
+const secondRenderer={...renderer};
+optics.disk.material.onBeforeCompile({precision:'highp'},secondRenderer);optics.disk.onBeforeRender(secondRenderer,scene,camera);assert.equal(uniforms.uDiskUnclipped.value,1,'new renderer has its own verified compilation');checks++;
+optics.disk.material.onBeforeCompile({precision:'mediump'},secondRenderer);optics.disk.onBeforeRender(secondRenderer,scene,camera);assert.equal(uniforms.uDiskUnclipped.value,0,'actual compiled mediump overrides highp defaults');checks++;
+optics.disk.material.onBeforeCompile({precision:'highp'},secondRenderer);optics.disk.onBeforeRender(secondRenderer,scene,camera);assert.equal(uniforms.uDiskUnclipped.value,0,'highp recompilation cannot re-enable an older cached mediump variant');checks++;
+const missingPrecisionRenderer={...renderer};optics.disk.material.onBeforeCompile({},missingPrecisionRenderer);optics.disk.onBeforeRender(missingPrecisionRenderer,scene,camera);assert.equal(uniforms.uDiskUnclipped.value,0,'missing compile precision fails closed');checks++;
 const brokenRenderer={...renderer,getContext:()=>{throw Error('context unavailable');}};
-optics.disk.material.onBeforeCompile({},brokenRenderer);optics.disk.onBeforeRender(brokenRenderer,scene,camera);assert.equal(uniforms.uDiskUnclipped.value,0,'failed capability read uses fallback');checks++;
+optics.disk.material.onBeforeCompile({precision:'highp'},brokenRenderer);optics.disk.onBeforeRender(brokenRenderer,scene,camera);assert.equal(uniforms.uDiskUnclipped.value,0,'failed capability read uses fallback');checks++;
 const fresh=makeHoleOptics();assert.equal(fresh.disk.material.uniforms.uDiskUnclipped.value,0,'new material starts with normalized fallback');checks++;
 assert.match(source,/if \(uDiskUnclipped < \.5\)/,'GLSL branch depends only on one uniform');
 assert.equal((source.match(/dFdx\(ray\)/g)||[]).length,1,'support derivative expression is retained once');

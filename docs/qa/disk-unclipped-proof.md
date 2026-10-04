@@ -17,11 +17,18 @@ uploaded float32 origin, disk normal, camera rotation, inverse projection, view
 depth and active near/far tier. It starts at 0, resets on rejected cameras and
 avoids the proof entirely when the disk is disabled. The flag is not cached
 between cameras, tiers or recreated materials. A renderer-specific capability
-proof is recorded when the disk material compiles: effective highp, at least 23
+qualification is recorded from the actual `onBeforeCompile` parameters when
+the disk material compiles: effective highp, at least 23
 fraction bits, exponent ranges at least 126/127. Unknown or lower precision
 keeps the normalized path. Compilation resets the flag before uniform upload,
-including recompilation after context restoration. Renderer proofs are separate;
-there is no precision query or GL readback in a draw callback.
+including recompilation after context restoration. Renderer qualifications are
+separate. A missing/unsupported compile permanently rejects this shortcut for
+that material/renderer, so a later highp compile cannot authorize a previously
+cached mediump program that skips the compile hook. A new material starts
+unverified. This conservative fallback also persists across restoration when
+that existing material has an uncertain history. No precision query or GL
+readback enters a draw callback. `getShaderPrecisionFormat` qualifies storage
+precision/range; it does not certify IEEE operation rounding.
 
 When it is 1, every ray in the viewport has full unclipped support. The shader
 uses the original `-ro.z/rd.z` hit and coverage 1. When it is 0, the normalized
@@ -105,9 +112,14 @@ cohort; their report and PNG hashes are retained. Camera matrices for those
 records are explicitly reconstructed from pinned fixture settings. `smoke-disk-fast-path-lifecycle.mjs` executes the production
 material and camera callback with real Three cameras, including tier changes,
 parenting, scale, projection changes, disabled/re-enabled disk and new material.
-It covers 37 callback/material transitions, including unsupported shader
+It covers 36 callback/material transitions, including unsupported shader
 precision and renderer-specific capability state. It is a CPU lifecycle test,
-not native GPU context recovery.
+not native GPU context recovery. `smoke-disk-program-precision.mjs` additionally
+uses the installed Three r164 `WebGLPrograms.getParameters/getProgramCacheKey`
+to reproduce inherited mediump despite renderer default highp, and cached
+mediump reselection after a later highp compilation. Only new cache keys invoke
+the production compile callback. This is actual parameter/cache-key behavior,
+not GPU program execution.
 
 Offline Mesa compilation must use the final committed source and captured
 native Three shader prefixes for all four layer programs. It proves compilation

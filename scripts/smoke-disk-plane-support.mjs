@@ -344,7 +344,7 @@ if (process.argv.includes('--verify-main-scope')) {
     const helperEnd=source.indexOf('export function makeHoleOptics()',helperStart);
     assert.ok(helperStart>0 && helperEnd>helperStart);
     let outside=source.slice(0,helperStart)+source.slice(helperEnd);
-    const precisionStart=outside.indexOf('    // Verify the arithmetic model');
+    const precisionStart=outside.indexOf('    // Qualify float32 capability');
     const precisionEnd=outside.indexOf('    const center=',precisionStart);
     assert.ok(precisionStart>0 && precisionEnd>precisionStart);
     outside=outside.slice(0,precisionStart)+outside.slice(precisionEnd);

@@ -312,21 +312,24 @@ export function makeHoleOptics() {
         return mesh;
     };
     const shadow=makeLayer(0), disk=makeLayer(1), ring=makeLayer(2), jet=makeLayer(3);
-    // Verify the arithmetic model when this material is compiled, including
+    // Qualify float32 capability when this material is compiled, including
     // recompilation after native context restoration. Unknown/lower precision
     // keeps the normalized path; no capability query enters the draw hot path.
     const diskPrecision=new WeakMap();
-    disk.material.onBeforeCompile=(_shader,renderer)=>{
+    disk.material.onBeforeCompile=(parameters,renderer)=>{
         uniforms.uDiskUnclipped.value=0;
         if (!renderer || typeof renderer!=='object') return;
         let supported=false;
         try {
             const gl=renderer.getContext();
             const format=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);
-            supported=(disk.material.precision ?? renderer.capabilities.precision)==='highp'
+            supported=parameters?.precision==='highp'
                 && format?.precision>=23 && format.rangeMin>=126 && format.rangeMax>=127;
         } catch { /* Unknown capabilities use normalized support. */ }
-        diskPrecision.set(renderer,supported);
+        // A material can reuse an older program without this callback. Once
+        // any compiled variant is uncertain, keep this renderer on fallback
+        // for this material's lifetime, including later cached-program returns.
+        diskPrecision.set(renderer,supported && diskPrecision.get(renderer)!==false);
     };
     const center=new THREE.Vector3(), eye=new THREE.Vector3(), forward=new THREE.Vector3(), rotation=new THREE.Matrix4(), viewport=new THREE.Vector4();
     const o={shadow,ring,disk,jet,rsUnits:1};
@@ -356,7 +359,7 @@ export function makeHoleOptics() {
         if (layer===1) {
             uniforms.uDiskUnclipped.value=0;
             if (uniforms.uDiskOn.value>.5 && diskPrecision.get(renderer)===true
-                && (disk.material.precision ?? renderer?.capabilities?.precision)==='highp' && camera.isPerspectiveCamera && !camera.parent && typeof renderer?.getCurrentViewport==='function') {
+                && camera.isPerspectiveCamera && !camera.parent && typeof renderer?.getCurrentViewport==='function') {
                 renderer.getCurrentViewport(viewport);
                 uniforms.uDiskUnclipped.value = diskSupportUnclipped({
                     origin:uniforms.uOrigin.value, normal:uniforms.uNormal.value, viewDepth:uniforms.uViewDepth.value,
