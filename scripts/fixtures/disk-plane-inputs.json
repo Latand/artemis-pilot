@@ -1,0 +1,30 @@
+{
+  "baseline": "6179f23661591bb4dee89a0bf8e686233e1ba280",
+  "baselineTree": "423b008213ce603bf3a92eeea33af061a92a0df5",
+  "candidateHoleSha256": "45696ec9bfe229a021fb9ae05d085446c72f7053bf4e38e1693582f2d8ca72fb",
+  "productionPaths": [
+    "src",
+    "public",
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "bun.lock",
+    "vite.config.*",
+    "scripts/galaxy-preview-plugin.mjs",
+    ".env*",
+    "postcss.config.*",
+    ".postcssrc*",
+    "tsconfig*.json",
+    "jsconfig*.json",
+    "npm-shrinkwrap.json",
+    ".npmrc"
+  ],
+  "fingerprints": {
+    "A": "5509822d3cdc9bee3f72b8ae08990f004f0e637911f44ecd3a3eb4825ef1fff8",
+    "B": "f779ced8d4b791a9f0c693df34043b1fb7e4307c02a8fe6dcd57735a91a6853f"
+  },
+  "benchmarkReference": "48a9da40a05b28cfd0d125b6107a771999fb784d",
+  "benchmarkPath": "scripts/benchmark-explored-systems.mjs",
+  "benchmarkHash": "f5a1f31989c2e074ccd947875a3032ccde6d19f3712b2c9178b38093d8dae5cb",
+  "nativeHookHash": "2d24f1ddf1916741d20595b305a5a5e4b5bf141440bed351ed9dbc143f9aca86"
+}
