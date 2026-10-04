@@ -1,0 +1,173 @@
+# One bounded baseline replay. Matching pixels are diagnostic only: the two
+# added untimed readbacks may affect scheduling. No candidate/cost execution.
+# Step caps total40 minutes, with5 minutes of job overhead margin.
+name: Baseline lens resize observation
+'on':
+  push:
+    branches:
+    - diagnostic/disk-resize-baseline-6179-v1
+permissions:
+  contents: read
+concurrency:
+  group: disk-resize-baseline-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  BASE_SHA: 6179f23661591bb4dee89a0bf8e686233e1ba280
+  CANDIDATE_ROOT: ${{ github.workspace }}
+  EXPECTED_CANDIDATE_REVISION: ${{ github.sha }}
+jobs:
+  observe-baseline:
+    name: Main-only desktop bloom resize observation
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DEVICE: desktop
+      BLOOM: '1'
+      ARTEMIS_EVIDENCE: ${{ github.workspace }}/evidence/disk-baseline-resize
+    steps:
+    - uses: actions/checkout@v4
+      timeout-minutes: 2
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+    - uses: actions/setup-node@v4
+      timeout-minutes: 2
+      with:
+        node-version: 22.23.3
+    - name: Pin baseline, reviewed observer ancestry and runtime
+      timeout-minutes: 5
+      run: |
+        set -euo pipefail
+        mkdir -p "$ARTEMIS_EVIDENCE"
+        test "$GITHUB_RUN_ATTEMPT" = '1'
+        test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+        REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
+        test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '367da7eae309755dab0791dca8af9c0d84ae0b58'
+        git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_PARENT_SHA"
+        node --input-type=module <<'DELTA'
+        import assert from 'node:assert/strict';
+        import {execFileSync} from 'node:child_process';
+        const changed=execFileSync('git',['diff','--name-only',process.env.GITHUB_SHA+'^1',process.env.GITHUB_SHA],{encoding:'utf8'}).trim().split('\n').sort();
+        assert.deepEqual(changed,['.github/workflows/disk-resize-baseline-observation.yml','scripts/baseline-resize-observation.mjs','scripts/probe-disk-plane.mjs','scripts/smoke-baseline-resize-observation.mjs'].sort());
+        DELTA
+        test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
+        cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
+        194798bc4002e9c64562d0ce6ee21be1147a7801 docs/qa/disk-plane-only.md
+        2ceec0c32911de3e85a78fece58f854046f23d55 scripts/baseline-resize-observation.mjs
+        cff455547ea07769b51e73ef4f49361028c672e4 scripts/benchmark-disk-plane.mjs
+        d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
+        fcb81da36f52499abdcd5da67294710b220f4471 scripts/disk-plane-qa.mjs
+        3c5aebfe1134cbc3a915e8fbf61551559802e427 scripts/disk-plane-source-contract.mjs
+        8934d52ec809c75c1fee2b774275cea0ed3b1205 scripts/fixtures/disk-plane-inputs.json
+        d861c81726080ae02a70559f4e72a8d3e9028262 scripts/lens-resize-observer.mjs
+        dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
+        a67ea093195476e9382603c1ac6415b2c2730913 scripts/probe-disk-plane.mjs
+        06c0d48c381b9eb710783a7f5d077842116dc4fe scripts/smoke-baseline-resize-observation.mjs
+        140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
+        3610cbcf584c593393934a71b4de5dae35a148d2 scripts/smoke-disk-plane-finalize.mjs
+        0d6e88017cc10a1b333762620b577bac067a5c74 scripts/smoke-disk-plane-qa.mjs
+        4a9d2c35b1399e2b1233c45dd556947ac114596a scripts/smoke-disk-plane-support.mjs
+        eecde70f13779d987445694bb3c81f3969294c30 scripts/smoke-lens-resize-observer.mjs
+        f5e4fcfa4ec596f9cf0775c8f138260c0b24f088 src/holeOptics.js
+        BLOBS
+        while read -r expected path; do
+          test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
+          test "$(git hash-object "$path")" = "$expected"
+        done < "$ARTEMIS_EVIDENCE/reviewed-blobs.txt"
+        git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
+        cp .github/workflows/disk-resize-baseline-observation.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
+        git worktree add --detach "$RUNNER_TEMP/disk-plane-main" "$BASE_SHA"
+        ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/disk-plane-main/node_modules"
+        echo "BASE_ROOT=$RUNNER_TEMP/disk-plane-main" >> "$GITHUB_ENV"
+        npm install --no-save --package-lock=false --ignore-scripts playwright@1.63.0 playwright-core@1.63.0 three@0.164.1 vite@5.4.21
+        test ! -e package-lock.json
+        node --input-type=module <<'NODE' > "$ARTEMIS_EVIDENCE/runtime.json"
+        import assert from 'node:assert/strict';
+        import {readFileSync,realpathSync} from 'node:fs';
+        import {createHash} from 'node:crypto';
+        const expected={playwright:'1.63.0','playwright-core':'1.63.0',three:'0.164.1',vite:'5.4.21'};
+        const actual={},packageJsonHashes={};
+        for(const [name,version] of Object.entries(expected)){
+         const bytes=readFileSync(`node_modules/${name}/package.json`);actual[name]=JSON.parse(bytes).version;
+         assert.equal(actual[name],version);packageJsonHashes[name]=createHash('sha256').update(bytes).digest('hex');
+        }
+        const bytes=readFileSync('node_modules/playwright-core/browsers.json');
+        const browsers=JSON.parse(bytes).browsers;
+        for(const name of ['chromium','chromium-headless-shell']){
+         const browser=browsers.find(b=>b.name===name);assert.equal(browser.revision,'1243');assert.equal(browser.browserVersion,'153.0.8010.12');
+        }
+        assert.equal(realpathSync(process.env.RUNNER_TEMP+'/disk-plane-main/node_modules'),realpathSync('node_modules'));
+        console.log(JSON.stringify({node:process.version,packages:actual,packageJsonHashes,browserManifestSha256:createHash('sha256').update(bytes).digest('hex'),chromium:'153.0.8010.12',revision:'1243'}));
+        NODE
+    - name: Verify baseline-only selection and observation failure controls
+      timeout-minutes: 3
+      run: |
+        set -euo pipefail
+        node scripts/probe-disk-plane.mjs --baseline-resize-observation --validate > "$ARTEMIS_EVIDENCE/source-before.json"
+        node scripts/smoke-lens-resize-observer.mjs
+        node scripts/smoke-baseline-resize-observation.mjs
+        node scripts/smoke-disk-plane-qa.mjs
+        node scripts/smoke-disk-plane-finalize.mjs
+        node --check scripts/probe-disk-plane.mjs
+    - name: Install the pinned Chromium153 runtime
+      timeout-minutes: 5
+      run: |
+        set -euo pipefail
+        node node_modules/playwright/cli.js install --with-deps chromium
+    - name: Observe the two original baseline resize captures once
+      timeout-minutes: 15
+      run: |
+        set -euo pipefail
+        node scripts/probe-disk-plane.mjs --baseline-resize-observation
+    - name: Verify protected source and fixture bytes after observation
+      if: always()
+      timeout-minutes: 2
+      run: |
+        set -euo pipefail
+        node scripts/probe-disk-plane.mjs --baseline-resize-observation --validate > "$ARTEMIS_EVIDENCE/source-after.json"
+    - uses: actions/upload-artifact@v4
+      if: always()
+      timeout-minutes: 2
+      with:
+        name: disk-resize-baseline-metadata-${{ github.sha }}
+        path: |-
+          evidence/disk-baseline-resize/*.json
+          evidence/disk-baseline-resize/*.txt
+          evidence/disk-baseline-resize/*.yml
+          evidence/disk-baseline-resize/main/*-resize-diagnostic.json
+          evidence/disk-baseline-resize/main/*-pre-lens-source-*.rgba
+        if-no-files-found: error
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: always()
+      timeout-minutes: 1
+      with:
+        name: disk-resize-baseline-original-disk-${{ github.sha }}
+        path: evidence/disk-baseline-resize/main/original-disk*.png
+        if-no-files-found: warn
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: always()
+      timeout-minutes: 1
+      with:
+        name: disk-resize-baseline-original-saturn-${{ github.sha }}
+        path: evidence/disk-baseline-resize/main/original-saturn*.png
+        if-no-files-found: warn
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: always()
+      timeout-minutes: 1
+      with:
+        name: disk-resize-baseline-resize-1-${{ github.sha }}
+        path: evidence/disk-baseline-resize/main/resize-1*.png
+        if-no-files-found: warn
+        retention-days: 14
+    - uses: actions/upload-artifact@v4
+      if: always()
+      timeout-minutes: 1
+      with:
+        name: disk-resize-baseline-resize-2-${{ github.sha }}
+        path: evidence/disk-baseline-resize/main/resize-2*.png
+        if-no-files-found: warn
+        retention-days: 14

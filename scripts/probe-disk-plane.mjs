@@ -2,6 +2,8 @@
 // Run only after authorization: each DEVICE=desktop|mobile and BLOOM=0|1 pair,
 // BASE_ROOT=<exact main> EXPECTED_CANDIDATE_REVISION=<committed candidate>.
 // This diagnoses issue50 disk continuity. It does not validate a ring-depth fix.
+// --baseline-resize-observation requires desktop+bloom and ends at capture45;
+// it preserves failures and labels a matching bounded replay inconclusive.
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -14,22 +16,23 @@ import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled,
 import { atomicDiskReport, initializeDiskReport, finalizeDiskProbe } from './disk-plane-finalize.mjs';
 import { installNativeRingProof } from './native-ring-proof.mjs';
 import { installLensResizeObserver, wantsResizeDiagnostic, RESIZE_DIAGNOSTIC_PLAN, captureWithResizeEvidence, removeResizeObservers } from './lens-resize-observer.mjs';
+import { diskProbeModes, BASELINE_RESIZE_BUDGET, assertNextBaselineObservation,
+    baselineObservationAtStop, finishBaselineObservation } from './baseline-resize-observation.mjs';
 
 const candidateRoot = resolve(process.env.CANDIDATE_ROOT || fileURLToPath(new URL('..', import.meta.url)));
 const baselineRoot = process.env.BASE_ROOT && resolve(process.env.BASE_ROOT);
-const hooksOnly = process.argv.includes('--validate-hooks');
-const validateOnly = process.argv.includes('--validate');
-assert(process.argv.slice(2).every(arg => ['--validate', '--validate-hooks'].includes(arg)), 'Known source-validation option');
-assert(!(hooksOnly && validateOnly), 'Choose one validation mode');
 const device = process.env.DEVICE || 'desktop', bloomOption = process.env.BLOOM || '0';
 assert(['desktop', 'mobile'].includes(device), 'DEVICE must be desktop or mobile');
 assert(['0', '1'].includes(bloomOption), 'BLOOM must be 0 or 1');
+const { hooksOnly, validateOnly, baselineResizeObservation } = diskProbeModes(process.argv.slice(2), device, bloomOption);
 const mobile = device === 'mobile', bloom = bloomOption === '1';
 const matrixEntry = `${device}-${bloom ? 'bloom' : 'direct'}`;
+const matrix = baselineResizeObservation ? ['desktop-bloom'] : MATRIX;
+const operationBudget = baselineResizeObservation ? BASELINE_RESIZE_BUDGET : QA_OPERATION_BUDGET;
 const hookChecks = [validateDiskPlaneHooks(candidateRoot)];
 if (baselineRoot) hookChecks.unshift(validateDiskPlaneHooks(baselineRoot));
 if (hooksOnly) {
-    console.log(JSON.stringify({ mode: 'hooks-only', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, resizeDiagnosticPlan: RESIZE_DIAGNOSTIC_PLAN, browserStarted: false,
+    console.log(JSON.stringify({ mode: 'hooks-only', hookChecks, matrix, operationBudget, resizeDiagnosticPlan: RESIZE_DIAGNOSTIC_PLAN, browserStarted: false,
         sourceBound: false, runtimeAcceptance: false }, null, 2));
     process.exit(0);
 }
@@ -40,7 +43,7 @@ const bindSources = () => ({ main: verifyDiskSource(baselineRoot, 'A', diskInput
     candidate: verifyDiskSource(candidateRoot, 'B', process.env.EXPECTED_CANDIDATE_REVISION) });
 const sourceBindingBefore = bindSources();
 if (validateOnly) {
-    console.log(JSON.stringify({ mode: 'source-validation', hookChecks, matrix: MATRIX, operationBudget: QA_OPERATION_BUDGET, resizeDiagnosticPlan: RESIZE_DIAGNOSTIC_PLAN, sourceBindingBefore,
+    console.log(JSON.stringify({ mode: 'source-validation', hookChecks, matrix, operationBudget, resizeDiagnosticPlan: RESIZE_DIAGNOSTIC_PLAN, sourceBindingBefore,
         sourceBindingAfter: bindSources(), browserStarted: false, runtimeAcceptance: false }, null, 2));
     process.exit(0);
 }
@@ -52,8 +55,8 @@ const out = resolve(process.env.ARTEMIS_EVIDENCE || `evidence/disk-plane/${matri
 await mkdir(out, { recursive: true });
 const viewport = mobile ? { width: 390, height: 700 } : { width: 960, height: 640 };
 const alternateViewport = mobile ? { width: 430, height: 760 } : { width: 840, height: 600 };
-const report = { schema: 1, matrixEntry, matrix: MATRIX, mobile, bloom, completed: false,
-    operationBudget: QA_OPERATION_BUDGET,
+const report = { schema: 1, matrixEntry, matrix, mobile, bloom, completed: false,
+    operationBudget,
     resizeDiagnosticPlan: RESIZE_DIAGNOSTIC_PLAN,
     sourceBindingBefore, sourceBindingAfter: null, diagnosticOnly: true,
     scope: 'Issue50 disk-plane continuity only; exact main paired with disk-only candidate.',
@@ -64,6 +67,10 @@ const report = { schema: 1, matrixEntry, matrix: MATRIX, mobile, bloom, complete
         'This diagnostic is not a performance benchmark or a full-source acceptance run.'],
     omissions: ['unrelated cosmic background, HYG/tier-1 catalogs, merger worker, gravity-flow overlay'],
     variants: {}, pairedControls: [] };
+if (baselineResizeObservation) Object.assign(report, { executionMode: 'baseline-resize-observation', acceptanceClaim: false,
+    scope: 'One baseline desktop/bloom observation through the exact second alternate near-lens resize capture.',
+    baselineResizeObservation: { completed: false, acceptanceClaim: false, outcome: 'pending',
+        interpretation: 'A disappearing mismatch is inconclusive and does not establish renderer acceptance.' } });
 let browser, server, observedPage, originalError, hadOriginalError=false;
 const mainControls = new Map();
 const flush = options => atomicDiskReport(resolve(out, 'report.json'),report,options);
@@ -322,7 +329,7 @@ await initializeDiskReport(resolve(out,'report.json'),report);
 try {
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined,
         args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
-    for (const [variant, root] of [['main', baselineRoot], ['candidate', candidateRoot]]) {
+    variantLoop: for (const [variant, root] of baselineResizeObservation ? [['main', baselineRoot]] : [['main', baselineRoot], ['candidate', candidateRoot]]) {
         const local = report.variants[variant] = { revision: sourceBindingBefore[variant].revision,
             errors: [], samples: [], assets: [], stability: [], recoveries: [], crossingAcceptance: null };
         await mkdir(resolve(out, variant), { recursive: true });
@@ -373,6 +380,7 @@ try {
         }
         await prepareContextRecoveryQA(page);
         for (const test of DISK_PLANE_CASES) {
+            if (baselineResizeObservation) assertNextBaselineObservation(local.samples, test, 'original');
             local.assets.push({ phase: 'original', ...test, ...await settleAssets(page, test) });
             if (test.scenario.startsWith('saturn-')) local.stability.push({ ...test, ...await assertStableControl(page, test) });
             await saveCase(page, variant, test, 'original');
@@ -393,6 +401,7 @@ try {
                 });
                 const phase = `resize-${cycle}-${sizeName}`;
                 for (const test of RESIZE_CASES) {
+                    if (baselineResizeObservation) assertNextBaselineObservation(local.samples, test, phase);
                     await settleAssets(page, test);
                     const sample = await saveCase(page, variant, test, phase);
                     if (test.scenario === 'disk-crossing' && test.pitch === 0)
@@ -401,6 +410,9 @@ try {
                         const previous = local.samples.find(s => s.phase === `resize-1-${sizeName}` && s.scenario === test.scenario && s.pitch === test.pitch);
                         assert.equal(sample.productionSha256, previous.productionSha256, 'Repeated camera/resize restores exact settled frozen pixels');
                     }
+                    // Equality above must pass first. This stops the original
+                    // prefix before any later controls, recovery, or candidate.
+                    if (baselineResizeObservation && baselineObservationAtStop(local.samples)) break variantLoop;
                 }
             }
         }
@@ -446,11 +458,15 @@ try {
         await page.close(); await server.close(); server = null;
         await flush();
     }
-    assert(report.pairedControls.some(control => control.label.endsWith('/ring') && control.applicable), 'Paired unchanged ring pixels were actually sampled');
-    assert.equal(report.pairedControls.length, mainControls.size, 'Every baseline control has a candidate pair');
+    if (baselineResizeObservation) report.baselineResizeObservation = finishBaselineObservation(report.variants);
+    else {
+        assert(report.pairedControls.some(control => control.label.endsWith('/ring') && control.applicable), 'Paired unchanged ring pixels were actually sampled');
+        assert.equal(report.pairedControls.length, mainControls.size, 'Every baseline control has a candidate pair');
+    }
     report.completed = true;
 } catch (error) {
     originalError = error; hadOriginalError=true;
+    if (baselineResizeObservation) Object.assign(report.baselineResizeObservation, { completed: false, outcome: 'failed', failure: error.stack || String(error) });
 } finally {
     if (observedPage) {
         try {
