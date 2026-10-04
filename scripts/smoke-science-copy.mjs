@@ -102,12 +102,16 @@ requireMatch(readme, /RK4.{0,100}ship.{0,180}Solar System.{0,120}player-placed-h
     "README must scope the capped priority-ranked stellar subset to ship RK4");
 requireMatch(help, /RK4.{0,100}ship.{0,180}Solar System.{0,120}player-placed holes.{0,180}capped.{0,80}priority-ranked.{0,100}stellar/is,
     "Help must scope the capped priority-ranked stellar subset to ship RK4");
-requireMatch(readme, /RK4 path.{0,100}player-placed holes.{0,160}Solar System bodies.{0,120}gravitational debris.{0,120}other placed holes/is,
-    "README must list player-placed-hole RK4 inputs");
+requireMatch(readme, /player-placed holes.{0,100}(?:share|shared|same).{0,80}KDK.{0,160}Solar System bodies.{0,120}other placed holes.{0,120}capped active-star.{0,80}gas/is,
+    "README must identify shared placed-hole KDK steps and their active source terms");
+rejectMatch(readme, /separate RK4 (?:path|pass).{0,100}player-placed holes|player-placed holes.{0,100}separate RK4/is,
+    "README must avoid the superseded separate placed-hole RK4 description");
+// The in-app Help copy is outside this README-only refresh. Its existing
+// consistency checks remain until that UI description is corrected separately.
 requireMatch(help, /RK4 path.{0,100}player-placed holes.{0,160}Solar System bodies.{0,120}gravitational debris.{0,120}other placed holes/is,
     "Help must list player-placed-hole RK4 inputs");
-rejectMatch(readme + help, /placed-hole RK4.{0,180}(?:active stars|stellar subset)|RK4 path.{0,180}(?:active stars|stellar subset)/is,
-    "player-placed-hole RK4 must exclude the active-star subset");
+rejectMatch(help, /placed-hole RK4.{0,180}(?:active stars|stellar subset)|RK4 path.{0,180}(?:active stars|stellar subset)/is,
+    "legacy Help placed-hole RK4 copy must retain its existing input scope");
 requireMatch(readme, /analytic.{0,80}(?:osculating )?Kepler.{0,80}high warp/is,
     "README must disclose analytic Kepler handoffs at high warp");
 requireMatch(help, /analytic.{0,80}(?:osculating )?Kepler.{0,80}high warp/is,

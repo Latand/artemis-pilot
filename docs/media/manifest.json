@@ -1,0 +1,126 @@
+{
+  "applicationCommit": "ab51029827cf9324eb737673e46c49ab74aa1718",
+  "applicationTree": "7b185b45a344738d6299856362b455b18c8a9484",
+  "screenshotCommit": "64e081181a698adb07df34334290066f68bbdf82",
+  "images": [
+    {
+      "file": "andromeda-planet-reloaded.png",
+      "width": 1100,
+      "height": 760,
+      "bytes": 199535,
+      "sha256": "606413276f8bdecbc39699c7abc763c33fbb024dd0f089e118c42cf9fe622414",
+      "sourceFile": "10-reloaded-same-planet.png",
+      "sourceArtifact": 11299539061,
+      "editing": "none; byte-identical copy"
+    },
+    {
+      "file": "andromeda-planet.png",
+      "width": 1100,
+      "height": 760,
+      "bytes": 199090,
+      "sha256": "a17b54d743a7b26020c27a08419532a32cd7609cd051d79f271e936a3d138204",
+      "sourceFile": "08-planet.png",
+      "sourceArtifact": 11299539061,
+      "editing": "none; byte-identical copy"
+    },
+    {
+      "file": "andromeda-star.png",
+      "width": 1100,
+      "height": 760,
+      "bytes": 183720,
+      "sha256": "79128a64dab9663cfe8864277984ebcc9fe4312ec1a85eaddd33c958c53d7eb0",
+      "sourceFile": "07-stellar-photosphere.png",
+      "sourceArtifact": 11299539061,
+      "editing": "none; byte-identical copy"
+    },
+    {
+      "file": "earth-explore.png",
+      "width": 1100,
+      "height": 760,
+      "bytes": 348393,
+      "sha256": "9eeaf4522736eee17611b60ae636bb0074c1bcd83dd71565c54d4e58725e8365",
+      "sourceFile": "01-departure.png",
+      "sourceArtifact": 11299539061,
+      "editing": "none; byte-identical copy"
+    },
+    {
+      "file": "intergalactic.png",
+      "width": 1100,
+      "height": 760,
+      "bytes": 58519,
+      "sha256": "ca913a3f18796fb298fe5bd4a2a59cdd77a58f9d4189cc42e450a646e27825a0",
+      "sourceFile": "03-intergalactic.png",
+      "sourceArtifact": 11299539061,
+      "editing": "none; byte-identical copy"
+    },
+    {
+      "file": "jupiter-slingshot.png",
+      "width": 1366,
+      "height": 900,
+      "bytes": 729041,
+      "sha256": "aa308d371906f082e49d861d6a51398ac76a5ecb4c4ca6e37ae9da1e690528c4",
+      "sourceFile": "flight/desktop-30-flight.png",
+      "sourceArtifact": 11300275101,
+      "editing": "none; byte-identical copy"
+    }
+  ],
+  "recording": {
+    "artifact": 11307251719,
+    "run": 37211222265,
+    "captureCommit": "f86fecbc4e8756f9ce7bf03aa5e0ee4393b1a0a8",
+    "captureTree": "634dd44378ebcfef66f02c25a00bcba85c4e6036",
+    "sourceSHA256": "b4c7d906c548b45672e85adb524d04b48720f74708755cbdcb3ad20b33dc41c1",
+    "sourceBytes": 46014562,
+    "sourceZipSHA256": "f2f71488be33ff949c1d8b20301e5736cdce9494be168455eda705697ec47334"
+  },
+  "video": {
+    "file": "andromeda-walkthrough.mp4",
+    "sourceSHA256": "b4c7d906c548b45672e85adb524d04b48720f74708755cbdcb3ad20b33dc41c1",
+    "segmentsSeconds": [
+      {
+        "from": 90,
+        "to": 266
+      },
+      {
+        "from": 534,
+        "to": 580
+      },
+      {
+        "from": 750,
+        "to": 1115
+      },
+      {
+        "from": 1230,
+        "to": 1349
+      }
+    ],
+    "speed": 16,
+    "outputFps": 12,
+    "outputSHA256": "b0f1a18369066b052b54df5543ea4e165a3a5589728ca21c05c7c523863c0779",
+    "outputBytes": 1170076,
+    "durationSeconds": 44.083333,
+    "width": 1100,
+    "height": 760,
+    "videoEdits": [
+      "Trimmed startup and long low-change intervals",
+      "16x wall-clock playback",
+      "Original full 1100x760 frame and aspect ratio",
+      "Added a disclosure label in the gap between navigation and panels",
+      "H.264 transcode and 12 fps sampling; no interpolation, AI editing, cropping, color grading or soundtrack"
+    ]
+  },
+  "preview": {
+    "file": "andromeda-preview.gif",
+    "width": 550,
+    "height": 380,
+    "fps": 6,
+    "durationSeconds": 7,
+    "sourceOutputSeconds": [
+      4,
+      11
+    ],
+    "paletteColors": 128,
+    "bytes": 1681073,
+    "sha256": "ba49a4def36bacc634f6499f2478e31bb96cd1378b1ac410f5673086a4a6225c"
+  }
+}

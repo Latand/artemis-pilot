@@ -1,0 +1,51 @@
+name: README media capture
+on:
+  push:
+    branches: ['diagnostic/readme-media-20261004']
+    paths:
+      - 'docs/media/capture-readme-media.mjs'
+      - 'docs/media/capture-support.mjs'
+      - 'docs/media/smoke-readme-capture.mjs'
+      - '.github/workflows/readme-media.yml'
+permissions:
+  contents: read
+concurrency:
+  group: readme-media-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  actual-app-recording:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: Validate lifecycle failures and immutable production inputs
+        run: |
+          node docs/media/smoke-readme-capture.mjs
+          node --check docs/media/capture-readme-media.mjs
+          node --input-type=module -e "import {verifyCaptureSource} from './docs/media/capture-support.mjs'; console.log(JSON.stringify(verifyCaptureSource(process.cwd()), null, 2));"
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact source and dependency versions
+        run: |
+          mkdir -p evidence/readme-media
+          git rev-parse HEAD > evidence/readme-media/head-sha.txt
+          git rev-parse HEAD^{tree} > evidence/readme-media/tree-sha.txt
+          cp docs/media/capture-*.mjs docs/media/smoke-readme-capture.mjs evidence/readme-media/
+          npm ls --all --json > evidence/readme-media/dependencies.json
+      - name: Record the real route at a fixed viewport without screenshots
+        timeout-minutes: 35
+        run: node docs/media/capture-readme-media.mjs evidence/readme-media
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: readme-media-recording
+          path: evidence/readme-media/
+          if-no-files-found: error
+          retention-days: 14
