@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { diskInputs, hash, verifyDiskSource } from './disk-plane-source-contract.mjs';
 import { COARSE_PITCHES, DISK_PLANE_CASES, MATRIX, RESIZE_CASES, RECOVERY_CONTROLS, REPEAT_CYCLES, QA_OPERATION_BUDGET, transformDiskPlaneSource,
-    validateDiskPlaneHooks, assertCrossingAcceptance, assertPairedControl } from './disk-plane-qa.mjs';
+    validateDiskPlaneHooks, assertCrossingAcceptance, assertPairedControl, compareMaskedPixels, assertDiskBehindForeground, assertOccludedEmissionPixels, assertControlCompleteness } from './disk-plane-qa.mjs';
 import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled,
     recoveredGpuIsHealthy, pausedRecoveryPassed } from './context-recovery-qa.mjs';
 import { atomicDiskReport, initializeDiskReport, finalizeDiskProbe } from './disk-plane-finalize.mjs';
@@ -61,7 +61,7 @@ const report = { schema: 1, matrixEntry, matrix: MATRIX, mobile, bloom, complete
         'No physical model, ring filter, planet appearance, lensing, or silhouette-edge change is accepted by this probe.',
         'This diagnostic is not a performance benchmark or a full-source acceptance run.'],
     omissions: ['unrelated cosmic background, HYG/tier-1 catalogs, merger worker, gravity-flow overlay'],
-    variants: {}, pairedControls: [] };
+    variants: {}, pairedControls: [], overlappingDiskDiagnostics: [] };
 let browser, server, originalError, hadOriginalError=false;
 const mainControls = new Map();
 const flush = options => atomicDiskReport(resolve(out, 'report.json'),report,options);
@@ -70,8 +70,12 @@ const flush = options => atomicDiskReport(resolve(out, 'report.json'),report,opt
 function configureCase({ scenario, pitch }) {
     const { s, st, b, bh, c, sat, enc, e } = window.qa;
     const foreground = scenario === 'saturn-foreground-lens';
-    st.BH.x[0] = qa.initialHole.x + (foreground ? 150000 : 0);
-    st.BH.y[0] = qa.initialHole.y + (foreground ? 2000000 : 0);
+    const overlapping = scenario === 'saturn-overlapping-disk';
+    st.BH.x[0] = qa.initialHole.x + (foreground || overlapping ? 150000 : 0);
+    st.BH.z[0] = qa.initialHole.z;
+    // At the signed .48 endpoints, this places even the outer disk support
+    // behind Saturn. The old 2,000-unit offset remains the overlap diagnostic.
+    st.BH.y[0] = qa.initialHole.y + (foreground ? 4000000 : overlapping ? 2000000 : 0);
     enc.syncHoleScene(); // Paused frames intentionally do not step physical caches.
     const physicalHole = bh.BH_META[0].g.position.clone().set((e.eph.earthX + st.BH.x[0]) * c.K,
         st.BH.z[0] * c.K, -(e.eph.earthY + st.BH.y[0]) * c.K);
@@ -81,17 +85,39 @@ function configureCase({ scenario, pitch }) {
     s.cam.dist = scenario === 'disk-crossing' ? st.BH.rs[0] * c.K * 8 : 600;
     s.cam.distTarget = null; s.cam.yaw = Math.PI / 2; s.cam.pitch = pitch;
     window.__celestialFrame();
+    if (foreground) {
+        // Put the face-on disk behind the sphere, with its emitting annulus
+        // behind the tested interior. Extend the actual eye→body-center ray,
+        // including the off-center camera target, before the lateral offset.
+        const bodyRay = b.plGroups[sat].position.clone().sub(s.camera.position);
+        const forward = s.camera.getWorldDirection(bodyRay.clone());
+        const bodyDepth = bodyRay.dot(forward), view = s.camera.matrixWorld.elements;
+        const right = bodyRay.clone().set(view[0], view[1], view[2]);
+        physicalHole.copy(s.camera.position).addScaledVector(bodyRay, (bodyDepth + 3900) / bodyDepth).addScaledVector(right, 400);
+        st.BH.x[0] = physicalHole.x / c.K - e.eph.earthX;
+        st.BH.y[0] = -physicalHole.z / c.K - e.eph.earthY;
+        st.BH.z[0] = physicalHole.y / c.K;
+        enc.syncHoleScene();
+    }
     bh.updateBHVisuals(0, e.eph.earthX * c.K, -e.eph.earthY * c.K);
+    if (foreground) {
+        // Diagnostic orientation only, using the production shader's existing
+        // orthonormal disk basis; all scalar emission inputs remain native.
+        const u = bh.BH_META[0].optics.disk.material.uniforms, view = s.camera.matrixWorld.elements;
+        u.uAxisX.value.set(view[0], view[1], view[2]);
+        u.uAxisY.value.set(view[4], view[5], view[6]);
+        u.uNormal.value.set(view[8], view[9], view[10]);
+    }
     qa.physicalHole = physicalHole;
 }
 
 // Every readback comes from the production direct/composer path. The only
-// bloom-disabled draws are the two foreground opacity comparisons.
+// bloom-disabled draws are the foreground opacity/emission comparisons.
 function captureCase({ scenario, pitch, includeImages = true }) {
     const { s, st, b, bh, c, sat, tde, lens, hole, bloom, rings } = window.qa;
-    const foreground = scenario === 'saturn-foreground-lens';
+    const foreground = ['saturn-foreground-lens', 'saturn-overlapping-disk'].includes(scenario);
     const m = bh.BH_META[0], disk = m.optics.disk, state = tde.tidalState(sat);
-    const original = { tidalActive: state.active, diskVisible: disk.visible, ringVisible: rings.map(r => r.visible) };
+    const original = { tidalActive: state.active, diskVisible: disk.visible, diskDepthTest: disk.material.depthTest, ringVisible: rings.map(r => r.visible) };
     const gl = s.renderer.getContext(), width = gl.drawingBufferWidth, height = gl.drawingBufferHeight;
     if (gl.isContextLost() || s.renderContext.isLost()) throw Error('Cannot capture a lost GPU context');
     const encode = bytes => {
@@ -99,12 +125,19 @@ function captureCase({ scenario, pitch, includeImages = true }) {
         for (let i = 0; i < bytes.length; i += 32768) binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
         return btoa(binary);
     };
-    const draw = ({ lensed = true, tides = true, diskOn = true, ringsOn = true, opacityControl = false, identity = false } = {}) => {
+    const draw = ({ lensed = true, tides = true, diskOn = true, ringsOn = true, opacityControl = false, identity = false, diskDepthTest = original.diskDepthTest } = {}) => {
         state.active = tides && original.tidalActive; disk.visible = diskOn;
+        disk.material.depthTest = diskDepthTest;
         rings.forEach((ring, i) => { ring.visible = ringsOn && original.ringVisible[i]; });
         if (lensed) lens.updateLensing(s.camera, s.camera.aspect);
         else { lens.lensingPass.enabled = false; hole.holeRoot.visible = true; }
         const lensCount = lens.lensingPass.uniforms.uN.value, bloomEnabled = s.bloomPass.enabled;
+        const diskAfterRender = disk.onAfterRender;
+        let witnessDepthTest = null;
+        if (!diskDepthTest) disk.onAfterRender = function (...args) {
+            diskAfterRender.apply(this, args);
+            witnessDepthTest = gl.isEnabled(gl.DEPTH_TEST);
+        };
         if (identity) lens.lensingPass.uniforms.uN.value = 0;
         const usedLensCount = lens.lensingPass.uniforms.uN.value;
         if (opacityControl) s.bloomPass.enabled = false;
@@ -119,10 +152,12 @@ function captureCase({ scenario, pitch, includeImages = true }) {
             if (glError !== 0 || gl.isContextLost()) throw Error(`Unhealthy GPU readback: ${glError}`);
             qa.readbacks++;
             return { bytes, png: includeImages ? s.renderer.domElement.toDataURL('image/png') : null,
-                glError, usedLensCount, bloomEnabled: !!s.bloomPass.enabled, target: s.renderer.getRenderTarget() === null };
+                glError, usedLensCount, witnessDepthTest, bloomEnabled: !!s.bloomPass.enabled, target: s.renderer.getRenderTarget() === null };
         } finally {
             lens.lensingPass.uniforms.uN.value = lensCount;
             s.bloomPass.enabled = bloomEnabled;
+            disk.material.depthTest = original.diskDepthTest;
+            disk.onAfterRender = diskAfterRender;
         }
     };
     try {
@@ -135,11 +170,14 @@ function captureCase({ scenario, pitch, includeImages = true }) {
         // Same render target and compositor, with uN=0: avoids MSAA/canvas
         // rasterization differences masquerading as foreground deflection.
         const opaqueIdentity = foreground ? draw({ tides: false, opacityControl: true, identity: true }) : null;
+        const opaqueDiskOff = foreground ? draw({ tides: false, opacityControl: true, diskOn: false }) : null;
+        const occludedWitness = scenario === 'saturn-foreground-lens' ? draw({ tides: false, opacityControl: true, diskDepthTest: false }) : null;
         const body = b.plGroups[sat], bodyCenter = body.position.clone().project(s.camera);
         const bodyDepth = -body.position.clone().applyMatrix4(s.camera.matrixWorldInverse).z;
         const bodyRadius = c.PL[sat].R * c.K / bodyDepth * s.camera.projectionMatrix.elements[5] * height * .5;
         const metrics = { lensChanged: 0, lensUndeformed: 0, tidalChanged: 0, opaquePixels: 0, opaqueChanged: 0,
-            identityVsDirectChanged: 0, diskPixels: 0, diskLight: 0, nonBlackPixels: 0, ringPixels: 0 };
+            identityVsDirectChanged: 0, opaqueEmissionChanged: 0, occludedEmissionWitnessPixels: 0,
+            diskPixels: 0, diskLight: 0, nonBlackPixels: 0, ringPixels: 0 };
         const ringMask = new Uint8Array(width * height), opaqueMask = new Uint8Array(width * height);
         const luminance = (bytes, i) => .2126 * bytes[i] + .7152 * bytes[i + 1] + .0722 * bytes[i + 2];
         for (let i = 0; i < production.bytes.length; i += 4) {
@@ -155,9 +193,11 @@ function captureCase({ scenario, pitch, includeImages = true }) {
             }
             if (foreground) {
                 const px = p % width + .5, py = Math.floor(p / width) + .5;
-                if (Math.hypot(px - (bodyCenter.x * .5 + .5) * width, py - (bodyCenter.y * .5 + .5) * height) < bodyRadius * .55 && luminance(opaqueIdentity.bytes, i) > 8) {
+                if (Math.hypot(px - (bodyCenter.x * .5 + .5) * width, py - (bodyCenter.y * .5 + .5) * height) < bodyRadius * .55 && luminance(opaqueDiskOff.bytes, i) > 8) {
                     opaqueMask[p] = 1; metrics.opaquePixels++;
                     if (Math.abs(luminance(opaqueLensed.bytes, i) - luminance(opaqueIdentity.bytes, i)) > 1) metrics.opaqueChanged++;
+                    if ([0, 1, 2, 3].some(k => opaqueLensed.bytes[i + k] !== opaqueDiskOff.bytes[i + k])) metrics.opaqueEmissionChanged++;
+                    if (occludedWitness && [0, 1, 2].some(k => occludedWitness.bytes[i + k] > opaqueDiskOff.bytes[i + k])) metrics.occludedEmissionWitnessPixels++;
                     if (!bloom && Math.abs(luminance(opaqueIdentity.bytes, i) - luminance(plain.bytes, i)) > 1) metrics.identityVsDirectChanged++;
                 }
             }
@@ -174,10 +214,15 @@ function captureCase({ scenario, pitch, includeImages = true }) {
         return { scenario, pitch, metrics, nativeRingState: ringState, nativeRingProof: observed.proof,
             images: includeImages ? { production: production.png, 'no-lens': noLens.png, 'no-tides': noTides.png,
                 plain: plain.png, 'no-disk': noDisk.png, ...(ringControl ? { 'disk-off-tde-off': ringControl.png, 'disk-off-tde-off-ring-absent': ringAbsent.png } : {}),
-                ...(foreground ? { 'opaque-lensed': opaqueLensed.png, 'opaque-identity-reference': opaqueIdentity.png } : {}) } : {},
+                ...(foreground ? { 'opaque-lensed': opaqueLensed.png, 'opaque-identity-reference': opaqueIdentity.png, 'opaque-disk-off': opaqueDiskOff.png } : {}),
+                ...(occludedWitness ? { 'disk-depth-disabled-witness': occludedWitness.png } : {}) } : {},
             controls: { ...(ringControl ? { ring: { ...control(ringControl), mask: encode(ringMask) } } : {}),
-                ...(foreground ? { opaque: { ...control(opaqueLensed), mask: encode(opaqueMask) } } : {}) },
+                ...(foreground ? { opaque: { ...control(opaqueLensed), mask: encode(opaqueMask) },
+                    'opaque-disk-off': { ...control(opaqueDiskOff), mask: encode(opaqueMask) } } : {}) },
             state: { meshSourceError: m.g.position.distanceTo(qa.physicalHole), physicalLensDepth, bodyDepth,
+                emissionSupport: { holeDepth: physicalLensDepth, bodyDepth, bodyRadius: c.PL[sat].R * c.K,
+                    rsUnits: disk.material.uniforms.uRsUnits.value, rout: disk.material.uniforms.uRout.value, supportHalfWidthRs: .02,
+                    witnessDepthDisabled: occludedWitness?.witnessDepthTest === false, productionDepthTest: original.diskDepthTest },
                 lensDepthError: Math.min(...Array.from(lens.lensingPass.uniforms.uDist.value).slice(0, lens.lensingPass.uniforms.uN.value).map(z => Math.abs(z - physicalLensDepth))),
                 opacityControl: foreground ? { sameTargetPath: true, identityLensCount: opaqueIdentity.usedLensCount,
                     actualLensCount: opaqueLensed.usedLensCount, bloomLensed: opaqueLensed.bloomEnabled, bloomIdentity: opaqueIdentity.bloomEnabled } : null,
@@ -190,7 +235,7 @@ function captureCase({ scenario, pitch, includeImages = true }) {
                 canvasTarget: production.target, productionBloomEnabled: production.bloomEnabled,
                 drawCalls: s.renderer.info.render.calls }, glError: production.glError };
     } finally {
-        state.active = original.tidalActive; disk.visible = original.diskVisible;
+        state.active = original.tidalActive; disk.visible = original.diskVisible; disk.material.depthTest = original.diskDepthTest;
         rings.forEach((ring, i) => { ring.visible = original.ringVisible[i]; });
         lens.updateLensing(s.camera, s.camera.aspect);
     }
@@ -239,13 +284,22 @@ function assertLiveCase(result) {
         assert(result.nativeRingProof.samples.every(sample => sample.linked && sample.activeTextureRestored &&
             sample.sampler.textureMatchesRing && sample.shaders.every(shader => shader.compiled)), 'Linked programs, compiled shaders, and real bound ring samplers');
     }
-    if (result.scenario === 'saturn-foreground-lens') {
+    if (['saturn-foreground-lens', 'saturn-overlapping-disk'].includes(result.scenario)) {
         assert(result.state.physicalLensDepth > result.state.bodyDepth + 500, 'Lens is behind the complete body and rings');
         assert(result.metrics.opaquePixels > 50, 'Foreground mask samples visible opaque surface');
         assert.equal(result.metrics.opaqueChanged, 0, 'A lens behind the body cannot change its opaque interior');
         const control = result.state.opacityControl;
         assert.equal(control.identityLensCount, 0); assert(control.actualLensCount > 0);
         assert.equal(control.bloomLensed, false); assert.equal(control.bloomIdentity, false);
+        if (result.scenario === 'saturn-foreground-lens') {
+            result.state.foregroundSupportProof = assertDiskBehindForeground(result.state.emissionSupport);
+            assert.equal(result.state.emissionSupport.productionDepthTest, true);
+            assert.equal(result.state.emissionSupport.witnessDepthDisabled, true);
+            assertOccludedEmissionPixels(result.metrics);
+        } else {
+            assert.throws(() => assertDiskBehindForeground(result.state.emissionSupport), /Entire disk emission support/,
+                'Retained overlap diagnostic must violate the strict occlusion bound');
+        }
     }
 }
 
@@ -268,7 +322,10 @@ async function saveCase(page, variant, test, phase) {
             assert(main, `Paired main control exists: ${controlKey}`);
             assert.deepEqual(result.nativeRingState, main.nativeRingState, 'Native ring filters and state remain unchanged');
             assert.deepEqual(result.nativeRingProof, main.nativeRingProof, 'Actual native ring program and sampler state remain unchanged');
-            report.pairedControls.push(assertPairedControl(main, control, controlKey, { allowEmpty: name === 'ring' && test.pitch === 0 }));
+            if (test.scenario === 'saturn-overlapping-disk' && name === 'opaque') {
+                report.overlappingDiskDiagnostics.push({ ...compareMaskedPixels(main, control, controlKey),
+                    interpretation: 'Original overlapping support; disk-on differences are diagnostic. Its disk-off paired control must remain exact.' });
+            } else report.pairedControls.push(assertPairedControl(main, control, controlKey, { allowEmpty: name === 'ring' && test.pitch === 0 }));
         }
     }
     delete result.controls;
@@ -339,7 +396,7 @@ try {
             await window.__celestialEnsureLensing();
             if (qa.bloom) await qa.s.ensurePostProcessing(qa.lens.lensingPass);
             for (let i = 0; i < 8; i++) window.__celestialFrame();
-            qa.initialHole = { x: qa.st.BH.x[0], y: qa.st.BH.y[0] };
+            qa.initialHole = { x: qa.st.BH.x[0], y: qa.st.BH.y[0], z: qa.st.BH.z[0] };
         });
         await page.evaluate(installNativeRingProof);
         await prepareContextRecoveryQA(page);
@@ -413,7 +470,7 @@ try {
         await flush();
     }
     assert(report.pairedControls.some(control => control.label.endsWith('/ring') && control.applicable), 'Paired unchanged ring pixels were actually sampled');
-    assert.equal(report.pairedControls.length, mainControls.size, 'Every baseline control has a candidate pair');
+    report.controlAccounting = assertControlCompleteness(mainControls.keys(), report.pairedControls, report.overlappingDiskDiagnostics);
     report.completed = true;
 } catch (error) {
     originalError = error; hadOriginalError=true;

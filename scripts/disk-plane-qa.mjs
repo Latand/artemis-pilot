@@ -11,6 +11,9 @@ export const DENSE_PITCHES = [.0008, .0007, .00065, .0006, .00055, .0005, .0004,
 export const DISK_PLANE_CASES = [
     ...COARSE_PITCHES.map(pitch => ({ scenario: 'saturn-near-lens', pitch })),
     ...[.48, 0, -.48].map(pitch => ({ scenario: 'saturn-foreground-lens', pitch })),
+    // Preserve the original foreground fixture: its disk extends between the
+    // camera and Saturn, so new in-plane emission is a diagnostic, not leakage.
+    ...[.48, 0, -.48].map(pitch => ({ scenario: 'saturn-overlapping-disk', pitch })),
     ...[...new Set([...COARSE_PITCHES, ...DENSE_PITCHES])].map(pitch => ({ scenario: 'disk-crossing', pitch })),
 ];
 export const VARIANTS = ['main', 'candidate'];
@@ -20,7 +23,9 @@ export const RESIZE_CASES = [{ scenario: 'disk-crossing', pitch: .0008 }, { scen
     { scenario: 'saturn-foreground-lens', pitch: .48 }];
 export const RECOVERY_CONTROLS = [{ scenario: 'saturn-near-lens', pitch: .48 }, { scenario: 'saturn-foreground-lens', pitch: .48 }];
 export const REPEAT_CYCLES = 2;
-const drawsPerCapture = test => 5 + (test.scenario.startsWith('saturn-') ? 2 : 0) + (test.scenario === 'saturn-foreground-lens' ? 2 : 0);
+const drawsPerCapture = test => 5 + (test.scenario.startsWith('saturn-') ? 2 : 0) +
+    (['saturn-foreground-lens', 'saturn-overlapping-disk'].includes(test.scenario) ? 3 : 0) +
+    (test.scenario === 'saturn-foreground-lens' ? 1 : 0);
 const sumDraws = tests => tests.reduce((sum, test) => sum + drawsPerCapture(test), 0);
 const originalReadbacks = sumDraws(DISK_PLANE_CASES);
 const stabilityReadbacks = 2 * sumDraws(DISK_PLANE_CASES.filter(test => test.scenario.startsWith('saturn-')));
@@ -28,7 +33,7 @@ const resizeReadbacks = REPEAT_CYCLES * 2 * sumDraws(RESIZE_CASES);
 const recoveryReadbacks = REPEAT_CYCLES * (2 * drawsPerCapture({ scenario: 'disk-crossing' }) + sumDraws(RECOVERY_CONTROLS));
 const savedCapturesPerRoot = DISK_PLANE_CASES.length + REPEAT_CYCLES * 2 * RESIZE_CASES.length + REPEAT_CYCLES * (2 + RECOVERY_CONTROLS.length);
 const explicitReadbacksPerRoot = originalReadbacks + stabilityReadbacks + resizeReadbacks + recoveryReadbacks;
-export const QA_OPERATION_BUDGET = { savedCapturesPerRoot, stabilityCapturesPerRoot: 20,
+export const QA_OPERATION_BUDGET = { savedCapturesPerRoot, stabilityCapturesPerRoot: 2 * DISK_PLANE_CASES.filter(test => test.scenario.startsWith('saturn-')).length,
     readbacks: { original: originalReadbacks, stability: stabilityReadbacks, resize: resizeReadbacks, recovery: recoveryReadbacks },
     explicitReadbacksPerRoot, explicitReadbacksPerPairedCell: explicitReadbacksPerRoot * 2,
     explicitReadbacksAllFourCells: explicitReadbacksPerRoot * 2 * MATRIX.length,
@@ -72,9 +77,29 @@ export function validateDiskPlaneHooks(root) {
     assert(scene.includes('bloomPass.enabled = bloomRequested;'), 'Loaded bloom pass retains the requested mode');
     for (const path of ['src/render/contextLifecycle.js', 'public/textures/2k_saturn.jpg', 'public/textures/2k_saturn_ring_alpha.png'])
         assert(existsSync(resolve(root, path)), `Required production asset/module: ${path}`);
-    assert.equal(DISK_PLANE_CASES.length, 31);
+    assert.equal(DISK_PLANE_CASES.length, 34);
     return { root: resolve(root), hooks: paths, cases: DISK_PLANE_CASES.length, densePitches: DENSE_PITCHES.length,
         ringEvidence: 'native state and paired unchanged pixels; no alpha-gap repair guarantee', browserStarted: false };
+}
+
+// Every emitted sample obeys r < 3*uRout and |z| <= max support=.02 rs.
+// Enclose that entire support in a sphere, independently of disk orientation.
+// This bound is deliberately conservative; a center-only depth test is invalid.
+export function assertDiskBehindForeground({ holeDepth, bodyDepth, bodyRadius, rsUnits, rout, supportHalfWidthRs }) {
+    const values = [holeDepth, bodyDepth, bodyRadius, rsUnits, rout, supportHalfWidthRs];
+    assert(values.every(Number.isFinite), 'Finite foreground support inputs');
+    assert(bodyRadius > 0 && rsUnits > 0 && rout > 1 && supportHalfWidthRs === .02, 'Actual disk radius and reviewed support clamp');
+    const supportRadius = Math.hypot(3 * rout, supportHalfWidthRs) * rsUnits;
+    const nearestSupportDepth = holeDepth - supportRadius, farthestBodyDepth = bodyDepth + bodyRadius;
+    assert(nearestSupportDepth > farthestBodyDepth, 'Entire disk emission support must lie behind the foreground sphere');
+    return { supportRadius, nearestSupportDepth, farthestBodyDepth, clearance: nearestSupportDepth - farthestBodyDepth };
+}
+
+export function assertOccludedEmissionPixels(metrics) {
+    assert(Number.isInteger(metrics.opaquePixels) && metrics.opaquePixels > 50, 'Meaningful opaque interior mask');
+    assert(Number.isInteger(metrics.occludedEmissionWitnessPixels) && metrics.occludedEmissionWitnessPixels > 50 &&
+        metrics.occludedEmissionWitnessPixels <= metrics.opaquePixels, 'Depth-disabled disk must emit into the same foreground mask');
+    assert.equal(metrics.opaqueEmissionChanged, 0, 'Wholly occluded disk emission cannot change any opaque interior channel');
 }
 
 export function assertCrossingAcceptance(cases, variant) {
@@ -133,4 +158,17 @@ export function assertPairedControl(main, candidate, label, { allowEmpty = false
     assert.equal(result.changed, 0, `${label}: main/candidate control pixels remain byte-identical`);
     assert.equal(result.maskChanged, 0, `${label}: main/candidate contribution mask remains identical`);
     return { ...result, applicable: result.sampled > 0 };
+}
+
+export function assertControlCompleteness(mainLabels, strictControls, diagnostics) {
+    const expected = [...mainLabels];
+    assert.equal(new Set(expected).size, expected.length, 'Baseline control labels are unique');
+    const strictLabels = strictControls.map(control => control.label), diagnosticLabels = diagnostics.map(control => control.label);
+    const actual = [...strictLabels, ...diagnosticLabels];
+    assert.equal(new Set(actual).size, actual.length, 'Every candidate control appears exactly once');
+    assert.deepEqual([...actual].sort(), [...expected].sort(), 'Every baseline control has exactly one candidate pair');
+    const diagnosticExpected = expected.filter(label => /^original\/saturn-overlapping-disk\/[^/]+\/opaque$/.test(label));
+    assert.equal(diagnosticExpected.length, 3, 'All three original overlapping disk diagnostics are retained');
+    assert.deepEqual([...diagnosticLabels].sort(), diagnosticExpected.sort(), 'Only the declared overlapping disk-on controls are diagnostic');
+    return { expected: expected.length, strict: strictLabels.length, diagnostic: diagnosticLabels.length };
 }
