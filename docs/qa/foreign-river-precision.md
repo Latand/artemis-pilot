@@ -200,3 +200,34 @@ The QA helper now opens the visible Details button before Places when that
 outer panel is hidden, and requires the actual Return button to be visible.
 No force click or DOM visibility mutation is used. Four disclosure-state
 cases and an old-order invisible-click negative cover the sequence.
+
+## Accepted bounded regression and continued validation
+
+Run `37191635511` on actual `18726e4bf3dcf09a9a68e52802a270f2c08c2566`
+(tree `9ce4a537b724b32536ba3bf7351eef581df70cea`) passed desktop and mobile.
+Each device delivered 41 frames and 317 checks, including 39 foreground
+provider/field/GPU force and body-draw checks, actual free-camera movement,
+positive/reverse epochs, return/quickload, the real delayed observer boundary,
+and native context loss/recovery. Both retained time while lost, observed one
+loss/restoration/reset, and resumed with a healthy respawn and unchanged host,
+system parameters and free-camera residual. Source guards before and after
+execution matched the exact head, production fingerprint and 14 fixture blobs.
+
+Artifacts: desktop `11298843567`, SHA256
+`48d01be049daa1cd86ec128a5a88d8547d5044804f434f4070e1900662451882`;
+mobile `11298708919`, SHA256
+`8468ebf11476b95a6354d62dedefe1c61d1ab5360f064f9645add447aa348aac`.
+All 26 captures were accounted for: nine inspected individually and seventeen
+byte-identical to previously inspected captures. Dense river streaks still
+overlay planetary surfaces; this regression does not certify a presentation
+redesign or physical-device performance. The fixed host-forward planet view
+shows its dark hemisphere, while the retained away-facing and epoch captures
+also exercise lit surfaces.
+
+The same bounded workflow now runs on relevant pull requests, checking out the
+actual PR head rather than a synthetic merge commit. Changes to production,
+build inputs or QA scripts require fresh validation. It retains the isolated
+diagnostic push trigger for a reviewed preflight, the twenty-minute job cap,
+fifteen-minute browser cap, all source pins and every negative control. The
+accepted artifact record is provenance only: it is not a substitute for a
+changed source or fixture. No historical renderer-performance result is reused.

@@ -9,8 +9,8 @@ code, with no historical raw-report substitution.
 The adapter compares actual main `3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6`
 against the exact reported candidate HEAD. The candidate's complete served and
 build input fingerprint is frozen from reviewed local foreign-river repair
-`6146c01c`, including the captured photosphere culling and pre-discovery
-point-layer startup corrections. Reports of
+`c372284c`, including the captured photosphere culling, pre-discovery
+point-layer startup and completed-observer quickload corrections. Reports of
 the preceding `d6ea8834` / `8663be59` / `e90481cd` production do not
 qualify for the changed source. The immutable
 fingerprint remains valid across QA-only commits. Source checks cover `src`,
@@ -52,3 +52,12 @@ successful post-run provenance checks and the exact same candidate/harness.
 Transient and lifecycle browser suites then compare that candidate with actual
 main. Hosted SwiftShader results do not establish physical-device FPS or the
 separate absolute 50 ms travel-transition target.
+
+The preceding `8663be59` run `37184131655` is retained as before-fix evidence.
+Its three mobile views completed all 3,600 measured and 720 warmup frames:
+median paired p95 ratios were Proxima 0.99861, Sun 0.97480 and black hole
+0.98899, with the original combined long-task budget passing. All three
+desktop views failed exact GPU geometry equality (+1 candidate geometry)
+before accepted measurement; desktop aggregation failed and the downstream
+functional suites were skipped. Those observations do not qualify the changed
+production. The final candidate requires a complete fresh six-view cohort.

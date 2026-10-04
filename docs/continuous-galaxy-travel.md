@@ -43,7 +43,7 @@ The software-rendered capture did **not** meet the absolute 50 ms transition tar
 
 ## Integrated foundation and final diagnostic limits
 
-The later exact `4c92bdcb` route passed its functional assertions. All 12 screenshots were inspected individually: the leaked Solar/MW labels were gone, and the same generated host/planet survived manual movement, return and quickload. The old Moon-beacon triangle still appeared on Milky Way return. The local integration now includes #55's cleanup and asserts that beacon is hidden on return; the integrated pixels remain to be recaptured.
+The later exact `4c92bdcb` route passed its functional assertions. All 12 screenshots were inspected individually: the leaked Solar/MW labels were gone, and the same generated host/planet survived manual movement, return and quickload. The old Moon-beacon triangle still appeared on Milky Way return. The `8663be59` integration includes #55's cleanup; its inspected route captures and explicit return assertion show the beacon hidden.
 
 The paired `4c92bdcb` / `1a8e3af` diagnostic matched all broad camera poses and resolved all 768 GPU queries. Warm submission p95 was 17.6 ms on both; warm GPU p95 was 7,394.6 / 7,441.6 ms (candidate/base ratio 1.006354), and warm completion p95 was 7,404.3 / 7,451.5 ms (1.006375). Every completed frame exceeded 50 ms. This is evidence about shared SwiftShader cost, not realistic-device frame rate. The baseline lacks the new foreign objects and both exact source trees predate this integration.
 
@@ -55,8 +55,37 @@ The integrated Jupiter excursion now captures and restores the foreign explorati
 
 ## Main integration and evidence boundary
 
-The main integration preserves actual travel head `b6b89726381261e58336a1c9ea611d87b5e48742` and actual main `3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6` as parents. Main's tree is `9612897732b3edc2baa16eeb211fc7da6c7753c9`. The merge is conflict-free. All 21 incoming files match main exactly; the only incoming production changes are `src/river.js` and the new `src/riverRadianceMath.js`. The travel, identity, journal, split-camera and surface source remains unchanged. The travel workflow's baseline pin and this document are the only additional integration edits.
+The main integration at `8663be59` preserves actual travel head `b6b89726381261e58336a1c9ea611d87b5e48742` and actual main `3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6` as parents. Main's tree is `9612897732b3edc2baa16eeb211fc7da6c7753c9`. That merge was conflict-free. All 21 incoming files matched main exactly; its only incoming production changes were `src/river.js` and the new `src/riverRadianceMath.js`.
 
 The earlier 18 successful travel-head workflows establish results for `b6b89726`, not this new combined tree. In particular, river pixels now include main's reviewed source-density display compensation. Its field, source publication and advection paths retain their accepted code, but final-head catalog/river coherence and travel return captures must still run. The explored-system workload must compare against actual current main, including the existing one-roundtrip label warmup and all 20 subsequent strict no-growth checks.
 
 Main's authenticated radiance timing can transfer only to identical production inputs. Travel changes those inputs, so the unchanged acceptance verifier correctly rejects transfer; its historical six-view results are not final travel performance evidence. A new measurement using the original strict protocol is required before claiming radiance performance for this tree. The absolute 50 ms travel target and the earlier per-fixture submission regressions remain unresolved until new measurements say otherwise. No physical-device frame-rate claim follows from hosted SwiftShader results.
+
+## Final source and bounded foreign regression
+
+The final source descends from actual `18726e4b`, retaining the real `8663be59`
+and main ancestry. Follow-up validation exposed and corrected the foreign
+river's rounded camera/model-view residual, global CPU frustum rejection of
+galaxy-qualified photospheres, and allocation of an undiscovered empty foreign
+point layer during startup. A completed dead-ship observer now retains its
+saved camera and hidden death banner instead of repeating the delayed death
+transition after quickload. Legacy pending transitions retain their behavior.
+
+The bounded desktop/mobile regression at `18726e4b` passed 41 real frames and
+317 checks per device, with independently reviewed raw source/GPU data and all
+26 captures accounted for. It covers real source discovery, physical force
+parity, eligible and behind-camera ownership, star/planet draw submission,
+split free movement, signed epochs, return/save/reload and native GPU recovery.
+Its exact artifact and source records are in
+[`foreign-river-precision.md`](qa/foreign-river-precision.md). Dense field
+overlays remain an existing presentation limitation. This focused check omits
+distant backdrop layers and is not a performance benchmark.
+
+The earlier `8663be59` real route passed functionality but every completed
+transition exceeded 50 ms on SwiftShader. Its matched-camera warm p95 ratios
+were submission 0.97973, GPU 0.99742 and completion 0.99736 overall; strict
+per-view submission comparisons failed M31 entry (1.20253) and planet (1.09244).
+Its mobile full-layer radiance aggregate passed, while all three desktop views
+failed a +1 GPU geometry comparison before measurement. All these results keep
+their original source attribution. The final production requires fresh route,
+explored-system, six-view radiance and affected integration gates before merge.

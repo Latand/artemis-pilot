@@ -1,5 +1,22 @@
 name: Foreign river precision validation
 on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'index.html'
+      - 'package*.json'
+      - 'bun.lock'
+      - 'npm-shrinkwrap.json'
+      - '.npmrc'
+      - '.env*'
+      - 'vite.config.*'
+      - 'postcss.config.*'
+      - '.postcssrc*'
+      - 'tsconfig*.json'
+      - 'jsconfig*.json'
+      - '.github/workflows/foreign-river-validation.yml'
   push:
     branches: ['diagnostic/foreign-river-precision']
     paths:
@@ -19,11 +36,11 @@ jobs:
         device: [desktop, mobile]
     env:
       DEVICE: ${{ matrix.device }}
-      EXPECTED_CANDIDATE_REVISION: ${{ github.sha }}
+      EXPECTED_CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
