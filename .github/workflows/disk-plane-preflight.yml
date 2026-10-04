@@ -1,12 +1,12 @@
-# One predeclared changed-pointer-input cohort; preserve all historical failures.
-# No extra rendering, observer readbacks, or warmup. Active hover or another
+# One predeclared changed-source cohort; preserve all historical failures.
+# Native proof observes existing untimed draws; no extra frames or warmup. Active hover or another
 # exact-pixel mismatch stops this cohort; there is no automatic retry.
-name: Disk-plane continuity with fixed pointer
+name: Disk-plane conservative fast path
 # One reviewed push launches this bounded issue50-only cohort. No PR, manual,
 # schedule, six-view radiance, deployment or branch-writing trigger is attached.
 on:
   push:
-    branches: ['diagnostic/disk-plane-only-6179-v3']
+    branches: ['diagnostic/disk-fast-path-6179-v4']
 permissions:
   contents: read
 concurrency:
@@ -50,35 +50,48 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '166c3c98b4c38f55f329b8c66c14ce79ce1a6ba0'
-          git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_PARENT_SHA"
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '246e0ca9970f76de041b3216c36083611154a2de'
+          REVIEWED_SOURCE_SHA="$(git rev-parse "$REVIEWED_PARENT_SHA^1")"
+          test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '9eed5a6094daf8cce6424dd18be3e786a3f0fbb4'
+          test "$(git log -1 --format=%H "$GITHUB_SHA" -- src/holeOptics.js)" = "$REVIEWED_SOURCE_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_SOURCE_SHA"
+          git diff --exit-code "$REVIEWED_SOURCE_SHA" "$GITHUB_SHA" -- src public index.html package.json
           git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-plane-preflight.yml'
           test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
           # Full checkout history must contain the immutable native optical harness.
           git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
           cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
-          d641cf191f63c7ffc6131f44d6f8449b1def6d2b docs/qa/disk-plane-only.md
+          d6c22f113a4dfe5f53cd3c0bfc0a6ddcd99fe681 docs/qa/disk-plane-only.md
           cff455547ea07769b51e73ef4f49361028c672e4 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
           3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
-          3c5aebfe1134cbc3a915e8fbf61551559802e427 scripts/disk-plane-source-contract.mjs
-          8934d52ec809c75c1fee2b774275cea0ed3b1205 scripts/fixtures/disk-plane-inputs.json
+          3dc4030f422dc1b27df12cfb897fe8c230fd69d5 scripts/disk-plane-source-contract.mjs
+          efa6c4f34dc03cfc6fbf450412a1cd61a5662695 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
-          8767735c2023b87a271dac916f50173214b9f7ed scripts/probe-disk-plane.mjs
+          9b1c9e8416830089399d1b16771ec84339bce734 scripts/probe-disk-plane.mjs
           140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
-          3610cbcf584c593393934a71b4de5dae35a148d2 scripts/smoke-disk-plane-finalize.mjs
+          4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
-          4a9d2c35b1399e2b1233c45dd556947ac114596a scripts/smoke-disk-plane-support.mjs
-          f5e4fcfa4ec596f9cf0775c8f138260c0b24f088 src/holeOptics.js
+          406d12c5f2325c9d8547ce676c6e03ecdb033c4b scripts/smoke-disk-plane-support.mjs
+          fd596093a218d38a8900d3b7cd93d82c5c4667c0 src/holeOptics.js
           99bd167c75ebe2a5fe636730fa5774204e663ae3 docs/disk-pointer-fixture.md
           701eba17c955bdd85f907d71fe66d8c8042c4e6b scripts/disk-pointer-fixture.mjs
           cbcc474ae36b178030b4a21452e1679ce02e8b25 scripts/smoke-disk-pointer-fixture.mjs
+          8afd78317112310a4338321ba7787ebd1c0026e7 docs/qa/disk-unclipped-proof.md
+          3920d0ef886324beacbda6a9aaa2f5e86029e977 docs/qa/native-disk-proof.md
+          4f0b441aea1df4bb01e94ce64ee0be3160896159 scripts/smoke-disk-frustum-fast-path.mjs
+          b1c238f9a7331c868152c13d0fcc1a185067d989 scripts/smoke-disk-fast-path-lifecycle.mjs
+          38782d9c21690fbf5c49599e87d7dd357152d757 scripts/smoke-disk-program-precision.mjs
+          caddb54031b4c7cbc73e92bf4fcfb6c80f57dd35 scripts/smoke-disk-source-binding.mjs
+          8a0927700fe7e09b8cb7d11e85459cd43c27acfb scripts/fixtures/disk-fast-path-captured.json
+          a6b6935ef23b3fc52a38b0f6c0b63b19a55c1968 scripts/native-disk-proof.mjs
+          22813ff313b7dc7717d8e7f5ea44e8d032a691b8 scripts/smoke-native-disk-proof.mjs
           BLOBS
           while read -r expected path; do
             test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
             test "$(git hash-object "$path")" = "$expected"
           done < "$ARTEMIS_EVIDENCE/reviewed-blobs.txt"
-          git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
+          git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" "$REVIEWED_SOURCE_SHA" "$REVIEWED_SOURCE_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
           cp .github/workflows/disk-plane-preflight.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
           git worktree add --detach "$RUNNER_TEMP/disk-plane-main" "$BASE_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/disk-plane-main/node_modules"
@@ -90,18 +103,20 @@ jobs:
           import {readFileSync,realpathSync} from 'node:fs';
           import {createHash} from 'node:crypto';
           const expected={playwright:'1.63.0','playwright-core':'1.63.0',three:'0.164.1',vite:'5.4.21'};
-          const actual={},packageJsonHashes={};
+          const actual={},packageJsonHashes={},criticalThreeSourceHashes={};
           for(const [name,version] of Object.entries(expected)){
            const bytes=readFileSync(`node_modules/${name}/package.json`);actual[name]=JSON.parse(bytes).version;
            assert.equal(actual[name],version);packageJsonHashes[name]=createHash('sha256').update(bytes).digest('hex');
           }
+          for(const path of ['src/renderers/WebGLRenderer.js','src/renderers/webgl/WebGLPrograms.js','src/renderers/webgl/WebGLProgram.js'])
+           criticalThreeSourceHashes[path]=createHash('sha256').update(readFileSync('node_modules/three/'+path)).digest('hex');
           const bytes=readFileSync('node_modules/playwright-core/browsers.json');
           const browsers=JSON.parse(bytes).browsers;
           for(const name of ['chromium','chromium-headless-shell']){
            const browser=browsers.find(b=>b.name===name);assert.equal(browser.revision,'1243');assert.equal(browser.browserVersion,'153.0.8010.12');
           }
           assert.equal(realpathSync(process.env.RUNNER_TEMP+'/disk-plane-main/node_modules'),realpathSync('node_modules'));
-          console.log(JSON.stringify({node:process.version,packages:actual,packageJsonHashes,browserManifestSha256:createHash('sha256').update(bytes).digest('hex'),chromium:'153.0.8010.12',revision:'1243'}));
+          console.log(JSON.stringify({node:process.version,packages:actual,packageJsonHashes,criticalThreeSourceHashes,browserManifestSha256:createHash('sha256').update(bytes).digest('hex'),chromium:'153.0.8010.12',revision:'1243'}));
           NODE
       - name: Verify numerical, source, native observer and finalizer controls
         timeout-minutes: 4
@@ -109,6 +124,11 @@ jobs:
           set -euo pipefail
           node scripts/probe-disk-plane.mjs --validate > "$ARTEMIS_EVIDENCE/source-before.json"
           node scripts/smoke-disk-plane-support.mjs --verify-main-scope
+          node scripts/smoke-disk-frustum-fast-path.mjs
+          node scripts/smoke-disk-fast-path-lifecycle.mjs
+          node scripts/smoke-disk-program-precision.mjs
+          node scripts/smoke-disk-source-binding.mjs
+          node scripts/smoke-native-disk-proof.mjs
           node scripts/smoke-disk-plane-qa.mjs
           node scripts/smoke-disk-pointer-fixture.mjs
           node scripts/smoke-disk-plane-finalize.mjs
@@ -294,35 +314,48 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '166c3c98b4c38f55f329b8c66c14ce79ce1a6ba0'
-          git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_PARENT_SHA"
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '246e0ca9970f76de041b3216c36083611154a2de'
+          REVIEWED_SOURCE_SHA="$(git rev-parse "$REVIEWED_PARENT_SHA^1")"
+          test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '9eed5a6094daf8cce6424dd18be3e786a3f0fbb4'
+          test "$(git log -1 --format=%H "$GITHUB_SHA" -- src/holeOptics.js)" = "$REVIEWED_SOURCE_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_SOURCE_SHA"
+          git diff --exit-code "$REVIEWED_SOURCE_SHA" "$GITHUB_SHA" -- src public index.html package.json
           git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-plane-preflight.yml'
           test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
           # Full checkout history must contain the immutable native optical harness.
           git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
           cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
-          d641cf191f63c7ffc6131f44d6f8449b1def6d2b docs/qa/disk-plane-only.md
+          d6c22f113a4dfe5f53cd3c0bfc0a6ddcd99fe681 docs/qa/disk-plane-only.md
           cff455547ea07769b51e73ef4f49361028c672e4 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
           3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
-          3c5aebfe1134cbc3a915e8fbf61551559802e427 scripts/disk-plane-source-contract.mjs
-          8934d52ec809c75c1fee2b774275cea0ed3b1205 scripts/fixtures/disk-plane-inputs.json
+          3dc4030f422dc1b27df12cfb897fe8c230fd69d5 scripts/disk-plane-source-contract.mjs
+          efa6c4f34dc03cfc6fbf450412a1cd61a5662695 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
-          8767735c2023b87a271dac916f50173214b9f7ed scripts/probe-disk-plane.mjs
+          9b1c9e8416830089399d1b16771ec84339bce734 scripts/probe-disk-plane.mjs
           140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
-          3610cbcf584c593393934a71b4de5dae35a148d2 scripts/smoke-disk-plane-finalize.mjs
+          4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
-          4a9d2c35b1399e2b1233c45dd556947ac114596a scripts/smoke-disk-plane-support.mjs
-          f5e4fcfa4ec596f9cf0775c8f138260c0b24f088 src/holeOptics.js
+          406d12c5f2325c9d8547ce676c6e03ecdb033c4b scripts/smoke-disk-plane-support.mjs
+          fd596093a218d38a8900d3b7cd93d82c5c4667c0 src/holeOptics.js
           99bd167c75ebe2a5fe636730fa5774204e663ae3 docs/disk-pointer-fixture.md
           701eba17c955bdd85f907d71fe66d8c8042c4e6b scripts/disk-pointer-fixture.mjs
           cbcc474ae36b178030b4a21452e1679ce02e8b25 scripts/smoke-disk-pointer-fixture.mjs
+          8afd78317112310a4338321ba7787ebd1c0026e7 docs/qa/disk-unclipped-proof.md
+          3920d0ef886324beacbda6a9aaa2f5e86029e977 docs/qa/native-disk-proof.md
+          4f0b441aea1df4bb01e94ce64ee0be3160896159 scripts/smoke-disk-frustum-fast-path.mjs
+          b1c238f9a7331c868152c13d0fcc1a185067d989 scripts/smoke-disk-fast-path-lifecycle.mjs
+          38782d9c21690fbf5c49599e87d7dd357152d757 scripts/smoke-disk-program-precision.mjs
+          caddb54031b4c7cbc73e92bf4fcfb6c80f57dd35 scripts/smoke-disk-source-binding.mjs
+          8a0927700fe7e09b8cb7d11e85459cd43c27acfb scripts/fixtures/disk-fast-path-captured.json
+          a6b6935ef23b3fc52a38b0f6c0b63b19a55c1968 scripts/native-disk-proof.mjs
+          22813ff313b7dc7717d8e7f5ea44e8d032a691b8 scripts/smoke-native-disk-proof.mjs
           BLOBS
           while read -r expected path; do
             test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
             test "$(git hash-object "$path")" = "$expected"
           done < "$ARTEMIS_EVIDENCE/reviewed-blobs.txt"
-          git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
+          git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" "$REVIEWED_SOURCE_SHA" "$REVIEWED_SOURCE_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
           cp .github/workflows/disk-plane-preflight.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
           git worktree add --detach "$RUNNER_TEMP/disk-plane-main" "$BASE_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/disk-plane-main/node_modules"
@@ -334,18 +367,20 @@ jobs:
           import {readFileSync,realpathSync} from 'node:fs';
           import {createHash} from 'node:crypto';
           const expected={playwright:'1.63.0','playwright-core':'1.63.0',three:'0.164.1',vite:'5.4.21'};
-          const actual={},packageJsonHashes={};
+          const actual={},packageJsonHashes={},criticalThreeSourceHashes={};
           for(const [name,version] of Object.entries(expected)){
            const bytes=readFileSync(`node_modules/${name}/package.json`);actual[name]=JSON.parse(bytes).version;
            assert.equal(actual[name],version);packageJsonHashes[name]=createHash('sha256').update(bytes).digest('hex');
           }
+          for(const path of ['src/renderers/WebGLRenderer.js','src/renderers/webgl/WebGLPrograms.js','src/renderers/webgl/WebGLProgram.js'])
+           criticalThreeSourceHashes[path]=createHash('sha256').update(readFileSync('node_modules/three/'+path)).digest('hex');
           const bytes=readFileSync('node_modules/playwright-core/browsers.json');
           const browsers=JSON.parse(bytes).browsers;
           for(const name of ['chromium','chromium-headless-shell']){
            const browser=browsers.find(b=>b.name===name);assert.equal(browser.revision,'1243');assert.equal(browser.browserVersion,'153.0.8010.12');
           }
           assert.equal(realpathSync(process.env.RUNNER_TEMP+'/disk-plane-main/node_modules'),realpathSync('node_modules'));
-          console.log(JSON.stringify({node:process.version,packages:actual,packageJsonHashes,browserManifestSha256:createHash('sha256').update(bytes).digest('hex'),chromium:'153.0.8010.12',revision:'1243'}));
+          console.log(JSON.stringify({node:process.version,packages:actual,packageJsonHashes,criticalThreeSourceHashes,browserManifestSha256:createHash('sha256').update(bytes).digest('hex'),chromium:'153.0.8010.12',revision:'1243'}));
           NODE
       - name: Verify exact pair and immutable native benchmark hooks
         timeout-minutes: 3
