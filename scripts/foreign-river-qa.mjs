@@ -5,6 +5,15 @@ import { spawnReach } from '../src/riverMath.js';
 import { K } from '../src/constants.js';
 
 export const FOREIGN_RIVER_HOST = 'gx:m31:2654435769:1250:0:0:18';
+// Compact Explore has two real disclosure levels. Use their visible controls
+// in order; never force-click the hidden destination or mutate its DOM state.
+export async function openForeignReturnControls(page) {
+  if (await page.locator('#explorePanelBody').evaluate(element => element.hidden))
+    await page.locator('#explorePanelToggle').click();
+  if (!await page.locator('#exploreDestinations').evaluate(element => element.open))
+    await page.locator('#exploreDestinations > summary').click();
+  if (!await page.locator('#exploreMilkyWayReturn').isVisible()) throw new Error('Return control remains hidden after visible disclosure actions');
+}
 // Roundoff budgets come from operations on the retained local residuals. The
 // intergalactic absolute position must never inflate the permitted error.
 export const residualTolerance = values => 64 * Number.EPSILON * Math.max(1, ...values.map(Math.abs));

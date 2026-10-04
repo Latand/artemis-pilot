@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
-import { FOREIGN_RIVER_HOST, healthyForeignFrame, foreignMovementPreserved, residualTolerance, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw, foreignSourceEligibility } from './foreign-river-qa.mjs';
+import { FOREIGN_RIVER_HOST, healthyForeignFrame, foreignMovementPreserved, residualTolerance, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw, foreignSourceEligibility, openForeignReturnControls } from './foreign-river-qa.mjs';
 import { healthyRadianceGain, healthyRadianceRecovery } from './river-radiance-lifecycle.mjs';
 import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled } from './context-recovery-qa.mjs';
 
@@ -234,8 +234,7 @@ try {
     check('actual river advection has nonzero correct signed dispatch ' + direction, healthyForeignAdvection(phase, direction));
   }
   await page.evaluate(() => { qa.state.G.paused = true; });
-  if (!await page.locator('#exploreDestinations').evaluate(element => element.open))
-    await page.locator('#exploreDestinations > summary').click();
+  await openForeignReturnControls(page);
   await page.locator('#exploreMilkyWayReturn').click();
   await sample('return-0', { hidden: true }); await sample('return-1', { hidden: true, capture: true });
   await page.locator('#exploreObject').click(); await page.keyboard.press('l');

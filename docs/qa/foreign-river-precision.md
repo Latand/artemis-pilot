@@ -188,3 +188,15 @@ Stateful HUD regressions check hidden completed observers, shown ordinary and
 legacy states followed by exactly one hide, rejected-load preservation, and an
 old-condition negative that leaves the banner visible. The browser fixture
 also checks the actual DOM banner immediately and after the quickload delay.
+
+The next bounded run `37191175098` at `e0c6fc8f` passed the full desktop
+sequence, including the delayed quickload boundary and native GPU recovery.
+Mobile reached the Places summary, but that summary was itself hidden inside
+the compact Details panel. Its failed artifact remains `11299525875`, SHA256
+`6f00beae0b5047ed07fb64800755bb5a30d2f5dffaf28cdaaf461c9f126c2a12`;
+desktop artifact `11299391893`, SHA256
+`7a2d38c3ab9eecdaf48af138d4e4474b75f45b88e20f185f11b3ef77c5611574`.
+The QA helper now opens the visible Details button before Places when that
+outer panel is hidden, and requires the actual Return button to be visible.
+No force click or DOM visibility mutation is used. Four disclosure-state
+cases and an old-order invisible-click negative cover the sequence.

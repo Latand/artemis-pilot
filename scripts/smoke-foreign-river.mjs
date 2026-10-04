@@ -8,7 +8,7 @@ import { systemAnchor } from '../src/render/systemPrecision.js';
 import { moveExplorationTarget } from '../src/universe/explorationCamera.js';
 import { observerPositionRelativeTo, stabilizeBodyMaterial } from '../src/render/relativeBodyFrame.js';
 import { CAM_DIST_MAX, LY_SCENE } from '../src/constants.js';
-import { FOREIGN_RIVER_HOST, residualTolerance, healthyForeignObserver, healthyForeignFrame, foreignMovementPreserved, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw, foreignSourceEligibility, healthyForeignSources } from './foreign-river-qa.mjs';
+import { FOREIGN_RIVER_HOST, residualTolerance, healthyForeignObserver, healthyForeignFrame, foreignMovementPreserved, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw, foreignSourceEligibility, healthyForeignSources, openForeignReturnControls } from './foreign-river-qa.mjs';
 
 const source = readFileSync(new URL('../src/scene.js', import.meta.url), 'utf8');
 const applySource = source.slice(source.indexOf('export function applyCamera() {'), source.indexOf('const ptrs = new Map();')).replace('export ', '');
@@ -217,3 +217,23 @@ drawObject.count = 2; assert.equal(collect(null).submission.instances, 2);
 delete drawObject.isInstancedMesh; drawGeometry.setIndex(null); assert(collect(null).submission.triangles > 0);
 drawGeometry.dispose(); drawMaterial.dispose();
 console.log('Real body collector rejects empty indexed/group/instance draws and incomplete triangles');
+
+// Model the two production disclosure boundaries, including hidden ancestry.
+// Every synthetic click rejects an invisible target just as Playwright does.
+function returnControls(hidden, open) {
+  const body={hidden},places={open},clicks=[];
+  const visible=selector=>selector==='#explorePanelToggle'||!body.hidden&&(selector!=='#exploreMilkyWayReturn'||places.open);
+  const page={locator:selector=>({evaluate:fn=>fn(selector==='#explorePanelBody'?body:places),isVisible:()=>visible(selector),
+    async click(){assert(visible(selector),'Cannot click a hidden control');clicks.push(selector);if(selector==='#explorePanelToggle')body.hidden=!body.hidden;else if(selector==='#exploreDestinations > summary')places.open=!places.open;}})};
+  return {page,body,places,clicks};
+}
+for(const hidden of [false,true])for(const open of [false,true]){
+  const controls=returnControls(hidden,open);await openForeignReturnControls(controls.page);
+  assert.deepEqual(controls.clicks,[...(hidden?['#explorePanelToggle']:[]),...(!open?['#exploreDestinations > summary']:[])]);
+  assert(!controls.body.hidden&&controls.places.open);
+  await controls.page.locator('#exploreMilkyWayReturn').click();
+}
+const oldMobile=returnControls(true,false);
+await assert.rejects(()=>oldMobile.page.locator('#exploreDestinations > summary').click(),/hidden control/);
+assert.equal(oldMobile.clicks.length,0,'Old single-disclosure fixture cannot reach the mobile return control');
+console.log('Visible Details-to-Places return sequence covers all disclosure states; original mobile omission fails');
