@@ -7,7 +7,8 @@ import { generateSystem } from '../src/universe/planetarySystem.js';
 import { systemAnchor } from '../src/render/systemPrecision.js';
 import { moveExplorationTarget } from '../src/universe/explorationCamera.js';
 import { observerPositionRelativeTo, stabilizeBodyMaterial } from '../src/render/relativeBodyFrame.js';
-import { FOREIGN_RIVER_HOST, residualTolerance, healthyForeignObserver, healthyForeignFrame, foreignMovementPreserved, sameForeignSystem, healthyForeignAdvection } from './foreign-river-qa.mjs';
+import { CAM_DIST_MAX, LY_SCENE } from '../src/constants.js';
+import { FOREIGN_RIVER_HOST, residualTolerance, healthyForeignObserver, healthyForeignFrame, foreignMovementPreserved, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw } from './foreign-river-qa.mjs';
 
 const source = readFileSync(new URL('../src/scene.js', import.meta.url), 'utf8');
 const applySource = source.slice(source.indexOf('export function applyCamera() {'), source.indexOf('const ptrs = new Map();')).replace('export ', '');
@@ -79,7 +80,8 @@ const validFrame = { time: 0, contextLost: false, glError: 0, readError: 0, fini
     world: [2, 3, 4], field: [2, 3, 4], residual: [1, 1, 1] }],
   precision: { expectedCamera: [6.25, 6.5, -8.25], expectedTranslation: [0, 0, -12], cameraUniform: [6.25, 6.5, -8.25],
     modelViewTranslation: [0, 0, -12], gpuCamera: [6.25, 6.5, -8.25], gpuTranslation: [0, 0, -12], arithmeticScale: [8000, 12] },
-  bodyPrecision: { visible: true, expectedTranslation: [0, 0, -12], modelViewTranslation: [0, 0, -12], arithmeticScale: [8000, 12] } };
+  bodyPrecision: { visible: true, drawnThisFrame: true, expectedTranslation: [0, 0, -12], modelViewTranslation: [0, 0, -12],
+    gpuTranslation: [0, 0, -12], arithmeticScale: [8000, 12] } };
 assert(healthyForeignFrame(validFrame, false));
 let negatives = 0;
 for (const mutate of [
@@ -89,7 +91,8 @@ for (const mutate of [
   f => f.invalidOwners = 1, f => f.contextLost = true, f => f.readError = 1282, f => f.drawVisible = false,
   f => f.count = 4096, f => f.precision.cameraUniform[0] += .25, f => f.precision.modelViewTranslation[0] += .25,
   f => f.precision.gpuCamera[0] += .25, f => f.precision.gpuTranslation[0] += .25,
-  f => f.bodyPrecision.visible = false, f => f.bodyPrecision.modelViewTranslation[0] += .25,
+  f => f.bodyPrecision.visible = false, f => f.bodyPrecision.drawnThisFrame = false, f => f.bodyPrecision.modelViewTranslation[0] += .25,
+  f => f.bodyPrecision.gpuTranslation[0] += .25,
 ]) { const bad = structuredClone(validFrame); mutate(bad); assert(!healthyForeignFrame(bad, false)); negatives++; }
 console.log(`${negatives} foreign-source, full-buffer, stale-clock, GPU/model-view and body-alignment negative controls passed`);
 
@@ -112,3 +115,66 @@ for (const direction of [1, -1]) {
   }
 }
 console.log('Live cache/renderer/slot replacement and wrong-sign/vacuous advection negatives pass');
+
+// Actual e90481cd desktop/mobile host-0 capture: a global near-tier far plane
+// puts this correctly centered sphere 3.346e9 scene units outside the frustum.
+const capturedStar = foreignStarById(FOREIGN_RIVER_HOST, 0), radius = capturedStar.R * .001;
+const origin = new THREE.Vector3(capturedStar.x * .001, capturedStar.z * .001, -capturedStar.y * .001);
+const eye = new THREE.PerspectiveCamera(48, 1100 / 760, .02, CAM_DIST_MAX * 1.35);
+const eyeOffset = new THREE.Vector3(Math.cos(.46) * Math.cos(-.95), Math.sin(.46), Math.cos(.46) * Math.sin(-.95)).multiplyScalar(radius * 4);
+eye.position.copy(origin).add(eyeOffset); eye.quaternion.setFromRotationMatrix(new THREE.Matrix4().lookAt(eyeOffset, new THREE.Vector3(), eye.up)); eye.updateMatrixWorld();
+eye.userData.systemAnchor = { origin, offset: new THREE.Vector3() };
+eye.userData.preciseOrbit = { worldPosition: eye.position.clone(), offset: eyeOffset };
+const photo = new THREE.Mesh(new THREE.SphereGeometry(radius, 64, 48), stabilizeBodyMaterial(new THREE.MeshBasicMaterial()));
+photo.position.copy(origin); photo.updateMatrixWorld();
+const frustum = new THREE.Frustum();
+for (const [near, far] of [[.02, LY_SCENE * .02], [LY_SCENE * .02, CAM_DIST_MAX * 1.35]]) {
+  eye.near = near; eye.far = far; eye.updateProjectionMatrix();
+  frustum.setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(eye.projectionMatrix, eye.matrixWorldInverse));
+  assert.equal(frustum.intersectsObject(photo), false, 'The actual captured host was rejected in both uncorrected CPU tier tests');
+}
+const starSource = readFileSync(new URL('../src/stars.js', import.meta.url), 'utf8');
+const rule = starSource.split('\n').find(line => line.trim() === 'photosphere.frustumCulled = !star.galaxyId;'); assert(rule);
+const applyRule = new Function('photosphere', 'star', rule); applyRule(photo, capturedStar);
+assert.equal(photo.frustumCulled, false);
+photo.material.onBeforeRender(null, null, eye, photo.geometry, photo, null);
+assert(Math.abs(photo.modelViewMatrix.elements[14] + radius * 4) < residualTolerance(eyeOffset.toArray()));
+assert(photo.modelViewMatrix.elements[14] + radius < 0, 'All of the intended near-pass sphere is in front of the observer');
+eye.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI)); eye.updateMatrixWorld();
+photo.material.onBeforeRender(null, null, eye, photo.geometry, photo, null);
+assert(photo.modelViewMatrix.elements[14] - radius > 0, 'Behind-camera sphere has negative clip w for every vertex and remains GPU-clipped');
+const parent = new THREE.Group(), testScene = new THREE.Scene(); parent.add(photo); testScene.add(parent); parent.visible = false;
+let visited = false; testScene.traverseVisible(object => { if (object === photo) visited = true; }); assert(!visited, 'Existing visibility still removes hidden surfaces');
+applyRule(photo, { ...capturedStar, galaxyId: undefined }); assert.equal(photo.frustumCulled, true, 'Ordinary MW photospheres retain CPU frustum culling');
+assert(starSource.includes('const ACTIVE_VISUAL_MAX = 48;'));
+photo.geometry.dispose(); photo.material.dispose();
+const nearZero = structuredClone(validFrame);
+nearZero.precision.expectedTranslation = [2.1316282072803006e-14, 2.842170943040401e-14, -1213.468838920708];
+nearZero.precision.modelViewTranslation = [0, 5.684341886080802e-14, -1213.468838920708];
+nearZero.precision.gpuTranslation = nearZero.precision.modelViewTranslation.map(Math.fround);
+nearZero.precision.arithmeticScale = [632.4825112639269, 538.7171939004957, -884.4525317804363];
+assert(healthyForeignObserver(nearZero), 'Independent double rotation roundoff is included before float32 upload rounding');
+nearZero.precision.gpuTranslation[0] = residualTolerance(nearZero.precision.arithmeticScale) * 2;
+assert(!healthyForeignObserver(nearZero), 'A near-zero mutation beyond the derived arithmetic bound still fails');
+console.log('Captured photosphere culling, hidden/behind-camera/MW rules, actual-draw and derived-roundoff negatives pass');
+
+const drawGeometry = new THREE.SphereGeometry(1, 16, 8), drawMaterial = new THREE.MeshBasicMaterial(), drawObject = new THREE.Mesh(drawGeometry, drawMaterial);
+const drawCamera = new THREE.PerspectiveCamera();
+const fakeRenderer = { getContext: () => ({ getUniformLocation: () => ({}), getUniform: () => new Float32Array(drawObject.modelViewMatrix.elements) }),
+  properties: { get: () => ({ currentProgram: { program: {} } }) } };
+const collect = group => collectForeignBodyDraw(drawObject, fakeRenderer, drawCamera, drawGeometry, drawMaterial, group, 1);
+assert(collect(null).submission.triangles > 0);
+drawGeometry.setDrawRange(0, 0);
+const emptyDraw = collect(null); assert.equal(emptyDraw.submission.triangles, 0, 'Actual collector rejects onAfterRender with an empty draw');
+const phantom = structuredClone(validFrame); phantom.bodyPrecision.drawnThisFrame = emptyDraw.submission.triangles > 0;
+assert(!healthyForeignFrame(phantom, false), 'Healthy river pixels/uniforms cannot certify an empty photosphere draw');
+drawGeometry.setDrawRange(0, Infinity);
+assert.equal(collect({ start: 0, count: 0 }).submission.triangles, 0);
+assert.equal(collect({ start: drawGeometry.index.count, count: 3 }).submission.triangles, 0);
+drawGeometry.setDrawRange(0, 2); assert.equal(collect(null).submission.triangles, 0, 'Incomplete triangle is not a rendered body');
+drawGeometry.setDrawRange(0, Infinity); drawObject.isInstancedMesh = true; drawObject.count = 0;
+assert.equal(collect(null).submission.triangles, 0);
+drawObject.count = 2; assert.equal(collect(null).submission.instances, 2);
+delete drawObject.isInstancedMesh; drawGeometry.setIndex(null); assert(collect(null).submission.triangles > 0);
+drawGeometry.dispose(); drawMaterial.dispose();
+console.log('Real body collector rejects empty indexed/group/instance draws and incomplete triangles');

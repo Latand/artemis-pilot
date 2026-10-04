@@ -62,3 +62,53 @@ blobs and actual HEAD before and after execution, retains raw JSON/PNG evidence
 and source identities even on failure, and does not retry. Passing this bounded
 validation is a prerequisite for considering another full corrected-source
 cohort, not a substitute for that cohort or its original performance gates.
+
+## First GPU result and the captured photosphere correction
+
+Run `37186624841` on actual `e90481cdb4e313493e5e3f54f4a42ea5dffe3665`
+failed on the first host frame on both devices. Its two artifacts remain the
+original failed evidence: desktop `11297610313`, SHA256
+`fb8fcec6c43753147de4032956084109b3d7e88fd90a9b3ac42dbd732e63d11c`, and
+mobile `11297058999`, SHA256
+`e57f2eab023f31034ef3be5b0cfae1cb6e27b92eec7214052bb0debba42054a4`.
+The repaired river observer and draw residuals reached the actual GPU, with
+finite full buffers and 10,452 desktop / 5,250 mobile drawn samples owned by
+the correct host. No screenshot was reached, so this is not visual acceptance.
+
+The independent quaternion/matrix calculations differ by about 2e-14 around
+zero. The numerical comparison now adds the local float64 arithmetic bound to
+float32 upload spacing; it does not enlarge the error budget using absolute
+galaxy coordinates. A mutation exceeding that derived bound still fails.
+
+The same frame showed an undrawn photosphere. Replaying its exact camera and
+303.367209730177-unit sphere in THREE.Frustum makes the near-tier far plane
+report -3,346,140,824 units, despite a true view distance of 1,213.468838920708.
+Both CPU tier tests reject it before the material callback can repair its
+transform. Galaxy-qualified photospheres now bypass that inaccurate global
+test under the existing 48-object active-visual cap and LOD/visibility gates.
+Ordinary Milky Way photospheres keep CPU culling. Hidden parents still stop
+traversal, and behind-camera geometry still clips on the GPU.
+
+The fixture now requires a real body draw in the current frame, records the
+actual per-draw GPU model-view rather than a potentially stale object matrix,
+and requires nonblank host-region pixels. The first host and planet frames are
+also captured. The sequence, source ownership, finite-buffer, saved-system,
+signed-advection and native-recovery checks retain their earlier requirements.
+
+## Undiscovered point-layer startup allocation
+
+The pre-fix `8663be59` full radiance run `37184131655` failed the desktop Sun
+and black-hole workload comparison after preparation, before any accepted
+warmup/measurement samples. GPU geometry counts were candidate 195 / base 194
+for the Sun and 193 / 192 for the black hole. The failed raw artifacts
+`11296959011` and `11297094438` remain intact. No GPU-count allowance was added.
+
+Desktop startup renders the scene before the first discovery frame. The foreign
+point layer previously started visible with an infinite draw range and 420
+unfilled attribute entries. The actual Three traversal and geometry allocators
+register that exact object: one geometry, five attributes, 15,120 bytes. The
+layer now starts hidden with zero draw range; existing discovery alone activates
+it. The real initializer/allocator regression retains the old failing control,
+proves zero allocation initially and on the first Milky Way query, then one
+allocation on real M31 activation with unchanged buffers and IDs on revisit.
+The fresh performance comparison still requires exact GPU-resource equality.

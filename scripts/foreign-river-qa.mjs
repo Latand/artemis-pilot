@@ -7,14 +7,36 @@ export const residualTolerance = values => 64 * Number.EPSILON * Math.max(1, ...
 export const float32Tolerance = value => 4 * 2 ** (Math.floor(Math.log2(Math.max(Math.abs(value), 2 ** -126))) - 23);
 const near = (a, b, tolerance) => a.length === b.length && a.every((v, i) => Number.isFinite(v) && Math.abs(v - b[i]) <= tolerance(b[i]));
 
+// The real onAfterRender collector. That callback can run for an empty draw,
+// so record the effective solid-triangle submission rather than inferring it.
+// This function is also serialized into the browser without external bindings.
+export function collectForeignBodyDraw(object, renderer, camera, geometry, material, group, frame) {
+  const available = geometry.index?.count ?? geometry.attributes.position?.count ?? 0;
+  const range = geometry.drawRange;
+  const start = Math.max(0, range.start, group?.start ?? 0);
+  const end = Math.min(available, range.start + range.count, group ? group.start + group.count : Infinity);
+  const elements = Math.max(0, end - start);
+  const instances = object.isInstancedMesh ? object.count : geometry.isInstancedBufferGeometry
+    ? Math.min(geometry.instanceCount, geometry._maxInstanceCount ?? Infinity) : 1;
+  const triangles = object.isMesh && !material.wireframe && material.visible !== false
+    && Number.isSafeInteger(elements) && Number.isSafeInteger(instances) && instances > 0
+    ? Math.floor(elements / 3) * instances : 0;
+  const gl = renderer.getContext(), program = renderer.properties.get(material).currentProgram?.program;
+  const location = program && gl.getUniformLocation(program, 'modelViewMatrix');
+  const gpu = location ? Array.from(gl.getUniform(program, location)) : [];
+  return { frame, object: object.uuid, near: camera.near, far: camera.far,
+    submission: { indexed: !!geometry.index, available, start, end, elements, instances, triangles },
+    modelViewTranslation: object.modelViewMatrix.elements.slice(12, 15), gpuTranslation: gpu.slice(12, 15) };
+}
+
 export function healthyForeignObserver(frame) {
   const p = frame.precision;
   if (!p || !p.expectedCamera.every(Number.isFinite) || !p.expectedTranslation.every(Number.isFinite)) return false;
   const tolerance = residualTolerance(p.arithmeticScale);
   return near(p.cameraUniform, p.expectedCamera, () => tolerance)
     && near(p.modelViewTranslation, p.expectedTranslation, () => tolerance)
-    && near(p.gpuCamera, p.expectedCamera, float32Tolerance)
-    && near(p.gpuTranslation, p.expectedTranslation, float32Tolerance);
+    && near(p.gpuCamera, p.expectedCamera, value => tolerance + float32Tolerance(value))
+    && near(p.gpuTranslation, p.expectedTranslation, value => tolerance + float32Tolerance(value));
 }
 
 export function healthyForeignSources(frame, hostId = FOREIGN_RIVER_HOST) {
@@ -30,8 +52,10 @@ export function healthyForeignSources(frame, hostId = FOREIGN_RIVER_HOST) {
 
 export function healthyForeignBody(frame) {
   const body = frame.bodyPrecision;
-  return !!body && body.visible && body.expectedTranslation.every(Number.isFinite)
-    && near(body.modelViewTranslation, body.expectedTranslation, () => residualTolerance(body.arithmeticScale));
+  const tolerance = body ? residualTolerance(body.arithmeticScale) : 0;
+  return !!body && body.visible && body.drawnThisFrame && body.expectedTranslation.every(Number.isFinite)
+    && near(body.modelViewTranslation, body.expectedTranslation, () => tolerance)
+    && near(body.gpuTranslation, body.expectedTranslation, value => tolerance + float32Tolerance(value));
 }
 
 export function healthyForeignFrame(frame, mobile) {

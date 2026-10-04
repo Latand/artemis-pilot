@@ -9,7 +9,9 @@ code, with no historical raw-report substitution.
 The adapter compares actual main `3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6`
 against the exact reported candidate HEAD. The candidate's complete served and
 build input fingerprint is frozen from reviewed local foreign-river repair
-`6bfee22d`. Reports of the preceding `d6ea8834` / `8663be59` production do not
+`6146c01c`, including the captured photosphere culling and pre-discovery
+point-layer startup corrections. Reports of
+the preceding `d6ea8834` / `8663be59` / `e90481cd` production do not
 qualify for the changed source. The immutable
 fingerprint remains valid across QA-only commits. Source checks cover `src`,
 `public`, entry HTML, dependency manifests/locks, the Vite preview dependency,

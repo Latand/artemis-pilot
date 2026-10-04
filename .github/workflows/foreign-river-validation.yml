@@ -36,10 +36,11 @@ jobs:
           git rev-parse HEAD > evidence/foreign-river/sources/head-sha.txt
           git rev-parse 'HEAD^{tree}' > evidence/foreign-river/sources/tree-sha.txt
           git diff 8663be59ed26cfed38176895527b9aa1d9bdd4ff HEAD > evidence/foreign-river/sources/change.diff
-          cp scripts/foreign-river-qa.mjs scripts/smoke-foreign-river.mjs scripts/verify-foreign-river.mjs scripts/context-recovery-qa.mjs scripts/river-radiance-qa.mjs scripts/river-radiance-lifecycle.mjs scripts/verify-river-radiance.mjs evidence/foreign-river/sources/
+          cp scripts/foreign-river-qa.mjs scripts/smoke-foreign-river.mjs scripts/smoke-foreign-star-startup.mjs scripts/verify-foreign-river.mjs scripts/context-recovery-qa.mjs scripts/river-radiance-qa.mjs scripts/river-radiance-lifecycle.mjs scripts/verify-river-radiance.mjs evidence/foreign-river/sources/
       - name: Require old-code negative controls and current production hooks
         run: |
           node scripts/smoke-foreign-river.mjs
+          node scripts/smoke-foreign-star-startup.mjs
           node scripts/verify-foreign-river.mjs . evidence/foreign-river --validate
       - run: npx playwright install --with-deps chromium
       - name: Bound the real-provider GPU sequence to fifteen minutes

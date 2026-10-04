@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
-import { FOREIGN_RIVER_HOST, healthyForeignFrame, foreignMovementPreserved, residualTolerance, sameForeignSystem, healthyForeignAdvection } from './foreign-river-qa.mjs';
+import { FOREIGN_RIVER_HOST, healthyForeignFrame, foreignMovementPreserved, residualTolerance, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw } from './foreign-river-qa.mjs';
 import { healthyRadianceGain, healthyRadianceRecovery } from './river-radiance-lifecycle.mjs';
 import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled } from './context-recovery-qa.mjs';
 
@@ -38,6 +38,12 @@ function once(source, token, replacement) { assert.equal(source.split(token).len
 
 function transform(source, id) {
   id = id.replaceAll('\\', '/').split('?')[0];
+  if (id.endsWith('/src/stars.js')) return once(source, 'photosphere.name = star.name + " photosphere";', `photosphere.name = star.name + " photosphere";
+        const previousPhotoAfterRender=photosphere.onAfterRender;
+        photosphere.onAfterRender=function(renderer,scene,camera,geometry,material,group){
+            previousPhotoAfterRender?.call(this,renderer,scene,camera,geometry,material,group);
+            window.__foreignRecordBody?.(star.id,this,renderer,camera,geometry,material,group);
+        };`);
   if (id.endsWith('/src/render/systemBodies.js')) return source + `\nexport function foreignRiverSystemState(){return {starId:renderedStarId,hostId:renderedSystem?.hostStar?.id,planets:renderedSystem?.planets,slots:groups.filter(slot=>slot.planet).map(slot=>slot.planet)};}\n`;
   if (id.endsWith('/src/river.js')) {
     const dispatch = 'renderer.setRenderTarget(rtB);\n            renderer.render(computeScene, computeCam);';
@@ -66,13 +72,13 @@ window.__foreignRiverRead=()=>{
   assert(source.includes('    finishFramePerf(frameT0,'));
   source = source.replaceAll('    finishFramePerf(frameT0,', '    window.__foreignCompleted=(window.__foreignCompleted||0)+1;\n    finishFramePerf(frameT0,');
   return source + `
-window.__foreignFrame=()=>{window.__foreignDispatch=null;clock.getDelta=()=>1/30;lastMobileFrame=-Infinity;frame();};
+window.__foreignFrame=()=>{window.__foreignDispatch=null;window.__foreignDraws=Object.create(null);window.__foreignFrameOrdinal=(window.__foreignFrameOrdinal||0)+1;clock.getDelta=()=>1/30;lastMobileFrame=-Infinity;frame();};
 window.__foreignRecoveryState=()=>({time:G.t,paused:G.paused,completed:window.__foreignCompleted||0,contextLost:renderer.getContext().isContextLost(),
  lifecycleLost:renderContext.isLost(),losses:renderContext.losses,restores:renderContext.restores,resetCalls:window.__foreignResetCalls||0,defaultTarget:renderer.getRenderTarget()===null});
 `;
 }
 
-for (const path of ['src/main.js', 'src/river.js', 'src/render/systemBodies.js']) execFileSync(process.execPath, ['--input-type=module', '--check'], {
+for (const path of ['src/main.js', 'src/river.js', 'src/stars.js', 'src/render/systemBodies.js']) execFileSync(process.execPath, ['--input-type=module', '--check'], {
   input: transform(await readFile(resolve(root, path), 'utf8'), '/' + path) });
 if (validate) { console.log(JSON.stringify({ hooks: 'valid', revision: report.revision, browserRun: false })); process.exit(0); }
 await mkdir(out, { recursive: true });
@@ -92,17 +98,27 @@ try {
   await page.route('https://fonts.googleapis.com/**', r => r.fulfill({ status: 200, body: '' }));
   await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?tier1=0&field=0&galaxyvol=0&galaxies=0&realsky=0&river=1&bloom=0&compile=0&hidehelp=1&dpr=1`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__AP_READY && window.__foreignFrame && window.__foreignRiverRead);
-  await page.evaluate(async hostId => {
+  await page.evaluate(async ({ hostId, collector }) => {
     const [scene, state, active, systems, P, input, C, systemRender] = await Promise.all([
       import('/src/scene.js'), import('/src/state.js'), import('/src/universe/activeStars.js'), import('/src/universe/exploredSystem.js'),
       import('/src/universe/planetarySystem.js'), import('/src/input.js'), import('/src/constants.js'), import('/src/render/systemBodies.js')]);
     window.qa = { scene, state, active, systems, P, input, C, systemRender, hostId, bodyKind: 'star' };
+    const collectDraw = (0, eval)('(' + collector + ')');
+    window.__foreignRecordBody = (key, object, renderer, camera, geometry, material, group) => {
+      const records = (window.__foreignDraws ||= Object.create(null))[key] ||= [];
+      records.push(collectDraw(object, renderer, camera, geometry, material, group, window.__foreignFrameOrdinal));
+    };
+    const planetMesh = systemRender.systemBodyRenderState()[0].mesh, previousAfterRender = planetMesh.onAfterRender;
+    planetMesh.onAfterRender = function(renderer, scene, camera, geometry, material, group) {
+      previousAfterRender?.call(this, renderer, scene, camera, geometry, material, group);
+      window.__foreignRecordBody('planet:0', this, renderer, camera, geometry, material, group);
+    };
     state.setSimTime(0); Object.assign(state.G, { paused: true, dead: true, observerMode: true, landed: null, gr: true, warp: 1 });
     active.pinProceduralStarById(hostId, 0); input.setFocus('proc:' + hostId);
     const host = active.activeStarForFocus('proc:' + hostId); systems.getExploredSystem('proc:' + hostId, null, 0);
     scene.cam.dist = host.R * C.K * 4; scene.cam.distTarget = null; scene.cam.yaw = -.95; scene.cam.pitch = .46;
     scene.cam.tgt.set(host.x * C.K, host.z * C.K, -host.y * C.K);
-  }, FOREIGN_RIVER_HOST);
+  }, { hostId: FOREIGN_RIVER_HOST, collector: collectForeignBodyDraw.toString() });
   await prepareContextRecoveryQA(page);
   const sample = async (name, { capture = false, hidden = false } = {}) => {
     const frame = await page.evaluate(({ name, capture, hidden }) => {
@@ -112,6 +128,7 @@ try {
       const host = q.systems.getExploredHost();
       const cached = q.active.getCachedFocusedSystem(), rendered = q.systemRender.foreignRiverSystemState();
       const body = q.bodyKind === 'star' ? s.scene.getObjectByName(host?.name + ' photosphere') : q.systemRender.systemBodyRenderState()[0]?.mesh;
+      const draws = window.__foreignDraws?.[q.bodyKind === 'star' ? host?.id : 'planet:0'] || [], drawn = draws.at(-1);
       let bodyPrecision = null;
       if (!hidden && body && eye) {
         const own = body.userData.systemAnchor, orbit = s.camera.userData.preciseOrbit;
@@ -119,7 +136,9 @@ try {
           : s.camera.position.clone().setFromMatrixPosition(body.matrixWorld).sub(eye.origin).sub(eye.offset).sub(orbit.offset);
         const expected = relative.clone().applyQuaternion(s.camera.quaternion.clone().invert());
         bodyPrecision = { visible: body.visible && body.parent.visible, expectedTranslation: expected.toArray(),
-          modelViewTranslation: body.modelViewMatrix.elements.slice(12, 15),
+          drawnThisFrame: draws.some(draw => draw.submission.triangles > 0)
+            && draws.every(draw => draw.frame === window.__foreignFrameOrdinal && draw.object === body.uuid), draws,
+          modelViewTranslation: drawn?.modelViewTranslation || [], gpuTranslation: drawn?.gpuTranslation || [],
           arithmeticScale: [...relative.toArray(), ...eye.offset.toArray(), ...orbit.offset.toArray(), ...(own?.offset.toArray() || [])] };
       }
       const result = { ...state, name, hidden, time: q.state.G.t, paused: q.state.G.paused, focus: q.state.G.focus,
@@ -136,6 +155,19 @@ try {
         let lit = 0, min = 255, max = 0;
         for (let i = 0; i < pixels.length; i += 4) { const v = Math.max(pixels[i], pixels[i + 1], pixels[i + 2]); if (v > 8) lit++; min = Math.min(min, v); max = Math.max(max, v); }
         result.pixels = { lit, min, max }; result.png = s.renderer.domElement.toDataURL('image/png');
+        if (q.bodyKind === 'star' && bodyPrecision) {
+          const [x, y, z] = bodyPrecision.expectedTranslation, scale = s.viewportSize.pxScale;
+          const cx = gl.drawingBufferWidth / 2 + x / -z * scale, cy = gl.drawingBufferHeight / 2 - y / -z * scale;
+          const radius = Math.max(5, Math.min(100, host.R * q.C.K / -z * scale * .35));
+          let sourceLit = 0, total = 0;
+          for (let py = Math.max(0, Math.floor(cy - radius)); py <= Math.min(gl.drawingBufferHeight - 1, Math.ceil(cy + radius)); py++)
+            for (let px = Math.max(0, Math.floor(cx - radius)); px <= Math.min(gl.drawingBufferWidth - 1, Math.ceil(cx + radius)); px++) {
+              if ((px - cx) ** 2 + (py - cy) ** 2 > radius ** 2) continue;
+              const offset = ((gl.drawingBufferHeight - 1 - py) * gl.drawingBufferWidth + px) * 4;
+              total++; if (Math.max(pixels[offset], pixels[offset + 1], pixels[offset + 2]) > 8) sourceLit++;
+            }
+          result.sourcePixels = { center: [cx, cy], radius, sourceLit, total };
+        }
       }
       return result;
     }, { name, capture, hidden });
@@ -154,13 +186,14 @@ try {
       check(name + ': foreign clock publication is current', record.sources.filter(s => s.name.startsWith('gx:')).every(s => s.sourceTime === record.time));
     }
     if (capture) check(name + ': nonblank synchronized pixels', frame.pixels.lit > 0 && frame.pixels.max > frame.pixels.min);
+    if (capture && frame.sourcePixels) check(name + ': the actually drawn host has nonblank source-region pixels', frame.sourcePixels.sourceLit > 0 && frame.sourcePixels.total > 0, frame.sourcePixels);
     return record;
   };
   // Fixed preparatory frames are retained, not timed or retried until stable.
-  for (let i = 0; i < 8; i++) await sample('host-' + i, { capture: i === 7 });
+  for (let i = 0; i < 8; i++) await sample('host-' + i, { capture: i === 0 || i === 7 });
   const hostFrame = report.frames.at(-1);
   await page.evaluate(() => { const system = qa.active.getCachedFocusedSystem(); qa.bodyKind = 'planet'; qa.input.setFocus(qa.P.planetFocusValue(0, system)); qa.scene.cam.distTarget = null; qa.scene.cam.dist = system.planets[0].radiusKm * qa.C.K * 3; });
-  for (let i = 0; i < 8; i++) await sample('planet-' + i, { capture: i === 7 });
+  for (let i = 0; i < 8; i++) await sample('planet-' + i, { capture: i === 0 || i === 7 });
   const beforeFree = report.frames.at(-1);
   await page.locator('#exploreObject').click(); await page.keyboard.down('w');
   await sample('free-move-0'); const free = await sample('free-move-1', { capture: true }); await page.keyboard.up('w');

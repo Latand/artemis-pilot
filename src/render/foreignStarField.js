@@ -21,6 +21,7 @@ export function initForeignStarField(scene) {
         g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(420 * size), size));
     mesh = new THREE.Points(g, makeStarPointMaterial({ radius: true }));
     mesh.name = 'persistent Andromeda stars'; mesh.frustumCulled = false; mesh.renderOrder = -3;
+    g.setDrawRange(0, 0); mesh.visible = false;
     scene.add(mesh);
 }
 export function updateForeignStarField(camera, world, t) {

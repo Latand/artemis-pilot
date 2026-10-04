@@ -138,6 +138,7 @@ export function addStarVisual(star) {
     }
     if (existing) {
         existing.star = star;
+        if (existing.photosphere) existing.photosphere.frustumCulled = !star.galaxyId;
         if (star.tempK > 0 && existing.photosphere) {
             existing.tempK = star.tempK;
             linearStarColor(teffToRGB(star.tempK, starRGB), existing.photosphere.material.color);
@@ -164,6 +165,9 @@ export function addStarVisual(star) {
         const color = tempK ? linearStarColor(teffToRGB(tempK, starRGB)) : new THREE.Color(star.color);
         photosphere = new THREE.Mesh(sphere(star.R * K, 64, 48, 32, 24), applyTerrellToMaterial(photosphereMaterial(color, null, { ...star, tempK })));
         photosphere.name = star.name + " photosphere";
+        // The bounded active-visual/LOD gates still own visibility. A global
+        // CPU frustum can reject an M31 surface before its split view transform.
+        photosphere.frustumCulled = !star.galaxyId;
         g.userData.appearance = photosphere.material.userData.photosphere.profile.provenance;
         g.add(photosphere);
     }
