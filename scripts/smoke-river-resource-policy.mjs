@@ -1,10 +1,26 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import * as THREE from 'three';
-import {LEGACY_COVERAGE_REF,FIXED_COVERAGE_ANCESTOR,coverageExpectation,withinPreparedResourceBounds,drawCoveragePreparation,prepareCoverageResources,coverageMainHook,coverageExactStateHook} from './river-coverage-policy.mjs';
+import {LEGACY_COVERAGE_REF,LEGACY_MAIN_COVERAGE_REF,LEGACY_MAIN_RIVER_INPUTS,FIXED_COVERAGE_ANCESTOR,coverageExpectation,withinPreparedResourceBounds,drawCoveragePreparation,prepareCoverageResources,coverageMainHook,coverageExactStateHook} from './river-coverage-policy.mjs';
 
 assert.equal(coverageExpectation(LEGACY_COVERAGE_REF,false).frames,120);
+const actualMainInputs=Object.fromEntries(Object.keys(LEGACY_MAIN_RIVER_INPUTS).map(path=>{
+ const blob=ref=>execFileSync('git',['rev-parse',`${ref}:${path}`],{encoding:'utf8'}).trim();
+ assert.equal(blob(LEGACY_MAIN_COVERAGE_REF),blob(LEGACY_COVERAGE_REF),'Actual main legacy river is byte-identical to the explicit original control');
+ return [path,blob(LEGACY_MAIN_COVERAGE_REF)];
+}));
+const mainExpectation=coverageExpectation(LEGACY_MAIN_COVERAGE_REF,false,actualMainInputs);
+assert.equal(mainExpectation.frames,120);assert.equal(mainExpectation.rule,LEGACY_MAIN_COVERAGE_REF);
+assert.equal(mainExpectation.legacyControl,LEGACY_COVERAGE_REF);assert.equal(mainExpectation.sourceRelativeHalos,false);
+assert.throws(()=>coverageExpectation(LEGACY_MAIN_COVERAGE_REF,false));
+assert.throws(()=>coverageExpectation(LEGACY_MAIN_COVERAGE_REF,true,actualMainInputs));
+for(const path of Object.keys(actualMainInputs)){
+ assert.throws(()=>coverageExpectation(LEGACY_MAIN_COVERAGE_REF,false,{...actualMainInputs,[path]:'0'.repeat(40)}));
+ const missing={...actualMainInputs};delete missing[path];assert.throws(()=>coverageExpectation(LEGACY_MAIN_COVERAGE_REF,false,missing));
+}
+assert.throws(()=>coverageExpectation('0'.repeat(40),false,actualMainInputs),/No declared/);
 for(const ref of ['22cc61dae7c2bbec5043dcf761cf4583b8b8d728','09863eedda25eef36d79e9cf88daa4ff3e377875']){
  const expected=coverageExpectation(ref,true);assert.equal(expected.frames,1200);assert.equal(expected.sourceRelativeHalos,true);assert.equal(expected.rule,FIXED_COVERAGE_ANCESTOR);
  assert.throws(()=>coverageExpectation(ref,false),/No declared/);

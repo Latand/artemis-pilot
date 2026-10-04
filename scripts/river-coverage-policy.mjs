@@ -2,10 +2,23 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 export const LEGACY_COVERAGE_REF='cb6601c2a5cdde3a8e9f22f6ac9b17a6837696a6';
+// Actual main includes the Jupiter merge but has the identical legacy river.
+export const LEGACY_MAIN_COVERAGE_REF='e69158f8bfa6f2d24d786cb60c247fe66afa1420';
+export const LEGACY_MAIN_RIVER_INPUTS=Object.freeze({
+ 'src/river.js':'be3f94a03c6e32f909aa63f6abd8d21f535401c0',
+ 'src/riverMath.js':'4a6e75131eb3b611d879b9a22b06614f2dc44241',
+ 'src/flowfield.js':'5751670794aa1f994163dfa4453a28f4559c567d',
+});
 export const FIXED_COVERAGE_ANCESTOR='bd6a3e6dafce69cd83c3672f748965c349b066d6';
 
-export function coverageExpectation(revision,hasReviewedHaloAncestry){
+export function coverageExpectation(revision,hasReviewedHaloAncestry,legacyMainInputs){
  if(revision===LEGACY_COVERAGE_REF)return {mode:'legacy-negative-control',sourceRelativeHalos:false,frames:120,rule:LEGACY_COVERAGE_REF};
+ if(revision===LEGACY_MAIN_COVERAGE_REF){
+  assert.equal(hasReviewedHaloAncestry,false,'Declared legacy main must not have fixed halo ancestry');
+  assert.deepEqual(legacyMainInputs,LEGACY_MAIN_RIVER_INPUTS,'Actual main must retain the exact reviewed legacy river inputs');
+  return {mode:'legacy-negative-control',sourceRelativeHalos:false,frames:120,rule:LEGACY_MAIN_COVERAGE_REF,
+   legacyControl:LEGACY_COVERAGE_REF,sourceProof:legacyMainInputs};
+ }
  if(hasReviewedHaloAncestry)return {mode:'source-relative',sourceRelativeHalos:true,frames:1200,rule:FIXED_COVERAGE_ANCESTOR};
  throw new Error(`No declared river coverage expectation for ${revision}`);
 }

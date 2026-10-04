@@ -6,7 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
-import { coverageExpectation, FIXED_COVERAGE_ANCESTOR, withinPreparedResourceBounds, prepareCoverageResources, coverageMainHook, coverageExactStateHook } from './river-coverage-policy.mjs';
+import { coverageExpectation, LEGACY_MAIN_COVERAGE_REF, LEGACY_MAIN_RIVER_INPUTS, FIXED_COVERAGE_ANCESTOR, withinPreparedResourceBounds, prepareCoverageResources, coverageMainHook, coverageExactStateHook } from './river-coverage-policy.mjs';
 const mobile=process.env.DEVICE==='mobile';
 const root=resolve(process.env.BASE_ROOT||process.cwd());
 const baseline=!!process.env.BASE_ROOT;
@@ -14,7 +14,10 @@ const revision=execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8
 if(process.env.EXPECTED_SOURCE_REF)assert.equal(revision,process.env.EXPECTED_SOURCE_REF,'fixture uses its declared exact production ref');
 let hasReviewedHaloAncestry=false;
 try{execFileSync('git',['-C',root,'merge-base','--is-ancestor',FIXED_COVERAGE_ANCESTOR,revision],{stdio:'ignore'});hasReviewedHaloAncestry=true;}catch(error){if(error.status!==1)throw error;}
-const expectation=coverageExpectation(revision,hasReviewedHaloAncestry),legacy=expectation.mode==='legacy-negative-control';
+const legacyMainInputs=revision===LEGACY_MAIN_COVERAGE_REF?Object.fromEntries(Object.keys(LEGACY_MAIN_RIVER_INPUTS).map(path=>[
+ path,execFileSync('git',['-C',root,'rev-parse',`${revision}:${path}`],{encoding:'utf8'}).trim(),
+])):undefined;
+const expectation=coverageExpectation(revision,hasReviewedHaloAncestry,legacyMainInputs),legacy=expectation.mode==='legacy-negative-control';
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/river-coverage');
 const viewport=mobile?{width:215,height:466}:{width:768,height:512};
 assert(mobile||viewport.width>760,'Desktop CSS viewport must stay above the production mobile breakpoint');
