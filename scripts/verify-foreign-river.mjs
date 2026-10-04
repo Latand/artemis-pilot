@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { createServer } from 'vite';
 import { chromium } from 'playwright';
-import { FOREIGN_RIVER_HOST, healthyForeignFrame, foreignMovementPreserved, residualTolerance, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw } from './foreign-river-qa.mjs';
+import { FOREIGN_RIVER_HOST, healthyForeignFrame, foreignMovementPreserved, residualTolerance, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw, foreignSourceEligibility } from './foreign-river-qa.mjs';
 import { healthyRadianceGain, healthyRadianceRecovery } from './river-radiance-lifecycle.mjs';
 import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled } from './context-recovery-qa.mjs';
 
@@ -53,15 +53,19 @@ function transform(source, id) {
 window.__foreignRiverRead=()=>{
  const state=__foreignRiverBaseRead(),gl=renderer.getContext(),drawable=river.style===2?dots:lines;
  for(const s of state.sources)if(s.activeSource){const i=s.index-riverStarUniformOffset,star=riverStarPickRefs[i];
-  s.world=[star.x*K,(star.z||0)*K,-star.y*K];s.field=[flowCtx.starX[i],flowCtx.starY[i],flowCtx.starZ[i]];s.sourceTime=star._foreignT??star._posSimT;}
+  s.world=[star.x*K,(star.z||0)*K,-star.y*K];s.field=[flowCtx.starX[i],flowCtx.starY[i],flowCtx.starZ[i]];s.sourceTime=star._foreignT??star._posSimT;
+  s.provider={mu:star.mu,R:star.R,rs:star.rs,bh:!!star.bh};s.fieldCoefficient=flowCtx.starC[i];s.fieldSink=flowCtx.starSink[i];}
  const orbit=camera.userData.preciseOrbit,anchor=camera.userData.systemAnchor;
  const expected=anchor&&orbit&&orbit.worldPosition.equals(camera.position)
   ?anchor.origin.clone().sub(smoothCenter).add(anchor.offset).add(orbit.offset):camera.position.clone().sub(smoothCenter);
  const expectedView=expected.clone().negate().applyQuaternion(camera.quaternion.clone().invert());
  const program=renderer.properties.get(drawable.material).currentProgram?.program;
- const uniform=name=>{const location=program&&gl.getUniformLocation(program,name);return location?Array.from(gl.getUniform(program,location)):null;};
+ const value=name=>{const location=program&&gl.getUniformLocation(program,name);return location?gl.getUniform(program,location):null;};
+ const uniform=name=>{const result=value(name);return result===null?null:Array.from(result);};
+ for(const s of state.sources)if(s.activeSource){s.gpuCoefficient=uniform('uBody['+s.index+']')?.[3];s.gpuSink=value('uSink['+s.index+']');}
  const model=uniform('modelViewMatrix');
- return {...state,precision:{expectedCamera:expected.toArray(),expectedTranslation:expectedView.toArray(),cameraUniform:uniformsShared.uCam.value.toArray(),
+ return {...state,sourceView:{quaternion:camera.quaternion.toArray(),fov:camera.fov,aspect:camera.aspect,nearTierLimit:TIER_SPLIT_UNITS},
+  precision:{expectedCamera:expected.toArray(),expectedTranslation:expectedView.toArray(),cameraUniform:uniformsShared.uCam.value.toArray(),
   modelViewTranslation:drawable.modelViewMatrix.elements.slice(12,15),gpuCamera:uniform('uCam')||[],gpuTranslation:model?.slice(12,15)||[],
   arithmeticScale:anchor?[...anchor.origin.clone().sub(smoothCenter).toArray(),...anchor.offset.toArray(),...orbit.offset.toArray()]:expected.toArray()},
   contextLost:gl.isContextLost(),glError:gl.getError()};
@@ -120,8 +124,8 @@ try {
     scene.cam.tgt.set(host.x * C.K, host.z * C.K, -host.y * C.K);
   }, { hostId: FOREIGN_RIVER_HOST, collector: collectForeignBodyDraw.toString() });
   await prepareContextRecoveryQA(page);
-  const sample = async (name, { capture = false, hidden = false } = {}) => {
-    const frame = await page.evaluate(({ name, capture, hidden }) => {
+  const sample = async (name, { capture = false, hidden = false, ownership = 'owned' } = {}) => {
+    const frame = await page.evaluate(({ name, capture, hidden, ownership }) => {
       __foreignFrame(); const q = qa, s = q.scene, gl = s.renderer.getContext(); gl.finish();
       const state = __foreignRiverRead();
       const eye = s.camera.userData.systemAnchor;
@@ -141,7 +145,7 @@ try {
           modelViewTranslation: drawn?.modelViewTranslation || [], gpuTranslation: drawn?.gpuTranslation || [],
           arithmeticScale: [...relative.toArray(), ...eye.offset.toArray(), ...orbit.offset.toArray(), ...(own?.offset.toArray() || [])] };
       }
-      const result = { ...state, name, hidden, time: q.state.G.t, paused: q.state.G.paused, focus: q.state.G.focus,
+      const result = { ...state, name, hidden, ownershipExpectation: ownership, time: q.state.G.t, paused: q.state.G.paused, focus: q.state.G.focus,
         completed: window.__foreignCompleted || 0, host: host?.id,
         system: { cachedStarId: cached?.starId, renderedStarId: rendered.starId, renderedHostId: rendered.hostId,
           cachedPlanets: JSON.stringify(cached?.planets), renderedPlanets: JSON.stringify(rendered.planets), slotPlanets: JSON.stringify(rendered.slots) },
@@ -170,8 +174,9 @@ try {
         }
       }
       return result;
-    }, { name, capture, hidden });
+    }, { name, capture, hidden, ownership });
     const { textureBase64, png, ...record } = frame; record.textureHash = sha(Buffer.from(textureBase64, 'base64'));
+    record.hostEligibility = foreignSourceEligibility(record, record.sources.find(source => source.name === FOREIGN_RIVER_HOST));
     report.frames.push(record);
     if (png) { await writeFile(resolve(out, name + '-canvas.png'), Buffer.from(png.split(',')[1], 'base64')); report.captures.push(name); }
     await save();
@@ -193,6 +198,23 @@ try {
   for (let i = 0; i < 8; i++) await sample('host-' + i, { capture: i === 0 || i === 7 });
   const hostFrame = report.frames.at(-1);
   await page.evaluate(() => { const system = qa.active.getCachedFocusedSystem(); qa.bodyKind = 'planet'; qa.input.setFocus(qa.P.planetFocusValue(0, system)); qa.scene.cam.distTarget = null; qa.scene.cam.dist = system.planets[0].radiusKm * qa.C.K * 3; });
+  // Preserve the failed 583370e pose: this view puts the host behind the
+  // observer, so its complete halo is correctly excluded while gravity stays.
+  const away = await sample('planet-away', { capture: true, ownership: 'excluded' });
+  check('away-facing captured host is outside the halo support', away.hostEligibility.depthPlusReach < 0);
+  // One declared inspection pose, aimed from the opposite side of the planet
+  // toward both planet and host. This is fixture framing, never camera flight.
+  await page.evaluate(() => {
+    const offset = qa.scene.cam.preciseTarget.offset;
+    qa.scene.cam.yaw = Math.atan2(offset.z, offset.x);
+    qa.scene.cam.pitch = Math.asin(offset.y / offset.length());
+  });
+  // Production can defer paused ownership reassignment for at most its four
+  // native cadence frames. Retain all four fixed deliveries and their state.
+  for (let i = 0; i < 4; i++) {
+    const row = await sample('planet-aim-' + i, { ownership: 'policy' });
+    check('native foreign ownership cadence is bounded ' + i, row.computeEvery <= 4);
+  }
   for (let i = 0; i < 8; i++) await sample('planet-' + i, { capture: i === 0 || i === 7 });
   const beforeFree = report.frames.at(-1);
   await page.locator('#exploreObject').click(); await page.keyboard.down('w');
@@ -206,7 +228,7 @@ try {
   for (const direction of [1, -1]) {
     const phase = [];
     await page.evaluate(direction => { qa.state.G.warp = direction * 10 * qa.C.SEC_YEAR; }, direction);
-    for (let i = 0; i < 4; i++) { const row = await sample((direction > 0 ? 'forward-' : 'reverse-') + i, { capture: i === 3 });
+    for (let i = 0; i < 4; i++) { const row = await sample((direction > 0 ? 'forward-' : 'reverse-') + i, { capture: i === 3, ownership: 'policy' });
       phase.push(row); check('clock advances in requested direction ' + direction + ':' + i, (row.time - previous.time) * direction > 0); previous = row; }
     check('actual river advection has nonzero correct signed dispatch ' + direction, healthyForeignAdvection(phase, direction));
   }

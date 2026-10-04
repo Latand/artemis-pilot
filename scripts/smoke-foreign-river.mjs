@@ -8,7 +8,7 @@ import { systemAnchor } from '../src/render/systemPrecision.js';
 import { moveExplorationTarget } from '../src/universe/explorationCamera.js';
 import { observerPositionRelativeTo, stabilizeBodyMaterial } from '../src/render/relativeBodyFrame.js';
 import { CAM_DIST_MAX, LY_SCENE } from '../src/constants.js';
-import { FOREIGN_RIVER_HOST, residualTolerance, healthyForeignObserver, healthyForeignFrame, foreignMovementPreserved, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw } from './foreign-river-qa.mjs';
+import { FOREIGN_RIVER_HOST, residualTolerance, healthyForeignObserver, healthyForeignFrame, foreignMovementPreserved, sameForeignSystem, healthyForeignAdvection, collectForeignBodyDraw, foreignSourceEligibility, healthyForeignSources } from './foreign-river-qa.mjs';
 
 const source = readFileSync(new URL('../src/scene.js', import.meta.url), 'utf8');
 const applySource = source.slice(source.indexOf('export function applyCamera() {'), source.indexOf('const ptrs = new Map();')).replace('export ', '');
@@ -75,8 +75,11 @@ for (const name of ['FLOW_GLSL', 'COMPUTE_FRAG']) {
 console.log(`${cases} real M31 planet/epoch/angle cases pass, with ${oldFailures} old-code precision failures; ordinary/stale fallbacks and source/compute invariants pass`);
 
 const validFrame = { time: 0, contextLost: false, glError: 0, readError: 0, finite: true, invalidOwners: 0,
+  ownershipExpectation: 'owned', radius: 20, gainState: { ownerShares: [1] },
+  sourceView: { quaternion: new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(new THREE.Vector3(6.25, 6.5, -8.25), new THREE.Vector3(1, 1, 1), new THREE.Vector3(0, 1, 0))).toArray(), fov: 48, aspect: 1100 / 760, nearTierLimit: LY_SCENE * .02 },
   count: 15376, drawCount: 15376, drawnCount: 15376, drawVisible: true, ambient: 0, drawnAmbient: 0, center: [1, 2, 3],
-  sources: [{ name: FOREIGN_RIVER_HOST, activeSource: true, currentActive: true, sourceTime: 0, owners: 15376, drawnOwners: 15376,
+  sources: [{ index: 0, name: FOREIGN_RIVER_HOST, coefficient: 10, sink: .1, soi: 0, hole: 0, halo: [20, 1, 1], cdfShare: 1, activeSource: true, currentActive: true, sourceTime: 0, owners: 15376, drawnOwners: 15376,
+    provider: { mu: 5e10, R: 100, bh: false }, fieldCoefficient: 10, fieldSink: .1, gpuCoefficient: 10, gpuSink: Math.fround(.1),
     world: [2, 3, 4], field: [2, 3, 4], residual: [1, 1, 1] }],
   precision: { expectedCamera: [6.25, 6.5, -8.25], expectedTranslation: [0, 0, -12], cameraUniform: [6.25, 6.5, -8.25],
     modelViewTranslation: [0, 0, -12], gpuCamera: [6.25, 6.5, -8.25], gpuTranslation: [0, 0, -12], arithmeticScale: [8000, 12] },
@@ -95,6 +98,42 @@ for (const mutate of [
   f => f.bodyPrecision.gpuTranslation[0] += .25,
 ]) { const bad = structuredClone(validFrame); mutate(bad); assert(!healthyForeignFrame(bad, false)); negatives++; }
 console.log(`${negatives} foreign-source, full-buffer, stale-clock, GPU/model-view and body-alignment negative controls passed`);
+
+// Actual 583370e planet-0 failure: the retained host is behind the camera.
+// All field/source assertions still apply; only its visible sampling is zero.
+const awayFrame = structuredClone(validFrame), awayHost = awayFrame.sources[0];
+awayFrame.ownershipExpectation = 'excluded'; awayFrame.dispatch = { dt: 0, respawn: 1 };
+awayFrame.radius = 34.59405534584757; awayFrame.center = [0, 0, 0];
+awayFrame.precision.expectedCamera = [4.734463451560835, 6.2741802824563875, -9.532367546237698];
+const capturedOffset = new THREE.Vector3(Math.cos(.46) * Math.cos(-.95), Math.sin(.46), Math.cos(.46) * Math.sin(-.95));
+awayFrame.sourceView.quaternion = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(capturedOffset, new THREE.Vector3(), new THREE.Vector3(0, 1, 0))).toArray();
+Object.assign(awayHost, { world: [7722, -364, -4002], field: [7722, -364, -4002], residual: [7722, -364, -4002],
+  coefficient: 11.664778266060036, sink: 303.367209730177, halo: [24350.840045279027, 0, 0], cdfShare: 0, owners: 0, drawnOwners: 0 });
+const awayProvider = foreignStarById(FOREIGN_RIVER_HOST, 0);
+Object.assign(awayHost, { provider: { mu: awayProvider.mu, R: awayProvider.R, rs: awayProvider.rs, bh: !!awayProvider.bh },
+  fieldCoefficient: awayHost.coefficient, fieldSink: awayHost.sink, gpuCoefficient: Math.fround(awayHost.coefficient), gpuSink: Math.fround(awayHost.sink) });
+awayFrame.gainState.ownerShares[0] = 0;
+const eligibility = foreignSourceEligibility(awayFrame, awayHost);
+assert(eligibility.depthPlusReach < -1400); assert.equal(eligibility.weight, 0); assert(healthyForeignSources(awayFrame));
+for (const mutate of [f => f.ownershipExpectation = 'owned', f => f.sources[0].halo[1] = 1,
+  f => f.sources[0].cdfShare = 1, f => f.sources[0].owners = 1, f => f.sources[0].drawnOwners = 1,
+  f => f.sources[0].field[0]++, f => f.sources[0].sourceTime--, f => f.dispatch = null]) {
+  const bad = structuredClone(awayFrame); mutate(bad); assert(!healthyForeignSources(bad));
+}
+for (const mutate of [f => f.sources[0].halo[1] = 0, f => f.sources[0].cdfShare = 0,
+  f => f.gainState.ownerShares[0] = 0, f => f.ownershipExpectation = 'excluded',
+  f => f.sourceView.quaternion = [0, 0, 0, 1]]) {
+  const bad = structuredClone(validFrame); mutate(bad); assert(!healthyForeignSources(bad));
+}
+console.log('Captured away-facing eligibility, independent quaternion/CDF, retained force/clock and missing eligible ownership negatives pass');
+for (const frame of [validFrame, awayFrame]) for (const mutate of [
+  s => s.coefficient = 0, s => s.coefficient *= 1.01, s => s.fieldCoefficient = 0,
+  s => { s.coefficient = 0; s.fieldCoefficient = 0; s.gpuCoefficient = 0; },
+  s => s.sink = 0, s => s.sink *= 1.01, s => s.fieldSink = 0, s => s.gpuCoefficient = 0,
+  s => s.gpuSink = 0, s => s.gpuCoefficient *= 1.01, s => s.gpuSink *= 1.01,
+  s => s.provider.mu *= 1.01, s => s.provider.R *= 1.01, s => s.provider = null,
+]) { const bad = structuredClone(frame); mutate(bad.sources[0]); assert(!healthyForeignSources(bad)); }
+console.log('28 eligible/excluded provider-to-field-to-GPU zero/altered-force and sink negatives pass');
 
 const parameters = JSON.stringify([{ index: 0, radiusKm: 4054, moons: [] }]);
 const original = { system: { cachedStarId: 'proc:' + FOREIGN_RIVER_HOST, renderedStarId: 'proc:' + FOREIGN_RIVER_HOST,

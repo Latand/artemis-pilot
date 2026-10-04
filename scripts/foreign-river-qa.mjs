@@ -1,4 +1,8 @@
 import { healthyRadianceFrame } from './river-radiance-qa.mjs';
+import { Quaternion, Vector3 } from 'three';
+import { haloViewWeight } from '../src/riverCoverageMath.js';
+import { spawnReach } from '../src/riverMath.js';
+import { K } from '../src/constants.js';
 
 export const FOREIGN_RIVER_HOST = 'gx:m31:2654435769:1250:0:0:18';
 // Roundoff budgets come from operations on the retained local residuals. The
@@ -39,15 +43,54 @@ export function healthyForeignObserver(frame) {
     && near(p.gpuTranslation, p.expectedTranslation, value => tolerance + float32Tolerance(value));
 }
 
+export function foreignSourceEligibility(frame, source) {
+  const view = frame.sourceView;
+  if (!source || !view || !view.quaternion?.every(Number.isFinite) || !Number.isFinite(view.fov + view.aspect + view.nearTierLimit)
+    || !source.halo?.every(Number.isFinite)) return null;
+  const relative = new Vector3(...source.residual).sub(new Vector3(...frame.precision.expectedCamera));
+  const distance = relative.length();
+  relative.applyQuaternion(new Quaternion(...view.quaternion).invert());
+  const core = source.hole ? Math.max(source.sink, Math.min(Math.max(frame.radius * .0008, .45), 64)) : source.sink;
+  const reach = spawnReach(core, source.soi, source.halo[0]);
+  const weight = source.coefficient > 0 ? haloViewWeight(relative.x, relative.y, -relative.z,
+    distance, Math.hypot(...source.residual), reach, Math.tan(view.fov * Math.PI / 360), view.aspect, view.nearTierLimit) : 0;
+  return { view: relative.toArray(), distance, reach, depthPlusReach: -relative.z + reach, weight };
+}
+
 export function healthyForeignSources(frame, hostId = FOREIGN_RIVER_HOST) {
   const stars = frame.sources.filter(source => source.activeSource);
   const host = stars.find(source => source.name === hostId);
-  if (!host || stars.length > 24 || host.owners <= 0 || host.drawnOwners <= 0) return false;
-  return stars.every(source => source.currentActive && source.world.every(Number.isFinite)
+  if (!host || stars.length > 24) return false;
+  const eligibility = frame.sources.map(source => foreignSourceEligibility(frame, source));
+  if (eligibility.some(value => !value || !Number.isFinite(value.weight))) return false;
+  const weights = eligibility.map((value, i) => Math.sqrt(Math.max(0, frame.sources[i].coefficient)) * value.weight);
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (!frame.sources.every((source, i) => Math.abs(source.halo[1] - eligibility[i].weight) <= residualTolerance([eligibility[i].weight])
+    && Math.abs(source.cdfShare - (total > 1e-6 ? weights[i] / total : 0)) <= residualTolerance([1]))) return false;
+  const weight = eligibility[frame.sources.indexOf(host)].weight, share = frame.gainState?.ownerShares[host.index];
+  if (!Number.isFinite(share) || share < 0) return false;
+  // A skipped compute retains its previous ownership snapshot. The existing
+  // gain check separately requires that snapshot to stay unchanged, or match
+  // the current CDF after a dispatch. Never accept missing eligible owners.
+  if (share > 0 ? host.owners <= 0 || host.drawnOwners <= 0 : host.owners !== 0 || host.drawnOwners !== 0) return false;
+  if (frame.ownershipExpectation === 'owned' && !(weight > 0 && host.cdfShare > 0 && share > 0)) return false;
+  if (frame.ownershipExpectation === 'excluded' && !(weight === 0 && host.cdfShare === 0 && share === 0 && frame.dispatch)) return false;
+  if (!['owned', 'excluded', 'policy'].includes(frame.ownershipExpectation)) return false;
+  return stars.every(source => {
+    const provider = source.provider;
+    if (!provider || !Number.isFinite(provider.mu) || provider.mu <= 0) return false;
+    const coefficient = .001 * Math.sqrt(2 * provider.mu / 1000);
+    const sink = (provider.bh ? provider.rs : provider.R) * K;
+    return Number.isFinite(sink) && sink > 0 && source.coefficient === coefficient && source.fieldCoefficient === coefficient
+      && source.sink === sink && source.fieldSink === sink
+      && Number.isFinite(source.gpuCoefficient) && Math.abs(source.gpuCoefficient - coefficient) <= float32Tolerance(coefficient)
+      && Number.isFinite(source.gpuSink) && Math.abs(source.gpuSink - sink) <= float32Tolerance(sink)
+      && source.currentActive && source.world.every(Number.isFinite)
     && (!source.name.startsWith('gx:') || source.sourceTime === frame.time)
     && source.world.every((v, i) => v === source.field[i])
     && source.residual.every((v, i) => Math.abs(v - (source.world[i] - frame.center[i]))
-      <= residualTolerance([v, source.world[i] - frame.center[i]])));
+      <= residualTolerance([v, source.world[i] - frame.center[i]]));
+  });
 }
 
 export function healthyForeignBody(frame) {

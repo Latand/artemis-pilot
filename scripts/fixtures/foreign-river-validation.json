@@ -1,14 +1,14 @@
 {
   "version": 1,
-  "reviewedLocalHead": "6146c01cdb638a159f334019cd25ceb841c09fbb",
-  "reviewedLocalTree": "fbcf3ea8a39f1902da0d5090cc7fa24d6f3b917a",
+  "reviewedLocalHead": "d930822c316f226c3286e245b3e503481f432a4e",
+  "reviewedLocalTree": "64e15ec0fb4e434a73d16d80d2d970258961337c",
   "requiredAncestor": "8663be59ed26cfed38176895527b9aa1d9bdd4ff",
   "blobs": {
     "src/river.js": "dd347cce74da823b4c3e8124f4d57e5440b13470",
     "src/render/relativeBodyFrame.js": "99be143152be9ea9e2d0cac973df6fdbf6f59a24",
-    "scripts/foreign-river-qa.mjs": "51b424fa01504d3c70f65babef5b4be4bc991523",
-    "scripts/smoke-foreign-river.mjs": "5c8539e5be8cb16ea93d3b0d3b31e47cf440106f",
-    "scripts/verify-foreign-river.mjs": "c3f340c8aa259fd3b6e3ce7d5be27202b2e4d68d",
+    "scripts/foreign-river-qa.mjs": "b8fdaf54003c1ac9fa5a087a8c3cf9fb8e8317e4",
+    "scripts/smoke-foreign-river.mjs": "dd916b8fe0a5d59418d1dbd60245c77cb31e7f96",
+    "scripts/verify-foreign-river.mjs": "6e6ddae27f9e4e0c4596fd3260677f764a334261",
     "scripts/context-recovery-qa.mjs": "df0ed74ffabfc5d1f3d342ed139638a161e07dae",
     "scripts/river-radiance-qa.mjs": "9cfc0193ede9dde3ef45fb333d346bc5beabc064",
     "scripts/river-radiance-lifecycle.mjs": "07b9700ffe238e7562d0609f94ae2fc7d00c9cce",
@@ -17,5 +17,9 @@
     "src/render/foreignStarField.js": "d3b821a7144dddfcd19389caf9450e8b6258c5dd",
     "scripts/smoke-foreign-star-startup.mjs": "c76a3123f2f89e2c8c0988f3aab00dc7fcff2da1"
   },
-  "previousFailedRun": 37186624841
+  "previousFailedRun": 37186624841,
+  "previousFailedRuns": [
+    37186624841,
+    37188916575
+  ]
 }

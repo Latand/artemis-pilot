@@ -112,3 +112,43 @@ it. The real initializer/allocator regression retains the old failing control,
 proves zero allocation initially and on the first Milky Way query, then one
 allocation on real M31 activation with unchanged buffers and IDs on revisit.
 The fresh performance comparison still requires exact GPU-resource equality.
+
+## Corrected host draw, away-facing planet ownership
+
+The next isolated run `37188916575` at `583370e9` passed all eight initial
+host frames on desktop and mobile, including actual triangle submissions,
+CPU/GPU observer and photosphere transforms, nonblank host-region pixels,
+finite full buffers and nonzero host ownership. Both jobs then stopped at
+`planet-0`. Raw artifacts remain: desktop `11298357802`, SHA256
+`0a1dad58661051eae8bf1226cbfdb510658c6e1c4de2428e03149c735dc45d72`, and
+mobile `11298023924`, SHA256
+`773c1a0a0e488e1adfaa24c008c23d7906d2df3d327339ce0b4c9a6bfd69883d`.
+
+That planet frame passed observer/body transforms and finite-buffer checks.
+The registered host remained a current field source but owned zero samples.
+Replaying the production halo eligibility rule gives source view position
+`[-3954.9925349749233, -3766.406474330936, 6767.961616674823]`, reach
+`5357.184809961386`, and depth plus reach `-1410.7768067134366`.
+Its halo is behind the observer, so zero eligibility, CDF and ownership are
+correct. The earlier fixture incorrectly demanded positive ownership there.
+
+The fixture preserves that exact away-facing transition and requires zero
+ownership after its actual dispatch. It then selects one fixed planet pose
+with the host in front, retains four native cadence frames, and requires
+positive host ownership in every following fixed-view frame. This is explicit
+inspection framing, not continuous navigation. Every foreground frame records
+the actual camera quaternion, recomputes the production eligibility and full
+source CDF, and checks current source/force/epoch parity. Signed-epoch frames
+follow actual eligibility and the retained dispatch snapshot without moving
+the camera to manufacture ownership. Missing eligible owners, fabricated
+away-view owners, changed quaternion/CDF, stale field and clock all fail pure
+negative controls. Production and the fifteen-minute fixture cap are unchanged.
+
+Independent review additionally demonstrated that position parity alone could
+accept a zeroed force coefficient in the excluded view. The fixture now records
+the real active provider's mass parameter and radius, the field's coefficient
+and sink, and actual compiled GPU `uBody.w`/`uSink` values. Both field and CPU
+uniform values must equal the provider-derived values; GPU values must match
+within float32 upload rounding. Twenty-eight zero/altered force, core and
+provider negative controls cover both eligible and excluded views. Turning
+off visible halo ownership cannot turn off the host's gravitational source.
