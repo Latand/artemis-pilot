@@ -11,6 +11,7 @@ import { COARSE_PITCHES, DISK_PLANE_CASES, MATRIX, RESIZE_CASES, RECOVERY_CONTRO
     validateDiskPlaneHooks, assertCrossingAcceptance, assertPairedControl } from './disk-plane-qa.mjs';
 import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled,
     recoveredGpuIsHealthy, pausedRecoveryPassed } from './context-recovery-qa.mjs';
+import { atomicDiskReport, initializeDiskReport, finalizeDiskProbe } from './disk-plane-finalize.mjs';
 import { installNativeRingProof } from './native-ring-proof.mjs';
 
 const candidateRoot = resolve(process.env.CANDIDATE_ROOT || fileURLToPath(new URL('..', import.meta.url)));
@@ -61,9 +62,9 @@ const report = { schema: 1, matrixEntry, matrix: MATRIX, mobile, bloom, complete
         'This diagnostic is not a performance benchmark or a full-source acceptance run.'],
     omissions: ['unrelated cosmic background, HYG/tier-1 catalogs, merger worker, gravity-flow overlay'],
     variants: {}, pairedControls: [] };
-let browser, server;
+let browser, server, originalError, hadOriginalError=false;
 const mainControls = new Map();
-const flush = () => writeFile(resolve(out, 'report.json'), JSON.stringify(report, null, 2));
+const flush = options => atomicDiskReport(resolve(out, 'report.json'),report,options);
 
 // Runs inside the page: configure only the frozen diagnostic camera/hole.
 function configureCase({ scenario, pitch }) {
@@ -292,6 +293,7 @@ async function recoverySnapshot(page) {
         restores: qa.s.renderContext.restores, canvasTarget: qa.s.renderer.getRenderTarget() === null }));
 }
 
+await initializeDiskReport(resolve(out,'report.json'),report);
 try {
     browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined,
         args: ['--no-sandbox', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
@@ -414,10 +416,9 @@ try {
     assert.equal(report.pairedControls.length, mainControls.size, 'Every baseline control has a candidate pair');
     report.completed = true;
 } catch (error) {
-    report.failure = error.stack || String(error);
-    throw error;
+    originalError = error; hadOriginalError=true;
 } finally {
-    try { report.sourceBindingAfter = bindSources(); assert.deepEqual(report.sourceBindingAfter, sourceBindingBefore); }
-    catch (error) { report.completed = false; report.sourceBindingFailure = error.stack || String(error); throw error; }
-    finally { await flush(); await browser?.close(); await server?.close(); }
+    await finalizeDiskProbe({report,originalError,hadOriginalError,
+        verifySources:()=>{report.sourceBindingAfter = bindSources();assert.deepEqual(report.sourceBindingAfter,sourceBindingBefore);},
+        flush,closeBrowser:()=>browser?.close(),closeServer:()=>server?.close()});
 }

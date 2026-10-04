@@ -20,6 +20,8 @@ Disk-off/TDE-off ring contribution masks must match main byte-for-byte wherever 
 
 Two complete camera/resize cycles compare their settled frozen images. Two actual `WEBGL_lose_context` cycles per source must stop successful-frame counting while lost, preserve paused physical time, restore a healthy native context and render identical post-recovery pixels. Failure to obtain the real extension is a blocked test, never a synthetic success.
 
+Probe finalization retains the original capture failure, independently attempts both resource closes with deadlines, and publishes atomic report snapshots. Completion stays false until source verification and cleanup succeed. A failed or timed-out report write cannot later publish a stale success, and an existing evidence destination is refused before browser resources start. Exact-finalizer negative controls cover report/close failures, hangs, late aborted writes and preservation of the original thrown value. The far-annulus scalar regression establishes arithmetic stability, not GPU visibility.
+
 The source-derived pixel budget is 509 explicit render/readback calls per root, 1018 per paired configuration and 4072 across four configurations, plus the declared setup/healthy/lost frame deliveries. Composer internals expand these into more GPU passes. These counts are a bounded diagnostic plan, not a timing or performance result. No browser execution has occurred for this candidate.
 
 ## Fresh cost plan
