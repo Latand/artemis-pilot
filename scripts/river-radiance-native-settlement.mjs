@@ -1,9 +1,9 @@
 // QA-only readers and pure guards. Native worker work remains on its normal
 // production frames; the caller owns the unchanged total preparation deadline.
 import assert from 'node:assert/strict';
-import { FIELD_BINS, FAMILY_BAR, FAMILY_DISK, binHasStars } from '../src/universe/resolvedField.js';
-import { RESOLVED_MAG_LIMIT } from '../src/universe/galaxyModel.js';
-import { MYR_S } from '../src/universe/galaxyDynamics.js';
+import { FIELD_BINS, FAMILY_BAR, FAMILY_DISK, binHasStars, binRadiusPc } from '../src/universe/resolvedField.js';
+import { RESOLVED_MAG_LIMIT, patternAngles } from '../src/universe/galaxyModel.js';
+import { MYR_S, EPOCH, epochPhi, omegaRadMyr } from '../src/universe/galaxyDynamics.js';
 
 // These match resolvedFieldStars.js startGen/retuneLimit. The smoke checks the
 // source contract explicitly because the production constants are private.
@@ -76,7 +76,7 @@ function subset(keys, required, name) {
   assert(keys.every(key => required.includes(key)), `${name} contains an unrequired bin`);
 }
 function buildInputs(record) {
-  return { camF: record.camF, tB: record.tB, active: record.active, sfr: record.sfr, keep: record.keep };
+  return { tB: record.tB, active: record.active, sfr: record.sfr, keep: record.keep };
 }
 function inputGroup(key) { return key.startsWith('b:') ? 'bar' : `disk:${key.split(':')[2]}`; }
 export function validateNativeFieldSnapshot(snapshot) {
@@ -144,17 +144,45 @@ export function nativeFieldSettlementReady(snapshot) {
   validateNativeFieldSnapshot(snapshot);
   return snapshot.field.idle;
 }
-function rememberInputs(previousInputs, snapshot) {
+// Use exactly the production frame transform and camera rebuild score. Bins
+// already built before the fixture was installed retain their valid selection
+// reference. They are immutable history, not a claim that every bin was built
+// from the current camera. New work must use the exact current reference.
+export function nativeFieldCameraReference(snapshot, key) {
+  const g = snapshot.queue.lastCam, tMyr = snapshot.queue.lastT / MYR_S;
+  const disk = key.startsWith('d:'), epoch = disk ? Number(key.split(':')[2]) : null;
+  const angle = disk ? epochPhi(epoch) + omegaRadMyr(Math.hypot(g[0], g[1])) * (tMyr - epoch * EPOCH.lengthMyr)
+    : patternAngles(snapshot.queue.lastT, {}).bar;
+  const c = Math.cos(-angle), s = Math.sin(-angle);
+  return [g[0] * c - g[1] * s, g[0] * s + g[1] * c, g[2]];
+}
+export function historicalCameraScore(snapshot, record) {
+  const current = nativeFieldCameraReference(snapshot, record.key);
+  const radius = binRadiusPc(Number(record.key.split(':')[1]), snapshot.queue.genMLim);
+  return Math.hypot(...current.map((value, i) => value - record.camF[i])) / Math.max(.06 * radius, .05);
+}
+function rememberInputs(previousInputs, snapshot, retained) {
   const inputs = structuredClone(previousInputs);
   const records = [...snapshot.queue.built], request = snapshot.queue.inflight;
   if (request) {
-    records.push({ key: request.key, camF: request.params.ref, tB: snapshot.queue.lastT / MYR_S,
+    const reference = nativeFieldCameraReference(snapshot, request.key);
+    assert.deepEqual(request.params.ref, reference, 'New native request has a changed camera reference');
+    assert.deepEqual(request.params.cam, request.key.startsWith('d:') ? snapshot.queue.lastCam : reference, 'New native request has a changed camera');
+    records.push({ key: request.key, gen: request.gen, camF: request.params.ref, tB: snapshot.queue.lastT / MYR_S,
       active: request.params.active, sfr: request.params.sfr, keep: request.params.keep });
     const { magLimit, ...fixedParams } = request.params, group = `request:${inputGroup(request.key)}`;
     if (inputs[group]) assert.deepEqual(fixedParams, inputs[group], 'Native worker selection inputs changed at the frozen observer');
     else inputs[group] = fixedParams;
   }
   for (const record of records) {
+    const original = retained.find(value => value.key === record.key && value.gen === record.gen);
+    if (original) {
+      assert.deepEqual(record, original, 'A retained historical native bin changed');
+      assert(historicalCameraScore(snapshot, record) <= 1, 'Historical native camera reference exceeds production rebuild policy');
+    } else assert.deepEqual(record.camF, nativeFieldCameraReference(snapshot, record.key), 'New native bin has a changed camera reference');
+    // This paused-clock fixture has no allowed temporal/era/neighbourhood
+    // transition. Only an already-retained camera reference may differ.
+    assert.equal(record.tB, snapshot.queue.lastT / MYR_S, 'Native bin time differs from the frozen clock');
     const group = inputGroup(record.key), next = buildInputs(record);
     if (inputs[group]) assert.deepEqual(next, inputs[group], 'Native field selection inputs changed at the frozen observer');
     else inputs[group] = next;
@@ -163,12 +191,13 @@ function rememberInputs(previousInputs, snapshot) {
 }
 export function createNativeFieldGuard(snapshot) {
   validateNativeFieldSnapshot(snapshot);
-  return { version: 1, previous: structuredClone(snapshot), limits: [snapshot.queue.genMLim], inputs: rememberInputs({}, snapshot),
+  const retained = structuredClone(snapshot.queue.built);
+  return { version: 2, previous: structuredClone(snapshot), retained, limits: [snapshot.queue.genMLim], inputs: rememberInputs({}, snapshot, retained),
     samples: 1, completedBuilds: 0, issuedBuilds: 0, progress: snapshot.field.idle ? 'idle' : 'observed',
     maxGenerationLimits: MAX_LIMITS, maxAdditionalBuilds: MAX_LIMITS * snapshot.queue.requiredKeys.length - snapshot.queue.built.length };
 }
 export function advanceNativeFieldGuard(guard, snapshot) {
-  assert(guard && guard.version === 1, 'Missing native settlement guard');
+  assert(guard && guard.version === 2, 'Missing native settlement guard');
   validateNativeFieldSnapshot(snapshot);
   const previous = guard.previous, before = previous.queue, next = snapshot.queue;
   assert.equal(snapshot.frameNo, previous.frameNo + 1, 'Native settlement must retain every whole production frame');
@@ -207,7 +236,7 @@ export function advanceNativeFieldGuard(guard, snapshot) {
   else if (completed) assert(next.idleUpdates <= 1, 'A completed request permits at most one delivered idle update');
   const completedBuilds = guard.completedBuilds + completed, issuedBuilds = guard.issuedBuilds + issued;
   assert(completedBuilds <= guard.maxAdditionalBuilds && issuedBuilds <= guard.maxAdditionalBuilds + 1, 'Native work exceeded its finite bin/limit allowance');
-  return { ...guard, previous: structuredClone(snapshot), limits, inputs: rememberInputs(guard.inputs, snapshot), samples: guard.samples + 1,
+  return { ...guard, previous: structuredClone(snapshot), limits, inputs: rememberInputs(guard.inputs, snapshot, guard.retained), samples: guard.samples + 1,
     completedBuilds, issuedBuilds, progress: snapshot.field.idle ? 'idle' : generation ? 'generation' : completed ? 'build' : issued ? 'issued' : next.inflight ? 'waiting-for-build' : 'idle-update' };
 }
 export function validateNativeSettlementRecord(record) {

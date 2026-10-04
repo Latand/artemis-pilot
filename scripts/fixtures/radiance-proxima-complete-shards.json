@@ -1,0 +1,38 @@
+{
+  "repository": "Latand/artemis-pilot",
+  "complete": true,
+  "run": 37156898245,
+  "head": "8feb71c9b0ed6d6286b98ff9123a84a2845566c9",
+  "shards": [
+    {
+      "run": 37156898245,
+      "device": "desktop",
+      "subject": "proxima",
+      "artifact": 11288183904,
+      "job": 111302146276,
+      "head": "8feb71c9b0ed6d6286b98ff9123a84a2845566c9",
+      "sha256": "8581a14b6b3507302a405e58b628d39299d2f9b597378e0797784d6904e3879a",
+      "canonicalSha256": "526c9a283829a9c52ff8c3d69fb07e0b7f4f72fa248a6c8029bc88cdcaf0b27c",
+      "timingPolicy": "asset-native-v2",
+      "measuredFrames": 1200,
+      "artifactName": "radiance-replacement-desktop-proxima",
+      "artifactDigest": "sha256:dc076600fa67b699d20ea935915f2c2da58015d2ddf0a9827b0db4c94c7520d8",
+      "jobName": "Complete desktop proxima"
+    },
+    {
+      "run": 37156898245,
+      "device": "mobile",
+      "subject": "proxima",
+      "artifact": 11287512358,
+      "job": 111302146297,
+      "head": "8feb71c9b0ed6d6286b98ff9123a84a2845566c9",
+      "sha256": "d94ed1df3573ba5cc7b42e53daa8b1441b984a1ff96fd7c5874fe4dedb13036a",
+      "canonicalSha256": "0f6cff67c92f0875d9315bb8da5e354fa862c5975b62f383a8da6ed2e7058aa7",
+      "timingPolicy": "asset-native-v2",
+      "measuredFrames": 1200,
+      "artifactName": "radiance-replacement-mobile-proxima",
+      "artifactDigest": "sha256:3561083c12377ea61c626e74bc9db9f226754ef4f3f5849d35f586bdef3b9137",
+      "jobName": "Complete mobile proxima"
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { healthyRadianceFrame } from './river-radiance-qa.mjs';
 import { runLimits,legacyRunLimits,validatePhases } from './river-radiance-run-budget.mjs';
+import { proximaCompletePolicy,pinnedProximaShard,requireCompleteProximaPins } from './river-radiance-proxima-shards.mjs';
 import { pinnedCompleteShard,completedShardPolicy } from './river-radiance-complete-shards.mjs';
 import { validateFullPreparation } from './river-radiance-full-preparation.mjs';
 import { radianceDeviceTargets,volumeRefinementReady,validateRefinementAdvance } from './river-radiance-volume-progress.mjs';
@@ -132,7 +133,12 @@ export function assertHealthyState(s, mobile, subject) {
   assert.equal(s.post.bloom, false, 'Default production bloom policy is preserved; neither device requests optional bloom');
 }
 
-export function aggregateReports(reports, device, expectedCandidateRevision, {reuseComplete=false,legacy=false}={}) {
+export function aggregateReports(reports, device, expectedCandidateRevision, {reuseComplete=false,legacy=false,reuseSunOnly=false}={}) {
+  if(reuseSunOnly){
+    requireCompleteProximaPins();assert(reuseComplete&&!legacy);
+    if(device==='desktop')assert.equal(expectedCandidateRevision,proximaCompletePolicy.head,'Reused desktop keeps its actual measured head');
+    else assert.notEqual(expectedCandidateRevision,proximaCompletePolicy.head,'Mobile Sun must come from its reviewed correction');
+  }
   if(legacy)assert(!reuseComplete&&['4f79de1c7d78dcea0aa7481f6a8e9d979d34fd68','b9e7c15f1507a1ecdc2beed6079676a24374b1eb'].includes(expectedCandidateRevision),'Historical policy is limited to the actual preserved heads');
   assert.match(expectedCandidateRevision, /^[a-f0-9]{40}$/, 'Reviewed candidate HEAD is required for aggregation');
   if(reuseComplete){
@@ -145,8 +151,8 @@ export function aggregateReports(reports, device, expectedCandidateRevision, {re
   const provenance=[];
   let freshReport=null;
   for (const report of reports) {
-    const pin=reuseComplete?pinnedCompleteShard(report,device):null;
-    const old=!!pin||legacy;
+    const pin=(reuseSunOnly?pinnedProximaShard(report,device):null)||(reuseComplete?pinnedCompleteShard(report,device):null);
+    const old=pin?.timingPolicy==='legacy-55'||legacy;
     if(reuseComplete)assert.equal(report.shardComplete,true,'An incomplete report cannot contribute even partial trials');
     assert.deepEqual(report.runLimits,old?legacyRunLimits:runLimits,'Pinned explicit phase budgets are mandatory');
     assert.equal(report.preparationPolicy,old?undefined:'asset-native-v2');
@@ -211,8 +217,14 @@ export function aggregateReports(reports, device, expectedCandidateRevision, {re
       measuredMaximumMs: Math.max(...sets.map(s => s.measuredMaximumMs)) };
   }
   const budget = longTaskBudget(totals.A, totals.B);
-  if(reuseComplete)assert(freshReport,'This continuation requires its new incomplete-view replacement, never only cached gates');
-  const representative=freshReport||reports[0];
+  if(reuseSunOnly&&device==='desktop')assert.equal(freshReport,null,'Desktop reuses only its three authenticated complete raw views');
+  else if(reuseComplete)assert(freshReport,'This continuation requires its new incomplete-view replacement, never only cached gates');
+  if(reuseSunOnly&&device==='mobile'){
+    assert.equal(freshReport.scenarios[0].fixture.subject,'sun');
+    assert.equal(provenance.filter(p=>!p.reused).length,1,'Only mobile Sun is newly measured');
+  }
+  const representative=freshReport||(reuseSunOnly?reports.find(r=>r.sources.B.revision===proximaCompletePolicy.head):reports[0]);
+  assert(representative);
   return { device, expectedCandidateRevision, protocol, sources: representative.sources, harness: representative.harness, scenarios,
     ...(reuseComplete?{shardProvenance:provenance}:{}),
     mandatoryFrames: { measured: 3600, warmup: 720 }, longTasks: totals, longTaskBudget: budget,

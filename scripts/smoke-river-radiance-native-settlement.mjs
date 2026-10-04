@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { MYR_S } from '../src/universe/galaxyDynamics.js';
 import {
-  nativeFieldRequiredKeys, nativeFieldSnapshot, validateNativeFieldStatus, validateNativeFieldSnapshot,
+  nativeFieldRequiredKeys, nativeFieldCameraReference, historicalCameraScore, nativeFieldSnapshot, validateNativeFieldStatus, validateNativeFieldSnapshot,
   nativeFieldSettlementReady, createNativeFieldGuard, advanceNativeFieldGuard, validateNativeSettlementRecord,
 } from './river-radiance-native-settlement.mjs';
 import * as fieldMath from '../src/universe/resolvedField.js';
@@ -14,10 +14,11 @@ import * as fieldMath from '../src/universe/resolvedField.js';
 export function syntheticNativeFieldSnapshot({ frameNo = 121, gen = 2, genMLim = 7.25, mLim = genMLim,
   builtCount = 89, priorBuilds = 90, idleUpdates = 3, staging = false, inflight = false, stars = 38715 } = {}) {
   const requiredKeys = nativeFieldRequiredKeys([18]), builds = priorBuilds + builtCount;
-  const t = 17076376013673600, camF = [1, 2, 3], active = [4, 5, 6];
-  const built = requiredKeys.slice(0, builtCount).map(key => ({ key, gen, camF: [...camF], tB: t / MYR_S, active: [...active], sfr: 1, keep: 1 }));
+  const t = 17076376013673600, lastCam = [10, 20, 30], active = [4, 5, 6];
+  const reference = key => nativeFieldCameraReference({queue:{lastCam,lastT:t}},key);
+  const built = requiredKeys.slice(0, builtCount).map(key => ({ key, gen, camF: reference(key), tB: t / MYR_S, active: [...active], sfr: 1, keep: 1 }));
   const request = inflight ? { id: builds + 1, gen, key: requiredKeys[builtCount], magLimit: genMLim,
-    params: { cam: [...camF], sun: [7, 8, 9], ref: [...camF], active: [...active], activeR: 10, sfr: 1, keep: 1,
+    params: { cam: requiredKeys[builtCount].startsWith('d:') ? [...lastCam] : reference(requiredKeys[builtCount]), sun: [7, 8, 9], ref: reference(requiredKeys[builtCount]), active: [...active], activeR: 10, sfr: 1, keep: 1,
       magLimit: genMLim, catalogMagLimit: 11, maxStars: 60000 * 1.2 } } : null;
   return {
     frameNo,
@@ -26,7 +27,7 @@ export function syntheticNativeFieldSnapshot({ frameNo = 121, gen = 2, genMLim =
     queue: { requiredKeys, built, stagedKeys: staging ? built.map(record => record.key) : null,
       meshKeys: stars ? [requiredKeys[0]] : [], counts: stars ? [[requiredKeys[0], stars]] : [],
       inflight: request, nextId: builds + (inflight ? 1 : 0) + 1, fallbackBusy: false,
-      idleUpdates, genMLim, guessAtGen: 9, lastT: t, lastCam: [10, 20, 30] },
+      idleUpdates, genMLim, guessAtGen: 9, lastT: t, lastCam },
     observer: { t, paused: true, observerMode: true, gr: true, dead: true, focus: 'star:0', warp: MYR_S,
       ship: [0, 0, 0, 0, 0, 0], seed: 1, epoch: 1791028800000,
       camera: { distance: 100, yaw: 1, pitch: 2, target: [1, 2, 3], position: [2, 3, 4], quaternion: [0, 0, 0, 1], fov: 60 } },
@@ -40,6 +41,8 @@ export function smokeNativeFieldSettlement() {
     'if (!best) { state.idleUpdates++; return; }', 'state.idleUpdates = 0;',
     'idle: !state.enabled || (!state.inflight && !state.staging && state.idleUpdates > 2)',
     'maxStars: state.budget * 1.2', 'state.inflight || state.fallbackBusy',
+    'score = Math.hypot(camF[0] - prev.camF[0], camF[1] - prev.camF[1], camF[2] - prev.camF[2]) / Math.max(0.06 * r, 0.05);',
+    'if (score > 1 && score > bestScore)',
   ]) assert(source.includes(contract), `Revisit native settlement guard after production contract changes: ${contract}`);
   const keys = nativeFieldRequiredKeys([18]);
   assert.equal(keys.filter(key => key.startsWith('b:')).length, 38);
@@ -64,6 +67,38 @@ export function smokeNativeFieldSettlement() {
     assert.equal(at(179).stars, 38715); assert.equal(at(179).mLim, 7.25); assert.equal(at(179).staging, false);
     assert.equal(at(180).builds, 179); assert.equal(at(180).idle, false);
     assert.throws(() => createNativeFieldGuard({ frameNo: 180, field: at(180) }), /observed queue/);
+  }
+
+  // Real Sun failure: first normal-entry bin b:18 predates the fixture camera,
+  // while the complete queue is genuinely idle under production's rebuild
+  // policy. Preserve exact historical records without demanding a rebuild.
+  const sun = JSON.parse(readFileSync(new URL('./fixtures/radiance-native-sun-run-37156898245.json', import.meta.url)));
+  assert.equal(sun.run, 37156898245); assert.equal(sun.artifact, 11286328261);
+  for (const side of ['A', 'B']) {
+    const checkpoint = sun.before[side], before = structuredClone(checkpoint);
+    assert.equal(checkpoint.frameNo, 121); assert.equal(checkpoint.field.builds, 89);
+    assert.equal(checkpoint.field.stars, 30477); assert.equal(checkpoint.field.idle, true);
+    const historical = checkpoint.queue.built.find(bin => bin.key === 'b:18');
+    assert.notDeepEqual(historical.camF, nativeFieldCameraReference(checkpoint, historical.key));
+    assert(historicalCameraScore(checkpoint, historical) > 0 && historicalCameraScore(checkpoint, historical) < 1);
+    const accepted = createNativeFieldGuard(checkpoint);
+    assert.deepEqual(checkpoint, before, 'Inspection must not rewrite the real retained checkpoint');
+    const zeroHistory = {before:{A:checkpoint,B:checkpoint},after:{A:checkpoint,B:checkpoint},A:[],B:[],complete:true};
+    assert.equal(validateNativeSettlementRecord(zeroHistory).A.samples, 1);
+    // Explicitly synthetic next idle update, never reported as a browser frame.
+    const next = structuredClone(checkpoint); next.frameNo++; next.queue.idleUpdates++;
+    assert.equal(advanceNativeFieldGuard(accepted, next).progress, 'idle');
+    const altered = structuredClone(next); altered.queue.built.find(bin=>bin.key==='b:18').camF[0] += 1e-7;
+    assert.throws(()=>advanceNativeFieldGuard(accepted, altered), /rebuilt|historical/, 'Even within-policy mutation of a retained record must fail');
+    const tooFar = structuredClone(checkpoint), bin = tooFar.queue.built.find(bin=>bin.key==='b:18');
+    const radius = fieldMath.binRadiusPc(18, tooFar.queue.genMLim);
+    bin.camF = nativeFieldCameraReference(tooFar, bin.key); bin.camF[0] += Math.max(.06*radius,.05)*1.001;
+    assert.throws(()=>createNativeFieldGuard(tooFar), /rebuild policy/);
+    const drift = structuredClone(next); drift.queue.lastCam[0] += 1e-7;
+    assert.throws(()=>advanceNativeFieldGuard(accepted, drift), /camera moved/);
+    checkpoint.queue.built[0].camF[0] += 1;
+    assert.deepEqual(accepted.retained, before.queue.built, 'Guard owns an independent immutable-history snapshot');
+    sun.before[side] = before;
   }
 
   const idle = syntheticNativeFieldSnapshot();
@@ -151,6 +186,17 @@ export function smokeNativeFieldSettlement() {
     const bad = syntheticNativeFieldSnapshot({ frameNo: 122, idleUpdates: 4 }); mutate(bad);
     assert.throws(() => advanceNativeFieldGuard(createNativeFieldGuard(idle), bad), undefined, name);
   }
+  const pendingRef = structuredClone(pending); pendingRef.queue.inflight.params.ref[0] += 1e-7;
+  assert.throws(()=>createNativeFieldGuard(pendingRef), /changed camera reference/);
+  const pendingCam = structuredClone(pending); pendingCam.queue.inflight.params.cam[0] += 1e-7;
+  assert.throws(()=>createNativeFieldGuard(pendingCam), /changed camera/);
+  const newBinStart = syntheticNativeFieldSnapshot({builtCount:88,idleUpdates:0});
+  const newBin = syntheticNativeFieldSnapshot({frameNo:122,idleUpdates:0});
+  newBin.queue.built.at(-1).camF[0] += 1e-7;
+  assert.throws(()=>advanceNativeFieldGuard(createNativeFieldGuard(newBinStart),newBin), /changed camera reference/);
+  const badTime = structuredClone(idle); badTime.queue.built[0].tB += 1e-7;
+  assert.throws(()=>createNativeFieldGuard(badTime), /frozen clock/);
+
   const lostRequest = structuredClone(pending); lostRequest.frameNo++; lostRequest.queue.inflight = null; lostRequest.queue.nextId--;
   assert.throws(() => advanceNativeFieldGuard(createNativeFieldGuard(pending), lostRequest));
   const changedRequest = structuredClone(pending); changedRequest.frameNo++; changedRequest.queue.inflight.params.activeR++;

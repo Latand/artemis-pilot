@@ -343,3 +343,72 @@ immediate-admission dependency path. Complete measured gate failures are never
 retried. Every prior failed report stays preserved. Publication and launch of
 this correction require independent review; this local implementation has not
 started another browser run.
+
+
+### Retained native-bin camera references
+
+The first corrected mobile Sun setup in run `37156898245` at `8feb71c9`
+failed before warmup or measurement. Artifact `11286328261` preserves both
+frame-121 queue snapshots and the original failure. Both revisions already
+had identical idle fields: 89 completed bins, 24 meshes, 30,477 stars, and
+32 idle updates. The first normal-entry bar bin `b:18` kept its earlier camera
+reference; its difference from the fixture reference was 0.000008095117 pc.
+Its actual production rebuild score was only `3.389002416e-8`, below the
+unchanged `score > 1` rebuild condition. The original guard incorrectly
+required all historical bin references to be exactly equal within a family.
+The secondary ten-second browser cleanup failure is retained separately.
+
+The QA correction snapshots those initial bin records without changing them.
+It uses the same bar/epoch transforms and `distance / max(0.06 * radius, 0.05)`
+camera score as production to validate retained references. Every subsequent
+appearance of a retained record must match its initial value exactly; newly
+issued requests and newly completed bins must use the exact current camera
+reference. The actual observer, camera, physical clock, era/neighbourhood
+inputs and pending request parameters remain stable. This paused fixture
+still rejects temporal or other input transitions; it does not grant a
+blanket tolerance to new work or trigger unnecessary production rebuilds.
+
+The regression fixture contains the actual failed A/B checkpoints, including
+their report hash. Tests accept their already-idle zero-extra-frame state and
+reject beyond-policy historical references, changed retained references,
+new-bin/request camera drift, current-camera drift and changed time. Any
+synthetic continuation used by unit tests is labelled as synthetic. The
+ongoing Proxima jobs from the same run remain separate evidence. This change
+alone provides no new browser or performance acceptance and changes no cap,
+production source, workload, sample count or performance gate.
+
+
+### One remaining mobile Sun view
+
+Run `37156898245` finished with both Proxima views successful and the mobile
+Sun setup failure above preserved. Desktop Proxima contributed all 1,200
+measured frames, with median paired p95 ratio 1.000624; mobile Proxima also
+contributed all 1,200, with ratio 0.992911. Their complete reports are pinned
+by run/head/job/artifact identity, archive digest, raw bytes and canonical JSON
+hash. The desktop aggregate was independently recomputed from all three raw
+views: 3,600 measured frames, 720 warmup frames, all per-view p95 gates and one
+device-wide long-task budget pass. Mobile correctly remains incomplete.
+
+The isolated `diagnostic/river-radiance-sun-only` trigger starts exactly one
+new browser job, mobile Sun, using the reviewed historical-reference guard.
+GitHub job reruns retain the original commit SHA, so rerunning the old Sun
+job cannot execute that correction. No Proxima or completed Sun/BH view is
+measured again. The current benchmark, browser transform, full preparation
+loop, frame timing, workload, volume readiness and caps stay unchanged.
+
+The prerequisite job authenticates all five complete raw views, retains the
+existing functional evidence, and checks that measured source and harness
+paths match `8feb71c9`. Both final device aggregates are mandatory. Desktop
+replays its three pinned raw views while reporting its actual measured head
+`8feb71c9`; mobile combines the new Sun view with the exact completed Proxima
+and BH reports. Cached pass flags and partial old Sun trials cannot contribute.
+The raw device-wide long-task budget is recomputed once for each device.
+
+The phase limits remain preparation 60 minutes, warmup 15 minutes, measurement
+80 minutes; the browser step is capped at 156 minutes and its job at 160.
+With a 10-minute verification job and two 10-minute aggregate jobs, the ceiling
+is 190 runner-minutes and a 180-minute dependency path if admitted immediately.
+All run on the existing standard `ubuntu-latest` public-repository runners.
+There are no retries or new billing/settings changes. All old failures remain
+available. This setup-only continuation still requires review and actual
+hosted execution; it does not yet establish overall performance acceptance.

@@ -1,0 +1,189 @@
+name: Complete only mobile Sun radiance acceptance
+on:
+  push:
+    branches: [diagnostic/river-radiance-sun-only]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verified-reuse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/smoke-radiance-prerequisites.mjs
+      - name: Verify the exact successful functional jobs and artifact identities
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-radiance-prerequisites.mjs fetch evidence/prerequisites
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37145710093
+          name: paired-owner-radiance-mobile
+          path: evidence/prerequisites/artifacts/paired-owner-radiance-mobile
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37145710093
+          name: paired-owner-lifecycle-mobile
+          path: evidence/prerequisites/artifacts/paired-owner-lifecycle-mobile
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37145710093
+          name: paired-owner-lifecycle-desktop
+          path: evidence/prerequisites/artifacts/paired-owner-lifecycle-desktop
+      - name: Check every report and reviewed PNG byte plus unchanged source
+        run: node scripts/verify-radiance-prerequisites.mjs verify evidence/prerequisites
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-reused-functional-provenance
+          path: |
+            evidence/prerequisites/provenance.json
+            evidence/prerequisites/metadata.json
+          retention-days: 14
+      - name: Authenticate the three completed measured shard artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-radiance-complete-shards.mjs fetch evidence/reused
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37145710093
+          name: radiance-performance-desktop-sun
+          path: evidence/reused/radiance-performance-desktop-sun
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37145710093
+          name: radiance-performance-desktop-black-hole
+          path: evidence/reused/radiance-performance-desktop-black-hole
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37148090790
+          name: radiance-performance-mobile-black-hole
+          path: evidence/reused/radiance-performance-mobile-black-hole
+      - name: Verify exact raw bytes and reject partial or altered reports
+        run: node scripts/verify-radiance-complete-shards.mjs verify evidence/reused
+      - run: node scripts/smoke-radiance-reuse.mjs evidence/reused
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-verified-complete-shards
+          path: evidence/reused/
+          retention-days: 14
+      - run: node scripts/smoke-radiance-sun-only.mjs evidence/reused
+      - name: Authenticate the completed Proxima jobs and immutable artifacts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/verify-radiance-proxima-shards.mjs fetch evidence/proxima
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37156898245
+          name: radiance-replacement-desktop-proxima
+          path: evidence/proxima/radiance-replacement-desktop-proxima
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 37156898245
+          name: radiance-replacement-mobile-proxima
+          path: evidence/proxima/radiance-replacement-mobile-proxima
+      - name: Verify both exact completed Proxima reports and unchanged workload
+        run: node scripts/verify-radiance-proxima-shards.mjs verify evidence/proxima
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-verified-proxima-shards
+          path: evidence/proxima/
+          retention-days: 14
+  incomplete-performance:
+    name: Complete ${{ matrix.device }} ${{ matrix.fixture }}
+    needs: verified-reuse
+    runs-on: ubuntu-latest
+    timeout-minutes: 160
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - device: mobile
+            fixture: sun
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: node scripts/smoke-river-radiance-paired.mjs && node scripts/smoke-river-radiance-run-budget.mjs && node scripts/smoke-river-radiance-full-preparation.mjs && node scripts/smoke-river-radiance-native-settlement.mjs
+      - run: npx playwright install --with-deps chromium
+      - name: Run only mobile Sun from sample one
+        timeout-minutes: 156
+        env:
+          DEVICE: ${{ matrix.device }}
+          FIXTURE: ${{ matrix.fixture }}
+        run: |
+          git worktree add --detach ../radiance-baseline 09863eedda25eef36d79e9cf88daa4ff3e377875
+          ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-baseline/node_modules
+          BASE_ROOT="$GITHUB_WORKSPACE/../radiance-baseline" node scripts/benchmark-river-radiance.mjs . evidence/paired
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-replacement-${{ matrix.device }}-${{ matrix.fixture }}
+          path: evidence/paired
+          retention-days: 14
+  recomputed-device-aggregate:
+    name: Recompute full device gate ${{ matrix.device }}
+    needs: incomplete-performance
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          pattern: radiance-replacement-${{ matrix.device }}-*
+          path: evidence/new
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: radiance-verified-complete-shards
+          path: evidence/reused
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: radiance-verified-proxima-shards
+          path: evidence/proxima
+      - name: Require every original trial and the single device-wide budget
+        if: always()
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: |
+          if [ "$DEVICE" = desktop ]; then
+            node scripts/aggregate-radiance-sun-only.mjs desktop evidence/aggregate.json evidence/proxima/radiance-replacement-desktop-proxima/report.json evidence/reused/radiance-performance-desktop-sun/report.json evidence/reused/radiance-performance-desktop-black-hole/report.json
+          else
+            node scripts/aggregate-radiance-sun-only.mjs mobile evidence/aggregate.json evidence/proxima/radiance-replacement-mobile-proxima/report.json evidence/new/radiance-replacement-mobile-sun/report.json evidence/reused/radiance-performance-mobile-black-hole/report.json
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: radiance-recomputed-complete-${{ matrix.device }}
+          path: evidence/
+          retention-days: 14
