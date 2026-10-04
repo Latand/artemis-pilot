@@ -799,7 +799,7 @@ export function updateGalaxyPopulation(camera, f) {
     if (blend > 0 && (EXPOSURE.frame++ % EXPOSURE.every === 0)) {
         const tanY = Math.tan(camera.fov * Math.PI / 360), tanX = tanY * camera.aspect;
         const screenPx = f.viewport ? f.viewport[0] * f.viewport[1] : 1e6;
-        const target = Math.min(EXPOSURE.max, Math.max(EXPOSURE.min, meterExposure([cx, cy, cz], _v, f.pxScale, tanX, tanY, screenPx)));
+        const target = Math.min(f.overview ? EXPOSURE.max : Math.max(f.exposure, 8), Math.max(EXPOSURE.min, meterExposure([cx, cy, cz], _v, f.pxScale, tanX, tanY, screenPx)));
         const k = EXPOSURE.fresh ? 1 : 1 - Math.exp(-dt * EXPOSURE.every / EXPOSURE.tau);
         EXPOSURE.fresh = false;
         EXPOSURE.auto = Math.exp(Math.log(EXPOSURE.auto) + (Math.log(target) - Math.log(EXPOSURE.auto)) * k);
@@ -812,7 +812,7 @@ export function updateGalaxyPopulation(camera, f) {
     // the interarm disk to the arms' level); a small one, the faint field
     // and tidal debris get the full stretch.
     const vm = galaxyVolumeMeter();
-    const stretch = blend * (1 - 0.7 * (vm.fresh ? smooth(0.02, 0.25, vm.cover) : 0));
+    const stretch = (f.overview ? blend : 0) * (1 - 0.7 * (vm.fresh ? smooth(0.02, 0.25, vm.cover) : 0));
     extragalacticExposure.stretch = stretch;
     s.uStretch.value = stretch;
     s.uCull.value = CULL * (1 - stretch + stretch * EXT_STRETCH.cullScale);

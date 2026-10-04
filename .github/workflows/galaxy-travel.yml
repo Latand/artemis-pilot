@@ -1,0 +1,71 @@
+name: Continuous galaxy travel
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'index.html'
+      - 'scripts/*galaxy-travel*'
+      - '.github/workflows/galaxy-travel.yml'
+permissions:
+  contents: read
+concurrency:
+  group: galaxy-travel-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  continuous-route:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npm run smoke:galaxy-travel && npm run smoke:explored-systems && npm run smoke:planetary-systems && node scripts/smoke-catalog-motion.mjs && npm test && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Preserve exact source and capture the real control sequence
+        run: |
+          mkdir -p evidence/galaxy-travel
+          git rev-parse HEAD > evidence/galaxy-travel/head-sha.txt
+          npm run verify:galaxy-travel
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: continuous-galaxy-travel
+          path: evidence/galaxy-travel/
+          retention-days: 14
+  paired-renderer-diagnostic:
+    name: Matched camera timing (diagnostic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Prepare exact main baseline
+        env:
+          # Freeze main after the accepted catalog/radiance merge. A moving
+          # branch must not silently change the paired comparison workload.
+          BASE_SHA: 3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/travel-base" "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/travel-base/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/travel-base" >> "$GITHUB_ENV"
+      - run: node scripts/benchmark-galaxy-travel.mjs --validate
+      - run: node scripts/benchmark-galaxy-travel.mjs . evidence/galaxy-travel-paired
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: continuous-galaxy-travel-paired
+          path: evidence/galaxy-travel-paired/
+          retention-days: 14

@@ -15,6 +15,7 @@ import { eph } from "./ephemeris.js";
 import { publishRiverSourcePositions } from "./riverSourceCache.js";
 import { haloSamplingRadius, haloViewWeight, refreshProbability } from "./riverCoverageMath.js";
 import { sourceSampleInkGain, OWNED_SAMPLE_FRACTION } from "./riverRadianceMath.js";
+import { observerPositionRelativeTo, stabilizeBodyMaterial } from './render/relativeBodyFrame.js';
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
 // Positions live in a float texture advected by a compute pass; the analytic
@@ -611,6 +612,7 @@ export function initRiver() {
         fragmentShader: LINE_FRAG,
         transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
     });
+    stabilizeBodyMaterial(lineMat);
     lines = new THREE.LineSegments(geom, lineMat);
     lines.frustumCulled = false;
     lines.renderOrder = 1;
@@ -624,10 +626,12 @@ export function initRiver() {
         transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
     }));
     dots.frustumCulled = false; dots.renderOrder = 1; dots.visible = false;
+    stabilizeBodyMaterial(dots.material);
     scene.add(dots);
     // The river fades before its camera-relative volume reaches the far
     // tier. Avoid executing these expensive vertex shaders there a second time.
     warpLines = createWarpRiverLayer(uniformsShared, renderQuality.mobile);
+    stabilizeBodyMaterial(warpLines.material);
     scene.add(warpLines);
     river.warpVertexCount = warpLines.geometry.attributes.position.count;
     registerNearTierOnly(lines, dots, warpLines);
@@ -691,6 +695,7 @@ const shellRnd = mulberry32(20260702);
 let frameW = 0, lastFrameKind = -1, lastFrameIdx = -1;
 const frameVelScene = [0, 0, 0];
 const smoothCenter = new THREE.Vector3();
+const riverObserverRelative = new THREE.Vector3();
 // Frame of the last computed position texture, not the last render frame.
 // Mobile may skip several compute passes; draws and the next compute must
 // subtract the WHOLE retained shift. Paused camera pans use the same rule.
@@ -899,7 +904,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     if (PERF.enabled) markPerf("river.focus", performance.now() - riverFocusT0, { renderShed, localFocus, drawCount });
 
     const riverVolumeT0 = PERF.enabled ? performance.now() : 0;
-    const cd = camera.position.distanceTo(cam.tgt);
+    const cd = observerPositionRelativeTo(camera, cam.tgt, riverObserverRelative).length();
     const localMinR = localFocus > .05 ? Math.max(10, Math.min(72, earthClear * 5.5 + 9)) : 16;
     const targetR = Math.min(1.2e8, Math.max(localMinR, cd * (localFocus > .05 ? 4.2 : 2.8)));
     const c = cam.tgt;
@@ -967,7 +972,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     );
     uniformsShared.uOrigin.value.set(earthV.x - smoothCenter.x, earthV.y - smoothCenter.y, earthV.z - smoothCenter.z);
     uniformsShared.uRadius.value = smoothR;
-    uniformsShared.uCam.value.set(camera.position.x - smoothCenter.x, camera.position.y - smoothCenter.y, camera.position.z - smoothCenter.z);
+    observerPositionRelativeTo(camera, smoothCenter, uniformsShared.uCam.value);
     uniformsShared.uRespawn.value = respawn;
     const deFade = G.darkEnergy ? smooth01(DARK_ENERGY.VISIBLE_START_KM * K, DARK_ENERGY.VISIBLE_FULL_KM * K, smoothR) : 0;
     uniformsShared.uDE.value = DARK_ENERGY.H_PHYS * deFade;
@@ -1245,6 +1250,7 @@ function makeShellSet(n, rOut, color) {
         const g = new THREE.BufferGeometry();
         g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
         const obj = new THREE.Points(g, new THREE.PointsMaterial({ color, size: .95, sizeAttenuation: true, map: dotTexture("rgba(220,240,255,1)", "rgba(140,190,230,0.4)"), transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, depthTest: true }));
+        stabilizeBodyMaterial(obj.material);
         obj.visible = false;
         obj.renderOrder = 1;
         scene.add(obj);

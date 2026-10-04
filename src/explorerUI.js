@@ -1,3 +1,5 @@
+import { moveExplorationTarget } from './universe/explorationCamera.js';
+import { initGalaxyTravel } from './galaxyTravel.js';
 import { initGravityInspector, closeGravityInspector } from './gravityInspector.js';
 import { largeFlowStatus } from './render/largeScaleFlow.js';
 import { NEBULAE } from "./universe/nebulaeData.js";
@@ -33,6 +35,7 @@ function visit(focus) {
 
 export function initExplorerUI(options) {
     hooks=options;
+    initGalaxyTravel();
     initCompactExplorer({ stopMovement: () => { movement = null; } });
     initGravityInspector({togglePrediction:options.toggleGravityPrediction,predictionNote:options.gravityPredictionNote,predictionActive:options.gravityPredictionActive});
     document.querySelectorAll('[data-ui-mode]').forEach(btn => btn.addEventListener('click',()=>setUiMode(btn.dataset.uiMode)));
@@ -98,7 +101,7 @@ export function moveExplorerCamera(dt) {
     right.setFromMatrixColumn(camera.matrixWorld,0);up.setFromMatrixColumn(camera.matrixWorld,1);
     delta.copy(forward).multiplyScalar(z).addScaledVector(right,x).addScaledVector(up,y).normalize();
     const speed=Math.max(.03,cam.dist)*Math.min(dt,.06)*(keys.has('ShiftLeft')||keys.has('ShiftRight')?2.5:.65);
-    cam.tgt.addScaledVector(delta,speed);cam.distTarget=null;G.focus='free';
+    moveExplorationTarget(cam,delta,speed);cam.distTarget=null;G.focus='free';
 }
 
 // Alongside the display name this carries the raw records the fact rows are
@@ -106,6 +109,8 @@ export function moveExplorerCamera(dt) {
 // epistemic tier those numbers belong to. A body that simply has no record for
 // a quantity carries no field for it, and bodyFacts then omits that row.
 function selectedBody() {
+    if (G.focus === 'galaxy:m31') return {name:'Andromeda',kind:'Accelerated camera approach · modeled stellar population',basis:'modeled'};
+    if (G.focus === 'galaxy:mw') return {name:'Milky Way',kind:'Accelerated camera return',basis:'modeled'};
     const ni = /^neb:(\d+)$/.exec(String(G.focus));
     if (ni && NEBULAE[+ni[1]]?.formation) {
         const n = NEBULAE[+ni[1]], s = gasStateAt(n,G.t);

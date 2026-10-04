@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "reviewedLocalHead": "7ce0c63afc00b2f03c4674b4777066e6a752f2d9",
+  "reviewedLocalTree": "74e91a66f6e8b053506f61c9f593ab57e7a3446c",
+  "requiredAncestor": "8663be59ed26cfed38176895527b9aa1d9bdd4ff",
+  "blobs": {
+    "src/river.js": "dd347cce74da823b4c3e8124f4d57e5440b13470",
+    "src/render/relativeBodyFrame.js": "99be143152be9ea9e2d0cac973df6fdbf6f59a24",
+    "scripts/foreign-river-qa.mjs": "a472e5572949630336cb346db67f8acd1ce382f1",
+    "scripts/smoke-foreign-river.mjs": "ba355b568adb8ca841c33bcdb6620361a51b6bde",
+    "scripts/verify-foreign-river.mjs": "fd79221e9447efb00ddb97afa0786bb36d2cd58c",
+    "scripts/context-recovery-qa.mjs": "df0ed74ffabfc5d1f3d342ed139638a161e07dae",
+    "scripts/river-radiance-qa.mjs": "9cfc0193ede9dde3ef45fb333d346bc5beabc064",
+    "scripts/river-radiance-lifecycle.mjs": "07b9700ffe238e7562d0609f94ae2fc7d00c9cce",
+    "scripts/verify-river-radiance.mjs": "4796eba4fe1c3f38b4a895c0d44ed2d39fa4ec51",
+    "src/stars.js": "e7fff811ac4806dfffad809b04be6093639e1083",
+    "src/render/foreignStarField.js": "d3b821a7144dddfcd19389caf9450e8b6258c5dd",
+    "scripts/smoke-foreign-star-startup.mjs": "c76a3123f2f89e2c8c0988f3aab00dc7fcff2da1",
+    "src/saves.js": "b6a8a7e5aefaa1cfe319d9fa472d7d2668b4af2e",
+    "scripts/smoke-scenario-session.mjs": "8b7b2c35a74e798468c2422b4a3cce835c441827"
+  },
+  "previousFailedRun": 37186624841,
+  "previousFailedRuns": [
+    37186624841,
+    37188916575,
+    37190256223,
+    37191175098
+  ]
+}

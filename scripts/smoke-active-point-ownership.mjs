@@ -23,6 +23,7 @@ const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(), heldRow
 const dependencies = {
     THREE, K, ACTIVE_STARS: A.ACTIVE_STARS,
     activeStarsTime: A.activeStarsTime, activeStarSetRevision: A.activeStarSetRevision,
+    activeForeignStarsStamp: A.activeForeignStarsStamp,
     getExploredHost: E.getExploredHost, scene, camera,
     holdCatalogRow: (row, held) => held ? heldRows.add(row) : heldRows.delete(row),
     makeStarPointMaterial: () => new THREE.PointsMaterial(), linearStarColor, teffToRGB,
@@ -84,3 +85,24 @@ for (const route of ['retained', 'returned', 'restored']) {
     assert(ownership.pass, route + ': actual production pool owns exactly one retained HYG point');
     console.log(route + ': HYG87 pooled slot ' + ownership.expectedHostSlot + '/' + ownership.pooled.count + ', background held=' + heldRows.has(87));
 }
+
+// The shared pool must also republish foreign rows between catalog buckets,
+// including an intervention restored while the coordinate clock is paused.
+const { galaxyWorldKm } = await import('../src/universe/galaxyRegistry.js');
+const { syncGalacticFrame } = await import('../src/universe/galacticClock.js');
+const J = await import('../src/universe/universeJournal.js');
+E.restoreExploredSystem(null,'free');
+const world=galaxyWorldKm('m31',[10000,0,0],0);
+A.refreshActiveStars(...world,'free',0);
+const foreign=A.ACTIVE_STARS.find(s=>s.galaxyId);
+assert(foreign);camera.position.set(foreign.x*K,foreign.z*K,-foreign.y*K);
+pool.sync();const slot=pointStars().indexOf(foreign);
+const position=()=>Array.from(pool.mesh().geometry.attributes.position.array.slice(slot*3,slot*3+3));
+const epochPosition=position();
+syncGalacticFrame(1e8);pool.sync();const movedPosition=position();
+assert.notDeepEqual(movedPosition,epochPosition,'Stationary observer receives exact foreign time publication');
+J.recordStarImpulse(foreign.id,0,[1000,0,0]);syncGalacticFrame(1e8);pool.sync();
+assert.notDeepEqual(position(),movedPosition,'Same-clock intervention invalidates the actual point pool');
+J.restoreUniverseJournal(null);syncGalacticFrame(1e8);pool.sync();
+assert.deepEqual(position(),movedPosition,'Same-clock restore republishes the original point location');
+console.log('Foreign point ownership: exact time and same-clock journal restoration invalidate the real shared pool');

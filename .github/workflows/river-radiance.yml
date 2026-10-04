@@ -25,10 +25,19 @@ permissions:
   contents: read
   actions: read
 jobs:
-  accepted-performance:
-    name: Authenticate and replay all six measured views
+  fresh-performance:
+    name: Fresh radiance ${{ matrix.device }} ${{ matrix.fixture }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 160
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        fixture: [proxima, sun, black-hole]
+    env:
+      EXPECTED_CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha }}
+      DEVICE: ${{ matrix.device }}
+      FIXTURE: ${{ matrix.fixture }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,37 +47,79 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: git worktree add --detach ../radiance-accepted 7d45c681f684da27bd84532e1de1d0ddd3f9564f
-      - run: node scripts/smoke-radiance-acceptance.mjs
-      - name: Require identical production and authenticated successful original jobs
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: node scripts/verify-radiance-acceptance.mjs fetch ../radiance-accepted evidence/accepted
-      - uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: 37164787136
-          name: radiance-recomputed-complete-desktop
-          path: evidence/accepted/desktop
-      - uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          run-id: 37164787136
-          name: radiance-recomputed-complete-mobile
-          path: evidence/accepted/mobile
-      - name: Recompute every trial and both device-wide budgets from exact raw reports
-        run: node scripts/verify-radiance-acceptance.mjs replay ../radiance-accepted evidence/accepted
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: Prepare immutable protocol and actual main baseline
+        run: |
+          git worktree add --detach ../radiance-accepted 7d45c681f684da27bd84532e1de1d0ddd3f9564f
+          git worktree add --detach ../travel-main 3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6
+          ln -s "$GITHUB_WORKSPACE/node_modules" ../travel-main/node_modules
+          ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-accepted/node_modules
+      - name: Require unchanged guards, adapter negative controls and both production hooks
+        run: |
+          node scripts/smoke-radiance-acceptance.mjs
+          node scripts/smoke-travel-radiance-adapter.mjs ../radiance-accepted ../travel-main
+          node scripts/travel-radiance-adapter.mjs validate ../radiance-accepted ../travel-main . evidence/validation
+      - run: npx playwright install --with-deps chromium
+      - name: Measure every fresh warmup and all five paired trials
+        run: node scripts/travel-radiance-adapter.mjs measure ../radiance-accepted ../travel-main . evidence/measured
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: radiance-acceptance-provenance
-          path: |
-            evidence/accepted/*provenance.json
-            evidence/accepted/metadata.json
+          name: travel-radiance-fresh-${{ matrix.device }}-${{ matrix.fixture }}
+          path: evidence/measured/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: travel-radiance-validation-${{ matrix.device }}-${{ matrix.fixture }}
+          path: evidence/validation/
+          retention-days: 14
+  fresh-aggregate:
+    name: Fresh radiance complete ${{ matrix.device }}
+    needs: fresh-performance
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    env:
+      EXPECTED_CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha }}
+      DEVICE: ${{ matrix.device }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - run: |
+          git worktree add --detach ../radiance-accepted 7d45c681f684da27bd84532e1de1d0ddd3f9564f
+          git worktree add --detach ../travel-main 3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: travel-radiance-fresh-${{ matrix.device }}-*
+          path: evidence/inputs
+      - name: Recompute all three fresh views and the unchanged device-wide budget
+        run: >-
+          node scripts/travel-radiance-adapter.mjs aggregate ../radiance-accepted ../travel-main . evidence/aggregate
+          evidence/inputs/travel-radiance-fresh-${{ matrix.device }}-proxima/report.json
+          evidence/inputs/travel-radiance-fresh-${{ matrix.device }}-sun/report.json
+          evidence/inputs/travel-radiance-fresh-${{ matrix.device }}-black-hole/report.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: travel-radiance-complete-${{ matrix.device }}
+          path: evidence/aggregate/
           retention-days: 14
   final-functional:
     name: Final radiance ${{ matrix.suite }} ${{ matrix.device }}
-    needs: accepted-performance
+    needs: fresh-aggregate
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
@@ -85,7 +136,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --ignore-scripts
+      - run: npm install --ignore-scripts --no-package-lock
       - run: node scripts/smoke-river-radiance.mjs && node scripts/smoke-river-radiance-qa.mjs && node scripts/smoke-river-radiance-lifecycle.mjs && node scripts/smoke-context-recovery-qa.mjs
       - run: npx playwright install --with-deps chromium
       - name: Exercise exact final production with the unchanged reviewed browser suite
@@ -93,7 +144,7 @@ jobs:
           DEVICE: ${{ matrix.device }}
           RADIANCE_SUITE: ${{ matrix.suite }}
         run: |
-          git worktree add --detach ../radiance-baseline aa13451b503ff59eb1f196632406c66fa0db37b1
+          git worktree add --detach ../radiance-baseline 3a51477c9b17aaf275bb58b84b16c5b1f14ae2c6
           ln -s "$GITHUB_WORKSPACE/node_modules" ../radiance-baseline/node_modules
           node scripts/verify-river-radiance.mjs ../radiance-baseline . evidence/radiance
       - uses: actions/upload-artifact@v4
