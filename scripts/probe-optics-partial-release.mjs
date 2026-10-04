@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { transformCelestialSource } from './celestial-detail-fixtures.mjs';
 import { verifyDeferredEdgeFixture } from './optics-deferred-edge-fixture.mjs';
+import { installNativeLensProof, validateNativeLensProof } from './optics-native-filter-proof.mjs';
 const mobile=process.env.DEVICE==='mobile';
 const bloom=process.env.BLOOM==='1';
 const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/optics-crossing');await mkdir(out,{recursive:true});
@@ -41,11 +42,13 @@ try{
  report.depthFixture=await verifyDeferredEdgeFixture(page);
  for(const[name,png]of Object.entries(report.depthFixture.images))await writeFile(`${out}/depth-fixture-${name}.png`,Buffer.from(png.split(',')[1],'base64'));
  delete report.depthFixture.images;await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));
+ await page.evaluate(installNativeLensProof);
  const coarse=[.48,.08,.005,0,-.005,-.08,-.48];
  const dense=[.0008,.0007,.00065,.0006,.00055,.0005,.0004,0,-.0004,-.0005,-.00055,-.0006,-.00065,-.0007,-.0008];
  for(const scenario of ['saturn-near-lens','saturn-foreground-lens','disk-crossing'])for(const pitch of scenario==='disk-crossing'?[...new Set([...coarse,...dense])]:scenario==='saturn-foreground-lens'?[.48,0,-.48]:coarse){
   const result=await page.evaluate(({scenario,pitch})=>{
    const{s,st,b,bh,tde,hole,lens,c,sat,bloom}=qa;const m=bh.BH_META[0];
+   window.__opticsNativeProofAllowed=scenario==='saturn-near-lens'&&pitch===.48;
    const foreground=scenario==='saturn-foreground-lens';
    st.BH.x[0]=qa.initialHole.x+(foreground?150000:0);st.BH.y[0]=qa.initialHole.y+(foreground?2000000:0);
    qa.enc.syncHoleScene(); // paused frames intentionally do not step physical caches
@@ -112,7 +115,9 @@ try{
   if(scenario==='saturn-foreground-lens'){assert(result.state.physicalLensDepth>result.state.bodyDepth+500,'test lens is behind the complete body and rings');assert(result.metrics.opaquePixels>50,'foreground body mask samples visible opaque surface');assert.equal(result.metrics.opaqueChanged,0,'a lens behind the body cannot alter its opaque interior');}
   console.log(scenario,pitch,JSON.stringify(result.metrics));
  }
- report.edgePerformance={implemented:false,acceptance:false,reason:'Edge repair remains deferred under issue49. Mandatory full-source531 performance runs separately.'};
+ report.nativeLensProof=await page.evaluate(()=>window.__finishOpticsNativeProof());
+ validateNativeLensProof(report.nativeLensProof);
+ report.edgePerformance={implemented:false,acceptance:false,reason:'Edge repair remains deferred under issue49. Performance requires a separate fresh actual-main comparison; historical531 results are not substituted.'};
  const edge=report.cases.filter(c=>c.scenario==='disk-crossing');
  const exact=edge.find(c=>c.pitch===0),near=edge.filter(c=>Math.abs(c.pitch)===.005);
  const crossing=edge.filter(c=>dense.includes(c.pitch)).sort((a,b)=>b.pitch-a.pitch);

@@ -1,0 +1,41 @@
+{
+  "baseline": "ab51029827cf9324eb737673e46c49ab74aa1718",
+  "baselineTree": "7b185b45a344738d6299856362b455b18c8a9484",
+  "reviewedSourceTree": "72a7428d05088115272decd506ff17de0f051669",
+  "productionPaths": [
+    "src",
+    "public",
+    "index.html",
+    "package.json",
+    "package-lock.json",
+    "bun.lock",
+    "vite.config.*",
+    "scripts/galaxy-preview-plugin.mjs",
+    ".env*",
+    "postcss.config.*",
+    ".postcssrc*",
+    "tsconfig*.json",
+    "jsconfig*.json",
+    "npm-shrinkwrap.json",
+    ".npmrc"
+  ],
+  "productionFingerprints": {
+    "A": "5509822d3cdc9bee3f72b8ae08990f004f0e637911f44ecd3a3eb4825ef1fff8",
+    "B": "e2e72104d0464e094654d864bec17873756bce309a5d0b09edd29a100eee1a7f"
+  },
+  "harnessHashes": {
+    "scripts/benchmark-explored-systems.mjs": "f5a1f31989c2e074ccd947875a3032ccde6d19f3712b2c9178b38093d8dae5cb",
+    "scripts/explored-system-hooks.mjs": "2d24f1ddf1916741d20595b305a5a5e4b5bf141440bed351ed9dbc143f9aca86",
+    "scripts/celestial-detail-fixtures.mjs": "6225bd07f1843891faef31f1119bf61c9831dedc74cd67dadec1c78f81381d79",
+    "scripts/optics-deferred-edge-fixture.mjs": "0861d3caf321ec2779ec9723e0ee914af7635cb3501245ee3e851246847cafdc",
+    "scripts/optics-depth-fixture.mjs": "7512301765c8ae2fe45bc040d224dd6e3d5325765690adce74c41bde3435ce54",
+    "scripts/probe-optics-partial-release.mjs": "cb7f1e3ea627d5148262f2fe34eed1d2689f057a13dc0eb19d85464cf369d898",
+    "scripts/optics-native-filter-proof.mjs": "b9c84cefc00e29b7885f1060b77933524b81e2df3715cab57cddb1e0af3a145e"
+  },
+  "packages": {
+    "playwright": "1.63.0",
+    "playwright-core": "1.63.0",
+    "three": "0.164.1",
+    "vite": "5.4.21"
+  }
+}
