@@ -386,6 +386,20 @@ async function saveCase(page, variant, test, phase) {
     delete result.nativeDiskProof; // Native records are retained once in nativeDiskEvidence.
     report.variants[variant].samples.push(result);
     await flush();
+    if (variant === 'candidate' && test.scenario === 'saturn-near-lens' && test.pitch === .48 &&
+        ['original', 'recovery-1-controls', 'recovery-2-controls'].includes(phase)) {
+        // Explicit untimed cache/precompile test after the existing pixels are
+        // captured. No added application frame, native draw or readback.
+        const observed = await page.evaluate(({ afterPhase }) => {
+            const epoch = qa.s.renderContext.restores;
+            qa.nativeDiskObserver.label({ kind: 'precompile', afterPhase, epoch });
+            qa.nativeDiskObserver.precompile(() => qa.s.renderer.compile(qa.bh.BH_META[0].optics.disk, qa.s.camera, qa.s.scene));
+            return { epoch, proof: qa.nativeDiskObserver.drain() };
+        }, { afterPhase: phase });
+        report.variants.candidate.nativeDiskEvidence.push({ phase: 'precompile', afterPhase: phase, ...test, ...observed });
+        await flush();
+        assertNativeDiskBatch(observed.proof);
+    }
     return result;
 }
 
