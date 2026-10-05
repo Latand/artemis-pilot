@@ -8,7 +8,18 @@ on:
       - 'src/**'
       - 'public/**'
       - 'index.html'
-      - 'package*.json'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'bun.lock'
+      - 'vite.config.*'
+      - 'scripts/galaxy-preview-plugin.mjs'
+      - '.env*'
+      - 'postcss.config.*'
+      - '.postcssrc*'
+      - 'tsconfig*.json'
+      - 'jsconfig*.json'
+      - 'npm-shrinkwrap.json'
+      - '.npmrc'
       - 'scripts/**'
       - '.github/workflows/disk-plane-validation.yml'
 permissions:
@@ -56,7 +67,7 @@ jobs:
           test "$PR_BASE_SHA" = "$BASE_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE_REVISION"
           REVIEWED_PARENT_SHA="$(git rev-parse "$EXPECTED_CANDIDATE_REVISION^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '5560e19f9badb9f5ddcd7887d3e62fa3e8763810'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'fc1d311f352e4f17c9e22239e25f0a286c5b88f5'
           REVIEWED_SOURCE_SHA="$(git log -1 --format=%H "$EXPECTED_CANDIDATE_REVISION" -- src/holeOptics.js)"
           test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
           git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" "$REVIEWED_PARENT_SHA"
@@ -75,7 +86,7 @@ jobs:
           244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
           c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
-          f2280bf902555da65c5f7b0c8f97d73befe067a4 scripts/smoke-disk-plane-cost-contract.mjs
+          ce85c9e5dad3d3aba87f0aea5be15c9bce20880f scripts/smoke-disk-plane-cost-contract.mjs
           4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
@@ -327,7 +338,7 @@ jobs:
           test "$PR_BASE_SHA" = "$BASE_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE_REVISION"
           REVIEWED_PARENT_SHA="$(git rev-parse "$EXPECTED_CANDIDATE_REVISION^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '5560e19f9badb9f5ddcd7887d3e62fa3e8763810'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'fc1d311f352e4f17c9e22239e25f0a286c5b88f5'
           REVIEWED_SOURCE_SHA="$(git log -1 --format=%H "$EXPECTED_CANDIDATE_REVISION" -- src/holeOptics.js)"
           test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
           git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" "$REVIEWED_PARENT_SHA"
@@ -346,7 +357,7 @@ jobs:
           244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
           c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
-          f2280bf902555da65c5f7b0c8f97d73befe067a4 scripts/smoke-disk-plane-cost-contract.mjs
+          ce85c9e5dad3d3aba87f0aea5be15c9bce20880f scripts/smoke-disk-plane-cost-contract.mjs
           4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
