@@ -1,13 +1,12 @@
-# One proposed QA-corrected cohort; preserve v4 oracle failure and all historical failures.
-# Compile resets are linked to native submissions, including zero counts without uniform claims.
-# Native proof observes existing untimed draws; no extra frames or warmup. Active hover or another
-# exact-pixel mismatch stops this cohort; there is no automatic retry.
-name: Disk-plane conservative fast path
+# One changed-source static-program cohort; preserve every earlier failure.
+# Native program definitions and three declared cached-precompile checks are
+# observed only in untimed pixel/lifecycle work. No retry or release follows.
+name: Disk static program validation
 # One reviewed push launches this bounded issue50-only cohort. No PR, manual,
 # schedule, six-view radiance, deployment or branch-writing trigger is attached.
 on:
   push:
-    branches: ['diagnostic/disk-fast-path-6179-v5']
+    branches: ['diagnostic/disk-static-programs-6179']
 permissions:
   contents: read
 concurrency:
@@ -51,9 +50,9 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '170bf54eee074f1ec738a23246abba0777a0ff76'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'be2868ede9b3e11b470803badccc9f479e64676f'
           REVIEWED_SOURCE_SHA="$(git rev-parse "$REVIEWED_PARENT_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '9eed5a6094daf8cce6424dd18be3e786a3f0fbb4'
+          test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
           test "$(git log -1 --format=%H "$GITHUB_SHA" -- src/holeOptics.js)" = "$REVIEWED_SOURCE_SHA"
           git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_SOURCE_SHA"
           git diff --exit-code "$REVIEWED_SOURCE_SHA" "$GITHUB_SHA" -- src public index.html package.json
@@ -67,26 +66,31 @@ jobs:
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
           3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
           3dc4030f422dc1b27df12cfb897fe8c230fd69d5 scripts/disk-plane-source-contract.mjs
-          efa6c4f34dc03cfc6fbf450412a1cd61a5662695 scripts/fixtures/disk-plane-inputs.json
+          244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
-          9b1c9e8416830089399d1b16771ec84339bce734 scripts/probe-disk-plane.mjs
+          c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
           140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
           4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
-          406d12c5f2325c9d8547ce676c6e03ecdb033c4b scripts/smoke-disk-plane-support.mjs
-          fd596093a218d38a8900d3b7cd93d82c5c4667c0 src/holeOptics.js
+          c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
+          60769a73dcd609dd49d464a35b8231901f2b431f src/holeOptics.js
           99bd167c75ebe2a5fe636730fa5774204e663ae3 docs/disk-pointer-fixture.md
           701eba17c955bdd85f907d71fe66d8c8042c4e6b scripts/disk-pointer-fixture.mjs
           cbcc474ae36b178030b4a21452e1679ce02e8b25 scripts/smoke-disk-pointer-fixture.mjs
           8afd78317112310a4338321ba7787ebd1c0026e7 docs/qa/disk-unclipped-proof.md
-          03bc0158b8cb5abbb2f6c4fc681ee3a42f8d2272 docs/qa/native-disk-proof.md
-          4f0b441aea1df4bb01e94ce64ee0be3160896159 scripts/smoke-disk-frustum-fast-path.mjs
-          b1c238f9a7331c868152c13d0fcc1a185067d989 scripts/smoke-disk-fast-path-lifecycle.mjs
-          38782d9c21690fbf5c49599e87d7dd357152d757 scripts/smoke-disk-program-precision.mjs
+          e68ade95b3e980a4df8e5d967fecc51387a820da docs/qa/native-disk-proof.md
+          6386bf08197cb4a6aac8199240e02283186d1230 scripts/smoke-disk-frustum-fast-path.mjs
+          f5f8276b05ec9693101fcba60b4af4816c8d56c9 scripts/smoke-disk-fast-path-lifecycle.mjs
+          509e673537b901dab368f5eeda3bb5de518b7ad7 scripts/smoke-disk-program-precision.mjs
           caddb54031b4c7cbc73e92bf4fcfb6c80f57dd35 scripts/smoke-disk-source-binding.mjs
           8a0927700fe7e09b8cb7d11e85459cd43c27acfb scripts/fixtures/disk-fast-path-captured.json
-          18a5d792a0c1ec3e1f23f63892949d35596a54f1 scripts/native-disk-proof.mjs
-          5e15c7d094107082d9594a4c3ead2c1d9523fe0c scripts/smoke-native-disk-proof.mjs
+          48f781b3040c7528dd57b4ace01cb97a108924cd scripts/native-disk-proof.mjs
+          c17e2a267d627c3bd921193592725c1b521ca62c scripts/smoke-native-disk-proof.mjs
+          763fccd434731477e789c067b7269d7c1744aa30 docs/qa/disk-static-specialization.md
+          0a4bfc561809c0b9f45af9502fad8c81519502f8 scripts/compile-disk-static-offline.py
+          d9e1f9ce14ac7228ddafa6cfc41caf6f0f55375d scripts/fixtures/disk-static-native.json
+          3ba642b61e8d16121bff48f22377975a5fcf20af scripts/qa/disk-static-harness.mjs
+          84b34e864f73bcc199e30faac08404f86587dd6a scripts/smoke-disk-static-programs.mjs
           BLOBS
           while read -r expected path; do
             test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
@@ -128,6 +132,7 @@ jobs:
           node scripts/smoke-disk-frustum-fast-path.mjs
           node scripts/smoke-disk-fast-path-lifecycle.mjs
           node scripts/smoke-disk-program-precision.mjs
+          node scripts/smoke-disk-static-programs.mjs
           node scripts/smoke-disk-source-binding.mjs
           node scripts/smoke-native-disk-proof.mjs
           node scripts/smoke-disk-plane-qa.mjs
@@ -315,9 +320,9 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '170bf54eee074f1ec738a23246abba0777a0ff76'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'be2868ede9b3e11b470803badccc9f479e64676f'
           REVIEWED_SOURCE_SHA="$(git rev-parse "$REVIEWED_PARENT_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '9eed5a6094daf8cce6424dd18be3e786a3f0fbb4'
+          test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
           test "$(git log -1 --format=%H "$GITHUB_SHA" -- src/holeOptics.js)" = "$REVIEWED_SOURCE_SHA"
           git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_SOURCE_SHA"
           git diff --exit-code "$REVIEWED_SOURCE_SHA" "$GITHUB_SHA" -- src public index.html package.json
@@ -331,26 +336,31 @@ jobs:
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
           3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
           3dc4030f422dc1b27df12cfb897fe8c230fd69d5 scripts/disk-plane-source-contract.mjs
-          efa6c4f34dc03cfc6fbf450412a1cd61a5662695 scripts/fixtures/disk-plane-inputs.json
+          244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
-          9b1c9e8416830089399d1b16771ec84339bce734 scripts/probe-disk-plane.mjs
+          c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
           140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
           4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
-          406d12c5f2325c9d8547ce676c6e03ecdb033c4b scripts/smoke-disk-plane-support.mjs
-          fd596093a218d38a8900d3b7cd93d82c5c4667c0 src/holeOptics.js
+          c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
+          60769a73dcd609dd49d464a35b8231901f2b431f src/holeOptics.js
           99bd167c75ebe2a5fe636730fa5774204e663ae3 docs/disk-pointer-fixture.md
           701eba17c955bdd85f907d71fe66d8c8042c4e6b scripts/disk-pointer-fixture.mjs
           cbcc474ae36b178030b4a21452e1679ce02e8b25 scripts/smoke-disk-pointer-fixture.mjs
           8afd78317112310a4338321ba7787ebd1c0026e7 docs/qa/disk-unclipped-proof.md
-          03bc0158b8cb5abbb2f6c4fc681ee3a42f8d2272 docs/qa/native-disk-proof.md
-          4f0b441aea1df4bb01e94ce64ee0be3160896159 scripts/smoke-disk-frustum-fast-path.mjs
-          b1c238f9a7331c868152c13d0fcc1a185067d989 scripts/smoke-disk-fast-path-lifecycle.mjs
-          38782d9c21690fbf5c49599e87d7dd357152d757 scripts/smoke-disk-program-precision.mjs
+          e68ade95b3e980a4df8e5d967fecc51387a820da docs/qa/native-disk-proof.md
+          6386bf08197cb4a6aac8199240e02283186d1230 scripts/smoke-disk-frustum-fast-path.mjs
+          f5f8276b05ec9693101fcba60b4af4816c8d56c9 scripts/smoke-disk-fast-path-lifecycle.mjs
+          509e673537b901dab368f5eeda3bb5de518b7ad7 scripts/smoke-disk-program-precision.mjs
           caddb54031b4c7cbc73e92bf4fcfb6c80f57dd35 scripts/smoke-disk-source-binding.mjs
           8a0927700fe7e09b8cb7d11e85459cd43c27acfb scripts/fixtures/disk-fast-path-captured.json
-          18a5d792a0c1ec3e1f23f63892949d35596a54f1 scripts/native-disk-proof.mjs
-          5e15c7d094107082d9594a4c3ead2c1d9523fe0c scripts/smoke-native-disk-proof.mjs
+          48f781b3040c7528dd57b4ace01cb97a108924cd scripts/native-disk-proof.mjs
+          c17e2a267d627c3bd921193592725c1b521ca62c scripts/smoke-native-disk-proof.mjs
+          763fccd434731477e789c067b7269d7c1744aa30 docs/qa/disk-static-specialization.md
+          0a4bfc561809c0b9f45af9502fad8c81519502f8 scripts/compile-disk-static-offline.py
+          d9e1f9ce14ac7228ddafa6cfc41caf6f0f55375d scripts/fixtures/disk-static-native.json
+          3ba642b61e8d16121bff48f22377975a5fcf20af scripts/qa/disk-static-harness.mjs
+          84b34e864f73bcc199e30faac08404f86587dd6a scripts/smoke-disk-static-programs.mjs
           BLOBS
           while read -r expected path; do
             test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
