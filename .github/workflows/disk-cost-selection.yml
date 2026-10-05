@@ -45,7 +45,7 @@ jobs:
           test "$GITHUB_RUN_ATTEMPT" = '1'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '3a3cfd1cf5595be1c4ee9607ad58461065f63201'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '640c4a34fc685264e02687fe8ecc703fd42bbbc2'
           git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-cost-selection.yml'
           test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
           test "$(git rev-parse "$SOURCE_SHA^{tree}")" = 'f42680b76e3750ccc9465f9b44165c82e28197de'
@@ -54,13 +54,13 @@ jobs:
           git diff --exit-code "$SOURCE_SHA" "$GITHUB_SHA" -- src public index.html package.json
           git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
           cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
-          fd75ea11f6957407132782c7e69dbce526ed936a docs/qa/disk-cost-mode-selection.md
-          e8cf83488a95dadd24b6d2c17e6b8009d95f3daa scripts/disk-cost-selection-contract.mjs
+          1f0aa5d52fc4ed59d75dfa9b155ea60d6f62bef0 docs/qa/disk-cost-mode-selection.md
+          cce18956d3581fbd0d90d6fdd0bf04d1f6cb4e96 scripts/disk-cost-selection-contract.mjs
           8b44e4b973797c7ef3d577d19657467d1c037bc8 scripts/disk-cost-selection-native.mjs
           4b3da57726055dc6d8c21cffa9101a5c222230e2 scripts/disk-selection-owned.cjs
           fb98019a6ca0bdf18fedd577c0c0588a0515ca54 scripts/disk-selection-process.mjs
-          7fcdf4ee00390af381ba7b7214222826ece991b0 scripts/observe-disk-cost-selection.mjs
-          6f9673f824ae9269487847ef2e0432d5aa497b18 scripts/smoke-disk-cost-selection.mjs
+          bd2732ac445ac70fa1e46587923bee1b6c040ae5 scripts/observe-disk-cost-selection.mjs
+          1e88209fe8d21b48657d0ac97307f957d49fc4df scripts/smoke-disk-cost-selection.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
           3dc4030f422dc1b27df12cfb897fe8c230fd69d5 scripts/disk-plane-source-contract.mjs
           76afaa8769399d6c4564533f868c8437dbf410b0 scripts/explored-system-hooks.mjs
@@ -87,7 +87,7 @@ jobs:
         timeout-minutes: 3
         run: |
           set -euo pipefail
-          node scripts/smoke-disk-cost-selection.mjs 2>&1 | tee "$ARTEMIS_EVIDENCE/local-controls.log"
+          node scripts/smoke-disk-cost-selection.mjs --workflow .github/workflows/disk-cost-selection.yml 2>&1 | tee "$ARTEMIS_EVIDENCE/local-controls.log"
           ARTEMIS_EVIDENCE="$ARTEMIS_EVIDENCE/validation-before" node scripts/observe-disk-cost-selection.mjs --validate
       - name: Install and bind the managed default headless-shell runtime
         timeout-minutes: 5
@@ -97,22 +97,14 @@ jobs:
           node --input-type=module <<'NODE' > "$ARTEMIS_EVIDENCE/runtime-installed.json"
           import assert from 'node:assert/strict';
           import {readFileSync,realpathSync} from 'node:fs';
-          import {dirname,join} from 'node:path';
           import {createRequire} from 'node:module';
-          import {managedHeadlessRuntime,digest,SELECTION_PINS} from './scripts/disk-cost-selection-contract.mjs';
-          const req=createRequire(import.meta.url),packages={},criticalThreeSourceHashes={};
+          import {inspectSelectionRuntime,digest} from './scripts/disk-cost-selection-contract.mjs';
+          const req=createRequire(import.meta.url),binding=inspectSelectionRuntime(req);
           assert.equal(process.version,'v22.23.3');
-          for(const [name,version] of Object.entries({playwright:'1.63.0','playwright-core':'1.63.0',three:'0.164.1',vite:'5.4.21'})){
-            const bytes=readFileSync(req.resolve(name+'/package.json'));
-            assert.equal(JSON.parse(bytes).version,version);packages[name]={version,sha256:digest(bytes)};
-          }
-          const three=dirname(req.resolve('three/package.json'));
-          for(const path of Object.keys(SELECTION_PINS.criticalThreeSourceHashes))criticalThreeSourceHashes[path]=digest(readFileSync(join(three,path)));
-          assert.deepEqual(criticalThreeSourceHashes,SELECTION_PINS.criticalThreeSourceHashes);
-          const managed=managedHeadlessRuntime(req),realPath=realpathSync(managed.executablePath);
+          const managed=binding.managedHeadless,realPath=realpathSync(managed.executablePath);
           assert.equal(realpathSync(process.env.BASE_ROOT+'/node_modules'),realpathSync('node_modules'));
           assert.equal(realpathSync(process.env.SOURCE_ROOT+'/node_modules'),realpathSync('node_modules'));
-          console.log(JSON.stringify({node:process.version,packages,criticalThreeSourceHashes,managed,realPath,executableSha256:digest(readFileSync(realPath)),actualLaunchVerifiedLater:true},null,2));
+          console.log(JSON.stringify({node:process.version,...binding.runtime,managed,realPath,executableSha256:digest(readFileSync(realPath)),actualLaunchVerifiedLater:true},null,2));
           NODE
       - name: Observe the original 120 warmup and four settled frames once
         timeout-minutes: 14
