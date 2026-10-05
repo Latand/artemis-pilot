@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {readFileSync} from 'node:fs';
+import {readFileSync,realpathSync} from 'node:fs';
 import {resolve,dirname} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {adaptDiskBenchmark} from './disk-plane-source-contract.mjs';
@@ -16,6 +16,35 @@ export const SELECTION_PINS=Object.freeze({baseline:'6179f23661591bb4dee89a0bf8e
         'src/renderers/webgl/WebGLPrograms.js':'6d9873295f6c039ffc6b06e2710ad8aa92256069e432f46e01853d28addc19d4',
         'src/renderers/webgl/WebGLProgram.js':'730cfc32c611aa12c87453b676373d8405e7807698de5b8c2533af1748ae9cd3'}});
 export const digest=s=>createHash('sha256').update(s).digest('hex');
+// Three r164 exports its public CJS entry, but not three/package.json. Resolve
+// that entry first and verify its exact package relationship before reading
+// metadata. No directory search or guessed alternative package is accepted.
+export function installedThreePackage(require){
+    const entry=realpathSync(require.resolve('three')),root=resolve(dirname(entry),'..');
+    const packagePath=resolve(root,'package.json'),bytes=readFileSync(packagePath),pkg=JSON.parse(bytes);
+    assert.equal(pkg.name,'three');assert.equal(pkg.version,'0.164.1');
+    assert.equal(pkg.exports?.['.']?.require,'./build/three.cjs','Pinned public Three entry');
+    assert.equal(resolve(root,pkg.exports['.'].require),entry,'Three entry must belong to the verified package root');
+    return{root,entry,packagePath,bytes};
+}
+// Shared by --validate, --run and the workflow's prelaunch binding. Resolving
+// paths and reading installed metadata never starts a browser. The actual
+// executable existence/image and Node version remain hosted-run checks.
+export function inspectSelectionRuntime(require){
+    const three=installedThreePackage(require),packages={},packageJsonHashes={},criticalThreeSourceHashes={};
+    for(const [name,version]of Object.entries({playwright:'1.63.0','playwright-core':'1.63.0',three:'0.164.1',vite:'5.4.21'})){
+        const bytes=name==='three'?three.bytes:readFileSync(require.resolve(name+'/package.json'));
+        const pkg=JSON.parse(bytes);assert.equal(pkg.name,name);assert.equal(pkg.version,version);
+        packages[name]=pkg.version;packageJsonHashes[name]=digest(bytes);
+    }
+    for(const path of Object.keys(SELECTION_PINS.criticalThreeSourceHashes))criticalThreeSourceHashes[path]=digest(readFileSync(resolve(three.root,path)));
+    assert.deepEqual(criticalThreeSourceHashes,SELECTION_PINS.criticalThreeSourceHashes);
+    const browsersPath=resolve(dirname(require.resolve('playwright-core/package.json')),'browsers.json'),browserBytes=readFileSync(browsersPath);
+    const browsers=JSON.parse(browserBytes).browsers,chromium=browsers.find(x=>x.name==='chromium');
+    assert.equal(chromium.revision,'1243');assert.equal(chromium.browserVersion,'153.0.8010.12');
+    return{managedHeadless:managedHeadlessRuntime(require),runtime:{packages,packageJsonHashes,criticalThreeSourceHashes,chromium,
+        browserManifestSha256:digest(browserBytes),threePackage:{root:three.root,entry:three.entry,path:three.packagePath}}};
+}
 export function managedHeadlessRuntime(require){
     const path=resolve(dirname(require.resolve('playwright-core/package.json')),'lib/coreBundle.js');
     assert.equal(digest(readFileSync(path)),SELECTION_PINS.coreBundleSha256,'Exact Playwright registry implementation');

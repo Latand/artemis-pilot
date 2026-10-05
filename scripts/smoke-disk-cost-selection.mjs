@@ -1,7 +1,7 @@
 // Pure Node tests: no browser or renderer context is created.
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import {readFileSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {readFileSync,mkdtempSync,writeFileSync,rmSync,realpathSync,mkdirSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {resolve,join} from 'node:path';
@@ -238,6 +238,50 @@ for(const mode of ['malformed','cap'])for(const detached of [false,true]){
 }
 const {createRequire}=await import('node:module'),{managedHeadlessRuntime,verifyHeadlessLaunch}=await import('./disk-cost-selection-contract.mjs');
 const require=createRequire(import.meta.url),managed=managedHeadlessRuntime(require);
+// Actual installed Three0.164.1 reproduces the failed hosted package-subpath
+// lookup. Both binding consumers use the same public-entry/ancestry check.
+const {installedThreePackage,inspectSelectionRuntime}=await import('./disk-cost-selection-contract.mjs');
+assert.throws(()=>require.resolve('three/package.json'),{code:'ERR_PACKAGE_PATH_NOT_EXPORTED'});
+const actualThree=installedThreePackage(require),runtimeBinding=inspectSelectionRuntime(require);
+assert.equal(actualThree.entry,realpathSync(require.resolve('three')));
+assert.equal(runtimeBinding.runtime.packages.three,'0.164.1');
+assert.equal(runtimeBinding.runtime.threePackage.root,actualThree.root);
+const packageDir=mkdtempSync(join(tmpdir(),'selection-three-package-'));
+try{
+ mkdirSync(join(packageDir,'build'));writeFileSync(join(packageDir,'build/three.cjs'),'// metadata fixture; never executed');
+ writeFileSync(join(packageDir,'build/other.cjs'),'// wrong public-entry fixture; never executed');
+ const valid={name:'three',version:'0.164.1',exports:{'.':{require:'./build/three.cjs'}}};
+ for(const change of [p=>p.name='other',p=>p.version='0.164.2',p=>p.exports['.'].require='./build/other.cjs']){
+  const pkg=structuredClone(valid);change(pkg);writeFileSync(join(packageDir,'package.json'),JSON.stringify(pkg));
+  assert.throws(()=>installedThreePackage({resolve:name=>{assert.equal(name,'three');return join(packageDir,'build/three.cjs');}}));
+ }
+ writeFileSync(join(packageDir,'package.json'),JSON.stringify(valid));
+ assert.throws(()=>installedThreePackage({resolve:()=>join(packageDir,'build/other.cjs')}),'Wrong entry ancestry is rejected');
+}finally{rmSync(packageDir,{recursive:true,force:true});}
+const bindingStart=wrapper.indexOf(' const req=createRequire('),bindingEnd=wrapper.indexOf('\n if(validate){',bindingStart);
+assert(bindingStart>0&&bindingEnd>bindingStart,'Runtime binding must precede both validate and run');
+const bindingContext={adapter:root,join,createRequire,inspectSelectionRuntime,report:{},process};
+vm.runInNewContext(wrapper.slice(bindingStart,bindingEnd),bindingContext);
+assert.deepEqual(JSON.parse(JSON.stringify(bindingContext.report.runtime)),{node:process.version,...runtimeBinding.runtime});
+assert.deepEqual(bindingContext.report.managedHeadless,runtimeBinding.managedHeadless);
+const runtimeArgs=process.argv.slice(2);
+assert(runtimeArgs.length===0||(runtimeArgs.length===2&&runtimeArgs[0]==='--workflow'));
+if(runtimeArgs.length){
+ const workflow=readFileSync(resolve(runtimeArgs[1]),'utf8');
+ const block=workflow.match(/          node --input-type=module <<'NODE' > "\$ARTEMIS_EVIDENCE\/runtime-installed.json"\n([\s\S]*?)\n          NODE/);
+ assert(block,'Exact workflow runtime-binding snippet required');
+ const body=block[1].replace(/^          /gm,'').replace(/^import .*;\n/gm,'').replaceAll('import.meta.url',JSON.stringify(import.meta.url));
+ const binary=Buffer.from('Unexecuted managed-binary placeholder for metadata-only workflow test');let printed;
+ vm.runInNewContext(body,{assert,createRequire,inspectSelectionRuntime,digest,
+  process:{version:'v22.23.3',env:{BASE_ROOT:root,SOURCE_ROOT:root}},
+  realpathSync:p=>p===managed.executablePath?p:realpathSync(p),
+  readFileSync:p=>p===managed.executablePath?binary:readFileSync(p),console:{log:s=>printed=JSON.parse(s)}});
+ assert.deepEqual(printed.packages,runtimeBinding.runtime.packages);
+ assert.deepEqual(printed.criticalThreeSourceHashes,SELECTION_PINS.criticalThreeSourceHashes);
+ assert.equal(printed.executableSha256,digest(binary));
+ assert.equal(printed.managed.name,'chromium-headless-shell');
+}
+console.log('Installed Three public-entry metadata, four package-ancestry negatives, exact wrapper preflight and optional workflow binding pass. Binary placeholder is not a browser/runtime execution.');
 const full=require(resolve(require.resolve('playwright-core/package.json'),'../lib/coreBundle.js')).registry.registry.findExecutable('chromium');
 assert.equal(managed.name,'chromium-headless-shell');assert.equal(managed.version,full.browserVersion);assert.notEqual(managed.executablePath,full.executablePath());
 const observed=path=>({executables:[{pid:10,start:'1',commandPath:path,processImage:path}]});

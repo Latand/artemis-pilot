@@ -8,7 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {tmpdir} from 'node:os';
 import {createRequire} from 'node:module';
 import {verifyDiskSource} from './disk-plane-source-contract.mjs';
-import {SELECTION_PINS as P,adaptSelectionBenchmark,digest,explainDiskEligibility,managedHeadlessRuntime,verifyHeadlessLaunch} from './disk-cost-selection-contract.mjs';
+import {SELECTION_PINS as P,adaptSelectionBenchmark,digest,explainDiskEligibility,inspectSelectionRuntime,verifyHeadlessLaunch} from './disk-cost-selection-contract.mjs';
 import {runSelectionProcess} from './disk-selection-process.mjs';
 const adapter=resolve(dirname(fileURLToPath(import.meta.url)),'..');
 const candidate=resolve(process.env.SOURCE_ROOT||''),baseline=resolve(process.env.BASE_ROOT||''),out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/disk-cost-selection');
@@ -39,24 +39,17 @@ try{
  const env={...process.env,BASE_ROOT:baseline,DEVICE:P.device,BLOOM:P.bloom,OPTICS_BENCH:'1',PAIRED_CPU_PROFILE:'0'};
  report.executableOverrideRemoved=!!env.CHROMIUM_PATH;delete env.CHROMIUM_PATH;
  execFileSync(process.execPath,['--check',runner]);
+ const req=createRequire(join(adapter,'package.json'));
+ const binding=inspectSelectionRuntime(req);
+ report.managedHeadless=binding.managedHeadless;
+ report.runtime={node:process.version,...binding.runtime};
  if(validate){
   report.validationOutput=execFileSync(process.execPath,[runner,candidate,join(out,'selection'),'--validate'],{cwd:adapter,env,encoding:'utf8'});
  }else{
   assert(!existsSync(join(out,'selection/selection-report.json')),'A new diagnostic cannot reuse a prior observation report');
   assert.equal(process.env.GITHUB_ACTIONS,'true','No local browser route');assert.equal(process.env.GITHUB_RUN_ATTEMPT,'1');
   assert.equal(process.version,'v22.23.3');
-  const req=createRequire(join(adapter,'package.json'));
-  report.managedHeadless=managedHeadlessRuntime(req);
   report.managedHeadless.realPath=realpathSync(report.managedHeadless.executablePath);
-  report.runtime={node:process.version,packages:{},criticalThreeSourceHashes:{}};
-  for(const [name,expected]of Object.entries({'playwright':'1.63.0','playwright-core':'1.63.0','three':'0.164.1','vite':'5.4.21'})){
-   const pkg=JSON.parse(readFileSync(req.resolve(name+'/package.json'),'utf8'));assert.equal(pkg.version,expected);report.runtime.packages[name]=pkg.version;
-  }
-  const browsers=JSON.parse(readFileSync(resolve(dirname(req.resolve('playwright-core/package.json')),'browsers.json'),'utf8'));
-  const chromium=browsers.browsers.find(x=>x.name==='chromium');assert.equal(chromium.revision,'1243');assert.equal(chromium.browserVersion,'153.0.8010.12');report.runtime.chromium=chromium;
-  const three=dirname(req.resolve('three/package.json'));
-  for(const path of ['src/renderers/WebGLRenderer.js','src/renderers/webgl/WebGLPrograms.js','src/renderers/webgl/WebGLProgram.js'])report.runtime.criticalThreeSourceHashes[path]=digest(readFileSync(join(three,path)));
-  assert.deepEqual(report.runtime.criticalThreeSourceHashes,P.criticalThreeSourceHashes);
   report.browserRequested=true;report.browserStarted=null;save();
   report.child=await runSelectionProcess(process.execPath,[runner,candidate,join(out,'selection')],{cwd:adapter,env,
       deadlineMs:P.maxProcessMs,cleanupMs:P.cleanupMs,journalPath:join(out,'owned-processes.jsonl'),onTimeout:()=>{report.timedOut=true;report.completed=false;save();}});

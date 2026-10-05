@@ -62,6 +62,17 @@ precision capability does not certify IEEE arithmetic rounding.
 
 ## Provenance, runtime and containment
 
+The first diagnostic attempt, run37252663287 at0ad2048f, failed before browser
+startup: Three0.164.1 does not export the package.json subpath. Its artifact and
+source checks are retained; no native mode was observed. The corrected metadata
+reader resolves Three's exported CJS entry and verifies package name, version
+and exact entry ancestry. Both --validate and --run now execute the same package
+and renderer-source binding used by the workflow. The smoke reproduces the real
+installed-package export error, tests invalid metadata/ancestry, and executes
+the exact wrapper and workflow binding snippets. Its unexecuted binary placeholder
+tests metadata code only; actual binary existence, image and version still need
+the separately authorized hosted observation. No retry is implied by this fix.
+
 The wrapper requires explicit source roots and an exact diagnostic HEAD. It
 checks immutable source/tree pins, all existing protected source/config inputs,
 shared dependencies and source snapshots before and after. The original native
