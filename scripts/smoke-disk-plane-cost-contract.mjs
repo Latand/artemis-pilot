@@ -4,17 +4,28 @@ import {readFileSync} from 'node:fs';
 import {diskInputs,diskMaximumTaskPolicy,adaptDiskBenchmark} from './disk-plane-source-contract.mjs';
 const native=execFileSync('git',['show',diskInputs.benchmarkReference+':'+diskInputs.benchmarkPath],{encoding:'utf8'});
 const effective=adaptDiskBenchmark(native),token="'src/render/ringSamplingDepth.js',",index=native.indexOf(token);
-const oldMaximum='Math.max(200, beforeLong.measuredMaximumMs * 1.05)',newMaximum='Math.max(220, beforeLong.measuredMaximumMs * 1.05)';
+const oldMaximum='Math.max(200, beforeLong.measuredMaximumMs * 1.05)',newMaximum='Math.max(220, beforeLong.measuredMaximumMs * 1.10)';
 assert.equal(effective.split(newMaximum).length,2);
 const restoredFloor=effective.replace(newMaximum,oldMaximum);
 assert.equal(restoredFloor.slice(0,index)+token+restoredFloor.slice(index),native,
-    'Only the absent source-inventory entry and approved absolute maximum-task floor change');
-assert.equal(diskMaximumTaskPolicy.absoluteFloorMs,220);assert.equal(diskMaximumTaskPolicy.previousAbsoluteFloorMs,200);assert.equal(diskMaximumTaskPolicy.baselineMultiplier,1.05);
+    'Only the absent source-inventory entry and approved maximum-task allowance change');
+assert.equal(diskMaximumTaskPolicy.absoluteFloorMs,220);assert.equal(diskMaximumTaskPolicy.previousAbsoluteFloorMs,200);
+assert.equal(diskMaximumTaskPolicy.baselineMultiplier,1.10);assert.equal(diskMaximumTaskPolicy.previousBaselineMultiplier,1.05);
 const maximum=new Function('beforeLong',`return ${effective.match(/allowedMaximumMs: (Math\.max\([^\n]+\)),/)[1]};`);
-for(const baseline of [0,179,200,209,220,352,394,1000])assert.equal(maximum({measuredMaximumMs:baseline}),Math.max(220,baseline*1.05));
+for(const baseline of [0,179,200,209,220,352,387,477,1000])assert.equal(maximum({measuredMaximumMs:baseline}),Math.max(220,baseline*1.10));
 assert.equal(maximum({measuredMaximumMs:179}),220);
 assert(203<=maximum({measuredMaximumMs:179}));assert(220<=maximum({measuredMaximumMs:179}));assert(!(220.001<=maximum({measuredMaximumMs:179})));
-assert.equal(maximum({measuredMaximumMs:352}),369.6,'No tolerance is compounded onto the existing relative allowance');
+assert.equal(maximum({measuredMaximumMs:1000}),1100,'The10% allowance replaces5%; it is not compounded onto it');
+assert(1100<=maximum({measuredMaximumMs:1000}));assert(!(1100.001<=maximum({measuredMaximumMs:1000})));
+assert(maximum({measuredMaximumMs:1000})<1000*1.05*1.10,'Reject the compounded15.5% allowance');
+for(const [baseline,observed] of [[477,508],[387,411]]){
+    assert(observed>Math.max(220,baseline*1.05),'Retain the original relative-limit failures');
+    assert(observed<=maximum({measuredMaximumMs:baseline}),'Only the approved new maximum criterion changes the result');
+}
+for(const [baseline,boundary] of [[477,524.7],[387,425.7]]){
+    assert(boundary<=maximum({measuredMaximumMs:baseline}));
+    assert(!(boundary+.001<=maximum({measuredMaximumMs:baseline})),'Relative boundary must reject above10%');
+}
 for(const mutation of [
     text=>text.replace('warmupFrames = 120','warmupFrames = 119'),
     text=>text.replace('samplesPerBlock = 60','samplesPerBlock = 59'),
@@ -29,7 +40,7 @@ for(const mutation of [
     const changed=mutation(native);assert.notEqual(changed,native);assert.throws(()=>adaptDiskBenchmark(changed));
 }
 execFileSync(process.execPath,['--input-type=module','--check'],{input:effective});
-console.log('Disk-only cost adapter: exact two-token delta,220ms floor boundaries, unchanged relative allowance and nine threshold/count negative controls passed');
+console.log('Disk-only cost adapter: exact two-token delta,220ms/10% maximum boundaries, noncompounding and nine threshold/count negative controls passed');
 
 // A config-only PR must start the same gate that protects that config at run time.
 // Require the complete explicit contract rather than a hand-maintained subset.

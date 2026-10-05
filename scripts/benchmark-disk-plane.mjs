@@ -1,6 +1,6 @@
 // Fresh full-app active optical cost. Reuse the immutable reviewed runner;
 // remove its absent ring-proxy inventory entry and apply the user-approved
-// 220ms absolute maximum-task floor. Every other gate and delivery is unchanged.
+// maximum max(220ms, baseline *1.10). Every other gate and delivery is unchanged.
 import assert from 'node:assert/strict';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,symlinkSync,rmSync,realpathSync} from 'node:fs';
@@ -24,7 +24,7 @@ try{
     const effective=adaptDiskBenchmark(native);
     const helper=readFileSync(join(root,'scripts/explored-system-hooks.mjs'),'utf8');assert.equal(hash(helper),diskInputs.nativeHookHash);
     provenance.harness={reference:diskInputs.benchmarkReference,originalSha256:hash(native),effectiveSha256:hash(effective),hookSha256:hash(helper),
-        delta:'Remove one absent source-inventory filename; change only the absolute maximum-task floor from200ms to220ms. Relative5%, p95, blocking, count, fixture and timing are unchanged.'};
+        delta:'Remove one absent source-inventory filename; apply only the approved maximum-task rule max(220ms, baseline maximum *1.10), without compounding. P95, blocking, count, fixture and timing are unchanged.'};
     writeFileSync(join(temporary,'package.json'),'{"type":"module"}');mkdirSync(join(temporary,'scripts'));
     writeFileSync(join(temporary,'scripts/benchmark-explored-systems.mjs'),effective);writeFileSync(join(temporary,'scripts/explored-system-hooks.mjs'),helper);
     symlinkSync(join(root,'node_modules'),join(temporary,'node_modules'),'dir');

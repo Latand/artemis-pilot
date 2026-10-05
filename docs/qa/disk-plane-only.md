@@ -71,20 +71,20 @@ those failures. Issue #49 and the held PR #52 stack remain open.
 
 ## Fresh cost plan
 
-`benchmark-disk-plane.mjs` adapts the immutable reviewed 48 benchmark with exactly two substitutions: remove the absent ring-proxy filename from its source-hash inventory, and change the absolute maximum-task floor from200ms to220ms. Both roots genuinely lack that module; no substitute is supplied. The measured frame, native hooks, fixture,120-frame warmup plus4 settled frames, five ABBA/BAAB trials,60 samples per block and synchronized readback remain unchanged. Tests reverse both substitutions to recover the original runner byte-for-byte. Nine negative controls reject changes to its warmup, block count/order, p95, blocking, count or relative maximum allowance.
+`benchmark-disk-plane.mjs` adapts the immutable reviewed 48 benchmark with exactly two substitutions: remove the absent ring-proxy filename from its source-hash inventory, and replace its maximum-task rule with `max(220ms, baseline maximum×1.10)`. Both roots genuinely lack that module; no substitute is supplied. The measured frame, native hooks, fixture,120-frame warmup plus4 settled frames, five ABBA/BAAB trials,60 samples per block and synchronized readback remain unchanged. Tests reverse both substitutions to recover the original runner byte-for-byte. Nine negative controls reject changes to its warmup, block count/order, p95, blocking, count or unapproved maximum allowance.
 
-For each of the four modes, measure exact6179 main against the frozen disk-only candidate with the same dependency tree and Chromium153.0.8010.12/Playwright1.63.0. Retain all600 measured frames per side and the full124-frame initial warmup/settlement ledger, including the native runner's separately labelled post-window attribution deliveries. Require median paired p95 ratio≤1.05, count≤ceil(baseline count×1.05)+1, total blocking≤baseline blocking×1.05+50ms, and maximum task≤max(220ms, baseline maximum×1.05). No historical531,48 or invariant timing substitutes for these new pairs. No selective retry or discarded trial is permitted.
+For each of the four modes, measure exact6179 main against the frozen disk-only candidate with the same dependency tree and Chromium153.0.8010.12/Playwright1.63.0. Retain all600 measured frames per side and the full124-frame initial warmup/settlement ledger, including the native runner's separately labelled post-window attribution deliveries. Require median paired p95 ratio≤1.05, count≤ceil(baseline count×1.05)+1, total blocking≤baseline blocking×1.05+50ms, and maximum task≤max(220ms, baseline maximum×1.10). No historical531,48 or invariant timing substitutes for these new pairs. No selective retry or discarded trial is permitted.
 
-## Approved maximum-task policy,2026-10-05
+## First approval: absolute floor,2026-10-05
 
 After reviewing the203ms versus200ms result, the user explicitly accepted a10%
-tolerance on that absolute limit. The resulting floor is220ms. The existing
-baseline-relative5% allowance is unchanged: the rule is
+tolerance on that absolute limit. The resulting floor was220ms. At this stage,
+the baseline-relative5% allowance was unchanged: the rule was
 `max(220ms, baseline maximum × 1.05)`, not a10% multiplier on the full old rule.
 For example, baseline179ms allows220ms; baseline352ms still allows369.6ms.
 A220.001ms task fails when the floor applies. No p95, blocking, count, frame,
 image, lifecycle or source-proof requirement changes. This policy is scoped to
-the disk-only active-cost adapter; the immutable historical harness is untouched.
+the disk-only active-cost adapter; the immutable historical harness was untouched.
 
 Static-source run [37265007756](https://github.com/Latand/artemis-pilot/actions/runs/37265007756)
 at6c2c6dab remains an original CI failure under its200ms policy. Its sole failure
@@ -95,6 +95,26 @@ re-evaluation, not a green historical CI run, new measurement or retroactive
 explanation of the tail. Final published-version checks must explicitly carry
 the new policy and preserve the original failed report. The planned trace
 diagnostic was cancelled before implementation; no extra diagnostic run occurred.
+
+## Clarified approval: relative maximum,2026-10-05
+
+After the two desktop results below were explained, the user instructed work
+to continue with10% tolerance on the baseline-relative disk maximum as well.
+The current rule is `max(220ms, baseline maximum×1.10)`. The10% replaces the
+former5% multiplier; it is not compounded into15.5% or applied again to the
+220ms floor. No p95, total-blocking, count, image, lifecycle, frame-budget or
+broader radiance threshold changes.
+
+[Run37269475953](https://github.com/Latand/artemis-pilot/actions/runs/37269475953)
+at14bdaa58 remains failed under its original `max(220ms, baseline×1.05)` rule:
+desktop/direct508ms>500.85ms and desktop/bloom411ms>406.35ms. Its p95, blocking,
+count and all four pixel/lifecycle gates passed. Re-evaluation of the same raw
+trials under the clarified rule gives524.7ms and425.7ms limits respectively,
+so both maxima pass. The mobile floor remains220ms. This is a labelled policy
+re-evaluation, not a new measurement or a rewritten historical CI result.
+All original samples/failures remain retained. Fresh final-version checks and
+independent review remain required before merge; no trace or source optimization
+is introduced by this policy-only correction.
 
 Before another hosted run, the corrected QA and workflow must be independently reviewed, pin the exact new candidate and baseline, make the immutable 48 harness object available through a normal fetch, preserve the full pixel artifacts and failure logs, and enforce an execution/upload budget. The previously published workflow's pins deliberately do not authorize these local edits. Source/build/harness inputs must match their committed blobs before and after every run, including ignored/untracked configuration and tracked files hidden by Git flags.
 

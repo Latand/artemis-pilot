@@ -36,13 +36,19 @@ is documented in [disk-plane-only.md](disk-plane-only.md); re-evaluation of
 those same raw data passes the new policy, without changing the old CI result.
 Fresh final-head checks are required. Earlier failures remain preserved.
 
+The subsequent final-head run at14bdaa58 retained all pixel/lifecycle passes
+and failed only desktop maximum tasks508>500.85ms and411>406.35ms. The user then
+clarified10% tolerance on the disk maximum relative to baseline. Under the new
+rule those same maxima fit524.7ms and425.7ms. That separate re-evaluation does
+not relabel the original failed CI or replace final-version checks.
+
 ## Final-head validation and source bindings
 
 The PR disk workflow replaces the isolated push-only diagnostic workflow.
 It checks the exact PR head and actual6179 baseline, runs all four pointer-
 controlled pixel/lifecycle modes, then all four five-trial cost modes. The only
-cost-policy change is `max(220ms, baseline maximum × 1.05)`; no10% is compounded
-onto the relative allowance and no other threshold changes. All frame counts,
+cost-policy change is `max(220ms, baseline maximum × 1.10)`; the10% replaces5%,
+without compounding, and no other threshold changes. All frame counts,
 source pins, runtime versions, process/job caps and failure uploads remain.
 
 The broad radiance workflow now binds A to actual6179 and B to the exact disk
@@ -53,8 +59,8 @@ the inventory proof requires one per side, its fixed buffers, zero draws and
 stable per-page identity. It no longer subtracts a candidate-only object; all
 raw CPU/GPU counts remain in comparison. This matching-inventory adapter was
 already reviewed for the prior optical integration and is reused here without
-a timing change. In particular, the broad suite's200ms maximum floor is not
-changed by the disk-only policy.
+a timing change. In particular, the broad suite's200ms maximum floor and5%
+relative allowance are not changed by the disk-only policy.
 
 Foreign-body functional QA consumes the new exact production fingerprint while
 retaining all14 pinned source/fixture blobs and the existing ancestor check.
