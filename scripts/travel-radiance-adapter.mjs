@@ -1,6 +1,6 @@
-// Fresh measurements for the travel integration. Historical evidence and its
+// Fresh measurements for the optical integration on travel-enabled main. Historical evidence and its
 // equality verifier stay immutable. Adapt only source binding and the precisely
-// declared empty CPU scene object; preserve all timing and workload gates.
+// declared matching hidden CPU scene objects; preserve all timing and workload gates.
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -104,7 +104,7 @@ export function prepareHarness(referenceRoot, baselineRoot, candidateRoot, expec
   symlinkSync(join(candidateRoot, 'src'), join(destination, 'src'), 'dir');
   symlinkSync(join(candidateRoot, 'node_modules'), join(destination, 'node_modules'), 'dir');
   const binding = { version: 1, freshOnly: true, historicalHarness: inputs.historicalHarness, historicalTree: inputs.historicalTree,
-    frozenTravelReference: inputs.frozenTravelReference, productionPaths: inputs.productionPaths, sources: { A, B },
+    frozenProductionReference: inputs.frozenProductionReference, productionPaths: inputs.productionPaths, sources: { A, B },
     measuredSources: { A: measuredSource(baselineRoot, 'A', inputs.baseline), B: measuredSource(candidateRoot, 'B', expectedHead) },
     measuredHarness: Object.fromEntries(measuredHarnessFiles.map(name => [name, effectiveHashes[name]])),
     adapterHashes: Object.fromEntries(['travel-radiance-adapter.mjs', 'travel-radiance-inventory.mjs', 'fixtures/travel-radiance-inputs.json']

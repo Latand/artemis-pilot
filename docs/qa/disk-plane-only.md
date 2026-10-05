@@ -1,0 +1,121 @@
+# Issue #50: disk-plane continuity only
+
+This candidate starts from actual main 6179f23661591bb4dee89a0bf8e686233e1ba280. Its only production change is the normalized disk support and conservative uniform shortcut in `src/holeOptics.js`. Main's lens solver, planet appearance, native ring rendering, physical state and other optical layers remain unchanged. There is no ring-depth proxy module. Issue #49 and the held PR #52 ring/lens stack remain unresolved.
+
+## Sampling change
+
+An analytical plane intersection gives zero ray distance when the camera lies in the disk plane, so all disk emission vanished for that crossing frame. The fix uses normalized, near/far-clipped raster-footprint support around the original plane hit. Coverage divides by the support width, preventing two full emitting faces or a crossing flash. This is sampling regularization, not physical disk thickness or a new accretion model.
+
+The earlier absolute-endpoint formulation loses thin intervals in float32 at large camera distances. A reachable Cygnus annulus example has a plane hit at 2,000,000 rs, radius 48 rs and a positive filtered mask, while the two absolute endpoints round to the same value. The new formulation clips offsets normalized around the original hit. An unclipped interval becomes exactly [-1,1], so its coverage is 1 and its midpoint remains the exact original plane hit. It does not add an epsilon exemption. Near/far clipping still has ordinary input/float32 rounding limits; no universal precision claim is made.
+
+The scalar regression uses the actual extracted GLSL expressions and an independent signed-coordinate integral oracle. It covers close signed crossings, reflections, tangent guards, support clamps, ordinary outside-support hits, clipped/tier partitions and the far emitting-annulus example. The former endpoint collapse is retained as a negative fixture. GPU derivatives, sampling and visual acceptance remain separate.
+
+## Prepared pixel and lifecycle controls
+
+The dedicated paired probe uses exact main and candidate roots in each of four desktop/mobile, direct/bloom configurations. It retains all original geometries and all dense crossing upper/lower/adjacency/no-drop bounds. The corrected fixture has 34 cases: three fully occluded disk views, the three original overlapping-disk views, seven near-lens Saturn views and 21 disk-crossing views. Main must reproduce its zero-plane dropout; only the candidate can pass positive continuity acceptance.
+
+Foreground opacity uses the same compositor/target with an identity lens, preserving the exact zero-change interior gate. Its disk support must be wholly behind the foreground sphere: hole view depth minus `hypot(3*uRout,.02)*uRsUnits` must exceed body view depth plus body radius. This enclosing-sphere bound includes the entire radial emission extent and maximum reviewed raster support, independently of orientation. Negative tests reject the original overlapping geometry, touching support, invalid inputs and enlarged disk radii. The interior mask uses the disk-off draw, so new emission cannot select the pixels being tested. Both exact main/candidate equality and exact disk-on/off equality are required for fully occluded interiors.
+
+The strict fixture orients the disk face-on in the camera basis and extends the actual eye-to-body ray3,900 view-depth units behind the body, then adds a400-unit lateral offset. This puts the mask behind emitting annulus rather than empty sky or the inner hole. A separate untimed draw disables only disk depth testing; its actual post-draw GL depth state must be disabled and more than50 pixels in the same mask must brighten. Ordinary draws retain depth testing and must change zero interior channels. The callback and material depth state are restored. A source-only projection check covers all four viewport sizes; the actual GPU witness remains mandatory. No physical orientation or production code is changed.
+
+The original 1,900-unit center separation is retained as `saturn-overlapping-disk`. Its 3,000-unit disk radius reaches between the observer and Saturn at zero pitch. Disk-on differences there are explicitly diagnostic; the paired disk-off control still requires byte equality, and each root retains the identity-lens check. Additive bloom is disabled only for these opacity/emission controls. Physical and drawn hole positions must match. Asset settlement uses production map requests and the real surface queue rather than a timer.
+
+Disk-off/TDE-off ring contribution masks must match main byte-for-byte wherever visible. Empty masks do not count as a passed ring comparison. Native material and actual GL sampler/program observations are state evidence only; they do not establish a new alpha-gap or ring-depth repair guarantee. No existing ring-fix assertion is represented as passing.
+
+Two complete camera/resize cycles compare their settled frozen images. Two actual `WEBGL_lose_context` cycles per source must stop successful-frame counting while lost, preserve paused physical time, restore a healthy native context and render identical post-recovery pixels. Failure to obtain the real extension is a blocked test, never a synthetic success.
+
+Probe finalization retains the original capture failure, independently attempts both resource closes with deadlines, and publishes atomic report snapshots. Completion stays false until source verification and cleanup succeed. A failed or timed-out report write cannot later publish a stale success, and an existing evidence destination is refused before browser resources start. Exact-finalizer negative controls cover report/close failures, hangs, late aborted writes and preservation of the original thrown value. The far-annulus scalar regression establishes arithmetic stability, not GPU visibility.
+
+The corrected source-derived pixel budget is 629 explicit render/readback calls per root, 1258 per paired configuration and 5032 across four configurations, plus 62 saved captures, 26 stability captures, 132 healthy app-frame calls, one startup frame and eight intentionally lost app-frame calls per root. Every baseline control must occur exactly once in the union of strict pairs and the three declared overlap diagnostics; omissions, duplicates and misclassification fail. Composer internals expand these into more GPU passes. These counts remain the bounded diagnostic plan, not a performance result. The prior v3 source completed all four pixel/lifecycle modes; the changed source still requires its own native validation.
+
+The first disk-only run, [37224058358](https://github.com/Latand/artemis-pilot/actions/runs/37224058358), is retained as failed. At actual 3abeb711, mobile/bloom completed its crossing and lifecycle gates, but desktop/direct and mobile/direct stopped at the original overlapping disk's paired opaque comparison (387 and 557 changed pixels). All 557 mobile changes were +1 blue from correctly foreground disk support; every disk-off control was byte-identical. Separately, desktop/bloom failed repeated resize equality on main before candidate execution. The four cost pairs were gated off. These failures are not acceptance, and correcting the occlusion fixture does not resolve the separate baseline resize mismatch.
+
+## One changed-source cohort after v3
+
+The reviewed fast-path source tree is `9eed5a6094daf8cce6424dd18be3e786a3f0fbb4`.
+Its complete-frustum proof includes derivative helper lanes and defaults to the
+normalized path for uncertain cameras, clipping or compiled precision. The
+source proof is documented in [disk-unclipped-proof.md](disk-unclipped-proof.md).
+Only actual `onBeforeCompile` precision is authoritative; an uncertain compiled
+variant permanently rejects the shortcut for that material/renderer, including
+cached-program reselection. Capability queries do not certify native IEEE
+operation rounding.
+
+Exactly one changed-source cohort is proposed: four pointer-controlled paired
+pixel/lifecycle modes, then four five-trial active-cost pairs only if every
+pixel mode passes. The same trusted-pointer policy and all original frames,
+readbacks, exact foreground/ring comparisons, dense crossing bounds, resize
+and native recovery gates remain. Ordinary inclined production captures must
+also match main exactly, with nonvacuous native fast-path evidence. Native
+program/uniform observations use existing untimed draws and preserve callback,
+program-cache and GL binding behavior. They do not add app frames, warming,
+render passes or readPixels calls. No retry or extra setup is authorized.
+
+The immutable historical cost runner is retained. Its effective adapter removes
+the absent-file inventory entry and applies the approved absolute maximum-task
+floor documented below. It does not record pointer/hover assertions or
+the disk uniform during timed frames. Native compiled-precision/eligibility
+proof comes from the paired pixel/setup fixture with the same active pose and
+pinned runtime; it is not observation of every timed cost draw, nor a new timing
+attribution. Different jobs may use different runner hardware.
+
+The v3 run [37232097341](https://github.com/Latand/artemis-pilot/actions/runs/37232097341)
+at `c933da57` remains failed despite all four pixel/lifecycle and p95 gates
+passing. Its mandatory failures are desktop/direct maximum task 548 > 515.55 ms,
+desktop/bloom maximum 448 > 431.55 ms and mobile/bloom total blocking 42099 > 41945 ms.
+Both desktop maxima came from one task each; the mobile failure is aggregate
+blocking, not a maximum outlier. All trials and the older ring/lens, invariant,
+baseline equality and inconclusive observation reports remain retained. A new
+result establishes only its own outcome and cannot retrospectively explain
+those failures. Issue #49 and the held PR #52 stack remain open.
+
+## Fresh cost plan
+
+`benchmark-disk-plane.mjs` adapts the immutable reviewed 48 benchmark with exactly two substitutions: remove the absent ring-proxy filename from its source-hash inventory, and replace its maximum-task rule with `max(220ms, baseline maximum×1.10)`. Both roots genuinely lack that module; no substitute is supplied. The measured frame, native hooks, fixture,120-frame warmup plus4 settled frames, five ABBA/BAAB trials,60 samples per block and synchronized readback remain unchanged. Tests reverse both substitutions to recover the original runner byte-for-byte. Nine negative controls reject changes to its warmup, block count/order, p95, blocking, count or unapproved maximum allowance.
+
+For each of the four modes, measure exact6179 main against the frozen disk-only candidate with the same dependency tree and Chromium153.0.8010.12/Playwright1.63.0. Retain all600 measured frames per side and the full124-frame initial warmup/settlement ledger, including the native runner's separately labelled post-window attribution deliveries. Require median paired p95 ratio≤1.05, count≤ceil(baseline count×1.05)+1, total blocking≤baseline blocking×1.05+50ms, and maximum task≤max(220ms, baseline maximum×1.10). No historical531,48 or invariant timing substitutes for these new pairs. No selective retry or discarded trial is permitted.
+
+## First approval: absolute floor,2026-10-05
+
+After reviewing the203ms versus200ms result, the user explicitly accepted a10%
+tolerance on that absolute limit. The resulting floor was220ms. At this stage,
+the baseline-relative5% allowance was unchanged: the rule was
+`max(220ms, baseline maximum × 1.05)`, not a10% multiplier on the full old rule.
+For example, baseline179ms allows220ms; baseline352ms still allows369.6ms.
+A220.001ms task fails when the floor applies. No p95, blocking, count, frame,
+image, lifecycle or source-proof requirement changes. This policy is scoped to
+the disk-only active-cost adapter; the immutable historical harness was untouched.
+
+Static-source run [37265007756](https://github.com/Latand/artemis-pilot/actions/runs/37265007756)
+at6c2c6dab remains an original CI failure under its200ms policy. Its sole failure
+is mobile/direct maximum203ms>200ms; all four p95 medians, blocking/count gates,
+and pixel/lifecycle modes pass. Re-evaluating those same retained raw samples
+with the new220ms rule passes all four cost modes. That is a labelled policy
+re-evaluation, not a green historical CI run, new measurement or retroactive
+explanation of the tail. Final published-version checks must explicitly carry
+the new policy and preserve the original failed report. The planned trace
+diagnostic was cancelled before implementation; no extra diagnostic run occurred.
+
+## Clarified approval: relative maximum,2026-10-05
+
+After the two desktop results below were explained, the user instructed work
+to continue with10% tolerance on the baseline-relative disk maximum as well.
+The current rule is `max(220ms, baseline maximum×1.10)`. The10% replaces the
+former5% multiplier; it is not compounded into15.5% or applied again to the
+220ms floor. No p95, total-blocking, count, image, lifecycle, frame-budget or
+broader radiance threshold changes.
+
+[Run37269475953](https://github.com/Latand/artemis-pilot/actions/runs/37269475953)
+at14bdaa58 remains failed under its original `max(220ms, baseline×1.05)` rule:
+desktop/direct508ms>500.85ms and desktop/bloom411ms>406.35ms. Its p95, blocking,
+count and all four pixel/lifecycle gates passed. Re-evaluation of the same raw
+trials under the clarified rule gives524.7ms and425.7ms limits respectively,
+so both maxima pass. The mobile floor remains220ms. This is a labelled policy
+re-evaluation, not a new measurement or a rewritten historical CI result.
+All original samples/failures remain retained. Fresh final-version checks and
+independent review remain required before merge; no trace or source optimization
+is introduced by this policy-only correction.
+
+Before another hosted run, the corrected QA and workflow must be independently reviewed, pin the exact new candidate and baseline, make the immutable 48 harness object available through a normal fetch, preserve the full pixel artifacts and failure logs, and enforce an execution/upload budget. The previously published workflow's pins deliberately do not authorize these local edits. Source/build/harness inputs must match their committed blobs before and after every run, including ignored/untracked configuration and tracked files hidden by Git flags.
+
+The prior disk-support treatment cost 7.6–9.7ms in a different Chromium 148 diagnostic. The full ring/lens stacks and invariant-cache experiment failed their actual-main performance gates. The centered interval fixes a correctness defect and is not assumed faster; the disk-only subset can still fail 5%. Those original failures remain preserved, and no broader solver optimization or release acceptance is claimed.

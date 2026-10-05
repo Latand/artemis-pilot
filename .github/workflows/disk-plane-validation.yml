@@ -1,0 +1,448 @@
+# Final issue50-only PR validation; preserve every earlier failed report.
+# Native program observations remain untimed. The approved maximum rule
+# max(220ms, baseline maximum*1.10) applies only to this active-disk cost suite.
+name: Disk continuity final validation
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'bun.lock'
+      - 'vite.config.*'
+      - 'scripts/galaxy-preview-plugin.mjs'
+      - '.env*'
+      - 'postcss.config.*'
+      - '.postcssrc*'
+      - 'tsconfig*.json'
+      - 'jsconfig*.json'
+      - 'npm-shrinkwrap.json'
+      - '.npmrc'
+      - 'scripts/**'
+      - '.github/workflows/disk-plane-validation.yml'
+permissions:
+  contents: read
+concurrency:
+  group: disk-plane-only-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+env:
+  BASE_SHA: '6179f23661591bb4dee89a0bf8e686233e1ba280'
+  PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  CANDIDATE_ROOT: ${{ github.workspace }}
+  EXPECTED_CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha }}
+jobs:
+  pixels:
+    name: Disk-only pixels and recovery ${{ matrix.device }} / bloom-${{ matrix.bloom }}
+    runs-on: ubuntu-latest
+    # Fixed step caps total56 minutes, leaving4 for scheduling/cleanup.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        bloom: [0, 1]
+    env:
+      DEVICE: ${{ matrix.device }}
+      BLOOM: ${{ matrix.bloom }}
+      ARTEMIS_EVIDENCE: '${{ github.workspace }}/evidence/disk-pixels'
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        timeout-minutes: 2
+        with:
+          node-version: '22.23.3'
+      - name: Pin reviewed source and prepare one shared runtime
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTEMIS_EVIDENCE"
+          test "$GITHUB_RUN_ATTEMPT" = '1'
+          test "$PR_BASE_SHA" = "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE_REVISION"
+          REVIEWED_PARENT_SHA="$(git rev-parse "$EXPECTED_CANDIDATE_REVISION^1")"
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '006bc8dcd25f3ddb1fe7024794f26b6a775428db'
+          REVIEWED_SOURCE_SHA="$(git log -1 --format=%H "$EXPECTED_CANDIDATE_REVISION" -- src/holeOptics.js)"
+          test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
+          git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" "$REVIEWED_PARENT_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_SOURCE_SHA"
+          git diff --exit-code "$REVIEWED_SOURCE_SHA" "$EXPECTED_CANDIDATE_REVISION" -- src public index.html package.json
+          git diff --exit-code "$REVIEWED_PARENT_SHA" "$EXPECTED_CANDIDATE_REVISION" -- . ':(exclude).github/workflows/disk-plane-validation.yml'
+          test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
+          # Full checkout history must contain the immutable native optical harness.
+          git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
+          cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
+          33b6bfb8af67d4edfca4fee9e45955c57ae79f74 docs/qa/disk-plane-only.md
+          6a0436e4a11e977d63a50273f5b23686885cd077 scripts/benchmark-disk-plane.mjs
+          d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
+          3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
+          07b0cb8c814f5663b2eee2d54d812c139ad49f91 scripts/disk-plane-source-contract.mjs
+          244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
+          dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
+          c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
+          16fdf5eb29bdf49afe2075e0e714a5f604dcb7e5 scripts/smoke-disk-plane-cost-contract.mjs
+          4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
+          9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
+          c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
+          60769a73dcd609dd49d464a35b8231901f2b431f src/holeOptics.js
+          99bd167c75ebe2a5fe636730fa5774204e663ae3 docs/disk-pointer-fixture.md
+          701eba17c955bdd85f907d71fe66d8c8042c4e6b scripts/disk-pointer-fixture.mjs
+          cbcc474ae36b178030b4a21452e1679ce02e8b25 scripts/smoke-disk-pointer-fixture.mjs
+          8afd78317112310a4338321ba7787ebd1c0026e7 docs/qa/disk-unclipped-proof.md
+          e68ade95b3e980a4df8e5d967fecc51387a820da docs/qa/native-disk-proof.md
+          6386bf08197cb4a6aac8199240e02283186d1230 scripts/smoke-disk-frustum-fast-path.mjs
+          f5f8276b05ec9693101fcba60b4af4816c8d56c9 scripts/smoke-disk-fast-path-lifecycle.mjs
+          509e673537b901dab368f5eeda3bb5de518b7ad7 scripts/smoke-disk-program-precision.mjs
+          caddb54031b4c7cbc73e92bf4fcfb6c80f57dd35 scripts/smoke-disk-source-binding.mjs
+          8a0927700fe7e09b8cb7d11e85459cd43c27acfb scripts/fixtures/disk-fast-path-captured.json
+          48f781b3040c7528dd57b4ace01cb97a108924cd scripts/native-disk-proof.mjs
+          c17e2a267d627c3bd921193592725c1b521ca62c scripts/smoke-native-disk-proof.mjs
+          763fccd434731477e789c067b7269d7c1744aa30 docs/qa/disk-static-specialization.md
+          0a4bfc561809c0b9f45af9502fad8c81519502f8 scripts/compile-disk-static-offline.py
+          d9e1f9ce14ac7228ddafa6cfc41caf6f0f55375d scripts/fixtures/disk-static-native.json
+          3ba642b61e8d16121bff48f22377975a5fcf20af scripts/qa/disk-static-harness.mjs
+          84b34e864f73bcc199e30faac08404f86587dd6a scripts/smoke-disk-static-programs.mjs
+          BLOBS
+          while read -r expected path; do
+            test "$(git rev-parse "$EXPECTED_CANDIDATE_REVISION:$path")" = "$expected"
+            test "$(git hash-object "$path")" = "$expected"
+          done < "$ARTEMIS_EVIDENCE/reviewed-blobs.txt"
+          git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" "$REVIEWED_SOURCE_SHA" "$REVIEWED_SOURCE_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
+          cp .github/workflows/disk-plane-validation.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
+          git worktree add --detach "$RUNNER_TEMP/disk-plane-main" "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/disk-plane-main/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/disk-plane-main" >> "$GITHUB_ENV"
+          npm install --no-save --package-lock=false --ignore-scripts playwright@1.63.0 playwright-core@1.63.0 three@0.164.1 vite@5.4.21
+          test ! -e package-lock.json
+          node --input-type=module <<'NODE' > "$ARTEMIS_EVIDENCE/runtime.json"
+          import assert from 'node:assert/strict';
+          import {readFileSync,realpathSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          const expected={playwright:'1.63.0','playwright-core':'1.63.0',three:'0.164.1',vite:'5.4.21'};
+          const actual={},packageJsonHashes={},criticalThreeSourceHashes={};
+          for(const [name,version] of Object.entries(expected)){
+           const bytes=readFileSync(`node_modules/${name}/package.json`);actual[name]=JSON.parse(bytes).version;
+           assert.equal(actual[name],version);packageJsonHashes[name]=createHash('sha256').update(bytes).digest('hex');
+          }
+          for(const path of ['src/renderers/WebGLRenderer.js','src/renderers/webgl/WebGLPrograms.js','src/renderers/webgl/WebGLProgram.js'])
+           criticalThreeSourceHashes[path]=createHash('sha256').update(readFileSync('node_modules/three/'+path)).digest('hex');
+          const bytes=readFileSync('node_modules/playwright-core/browsers.json');
+          const browsers=JSON.parse(bytes).browsers;
+          for(const name of ['chromium','chromium-headless-shell']){
+           const browser=browsers.find(b=>b.name===name);assert.equal(browser.revision,'1243');assert.equal(browser.browserVersion,'153.0.8010.12');
+          }
+          assert.equal(realpathSync(process.env.RUNNER_TEMP+'/disk-plane-main/node_modules'),realpathSync('node_modules'));
+          console.log(JSON.stringify({node:process.version,packages:actual,packageJsonHashes,criticalThreeSourceHashes,browserManifestSha256:createHash('sha256').update(bytes).digest('hex'),chromium:'153.0.8010.12',revision:'1243'}));
+          NODE
+      - name: Verify numerical, source, native observer and finalizer controls
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          node scripts/probe-disk-plane.mjs --validate > "$ARTEMIS_EVIDENCE/source-before.json"
+          node scripts/smoke-disk-plane-support.mjs --verify-main-scope
+          node scripts/smoke-disk-frustum-fast-path.mjs
+          node scripts/smoke-disk-fast-path-lifecycle.mjs
+          node scripts/smoke-disk-program-precision.mjs
+          ARTEMIS_EVIDENCE="$ARTEMIS_EVIDENCE/static-programs.json" node scripts/smoke-disk-static-programs.mjs
+          node scripts/smoke-disk-source-binding.mjs
+          node scripts/smoke-native-disk-proof.mjs
+          node scripts/smoke-disk-plane-qa.mjs
+          node scripts/smoke-disk-pointer-fixture.mjs
+          node scripts/smoke-disk-plane-finalize.mjs
+          node scripts/smoke-disk-plane-cost-contract.mjs
+          node scripts/smoke-context-recovery-qa.mjs
+          node scripts/smoke-hole-appearance.mjs
+          node scripts/smoke-hole-precision.mjs
+          node scripts/smoke-hole-emission.mjs
+          npm run build
+      - name: Install the pinned Chromium153 runtime
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          node node_modules/playwright/cli.js install --with-deps chromium
+      - name: Paired main/candidate crossing, foreground, ring and lifecycle pixels
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          node scripts/probe-disk-plane.mjs
+      - name: Verify protected source and fixture bytes after execution
+        timeout-minutes: 2
+        if: always()
+        run: |
+          set -euo pipefail
+          node scripts/probe-disk-plane.mjs --validate > "$ARTEMIS_EVIDENCE/source-after.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 2
+        with:
+          name: disk-plane-metrics-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: |
+            evidence/disk-pixels/*.json
+            evidence/disk-pixels/*.txt
+            evidence/disk-pixels/*.yml
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-main-original-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/main/original-disk-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-main-original-saturn-near-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/main/original-saturn-near-lens-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-main-original-saturn-foreground-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/main/original-saturn-foreground-lens-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-main-original-saturn-overlapping-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/main/original-saturn-overlapping-disk-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-main-resize-1-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/main/resize-1-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-main-resize-2-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/main/resize-2-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-main-recovery-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/main/recovery-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-candidate-original-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/candidate/original-disk-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-candidate-original-saturn-near-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/candidate/original-saturn-near-lens-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-candidate-original-saturn-foreground-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/candidate/original-saturn-foreground-lens-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-candidate-original-saturn-overlapping-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/candidate/original-saturn-overlapping-disk-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-candidate-resize-1-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/candidate/resize-1-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-candidate-resize-2-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/candidate/resize-2-*.png
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 1
+        with:
+          name: disk-plane-candidate-recovery-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-pixels/candidate/recovery-*.png
+          if-no-files-found: warn
+          retention-days: 14
+  paired-cost:
+    name: Disk-only actual-main cost ${{ matrix.device }} / bloom-${{ matrix.bloom }}
+    # Every pixel/lifecycle mode must pass before any cost job can start.
+    needs: pixels
+    runs-on: ubuntu-latest
+    # Fixed step caps total46 minutes, leaving9 for scheduling/cleanup.
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        bloom: [0, 1]
+    env:
+      DEVICE: ${{ matrix.device }}
+      BLOOM: ${{ matrix.bloom }}
+      OPTICS_BENCH: '1'
+      PAIRED_CPU_PROFILE: '0'
+      ARTEMIS_EVIDENCE: '${{ github.workspace }}/evidence/disk-cost'
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        timeout-minutes: 2
+        with:
+          node-version: '22.23.3'
+      - name: Pin reviewed source and prepare one shared runtime
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTEMIS_EVIDENCE"
+          test "$GITHUB_RUN_ATTEMPT" = '1'
+          test "$PR_BASE_SHA" = "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE_REVISION"
+          REVIEWED_PARENT_SHA="$(git rev-parse "$EXPECTED_CANDIDATE_REVISION^1")"
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '006bc8dcd25f3ddb1fe7024794f26b6a775428db'
+          REVIEWED_SOURCE_SHA="$(git log -1 --format=%H "$EXPECTED_CANDIDATE_REVISION" -- src/holeOptics.js)"
+          test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
+          git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" "$REVIEWED_PARENT_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_SOURCE_SHA"
+          git diff --exit-code "$REVIEWED_SOURCE_SHA" "$EXPECTED_CANDIDATE_REVISION" -- src public index.html package.json
+          git diff --exit-code "$REVIEWED_PARENT_SHA" "$EXPECTED_CANDIDATE_REVISION" -- . ':(exclude).github/workflows/disk-plane-validation.yml'
+          test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
+          # Full checkout history must contain the immutable native optical harness.
+          git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
+          cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
+          33b6bfb8af67d4edfca4fee9e45955c57ae79f74 docs/qa/disk-plane-only.md
+          6a0436e4a11e977d63a50273f5b23686885cd077 scripts/benchmark-disk-plane.mjs
+          d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
+          3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
+          07b0cb8c814f5663b2eee2d54d812c139ad49f91 scripts/disk-plane-source-contract.mjs
+          244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
+          dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
+          c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
+          16fdf5eb29bdf49afe2075e0e714a5f604dcb7e5 scripts/smoke-disk-plane-cost-contract.mjs
+          4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
+          9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
+          c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
+          60769a73dcd609dd49d464a35b8231901f2b431f src/holeOptics.js
+          99bd167c75ebe2a5fe636730fa5774204e663ae3 docs/disk-pointer-fixture.md
+          701eba17c955bdd85f907d71fe66d8c8042c4e6b scripts/disk-pointer-fixture.mjs
+          cbcc474ae36b178030b4a21452e1679ce02e8b25 scripts/smoke-disk-pointer-fixture.mjs
+          8afd78317112310a4338321ba7787ebd1c0026e7 docs/qa/disk-unclipped-proof.md
+          e68ade95b3e980a4df8e5d967fecc51387a820da docs/qa/native-disk-proof.md
+          6386bf08197cb4a6aac8199240e02283186d1230 scripts/smoke-disk-frustum-fast-path.mjs
+          f5f8276b05ec9693101fcba60b4af4816c8d56c9 scripts/smoke-disk-fast-path-lifecycle.mjs
+          509e673537b901dab368f5eeda3bb5de518b7ad7 scripts/smoke-disk-program-precision.mjs
+          caddb54031b4c7cbc73e92bf4fcfb6c80f57dd35 scripts/smoke-disk-source-binding.mjs
+          8a0927700fe7e09b8cb7d11e85459cd43c27acfb scripts/fixtures/disk-fast-path-captured.json
+          48f781b3040c7528dd57b4ace01cb97a108924cd scripts/native-disk-proof.mjs
+          c17e2a267d627c3bd921193592725c1b521ca62c scripts/smoke-native-disk-proof.mjs
+          763fccd434731477e789c067b7269d7c1744aa30 docs/qa/disk-static-specialization.md
+          0a4bfc561809c0b9f45af9502fad8c81519502f8 scripts/compile-disk-static-offline.py
+          d9e1f9ce14ac7228ddafa6cfc41caf6f0f55375d scripts/fixtures/disk-static-native.json
+          3ba642b61e8d16121bff48f22377975a5fcf20af scripts/qa/disk-static-harness.mjs
+          84b34e864f73bcc199e30faac08404f86587dd6a scripts/smoke-disk-static-programs.mjs
+          BLOBS
+          while read -r expected path; do
+            test "$(git rev-parse "$EXPECTED_CANDIDATE_REVISION:$path")" = "$expected"
+            test "$(git hash-object "$path")" = "$expected"
+          done < "$ARTEMIS_EVIDENCE/reviewed-blobs.txt"
+          git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" "$REVIEWED_SOURCE_SHA" "$REVIEWED_SOURCE_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
+          cp .github/workflows/disk-plane-validation.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
+          git worktree add --detach "$RUNNER_TEMP/disk-plane-main" "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/disk-plane-main/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/disk-plane-main" >> "$GITHUB_ENV"
+          npm install --no-save --package-lock=false --ignore-scripts playwright@1.63.0 playwright-core@1.63.0 three@0.164.1 vite@5.4.21
+          test ! -e package-lock.json
+          node --input-type=module <<'NODE' > "$ARTEMIS_EVIDENCE/runtime.json"
+          import assert from 'node:assert/strict';
+          import {readFileSync,realpathSync} from 'node:fs';
+          import {createHash} from 'node:crypto';
+          const expected={playwright:'1.63.0','playwright-core':'1.63.0',three:'0.164.1',vite:'5.4.21'};
+          const actual={},packageJsonHashes={},criticalThreeSourceHashes={};
+          for(const [name,version] of Object.entries(expected)){
+           const bytes=readFileSync(`node_modules/${name}/package.json`);actual[name]=JSON.parse(bytes).version;
+           assert.equal(actual[name],version);packageJsonHashes[name]=createHash('sha256').update(bytes).digest('hex');
+          }
+          for(const path of ['src/renderers/WebGLRenderer.js','src/renderers/webgl/WebGLPrograms.js','src/renderers/webgl/WebGLProgram.js'])
+           criticalThreeSourceHashes[path]=createHash('sha256').update(readFileSync('node_modules/three/'+path)).digest('hex');
+          const bytes=readFileSync('node_modules/playwright-core/browsers.json');
+          const browsers=JSON.parse(bytes).browsers;
+          for(const name of ['chromium','chromium-headless-shell']){
+           const browser=browsers.find(b=>b.name===name);assert.equal(browser.revision,'1243');assert.equal(browser.browserVersion,'153.0.8010.12');
+          }
+          assert.equal(realpathSync(process.env.RUNNER_TEMP+'/disk-plane-main/node_modules'),realpathSync('node_modules'));
+          console.log(JSON.stringify({node:process.version,packages:actual,packageJsonHashes,criticalThreeSourceHashes,browserManifestSha256:createHash('sha256').update(bytes).digest('hex'),chromium:'153.0.8010.12',revision:'1243'}));
+          NODE
+      - name: Verify exact pair and immutable native benchmark hooks
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          node scripts/probe-disk-plane.mjs --validate > "$ARTEMIS_EVIDENCE/source-before.json"
+          node scripts/benchmark-disk-plane.mjs . evidence/disk-cost-hooks --validate
+      - name: Install the pinned Chromium153 runtime
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          node node_modules/playwright/cli.js install --with-deps chromium
+      - name: Run all five trials with220ms/10% maximum and unchanged other gates
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          node scripts/benchmark-disk-plane.mjs . evidence/disk-cost --run
+      - name: Verify protected source and fixture bytes after execution
+        timeout-minutes: 2
+        if: always()
+        run: |
+          set -euo pipefail
+          node scripts/probe-disk-plane.mjs --validate > "$ARTEMIS_EVIDENCE/source-after.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 2
+        with:
+          name: disk-plane-cost-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: |
+            evidence/disk-cost/
+            evidence/disk-cost-hooks/
+          if-no-files-found: error
+          retention-days: 14
+          # Original203>200 and desktop508/411 relative-limit failures remain.
+          # Apply only max(220ms, baseline maximum*1.10). No outlier removal,
+          # replacement trial, rerun-for-green or automatic release follows.
