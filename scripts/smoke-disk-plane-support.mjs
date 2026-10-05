@@ -18,7 +18,7 @@ const diskStart = '        #if HOLE_LAYER == 1\n';
 function diskBlock(text) {
     const start = text.indexOf(diskStart);
     assert.ok(start >= 0, 'disk layer exists');
-    const end = text.indexOf('        #endif', start);
+    const end = text.indexOf('        #if HOLE_LAYER == 2', start);
     assert.ok(end > start, 'disk layer ends');
     return text.slice(start, end);
 }
@@ -344,7 +344,7 @@ if (process.argv.includes('--verify-main-scope')) {
     const helperEnd=source.indexOf('export function makeHoleOptics()',helperStart);
     assert.ok(helperStart>0 && helperEnd>helperStart);
     let outside=source.slice(0,helperStart)+source.slice(helperEnd);
-    const precisionStart=outside.indexOf('    // Qualify float32 capability');
+    const precisionStart=outside.indexOf('    // Three obtains its program key');
     const precisionEnd=outside.indexOf('    const center=',precisionStart);
     assert.ok(precisionStart>0 && precisionEnd>precisionStart);
     outside=outside.slice(0,precisionStart)+outside.slice(precisionEnd);
@@ -371,7 +371,7 @@ if (process.argv.includes('--verify-main-scope')) {
     }
     assert.deepEqual(walk('src').sort(), baselineFiles.sort(), 'no unrelated source files were added or removed');
     assert.ok(!existsSync(new URL('../src/render/ringSamplingDepth.js', import.meta.url)), 'ringSamplingDepth remains absent, as on main');
-    console.log(`Disk-only source scope: normalized support/coverage and conservative uniform eligibility only; ${baselineFiles.length - 1} unchanged source blobs and remaining holeOptics content match ${mainCommit}`);
+    console.log(`Disk-only source scope: normalized support/coverage and conservative shader selection only; ${baselineFiles.length - 1} unchanged source blobs and remaining holeOptics content match ${mainCommit}`);
 }
 
 console.log(`Disk plane support: ${comparisons} float64/float32 oracle comparisons; ${reflected} reflection cases; ${unchanged} ordinary outside-support hits; ${partitions} clipped-integral partitions passed`);

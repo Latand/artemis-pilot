@@ -29,7 +29,9 @@ function parameterize(material,object) { return programs.getParameters(material,
 const otherMaterial=new THREE.ShaderMaterial(),other=new THREE.Mesh(new THREE.PlaneGeometry(),otherMaterial);
 function precedingPrecision(value) {otherMaterial.precision=value;return parameterize(otherMaterial,other);}
 let checks=0;
-function draw(disk,expected,label){disk.onBeforeRender(renderer,scene,camera);assert.equal(disk.material.uniforms.uDiskUnclipped.value,expected,label);checks++;}
+function draw(disk,expected,label){disk.onBeforeRender(renderer,scene,camera);assert.equal(disk.material.uniforms.uDiskUnclipped.value,expected,label);disk.onAfterRender();checks++;}
+// These explicit parameterizations model unarmed precompilation. Actual draw
+// callback order and both static variants are covered by smoke-disk-static-programs.
 // Exact r164 reproduction: WebGLPrograms retains its last precision variable
 // when the next material.precision is null, despite renderer default highp.
 precedingPrecision('mediump');

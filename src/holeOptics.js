@@ -121,9 +121,11 @@ const analyticFragment = /* glsl */`
             // it is sampling regularization, not a new accretion model.
             float hit = -ro.z/rd.z, coverage = 1.0;
             float entry = -1.0, exitHit = 1.0;
-            // One uniform decision for the complete draw: no derivative is
-            // moved into a per-fragment fast-path branch.
-            if (uDiskUnclipped < .5) {
+            // Two cached programs retain identical emission/depth arithmetic.
+            // Only a proven highp draw can omit normalized raster support.
+            // Effective precision is a Three program parameter, so lower or
+            // unknown precision cannot select the specialized shader body.
+            #if !defined(DISK_UNCLIPPED) || DISK_UNCLIPPED == 0 || !defined(HIGH_PRECISION)
                 float halfSupport = clamp(uDistance * max(length(dFdx(ray)),length(dFdy(ray))) * .5, .001, .02);
                 // Center the interval on the original plane hit. Subtracting two
                 // large ray distances can erase a thin support in float32; bounded
@@ -135,7 +137,7 @@ const analyticFragment = /* glsl */`
                 exitHit = min(1.0,(uFar/depthPerRs-planeHit)/halfWidth);
                 coverage = clamp((exitHit-entry)*.5,0.0,1.0);
                 hit = planeHit+halfWidth*((entry+exitHit)*.5);
-            }
+            #endif
             if (exitHit > entry && hit > 0.0) {
                 vec3 p = ro+hit*rd;
                 float r = length(p.xy), x = r/3.0;
@@ -286,6 +288,16 @@ export function diskSupportUnclipped(input) {
     return Number.isFinite(first) && Number.isFinite(last) && first>2*near && last<far/2;
 }
 
+// Program caches are already per renderer. This stable renderer identity only
+// separates an accidentally stale precompile arm from a real draw on another
+// renderer; it is shared by every hole and never includes a frame/camera value.
+const diskRendererIds=new WeakMap();
+let nextDiskRendererId=1;
+function diskRendererId(renderer) {
+    if (!diskRendererIds.has(renderer)) diskRendererIds.set(renderer,nextDiskRendererId++);
+    return diskRendererIds.get(renderer);
+}
+
 export function makeHoleOptics() {
     const uniforms = {
         uOrigin:{value:new THREE.Vector3()}, uViewDepth:{value:new THREE.Vector3(0,0,-1)}, uDepthProjection:{value:new THREE.Vector4()}, uAxisX:{value:new THREE.Vector3(1,0,0)},
@@ -312,25 +324,62 @@ export function makeHoleOptics() {
         return mesh;
     };
     const shadow=makeLayer(0), disk=makeLayer(1), ring=makeLayer(2), jet=makeLayer(3);
-    // Qualify float32 capability when this material is compiled, including
-    // recompilation after native context restoration. Unknown/lower precision
-    // keeps the normalized path; no capability query enters the draw hot path.
+    // Three obtains its program key BEFORE onBeforeCompile. Choose the static
+    // variant before key generation; never rewrite a valid draw's keyed mode
+    // afterward. Stable draws reuse their program without capability queries.
     const diskPrecision=new WeakMap();
-    disk.material.onBeforeCompile=(parameters,renderer)=>{
-        uniforms.uDiskUnclipped.value=0;
-        if (!renderer || typeof renderer!=='object') return;
-        let supported=false;
+    let diskDrawRenderer=null, keyedSelection=null;
+    disk.material.defines.DISK_UNCLIPPED=0;
+    const setDiskMode=mode=>{
+        if (disk.material.defines.DISK_UNCLIPPED!==mode) {
+            disk.material.defines.DISK_UNCLIPPED=mode;
+            // Defines are shared across renderers; their cached programs are
+            // not. Even an unarmed compile must invalidate every renderer's
+            // material version when it changes the shared shader mode.
+            disk.material.needsUpdate=true;
+        }
+    };
+    const storageQualified=renderer=>{
         try {
             const gl=renderer.getContext();
             const format=gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER,gl.HIGH_FLOAT);
-            supported=parameters?.precision==='highp'
-                && format?.precision>=23 && format.rangeMin>=126 && format.rangeMax>=127;
-        } catch { /* Unknown capabilities use normalized support. */ }
+            return format?.precision>=23 && format.rangeMin>=126 && format.rangeMax>=127;
+        } catch { return false; }
+    };
+    disk.material.customProgramCacheKey=()=>{
+        const renderer=diskDrawRenderer;
+        let mode=renderer && disk.material.defines.DISK_UNCLIPPED===1 && diskPrecision.get(renderer)===true ? 1 : 0;
+        const supported=mode===1 && storageQualified(renderer);
+        if (mode===1 && !supported) { diskPrecision.set(renderer,false); mode=0; }
+        // getParameters retains this defines object; getProgramCacheKey reads
+        // it after this hook. Unarmed renderer.compile/compileAsync is always
+        // normalized, sharing the same fallback key as a regular fallback draw.
+        setDiskMode(mode);
+        if (!mode) uniforms.uDiskUnclipped.value=0;
+        const key=mode ? `hole-disk-static:1:${diskRendererId(renderer)}` : 'hole-disk-static:0';
+        keyedSelection={renderer,mode,supported,key};
+        return key;
+    };
+    disk.material.onBeforeCompile=(parameters,renderer)=>{
+        const requested=parameters?.defines?.DISK_UNCLIPPED===1;
+        const bound=keyedSelection?.renderer===renderer && keyedSelection?.mode===1
+            && keyedSelection.key===parameters?.customProgramCacheKey;
+        if (requested && !bound) {
+            // Only an unarmed/stale cross-renderer precompile can reach this.
+            // Its foreign renderer key cannot alias a valid specialized draw
+            // in this renderer's cache. Keep that precompiled program safe.
+            parameters.defines={...parameters.defines,DISK_UNCLIPPED:0};
+        }
+        const supported=!!renderer && typeof renderer==='object' && parameters?.precision==='highp'
+            && (requested ? bound && keyedSelection.supported : storageQualified(renderer));
+        uniforms.uDiskUnclipped.value=requested && supported ? 1 : 0;
+        if (!renderer || typeof renderer!=='object') return;
         // A material can reuse an older program without this callback. Once
         // any compiled variant is uncertain, keep this renderer on fallback
         // for this material's lifetime, including later cached-program returns.
         diskPrecision.set(renderer,supported && diskPrecision.get(renderer)!==false);
     };
+    disk.onAfterRender=()=>{diskDrawRenderer=null;keyedSelection=null;};
     const center=new THREE.Vector3(), eye=new THREE.Vector3(), forward=new THREE.Vector3(), rotation=new THREE.Matrix4(), viewport=new THREE.Vector4();
     const o={shadow,ring,disk,jet,rsUnits:1};
     const prepare=(mesh,camera,renderer)=>{
@@ -357,6 +406,7 @@ export function makeHoleOptics() {
         // disk cannot cover a foreground planet using the hole centre's depth.
         const layer=mesh.userData.holeLayer;
         if (layer===1) {
+            diskDrawRenderer=renderer && typeof renderer==='object' ? renderer : null;
             uniforms.uDiskUnclipped.value=0;
             if (uniforms.uDiskOn.value>.5 && diskPrecision.get(renderer)===true
                 && camera.isPerspectiveCamera && !camera.parent && typeof renderer?.getCurrentViewport==='function') {
@@ -367,6 +417,7 @@ export function makeHoleOptics() {
                     near:camera.near, far:camera.far, rsUnits:o.rsUnits, viewportWidth:viewport.z, viewportHeight:viewport.w,
                 }) ? 1 : 0;
             }
+            setDiskMode(uniforms.uDiskUnclipped.value);
         }
         const enabled=layer===1 ? uniforms.uDiskOn.value>.5 : layer===3 ? uniforms.uJetLength.value>0 && uniforms.uJetI.value>0 : true;
         const extent=layer===1 ? 3*uniforms.uRout.value : layer===3 ? uniforms.uJetLength.value : SHADOW_RS*1.5;

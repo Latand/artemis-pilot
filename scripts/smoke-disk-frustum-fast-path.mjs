@@ -11,7 +11,7 @@ const THREE = await import(pathToFileURL(resolve(root, 'node_modules/three/build
 const { LY_SCENE, CAM_DIST_MAX } = await import(pathToFileURL(resolve(root, 'src/constants.js')));
 const source = readFileSync(resolve(root, 'src/holeOptics.js'), 'utf8');
 const start = source.indexOf('#if HOLE_LAYER == 1');
-const disk = source.slice(start, source.indexOf('#endif', start));
+const disk = source.slice(start, source.indexOf('#if HOLE_LAYER == 2', start));
 const normalizedNames = ['halfSupport', 'planeHit', 'halfWidth', 'depthPerRs', 'entry', 'exitHit', 'coverage', 'hit'];
 // Use the actual production assignments, including slow-branch assignments
 // after an eventual fast-path initialization of hit/coverage.
@@ -110,7 +110,7 @@ const policyInput = view => ({ origin: view.origin, normal: view.normal, viewDep
 const eligible = view => policy(policyInput(view));
 assert.match(disk, /float hit = -ro\.z\/rd\.z, coverage = 1\.0;/, 'fast GLSL retains original plane hit and unit coverage');
 assert.match(disk, /float entry = -1\.0, exitHit = 1\.0;/, 'fast GLSL keeps a complete interval');
-assert.match(disk, /if \(uDiskUnclipped < \.5\)/, 'only the uniform fallback executes the normalized support');
+assert.match(disk, /#if !defined\(DISK_UNCLIPPED\) \|\| DISK_UNCLIPPED == 0 \|\| !defined\(HIGH_PRECISION\)/, 'only a proven highp static variant omits normalized support');
 
 const positives = [
     ['face-on', cameraFixture()],
@@ -303,3 +303,16 @@ console.log(`Adversarial sweep: ${generatedAccepted} eligible, ${generatedReject
 console.log(`Proof mutation controls: ${mutations.length} deterministic guard changes detected.`);
 console.log(`Required pinned v3 inputs: ${capturedCases} cases, ${capturedEligible} eligible, ${capturedRays} halo rays; matrices reconstructed from pinned camera settings.`);
 console.log('Limits: CPU float32 operations and sampled rays are not GPU/compiler or performance evidence; eligibility needs its analytic full-frustum proof independently reviewed.');
+// New static specialization also preserves the exact native inputs from the
+// completed selection diagnostic, rather than only reconstructed older views.
+const nativeCase=JSON.parse(readFileSync(resolve(root,'scripts/fixtures/disk-static-native.json'),'utf8'));
+assert.equal(nativeCase.reportSha256,'299549f8614478dfd9b20e9faa8d816fe6d0d04792fe2b95951c1039637b5ee0');
+assert.deepEqual(nativeCase.frames,[122,123,124,125]);assert.equal(nativeCase.effectivePrecision,'highp');
+const nu=nativeCase.uniforms,nativeView=cameraFixture({near:nu.uNear,far:nu.uFar,rsUnits:nu.uRsUnits,origin:nu.uOrigin,normal:nu.uNormal,viewportWidth:nativeCase.viewport[2],viewportHeight:nativeCase.viewport[3]});
+nativeView.inverseProjection.fromArray(nu.uInverseProjection);nativeView.rotation.fromArray(nu.uCameraRotation);nativeView.viewDepth.fromArray(nu.uViewDepth);
+assert.equal(eligible(nativeView),nativeCase.expectedEligible);let nativeRays=0;
+for(let ix=0;ix<=16;ix++)for(let iy=0;iy<=16;iy++)for(const h of [.001,.02]){
+ const input=rayInput(nativeView,(-1+ix/8)*(1+4/nativeView.viewportWidth),(-1+iy/8)*(1+4/nativeView.viewportHeight),h),result=evaluate32(input);
+ assert(result.active);assert.equal(result.coverage,1);assert.equal(result.hit,f(-f(input['ro.z'])/f(input['rd.z'])));nativeRays++;
+}
+console.log(`Actual native selection inputs: four matching draws, ${nativeRays} float32 helper-halo rays preserve exact normalized hit/coverage.`);

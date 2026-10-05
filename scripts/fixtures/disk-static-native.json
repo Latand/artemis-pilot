@@ -1,0 +1,72 @@
+{
+  "run": 37255339064,
+  "diagnosticHead": "6c6dfcef0a04e76f6ac5f35608607fd4aa20f7cd",
+  "productionSource": "a21d5d137659d81193a196414e31c8c0012718ff",
+  "reportSha256": "299549f8614478dfd9b20e9faa8d816fe6d0d04792fe2b95951c1039637b5ee0",
+  "frames": [
+    122,
+    123,
+    124,
+    125
+  ],
+  "viewport": [
+    0,
+    0,
+    430,
+    932
+  ],
+  "uniforms": {
+    "uDiskUnclipped": 1,
+    "uDiskOn": 1,
+    "uOrigin": [
+      1.5,
+      5.5413498878479,
+      8.643939018249512
+    ],
+    "uNormal": [
+      0,
+      1,
+      0
+    ],
+    "uViewDepth": [
+      -5.4312774973182853e-17,
+      -0.4617791771888733,
+      -0.8869948983192444
+    ],
+    "uCameraRotation": [
+      1,
+      0,
+      -6.123234262925839e-17,
+      -2.8275819281365565e-17,
+      0.8869948983192444,
+      -0.4617791771888733,
+      5.4312774973182853e-17,
+      0.4617791771888733,
+      0.8869948983192444
+    ],
+    "uInverseProjection": [
+      0.20541666448116302,
+      0,
+      0,
+      0,
+      0,
+      0.4452286958694458,
+      0,
+      0,
+      0,
+      0,
+      0,
+      -25,
+      0,
+      0,
+      -1,
+      25
+    ],
+    "uNear": 0.019999999552965164,
+    "uFar": 19157978563299246000,
+    "uRsUnits": 50
+  },
+  "effectivePrecision": "highp",
+  "expectedEligible": true,
+  "scope": "Native uniforms from four identical settled draws; no historical timed-uniform claim."
+}

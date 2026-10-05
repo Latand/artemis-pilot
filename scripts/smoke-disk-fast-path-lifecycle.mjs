@@ -25,6 +25,7 @@ let checks=0;
 function draw(expected,label,cameraArg=camera) {
     optics.disk.onBeforeRender(renderer,scene,cameraArg);
     assert.equal(uniforms.uDiskUnclipped.value,expected,label);checks++;
+    optics.disk.onAfterRender();
 }
 pose();draw(0,'unverified initial material uses fallback');
 optics.disk.material.onBeforeCompile({precision:'highp'},renderer);
@@ -65,7 +66,7 @@ const missingPrecisionRenderer={...renderer};optics.disk.material.onBeforeCompil
 const brokenRenderer={...renderer,getContext:()=>{throw Error('context unavailable');}};
 optics.disk.material.onBeforeCompile({precision:'highp'},brokenRenderer);optics.disk.onBeforeRender(brokenRenderer,scene,camera);assert.equal(uniforms.uDiskUnclipped.value,0,'failed capability read uses fallback');checks++;
 const fresh=makeHoleOptics();assert.equal(fresh.disk.material.uniforms.uDiskUnclipped.value,0,'new material starts with normalized fallback');checks++;
-assert.match(source,/if \(uDiskUnclipped < \.5\)/,'GLSL branch depends only on one uniform');
+assert.match(source,/#if !defined\(DISK_UNCLIPPED\) \|\| DISK_UNCLIPPED == 0 \|\| !defined\(HIGH_PRECISION\)/,'GLSL specialization requires both a proven mode and effective highp');
 assert.equal((source.match(/dFdx\(ray\)/g)||[]).length,1,'support derivative expression is retained once');
 assert.match(source,/if \(exitHit > entry && hit > 0\.0\)/,'support validity gate retained');
 assert.match(source,/if \(z < uNear \|\| z > uFar\) discard;/,'final depth fence retained');
