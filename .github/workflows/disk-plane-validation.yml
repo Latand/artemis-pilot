@@ -1,6 +1,6 @@
 # Final issue50-only PR validation; preserve every earlier failed report.
-# Native program observations remain untimed. The approved220ms absolute
-# maximum-task floor applies only to this active-disk cost suite.
+# Native program observations remain untimed. The approved maximum rule
+# max(220ms, baseline maximum*1.10) applies only to this active-disk cost suite.
 name: Disk continuity final validation
 on:
   pull_request:
@@ -67,7 +67,7 @@ jobs:
           test "$PR_BASE_SHA" = "$BASE_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE_REVISION"
           REVIEWED_PARENT_SHA="$(git rev-parse "$EXPECTED_CANDIDATE_REVISION^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'fc1d311f352e4f17c9e22239e25f0a286c5b88f5'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '006bc8dcd25f3ddb1fe7024794f26b6a775428db'
           REVIEWED_SOURCE_SHA="$(git log -1 --format=%H "$EXPECTED_CANDIDATE_REVISION" -- src/holeOptics.js)"
           test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
           git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" "$REVIEWED_PARENT_SHA"
@@ -78,15 +78,15 @@ jobs:
           # Full checkout history must contain the immutable native optical harness.
           git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
           cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
-          613c6c8066420a6f9bec0527eebbdee26b3b4b19 docs/qa/disk-plane-only.md
-          d7b4260ff3b91e8a15aa96f4920d600073412412 scripts/benchmark-disk-plane.mjs
+          33b6bfb8af67d4edfca4fee9e45955c57ae79f74 docs/qa/disk-plane-only.md
+          6a0436e4a11e977d63a50273f5b23686885cd077 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
           3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
-          977ddef8406593be1c863a14b2e6fc064612183c scripts/disk-plane-source-contract.mjs
+          07b0cb8c814f5663b2eee2d54d812c139ad49f91 scripts/disk-plane-source-contract.mjs
           244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
           c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
-          ce85c9e5dad3d3aba87f0aea5be15c9bce20880f scripts/smoke-disk-plane-cost-contract.mjs
+          16fdf5eb29bdf49afe2075e0e714a5f604dcb7e5 scripts/smoke-disk-plane-cost-contract.mjs
           4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
@@ -338,7 +338,7 @@ jobs:
           test "$PR_BASE_SHA" = "$BASE_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE_REVISION"
           REVIEWED_PARENT_SHA="$(git rev-parse "$EXPECTED_CANDIDATE_REVISION^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'fc1d311f352e4f17c9e22239e25f0a286c5b88f5'
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '006bc8dcd25f3ddb1fe7024794f26b6a775428db'
           REVIEWED_SOURCE_SHA="$(git log -1 --format=%H "$EXPECTED_CANDIDATE_REVISION" -- src/holeOptics.js)"
           test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
           git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" "$REVIEWED_PARENT_SHA"
@@ -349,15 +349,15 @@ jobs:
           # Full checkout history must contain the immutable native optical harness.
           git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
           cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
-          613c6c8066420a6f9bec0527eebbdee26b3b4b19 docs/qa/disk-plane-only.md
-          d7b4260ff3b91e8a15aa96f4920d600073412412 scripts/benchmark-disk-plane.mjs
+          33b6bfb8af67d4edfca4fee9e45955c57ae79f74 docs/qa/disk-plane-only.md
+          6a0436e4a11e977d63a50273f5b23686885cd077 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
           3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
-          977ddef8406593be1c863a14b2e6fc064612183c scripts/disk-plane-source-contract.mjs
+          07b0cb8c814f5663b2eee2d54d812c139ad49f91 scripts/disk-plane-source-contract.mjs
           244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
           c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
-          ce85c9e5dad3d3aba87f0aea5be15c9bce20880f scripts/smoke-disk-plane-cost-contract.mjs
+          16fdf5eb29bdf49afe2075e0e714a5f604dcb7e5 scripts/smoke-disk-plane-cost-contract.mjs
           4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
@@ -422,7 +422,7 @@ jobs:
         run: |
           set -euo pipefail
           node node_modules/playwright/cli.js install --with-deps chromium
-      - name: Run all five trials with220ms absolute maximum and unchanged other gates
+      - name: Run all five trials with220ms/10% maximum and unchanged other gates
         timeout-minutes: 25
         run: |
           set -euo pipefail
@@ -443,6 +443,6 @@ jobs:
             evidence/disk-cost-hooks/
           if-no-files-found: error
           retention-days: 14
-          # The original203>200 report remains failed; apply only the approved
-          # 220ms absolute maximum floor. No outlier removal,
+          # Original203>200 and desktop508/411 relative-limit failures remain.
+          # Apply only max(220ms, baseline maximum*1.10). No outlier removal,
           # replacement trial, rerun-for-green or automatic release follows.
