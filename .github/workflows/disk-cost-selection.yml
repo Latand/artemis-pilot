@@ -1,0 +1,138 @@
+# One diagnostic observation, not a performance or release gate. Preserve the
+# failed v5 results; these instrumented setup frames cannot replace timed data.
+name: Disk native mode selection
+on:
+  push:
+    branches: ['diagnostic/disk-cost-selection']
+permissions:
+  contents: read
+concurrency:
+  group: disk-cost-selection-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  BASE_SHA: '6179f23661591bb4dee89a0bf8e686233e1ba280'
+  SOURCE_SHA: 'a21d5d137659d81193a196414e31c8c0012718ff'
+  EXPECTED_DIAGNOSTIC_REVISION: ${{ github.sha }}
+  ARTEMIS_EVIDENCE: '${{ github.workspace }}/evidence/disk-cost-selection'
+jobs:
+  selection:
+    name: Mobile direct native selection, original 120+4 setup only
+    runs-on: ubuntu-latest
+    # Step caps total35 minutes, leaving3 minutes of outer margin. The actual
+    # observation has a12-minute process deadline plus20s cleanup and1s exit wait.
+    timeout-minutes: 38
+    env:
+      DEVICE: 'mobile'
+      BLOOM: '0'
+      OPTICS_BENCH: '1'
+      PAIRED_CPU_PROFILE: '0'
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        timeout-minutes: 2
+        with:
+          node-version: '22.23.3'
+      - name: Verify the reviewed implementation and prepare exact served roots
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p "$ARTEMIS_EVIDENCE"
+          test "$GITHUB_RUN_ATTEMPT" = '1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '3a3cfd1cf5595be1c4ee9607ad58461065f63201'
+          git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-cost-selection.yml'
+          test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
+          test "$(git rev-parse "$SOURCE_SHA^{tree}")" = 'f42680b76e3750ccc9465f9b44165c82e28197de'
+          git merge-base --is-ancestor "$BASE_SHA" "$SOURCE_SHA"
+          git merge-base --is-ancestor "$SOURCE_SHA" "$REVIEWED_PARENT_SHA"
+          git diff --exit-code "$SOURCE_SHA" "$GITHUB_SHA" -- src public index.html package.json
+          git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
+          cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
+          fd75ea11f6957407132782c7e69dbce526ed936a docs/qa/disk-cost-mode-selection.md
+          e8cf83488a95dadd24b6d2c17e6b8009d95f3daa scripts/disk-cost-selection-contract.mjs
+          8b44e4b973797c7ef3d577d19657467d1c037bc8 scripts/disk-cost-selection-native.mjs
+          4b3da57726055dc6d8c21cffa9101a5c222230e2 scripts/disk-selection-owned.cjs
+          fb98019a6ca0bdf18fedd577c0c0588a0515ca54 scripts/disk-selection-process.mjs
+          7fcdf4ee00390af381ba7b7214222826ece991b0 scripts/observe-disk-cost-selection.mjs
+          6f9673f824ae9269487847ef2e0432d5aa497b18 scripts/smoke-disk-cost-selection.mjs
+          d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
+          3dc4030f422dc1b27df12cfb897fe8c230fd69d5 scripts/disk-plane-source-contract.mjs
+          76afaa8769399d6c4564533f868c8437dbf410b0 scripts/explored-system-hooks.mjs
+          efa6c4f34dc03cfc6fbf450412a1cd61a5662695 scripts/fixtures/disk-plane-inputs.json
+          8a0927700fe7e09b8cb7d11e85459cd43c27acfb scripts/fixtures/disk-fast-path-captured.json
+          18a5d792a0c1ec3e1f23f63892949d35596a54f1 scripts/native-disk-proof.mjs
+          fd596093a218d38a8900d3b7cd93d82c5c4667c0 src/holeOptics.js
+          BLOBS
+          while read -r expected path; do
+            test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
+            test "$(git hash-object "$path")" = "$expected"
+          done < "$ARTEMIS_EVIDENCE/reviewed-blobs.txt"
+          git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" "$BASE_SHA" "$BASE_SHA^{tree}" "$SOURCE_SHA" "$SOURCE_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
+          cp .github/workflows/disk-cost-selection.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
+          git worktree add --detach "$RUNNER_TEMP/disk-selection-main" "$BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/disk-selection-candidate" "$SOURCE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/disk-selection-main/node_modules"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/disk-selection-candidate/node_modules"
+          echo "BASE_ROOT=$RUNNER_TEMP/disk-selection-main" >> "$GITHUB_ENV"
+          echo "SOURCE_ROOT=$RUNNER_TEMP/disk-selection-candidate" >> "$GITHUB_ENV"
+          npm install --no-save --package-lock=false --ignore-scripts playwright@1.63.0 playwright-core@1.63.0 three@0.164.1 vite@5.4.21
+          test ! -e package-lock.json
+      - name: Verify local negative controls and exact native setup hooks
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          node scripts/smoke-disk-cost-selection.mjs 2>&1 | tee "$ARTEMIS_EVIDENCE/local-controls.log"
+          ARTEMIS_EVIDENCE="$ARTEMIS_EVIDENCE/validation-before" node scripts/observe-disk-cost-selection.mjs --validate
+      - name: Install and bind the managed default headless-shell runtime
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          node node_modules/playwright/cli.js install --with-deps chromium
+          node --input-type=module <<'NODE' > "$ARTEMIS_EVIDENCE/runtime-installed.json"
+          import assert from 'node:assert/strict';
+          import {readFileSync,realpathSync} from 'node:fs';
+          import {dirname,join} from 'node:path';
+          import {createRequire} from 'node:module';
+          import {managedHeadlessRuntime,digest,SELECTION_PINS} from './scripts/disk-cost-selection-contract.mjs';
+          const req=createRequire(import.meta.url),packages={},criticalThreeSourceHashes={};
+          assert.equal(process.version,'v22.23.3');
+          for(const [name,version] of Object.entries({playwright:'1.63.0','playwright-core':'1.63.0',three:'0.164.1',vite:'5.4.21'})){
+            const bytes=readFileSync(req.resolve(name+'/package.json'));
+            assert.equal(JSON.parse(bytes).version,version);packages[name]={version,sha256:digest(bytes)};
+          }
+          const three=dirname(req.resolve('three/package.json'));
+          for(const path of Object.keys(SELECTION_PINS.criticalThreeSourceHashes))criticalThreeSourceHashes[path]=digest(readFileSync(join(three,path)));
+          assert.deepEqual(criticalThreeSourceHashes,SELECTION_PINS.criticalThreeSourceHashes);
+          const managed=managedHeadlessRuntime(req),realPath=realpathSync(managed.executablePath);
+          assert.equal(realpathSync(process.env.BASE_ROOT+'/node_modules'),realpathSync('node_modules'));
+          assert.equal(realpathSync(process.env.SOURCE_ROOT+'/node_modules'),realpathSync('node_modules'));
+          console.log(JSON.stringify({node:process.version,packages,criticalThreeSourceHashes,managed,realPath,executableSha256:digest(readFileSync(realPath)),actualLaunchVerifiedLater:true},null,2));
+          NODE
+      - name: Observe the original 120 warmup and four settled frames once
+        timeout-minutes: 14
+        run: |
+          set -euo pipefail
+          node scripts/observe-disk-cost-selection.mjs --run 2>&1 | tee "$ARTEMIS_EVIDENCE/native-selection.log"
+      - name: Verify protected source and fixture bytes after observation
+        if: always()
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          ARTEMIS_EVIDENCE="$ARTEMIS_EVIDENCE/validation-after" node scripts/observe-disk-cost-selection.mjs --validate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        timeout-minutes: 2
+        with:
+          name: disk-native-selection-mobile-direct-${{ github.sha }}
+          path: evidence/disk-cost-selection/
+          if-no-files-found: error
+          retention-days: 14
+          # Includes raw native/compile evidence, process ownership/cleanup,
+          # generated adapter, exact provenance and failures. No retries,
+          # acceptance trials, screenshots, PR mutation or release follows.
