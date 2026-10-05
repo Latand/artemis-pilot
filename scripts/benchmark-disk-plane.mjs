@@ -1,13 +1,13 @@
 // Fresh full-app active optical cost. Reuse the immutable reviewed runner;
-// remove only its source-inventory entry for the absent ring-proxy module.
-// All frames, five trials, timing windows and numerical gates stay unchanged.
+// remove its absent ring-proxy inventory entry and apply the user-approved
+// 220ms absolute maximum-task floor. Every other gate and delivery is unchanged.
 import assert from 'node:assert/strict';
 import {execFileSync,spawnSync} from 'node:child_process';
 import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,symlinkSync,rmSync,realpathSync} from 'node:fs';
 import {resolve,join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
-import {diskInputs,hash,verifyDiskSource,adaptDiskBenchmark} from './disk-plane-source-contract.mjs';
+import {diskInputs,diskMaximumTaskPolicy,hash,verifyDiskSource,adaptDiskBenchmark} from './disk-plane-source-contract.mjs';
 const root=resolve(process.argv[2]||'.'),out=resolve(process.argv[3]||'evidence/disk-plane-cost');
 const baseline=resolve(process.env.BASE_ROOT||'');assert(process.env.BASE_ROOT);
 const validate=process.argv.includes('--validate');assert(validate||process.argv.includes('--run'),'Explicit --validate or separately authorized --run required');
@@ -15,7 +15,8 @@ assert.equal(process.env.OPTICS_BENCH,'1');assert(['desktop','mobile'].includes(
 const expected=process.env.EXPECTED_CANDIDATE_REVISION;assert(expected,'External exact candidate revision required');
 assert.equal(resolve(dirname(fileURLToPath(import.meta.url)),'..'),root,'Execute the committed candidate wrapper');
 const temporary=mkdtempSync(join(tmpdir(),'disk-plane-cost-'));mkdirSync(out,{recursive:true});
-const provenance={baseline:diskInputs.baseline,candidate:expected,mode:validate?'validate':'run',passed:false,errors:[],scope:'Issue50 only; ring-depth/finite-source lens fixes and issue49 remain excluded'};
+const provenance={baseline:diskInputs.baseline,candidate:expected,mode:validate?'validate':'run',passed:false,errors:[],maximumTaskPolicy:diskMaximumTaskPolicy,
+    scope:'Issue50 only; ring-depth/finite-source lens fixes and issue49 remain excluded'};
 try{
     provenance.sources={A:verifyDiskSource(baseline,'A',diskInputs.baseline),B:verifyDiskSource(root,'B',expected)};
     assert.equal(realpathSync(join(root,'node_modules')),realpathSync(join(baseline,'node_modules')),'Shared dependency tree');
@@ -23,7 +24,7 @@ try{
     const effective=adaptDiskBenchmark(native);
     const helper=readFileSync(join(root,'scripts/explored-system-hooks.mjs'),'utf8');assert.equal(hash(helper),diskInputs.nativeHookHash);
     provenance.harness={reference:diskInputs.benchmarkReference,originalSha256:hash(native),effectiveSha256:hash(effective),hookSha256:hash(helper),
-        delta:'Remove one source-inventory filename; no runtime/fixture/timing/gate changes'};
+        delta:'Remove one absent source-inventory filename; change only the absolute maximum-task floor from200ms to220ms. Relative5%, p95, blocking, count, fixture and timing are unchanged.'};
     writeFileSync(join(temporary,'package.json'),'{"type":"module"}');mkdirSync(join(temporary,'scripts'));
     writeFileSync(join(temporary,'scripts/benchmark-explored-systems.mjs'),effective);writeFileSync(join(temporary,'scripts/explored-system-hooks.mjs'),helper);
     symlinkSync(join(root,'node_modules'),join(temporary,'node_modules'),'dir');

@@ -1,21 +1,26 @@
-# One changed-source static-program cohort; preserve every earlier failure.
-# Native program definitions and three declared cached-precompile checks are
-# observed only in untimed pixel/lifecycle work. No retry or release follows.
-name: Disk static program validation
-# One reviewed push launches this bounded issue50-only cohort. No PR, manual,
-# schedule, six-view radiance, deployment or branch-writing trigger is attached.
+# Final issue50-only PR validation; preserve every earlier failed report.
+# Native program observations remain untimed. The approved220ms absolute
+# maximum-task floor applies only to this active-disk cost suite.
+name: Disk continuity final validation
 on:
-  push:
-    branches: ['diagnostic/disk-static-programs-6179-v2']
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'index.html'
+      - 'package*.json'
+      - 'scripts/**'
+      - '.github/workflows/disk-plane-validation.yml'
 permissions:
   contents: read
 concurrency:
-  group: disk-plane-only-${{ github.ref }}
+  group: disk-plane-only-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 env:
   BASE_SHA: '6179f23661591bb4dee89a0bf8e686233e1ba280'
+  PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
   CANDIDATE_ROOT: ${{ github.workspace }}
-  EXPECTED_CANDIDATE_REVISION: ${{ github.sha }}
+  EXPECTED_CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha }}
 jobs:
   pixels:
     name: Disk-only pixels and recovery ${{ matrix.device }} / bloom-${{ matrix.bloom }}
@@ -35,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
         timeout-minutes: 2
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -48,28 +53,29 @@ jobs:
           set -euo pipefail
           mkdir -p "$ARTEMIS_EVIDENCE"
           test "$GITHUB_RUN_ATTEMPT" = '1'
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'be2868ede9b3e11b470803badccc9f479e64676f'
-          REVIEWED_SOURCE_SHA="$(git rev-parse "$REVIEWED_PARENT_SHA^1")"
+          test "$PR_BASE_SHA" = "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE_REVISION"
+          REVIEWED_PARENT_SHA="$(git rev-parse "$EXPECTED_CANDIDATE_REVISION^1")"
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '5560e19f9badb9f5ddcd7887d3e62fa3e8763810'
+          REVIEWED_SOURCE_SHA="$(git log -1 --format=%H "$EXPECTED_CANDIDATE_REVISION" -- src/holeOptics.js)"
           test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
-          test "$(git log -1 --format=%H "$GITHUB_SHA" -- src/holeOptics.js)" = "$REVIEWED_SOURCE_SHA"
+          git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" "$REVIEWED_PARENT_SHA"
           git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_SOURCE_SHA"
-          git diff --exit-code "$REVIEWED_SOURCE_SHA" "$GITHUB_SHA" -- src public index.html package.json
-          git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-plane-preflight.yml'
+          git diff --exit-code "$REVIEWED_SOURCE_SHA" "$EXPECTED_CANDIDATE_REVISION" -- src public index.html package.json
+          git diff --exit-code "$REVIEWED_PARENT_SHA" "$EXPECTED_CANDIDATE_REVISION" -- . ':(exclude).github/workflows/disk-plane-validation.yml'
           test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
           # Full checkout history must contain the immutable native optical harness.
           git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
           cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
-          d6c22f113a4dfe5f53cd3c0bfc0a6ddcd99fe681 docs/qa/disk-plane-only.md
-          cff455547ea07769b51e73ef4f49361028c672e4 scripts/benchmark-disk-plane.mjs
+          613c6c8066420a6f9bec0527eebbdee26b3b4b19 docs/qa/disk-plane-only.md
+          d7b4260ff3b91e8a15aa96f4920d600073412412 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
           3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
-          3dc4030f422dc1b27df12cfb897fe8c230fd69d5 scripts/disk-plane-source-contract.mjs
+          977ddef8406593be1c863a14b2e6fc064612183c scripts/disk-plane-source-contract.mjs
           244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
           c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
-          140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
+          f2280bf902555da65c5f7b0c8f97d73befe067a4 scripts/smoke-disk-plane-cost-contract.mjs
           4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
@@ -93,11 +99,11 @@ jobs:
           84b34e864f73bcc199e30faac08404f86587dd6a scripts/smoke-disk-static-programs.mjs
           BLOBS
           while read -r expected path; do
-            test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
+            test "$(git rev-parse "$EXPECTED_CANDIDATE_REVISION:$path")" = "$expected"
             test "$(git hash-object "$path")" = "$expected"
           done < "$ARTEMIS_EVIDENCE/reviewed-blobs.txt"
           git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" "$REVIEWED_SOURCE_SHA" "$REVIEWED_SOURCE_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
-          cp .github/workflows/disk-plane-preflight.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
+          cp .github/workflows/disk-plane-validation.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
           git worktree add --detach "$RUNNER_TEMP/disk-plane-main" "$BASE_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/disk-plane-main/node_modules"
           echo "BASE_ROOT=$RUNNER_TEMP/disk-plane-main" >> "$GITHUB_ENV"
@@ -164,7 +170,7 @@ jobs:
         if: always()
         timeout-minutes: 2
         with:
-          name: disk-plane-metrics-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-metrics-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: |
             evidence/disk-pixels/*.json
             evidence/disk-pixels/*.txt
@@ -175,7 +181,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-main-original-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-main-original-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/main/original-disk-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -183,7 +189,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-main-original-saturn-near-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-main-original-saturn-near-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/main/original-saturn-near-lens-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -191,7 +197,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-main-original-saturn-foreground-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-main-original-saturn-foreground-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/main/original-saturn-foreground-lens-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -199,7 +205,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-main-original-saturn-overlapping-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-main-original-saturn-overlapping-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/main/original-saturn-overlapping-disk-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -207,7 +213,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-main-resize-1-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-main-resize-1-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/main/resize-1-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -215,7 +221,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-main-resize-2-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-main-resize-2-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/main/resize-2-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -223,7 +229,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-main-recovery-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-main-recovery-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/main/recovery-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -231,7 +237,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-candidate-original-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-candidate-original-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/candidate/original-disk-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -239,7 +245,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-candidate-original-saturn-near-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-candidate-original-saturn-near-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/candidate/original-saturn-near-lens-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -247,7 +253,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-candidate-original-saturn-foreground-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-candidate-original-saturn-foreground-lens-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/candidate/original-saturn-foreground-lens-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -255,7 +261,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-candidate-original-saturn-overlapping-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-candidate-original-saturn-overlapping-disk-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/candidate/original-saturn-overlapping-disk-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -263,7 +269,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-candidate-resize-1-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-candidate-resize-1-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/candidate/resize-1-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -271,7 +277,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-candidate-resize-2-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-candidate-resize-2-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/candidate/resize-2-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -279,7 +285,7 @@ jobs:
         if: always()
         timeout-minutes: 1
         with:
-          name: disk-plane-candidate-recovery-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-candidate-recovery-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: evidence/disk-pixels/candidate/recovery-*.png
           if-no-files-found: warn
           retention-days: 14
@@ -305,7 +311,7 @@ jobs:
       - uses: actions/checkout@v4
         timeout-minutes: 2
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v4
@@ -318,28 +324,29 @@ jobs:
           set -euo pipefail
           mkdir -p "$ARTEMIS_EVIDENCE"
           test "$GITHUB_RUN_ATTEMPT" = '1'
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          REVIEWED_PARENT_SHA="$(git rev-parse "$GITHUB_SHA^1")"
-          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = 'be2868ede9b3e11b470803badccc9f479e64676f'
-          REVIEWED_SOURCE_SHA="$(git rev-parse "$REVIEWED_PARENT_SHA^1")"
+          test "$PR_BASE_SHA" = "$BASE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CANDIDATE_REVISION"
+          REVIEWED_PARENT_SHA="$(git rev-parse "$EXPECTED_CANDIDATE_REVISION^1")"
+          test "$(git rev-parse "$REVIEWED_PARENT_SHA^{tree}")" = '5560e19f9badb9f5ddcd7887d3e62fa3e8763810'
+          REVIEWED_SOURCE_SHA="$(git log -1 --format=%H "$EXPECTED_CANDIDATE_REVISION" -- src/holeOptics.js)"
           test "$(git rev-parse "$REVIEWED_SOURCE_SHA^{tree}")" = '3f08fd617780c395cebae6b608b72d594304bfcb'
-          test "$(git log -1 --format=%H "$GITHUB_SHA" -- src/holeOptics.js)" = "$REVIEWED_SOURCE_SHA"
+          git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" "$REVIEWED_PARENT_SHA"
           git merge-base --is-ancestor "$BASE_SHA" "$REVIEWED_SOURCE_SHA"
-          git diff --exit-code "$REVIEWED_SOURCE_SHA" "$GITHUB_SHA" -- src public index.html package.json
-          git diff --exit-code "$REVIEWED_PARENT_SHA" "$GITHUB_SHA" -- . ':(exclude).github/workflows/disk-plane-preflight.yml'
+          git diff --exit-code "$REVIEWED_SOURCE_SHA" "$EXPECTED_CANDIDATE_REVISION" -- src public index.html package.json
+          git diff --exit-code "$REVIEWED_PARENT_SHA" "$EXPECTED_CANDIDATE_REVISION" -- . ':(exclude).github/workflows/disk-plane-validation.yml'
           test "$(git rev-parse "$BASE_SHA^{tree}")" = '423b008213ce603bf3a92eeea33af061a92a0df5'
           # Full checkout history must contain the immutable native optical harness.
           git cat-file -e 48a9da40a05b28cfd0d125b6107a771999fb784d^{commit}
           cat > "$ARTEMIS_EVIDENCE/reviewed-blobs.txt" <<'BLOBS'
-          d6c22f113a4dfe5f53cd3c0bfc0a6ddcd99fe681 docs/qa/disk-plane-only.md
-          cff455547ea07769b51e73ef4f49361028c672e4 scripts/benchmark-disk-plane.mjs
+          613c6c8066420a6f9bec0527eebbdee26b3b4b19 docs/qa/disk-plane-only.md
+          d7b4260ff3b91e8a15aa96f4920d600073412412 scripts/benchmark-disk-plane.mjs
           d46364372ae063796f58c95c1810c8cf7a3036b3 scripts/disk-plane-finalize.mjs
           3f3311c8bf5139ec832dd3de861061e23e83b9d6 scripts/disk-plane-qa.mjs
-          3dc4030f422dc1b27df12cfb897fe8c230fd69d5 scripts/disk-plane-source-contract.mjs
+          977ddef8406593be1c863a14b2e6fc064612183c scripts/disk-plane-source-contract.mjs
           244797252a15b89083eacb05a3090665c016a765 scripts/fixtures/disk-plane-inputs.json
           dd7bcd9c7186a3e2c7a51c2603cbb5929cdcb779 scripts/native-ring-proof.mjs
           c403e19e9ab6476689cecaa6479993f01452fb19 scripts/probe-disk-plane.mjs
-          140d782ca9943a049e5f5717a3ff1c9a464a79e6 scripts/smoke-disk-plane-cost-contract.mjs
+          f2280bf902555da65c5f7b0c8f97d73befe067a4 scripts/smoke-disk-plane-cost-contract.mjs
           4a388d20af019eb3739fe931019acb30af30d28d scripts/smoke-disk-plane-finalize.mjs
           9f7baa8a1e619c31a45863778f819e3b8bd0514b scripts/smoke-disk-plane-qa.mjs
           c98a1fd664c1fc7be4ebdb49854f0d3b97fb2658 scripts/smoke-disk-plane-support.mjs
@@ -363,11 +370,11 @@ jobs:
           84b34e864f73bcc199e30faac08404f86587dd6a scripts/smoke-disk-static-programs.mjs
           BLOBS
           while read -r expected path; do
-            test "$(git rev-parse "$GITHUB_SHA:$path")" = "$expected"
+            test "$(git rev-parse "$EXPECTED_CANDIDATE_REVISION:$path")" = "$expected"
             test "$(git hash-object "$path")" = "$expected"
           done < "$ARTEMIS_EVIDENCE/reviewed-blobs.txt"
           git rev-parse HEAD HEAD^{tree} "$REVIEWED_PARENT_SHA" "$REVIEWED_PARENT_SHA^{tree}" "$REVIEWED_SOURCE_SHA" "$REVIEWED_SOURCE_SHA^{tree}" > "$ARTEMIS_EVIDENCE/actual-commit-tree.txt"
-          cp .github/workflows/disk-plane-preflight.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
+          cp .github/workflows/disk-plane-validation.yml "$ARTEMIS_EVIDENCE/execution-workflow.yml"
           git worktree add --detach "$RUNNER_TEMP/disk-plane-main" "$BASE_SHA"
           ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/disk-plane-main/node_modules"
           echo "BASE_ROOT=$RUNNER_TEMP/disk-plane-main" >> "$GITHUB_ENV"
@@ -404,7 +411,7 @@ jobs:
         run: |
           set -euo pipefail
           node node_modules/playwright/cli.js install --with-deps chromium
-      - name: Run all five paired trials and unchanged p95/count/TBT/maximum gates
+      - name: Run all five trials with220ms absolute maximum and unchanged other gates
         timeout-minutes: 25
         run: |
           set -euo pipefail
@@ -419,11 +426,12 @@ jobs:
         if: always()
         timeout-minutes: 2
         with:
-          name: disk-plane-cost-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.sha }}
+          name: disk-plane-cost-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
           path: |
             evidence/disk-cost/
             evidence/disk-cost-hooks/
           if-no-files-found: error
           retention-days: 14
-          # Failed original reports remain failed. No outlier removal,
+          # The original203>200 report remains failed; apply only the approved
+          # 220ms absolute maximum floor. No outlier removal,
           # replacement trial, rerun-for-green or automatic release follows.
