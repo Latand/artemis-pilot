@@ -21,7 +21,8 @@ const mobile = process.env.DEVICE === 'mobile';
 const report = { baseRef, revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceSha256: createHash('sha256').update(source).digest('hex'), mobile,
     scope: 'Frozen production app; same-frame original/candidate vertex shaders, identical physical state and owned GPU samples. Synthetic matched-distance views, not reconstruction of the user camera.',
-    omissions: ['unrelated galaxy, catalog and procedural backgrounds', 'wall-clock performance measurement'], cases: [], errors: [] };
+    omissions: ['unrelated galaxy, catalog and procedural backgrounds', 'wall-clock performance measurement'],
+    resolvedBackdrop: 'A dim test-only plane behind the resolved hole makes black-horizon exclusion distinguishable from an empty black framebuffer; production lens and horizon shaders are unchanged.', cases: [], errors: [] };
 await mkdir(out, { recursive: true });
 const hook = `
 const supportOldVertex = ${oldVertex};
@@ -79,9 +80,18 @@ try {
             }
             s.cam.tgt.copy(sun).add(new THREE.Vector3(10000, 0, 0));s.cam.dist=spec.distance;s.cam.distTarget=null;s.cam.yaw=Math.PI/2;s.cam.pitch=0;
             if(spec.resolved)s.cam.tgt.set(earth.x+st.BH.sx[0],st.BH.sy[0],earth.z+st.BH.sz[0]);
-            s.applyCamera();s.camera.updateMatrixWorld(true);
+            // Complete the real camera-dependent scene update before freezing
+            // the pair: direct camera mutation leaves old marker sizes/LOD.
+            window.__celestialFrame();s.renderer.getContext().finish();
+            s.camera.updateMatrixWorld(true);
             bh.updateBHVisuals(0, earth.x, earth.z);
             lens.updateLensing(s.camera,s.camera.aspect);
+            let backdrop=null;
+            if(spec.resolved){
+                const h=4*spec.distance*Math.tan(s.camera.fov*Math.PI/360);
+                backdrop=new THREE.Mesh(new THREE.PlaneGeometry(h*s.camera.aspect*1.2,h*1.2),new THREE.MeshBasicMaterial({color:0x203040}));
+                backdrop.position.copy(s.cam.tgt).add(new THREE.Vector3(0,0,-spec.distance));backdrop.quaternion.copy(s.camera.quaternion);s.scene.add(backdrop);
+            }
             river.resetRiverContext();
             for(let i=0;i<8;i++)river.updateRiver(0,1,earth,bodies.moon.position,bodies.sunPos,bodies.plGroups.map(p=>p.position),1/60);
             river.updateShells(0,0);
@@ -115,8 +125,15 @@ try {
                 return {png:s.renderer.domElement.toDataURL('image/png'),pixelHash,canvasLit,lensing:lens.lensingPass.enabled,metrics,state:river.supportRead(),error:gl.getError()};
             };
             const before=capture(true),after=capture(false);
+            if(backdrop){s.scene.remove(backdrop);backdrop.geometry.dispose();backdrop.material.dispose();}
             return {width,height,before,after};
         }, spec);
+        // Keep all completed pixels and diagnostics even when a guard fails.
+        for(const key of ['before','after']){
+            await writeFile(resolve(out,`${spec.name}-${key}.png`),Buffer.from(result[key].png.split(',')[1],'base64'));delete result[key].png;
+        }
+        report.cases.push({...spec,...result,passed:false});
+        await writeFile(resolve(out,'report.json'),JSON.stringify(report,null,2));
         assert.deepEqual(result.after.state, result.before.state, 'same-frame draw cannot change texture, sources, allocation, frame, clock or uniforms');
         assert(result.after.state.finite);assert.equal(result.before.error,0);assert.equal(result.after.error,0);
         assert(result.before.canvasLit>100&&result.after.canvasLit>100,'completed captures contain actual scene light');
@@ -136,10 +153,7 @@ try {
                 assert(afterHoles[i].excludedMaxLum<=3&&beforeHoles[i].excludedMaxLum<=3,'sink correction cannot paint through the black horizon');
             }else assert(afterHoles[i].lit>beforeHoles[i].lit,'production sink fix restores missing BH-region strokes');
         }
-        for(const key of ['before','after']){
-            await writeFile(resolve(out,`${spec.name}-${key}.png`),Buffer.from(result[key].png.split(',')[1],'base64'));delete result[key].png;
-        }
-        report.cases.push({...spec,...result});
+        report.cases.at(-1).passed=true;
         console.log(JSON.stringify({name:spec.name,before:beforeHoles.map(x=>({lit:x.lit,meanLum:x.meanLum})),after:afterHoles.map(x=>({lit:x.lit,meanLum:x.meanLum,saturated:x.saturated}))}));
         await writeFile(resolve(out,'report.json'),JSON.stringify(report,null,2));
     }

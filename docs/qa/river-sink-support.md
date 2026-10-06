@@ -44,11 +44,15 @@ holes, and a wider three-hole view.
 Mobile uses a larger camera distance so all sources fit the narrower viewport.
 One further capture resolves the 10 km horizon at an 80 km observer distance,
 through the production lens/optics path, and checks that its interior stays
-black. A broad majority-clipping guard rejects a saturated white patch in
+black against a dim test-only plane behind the hole. This makes exclusion
+distinguishable from a wholly empty black frame without replacing the lens
+or horizon shaders. A broad majority-clipping guard rejects a saturated white patch in
 place of missing strokes; before/after PNG inspection remains required.
 For each view, the pinned old and candidate vertex shaders render the exact
 same GPU particle texture, source state, uniforms and camera. The test reads
 the completed WebGL framebuffer and saves full PNGs and region measurements.
+Each camera change first completes the normal app frame so marker scale,
+body LOD and clipping match that camera; failing captures are saved too.
 It fails if the old missing-stroke condition is not improved, if an actual
 hole has no owned samples, or if any field/texture state changes between draws.
 
