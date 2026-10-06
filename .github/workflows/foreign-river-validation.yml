@@ -27,6 +27,7 @@ permissions:
   contents: read
 jobs:
   foreign-river:
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/diagnostic/foreign-river-precision') || (github.event.pull_request.base.sha == '6179f23661591bb4dee89a0bf8e686233e1ba280')
     name: Foreign river ${{ matrix.device }}
     runs-on: ubuntu-latest
     timeout-minutes: 20

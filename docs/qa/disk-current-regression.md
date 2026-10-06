@@ -33,8 +33,15 @@ It does not invoke snapshot-specific source binding or `--verify-main-scope`.
 
 After that job passes, `current-pixels` runs all four desktop/mobile ×
 direct/bloom cells using `probe-disk-continuity-current.mjs`. The probe uses the
-current app at explicit `quality=high` and the existing test-only frozen-frame
-hooks. It checks all 21 signed disk pitches using the unchanged acceptance
+current app at explicit `quality=high&dpr=1` and the existing test-only
+frozen-frame hooks. Each capture verifies actual renderer DPR 1, native context
+antialiasing, device classification, full 96²/124² river allocation, matching
+viewport/host/canvas/drawing-buffer dimensions and the requested healthy
+canvas/bloom path. A present quality mode must be High. Pre-controller source
+without a mode field passes only with that same complete actual-state evidence
+and is labeled `legacy-native-full`, rather than inventing a High mode. Shared
+collector/validator positive and negative controls run in the existing model
+gate. It checks all 21 signed disk pitches using the unchanged acceptance
 function from `disk-plane-qa.mjs`: dense-crossing 0.75–1.25 endpoint bounds,
 0.20 endpoint-relative adjacent-step bound and the original no-dropout bound.
 Measurements are disk-on minus disk-off GPU framebuffer pixels. Real trusted

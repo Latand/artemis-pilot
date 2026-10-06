@@ -1,0 +1,101 @@
+# Current functional coverage is independent of archived exact-source runs.
+# This suite makes no paired radiance-performance acceptance claim.
+name: Current river functional regression
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'public/**'
+      - 'scripts/**'
+      - 'index.html'
+      - 'package*.json'
+      - 'bun.lock'
+      - 'vite.config.*'
+      - '.env*'
+      - 'postcss.config.*'
+      - '.postcssrc*'
+      - 'tsconfig*.json'
+      - 'jsconfig*.json'
+      - 'npm-shrinkwrap.json'
+      - '.npmrc'
+      - '.github/workflows/river-current-validation.yml'
+      - '.github/workflows/river-radiance.yml'
+      - '.github/workflows/foreign-river-validation.yml'
+      - 'docs/qa/river-current-regression.md'
+permissions:
+  contents: read
+jobs:
+  current-model:
+    name: Current river model and protocol controls
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - name: Current physics, precision, ownership and immutable-protocol controls
+        run: |
+          set -euo pipefail
+          node scripts/smoke-current-river-regression.mjs
+          node scripts/smoke-radiance-acceptance.mjs
+          node scripts/smoke-river-radiance.mjs
+          node scripts/smoke-river-radiance-qa.mjs
+          node scripts/smoke-river-radiance-lifecycle.mjs
+          node scripts/smoke-context-recovery-qa.mjs
+          node scripts/smoke-foreign-river.mjs
+          node scripts/smoke-foreign-star-startup.mjs
+          node scripts/smoke-scenario-session.mjs
+          node scripts/run-current-river-regression.mjs foreign . evidence/river-current-hooks/foreign --validate
+          node scripts/run-current-river-regression.mjs radiance . evidence/river-current-hooks/radiance --validate
+          DEVICE=mobile RADIANCE_SUITE=lifecycle node scripts/run-current-river-regression.mjs radiance . evidence/river-current-hooks/mobile-lifecycle --validate
+          npm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: current-river-hooks-${{ github.event.pull_request.head.sha }}
+          path: evidence/river-current-hooks/
+          if-no-files-found: error
+          retention-days: 14
+  current-functional:
+    name: Current river ${{ matrix.suite }} / ${{ matrix.device }}
+    needs: current-model
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        suite: [foreign, radiance-transient, radiance-lifecycle]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-package-lock
+      - run: npx playwright install --with-deps chromium
+      - name: Current pixels, full particle capacity, cadence and real recovery
+        env:
+          DEVICE: ${{ matrix.device }}
+          SUITE: ${{ matrix.suite }}
+          EXPECTED_CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          kind="${SUITE%%-*}"
+          export RADIANCE_SUITE="${SUITE#*-}"
+          timeout --signal=TERM --kill-after=10s 15m node scripts/run-current-river-regression.mjs "$kind" . evidence/river-current
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: current-river-${{ matrix.suite }}-${{ matrix.device }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/river-current/
+          if-no-files-found: error
+          retention-days: 14
