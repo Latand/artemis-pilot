@@ -5,6 +5,7 @@ import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { landscapeQualityLayout } from './quality-layout-qa.mjs';
 const out = resolve(process.argv[2] || 'evidence/adaptive-quality');
 await mkdir(out, { recursive: true });
 const report = { scope: 'Cloud Chromium SwiftShader functional QA; not WARP, Iris Xe or a physical phone benchmark', manualLensOmissions: ['Unrelated volumetric galaxy disabled only for manual Low lens coverage', 'Manual Low lens frames serialized through the unchanged production frame to bound the software GPU queue; no FPS claim'], cases: [], errors: [] };
@@ -210,6 +211,36 @@ async function warmRendererStartup()`);
                 await page.locator(selector).click(); await clearCompactBounds();
             }
             testResult.shortPortraitQuality={width:320,height:568,syntheticBottomInsetPx:34,focusAndPanelReturn:true};
+            testResult.landscapeQuality=[];
+            await page.evaluate(()=>document.getElementById('timeDock').style.removeProperty('bottom'));
+            for(const viewport of [{width:568,height:320},{width:844,height:390}]) {
+                await page.setViewportSize(viewport);
+                await page.evaluate(()=>{const q=document.getElementById('renderQualityControls');q.open=false;q.scrollTop=0;window.dispatchEvent(new Event('resize'));});
+                const clearSlot=()=>page.waitForFunction(`(${landscapeQualityLayout.toString()})().clear`);
+                await clearSlot();
+                const summary=page.locator('#renderQualityControls summary');
+                await page.keyboard.press('Tab'); await summary.focus();
+                assert(await summary.evaluate(el=>{const s=getComputedStyle(el);return el.matches(':focus-visible')&&parseFloat(s.outlineWidth)>=2&&parseFloat(s.outlineOffset)<0;}),'Landscape summary keeps its visible inset keyboard focus');
+                const closed=await page.evaluate(landscapeQualityLayout);
+                await page.screenshot({path:resolve(out,`${test.name}-landscape-${viewport.width}-closed.png`)});
+                await summary.click();
+                // In the short right-hand slot the menu scrolls, but its
+                // actual select remains reachable without covering Time Dock.
+                await page.locator('#renderQualityMode').focus(); await clearSlot();
+                const open=await page.evaluate(landscapeQualityLayout);
+                await page.screenshot({path:resolve(out,`${test.name}-landscape-${viewport.width}-open.png`)});
+                await page.keyboard.press('Escape'); await clearSlot();
+                assert(!(await page.locator('#renderQualityControls').evaluate(el=>el.open)),'Escape closes the scrolled landscape menu');
+                for(const selector of ['#tdMore','#explorePanelToggle','#gravityInspector > summary','#exploreMoveToggle']) {
+                    await page.locator(selector).click(); assert(!(await page.locator('#renderQualityControls').isVisible()),'Expanded compact controls own the landscape slot');
+                    await page.locator(selector).click(); await clearSlot();
+                }
+                const paths=page.locator('#motionPathsToggle'),initialPaths=await paths.getAttribute('aria-pressed');
+                await paths.click(); assert.notEqual(await paths.getAttribute('aria-pressed'),initialPaths,'Motion paths remains directly clickable');
+                await paths.click(); assert.equal(await paths.getAttribute('aria-pressed'),initialPaths);
+                testResult.landscapeQuality.push({viewport,closed,open,expandedControlsAndReturn:true});
+                await page.setViewportSize({width:390,height:844}); await clearCompactBounds();
+            }
         }
         const contextRestores = await page.evaluate(() => __renderContext.restores);
         Object.assign(testResult, { sourceCount, contextRestores, phase: 'passed' });

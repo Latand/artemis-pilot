@@ -93,3 +93,33 @@ assert(qualityCss.includes('box-sizing:border-box') && qualityCss.includes('var(
 assert(qualityCss.includes('#renderQualityControls[open] { overflow:auto; }'));
 assert(qualityCss.includes('summary:focus-visible { outline:2px solid #8ecdf6;outline-offset:-4px; }'));
 assert(qualityCss.includes(':has(#tdOptions:not([hidden]))'));
+assert(compactSource.includes("setCss('--explore-panel-right'"));
+assert(qualityCss.includes('top:calc(var(--explore-toolbar-bottom,60px) + 10px)'));
+assert(qualityCss.includes('100vw - var(--explore-panel-right,260px) - 20px'));
+assert(qualityCss.includes('body.compact-explorer.compact-moving.mode-observe #renderQualityControls'));
+const {landscapeQualityLayout}=await import('./quality-layout-qa.mjs');
+const savedGlobals={document:globalThis.document,innerWidth:globalThis.innerWidth,innerHeight:globalThis.innerHeight};
+function layoutFixture({open=false,oldOverlap=false,blocked=null}={}) {
+    const box=(left,top,width,height)=>({left,top,right:left+width,bottom:top+height,width,height});
+    const node=r=>({getBoundingClientRect:()=>r,contains(el){return el===this;}});
+    const elements={renderQualityControls:node(box(oldOverlap?426:270,oldOverlap?143:68,oldOverlap?132:288,open?70:46)),
+        explorePanel:node(box(10,68,250,179)),timeDock:node(box(275,150,283,160)),exploreBar:node(box(10,8,548,50)),
+        renderQualityMode:node(box(280,82,150,44)),tdMore:node(box(367,160,64,44)),motionPathsToggle:node(box(437,160,110,44))};
+    elements.summary=node(box(oldOverlap?426:270,oldOverlap?143:68,oldOverlap?132:288,46));
+    elements.renderQualityControls.open=open;elements.renderQualityControls.querySelector=()=>elements.summary;
+    globalThis.innerWidth=568;globalThis.innerHeight=320;
+    globalThis.document={getElementById:id=>elements[id],elementFromPoint(x,y){
+        const order=[open?'renderQualityMode':'summary','tdMore','motionPathsToggle'];
+        for(const id of order){const e=elements[id],r=e.getBoundingClientRect();if(x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom)return id===blocked&&x===r.right-4&&y===r.bottom-4?{}:e;}
+        return null;
+    }};
+    return landscapeQualityLayout();
+}
+try {
+    for(const open of [false,true]){
+        assert(layoutFixture({open}).clear);
+        assert(!layoutFixture({open,oldOverlap:true}).clear,'The captured overlapping landscape layout is rejected');
+        for(const blocked of [open?'renderQualityMode':'summary','tdMore','motionPathsToggle'])assert(!layoutFixture({open,blocked}).clear,'An obscured corner is rejected for each interactive control');
+    }
+}finally{for(const [key,value] of Object.entries(savedGlobals)){if(value===undefined)delete globalThis[key];else globalThis[key]=value;}}
+console.log('Compact quality layout: measured landscape slot and five-point Graphics/Settings/Motion paths hit tests reject the captured overlap and obstructed corners.');

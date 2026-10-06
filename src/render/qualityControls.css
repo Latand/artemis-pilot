@@ -9,16 +9,25 @@ body.mode-xr #renderQualityControls, body.mode-clean #renderQualityControls { di
 
 #restartGraphics[hidden] { display:none!important; }
 
-@media(max-width:760px) and (orientation:portrait) {
  body.compact-explorer.mode-observe #renderQualityControls {
   top:calc(var(--explore-panel-bottom,238px) + 10px);
   max-height:calc(var(--time-dock-top,calc(100dvh - 140px)) - var(--explore-panel-bottom,238px) - 20px);
   box-sizing:border-box;
  }
+ body.compact-explorer.mode-observe #renderQualityControls summary,
+ body.compact-explorer.mode-observe #renderQualityControls select { min-height:44px; }
  body.compact-explorer.mode-observe #renderQualityControls[open] { overflow:auto; }
+ body.compact-explorer.compact-moving.mode-observe #renderQualityControls,
  body.compact-explorer.mode-observe:has(#tdOptions:not([hidden])) #renderQualityControls,
  body.compact-explorer.mode-observe:has(#explorePanel.expanded) #renderQualityControls,
  body.compact-explorer.mode-observe:has(#gravityInspector[open]) #renderQualityControls { display:none; }
+@media(max-height:540px) and (orientation:landscape) {
+ body.compact-explorer.mode-observe #renderQualityControls {
+  top:calc(var(--explore-toolbar-bottom,60px) + 10px);
+  right:10px;
+  max-width:min(290px,calc(100vw - var(--explore-panel-right,260px) - 20px));
+  max-height:calc(var(--time-dock-top,calc(100dvh - 140px)) - var(--explore-toolbar-bottom,60px) - 20px);
+ }
 }
 
 #renderQualityControls summary:focus-visible { outline:2px solid #8ecdf6;outline-offset:-4px; }
