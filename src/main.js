@@ -1,3 +1,6 @@
+import { pacedFrameTime } from './render/adaptiveQuality.js';
+import { installQualityControls } from './render/qualityControls.js';
+import { withinStartupBudget } from './render/startupBudget.js';
 import { observerLabelAllowed } from './universe/observerLabels.js';
 import { aimExplorationCamera } from './universe/cameraNavigation.js';
 import { prepareSystemCameraAnchor, systemAnchor } from './render/systemPrecision.js';
@@ -26,7 +29,7 @@ import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.
 import { loadAllMaps, dotTexture } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
-    renderQuality, renderContext, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
+    renderQuality, renderContext, sampleRenderPerformance, setQualityMode, bindQualityControls, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
     farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
@@ -122,6 +125,7 @@ import { classifyContact } from "./universe/contactMath.js";
 import { initEvents, noteEvent, updateEvents } from "./events.js";
 
 // ============================ WIRING ============================
+bindQualityControls(installQualityControls(renderQuality, setQualityMode));
 // Milky Way stellar-disk diameter (~30 kpc) in scene units: sets the
 // volume -> galaxy-population handoff by angular size.
 const MW_DIAMETER_SCENE = 30000 * PC_KM * K;
@@ -137,7 +141,11 @@ const bloomParam = query.get("bloom");
 const bloomRequested = bloomParam !== "0" && (bloomParam === "1" || bloomParam === "legacy" || query.get("fastbloom") === "0");
 const bloomForced = bloomRequested;
 const bloomDisabled = !bloomRequested;
-const skipSceneCompile = query.get("compile") === "0" || query.get("warmcompile") === "0";
+// Whole-universe warmup is a profiling opt-in. Compile only visible materials
+// on demand by default, especially with a software renderer.
+const skipSceneCompile = renderQuality.software || renderQuality.mobile ||
+    (query.get("compile") !== "1" && query.get("warmcompile") !== "1");
+window.__startupStatus = { compile: 'skipped' };
 const galaxyBackdropForced = query.get("galaxy") === "1";
 // WP18: sets foveation + primes the framebuffer scale factor before any XR
 // session is requested; tickXrPerf() below self-inits if this is skipped, but
@@ -214,7 +222,10 @@ function ensureLensingModule() {
     return lensingReady;
 }
 function updateLensingLazy(camera, aspect) {
-    if (!lensingCouldBeVisible(camera)) {
+    if (renderQuality.minimal || !lensingCouldBeVisible(camera)) {
+        // The loaded pass also restores the holes' own optics after a previous
+        // composer frame. Minimal removes the screen warp, never the holes.
+        if (renderQuality.minimal && updateLensingImpl) updateLensingImpl(camera, aspect);
         lensingPass.enabled = false;
         return false;
     }
@@ -527,11 +538,15 @@ async function warmRendererStartup() {
         if (skipSceneCompile) {
             if (PERF.enabled) markPerf("startup.compileScene", performance.now() - sceneCompileT0, { skipped: true });
         } else if (renderer.compileAsync) {
-            await renderer.compileAsync(scene, camera);
-            if (PERF.enabled) markPerf("startup.compileScene", performance.now() - sceneCompileT0);
+            const result = await withinStartupBudget(() => renderer.compileAsync(scene, camera));
+            window.__startupStatus.compile = result.status;
+            if (PERF.enabled) markPerf("startup.compileScene", performance.now() - sceneCompileT0, result);
+            if (result.status !== 'ready') return;
         } else {
-            renderer.compile(scene, camera);
-            if (PERF.enabled) markPerf("startup.compileScene", performance.now() - sceneCompileT0);
+            // No synchronous fallback: a timer cannot interrupt a blocking
+            // driver compile on this thread. First-use compilation is enough.
+            window.__startupStatus.compile = 'unsupported';
+            return;
         }
         const riverWarmT0 = PERF.enabled ? performance.now() : 0;
         const riverWarmed = warmRiverCompute();
@@ -560,7 +575,7 @@ async function warmRendererStartup() {
 }
 // Mobile shader compilation happens on demand. Warming the entire universe
 // before entry competes with touch handling and can stall Safari's GPU queue.
-if (!renderQuality.mobile) await warmRendererStartup();
+if (!skipSceneCompile) await warmRendererStartup();
 
 let cockpitWarmupStarted = false;
 let cockpitWarmed = false;
@@ -1722,12 +1737,16 @@ function frameStep() {
     // physics or submitting GPU work. Drain the clock so resuming cannot jump.
     if (renderContext.isLost() || document.hidden || document.getElementById("intro").style.display !== "none") {
         clock.getDelta();
+        sampleRenderPerformance(performance.now(), false);
         lastMobileFrame = -Infinity;
         return;
     }
     const now = performance.now();
-    if (renderQuality.mobile && !VR.active && now - lastMobileFrame < 1000 / 30 - 1) return;
-    lastMobileFrame = now;
+    const renderHz = renderQuality.mobile || renderQuality.minimal ? 30 : 0;
+    const pacedTime = pacedFrameTime(now, lastMobileFrame, VR.active ? 0 : renderHz);
+    if (pacedTime === null) return;
+    lastMobileFrame = pacedTime;
+    sampleRenderPerformance(now, !VR.active);
     const frameT0 = perfStart();
     const rawDtR = clock.getDelta();
     tickXrPerf(renderer, rawDtR * 1000);
@@ -1825,7 +1844,7 @@ function frameStep() {
     sampleTimeDock();
     const cosmicView = cam.dist > LY_SCENE * .2 && !observerHasStellarDetail();
     const cosmicLod = cam.dist > LY_SCENE * 800000 ? 3 : cam.dist > LY_SCENE * 20000 ? 2 : cosmicView ? 1 : 0;
-    const pixelLoadShed = renderQuality.mobile ? (G.warp > 600 && G.gr ? 2 : 1) :
+    const pixelLoadShed = renderQuality.mobile ? (G.warp > 600 && G.gr ? 2 : 0) :
         G.warp > 86400 && G.gr && cam.dist < LY_SCENE * .2 ? 1 : 0;
     setRenderLoadShed(pixelLoadShed);
     const nearFieldDue = cosmicLod === 0 || frameNo % (cosmicLod === 1 ? 6 : cosmicLod === 2 ? 18 : 45) === 0;
@@ -2325,12 +2344,13 @@ function frameStep() {
         updateLensingLazy(camera, camera.aspect);
         bloomPass.enabled = false;
         renderFrame(false);
+        window.__AP_FIRST_FRAME = true;
         return;
     }
     updateLensingLazy(camera, camera.aspect);
-    const bloomLoadShed = renderQuality.mobile || shouldGateBloom() ||
+    const bloomLoadShed = renderQuality.level >= 2 || renderQuality.mobile || shouldGateBloom() ||
         (!bloomForced && G.warp > 86400 && G.gr && grB > .18 && cam.dist > LY_SCENE * .05);
-    bloomPass.enabled = !bloomDisabled && (cinematic.isPlaying() || bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
+    bloomPass.enabled = !renderQuality.minimal && !bloomDisabled && (cinematic.isPlaying() || bloomForced || !bloomLoadShed) && cam.dist < LY_SCENE * 400;
     if (bloomPass.enabled && !composer) ensurePostProcessing(lensingPass);
     updateBodyShaders(camera, G.t, G.paused ? 0 : presentationExposureSeconds(advanced, rawDtR), _m.om);
     updateOrbitalExposure(camera, advanced, rawDtR, cabinActive || VR.active);
@@ -2687,12 +2707,14 @@ function frameStep() {
         bh: BH.n,
     } : null);
     renderFrame(cabinActive);
+    window.__AP_FIRST_FRAME = true;
     finishFramePerf(frameT0, dtR, rawDtR, dtRCap, cosmicView, cabinActive);
 }
 // setAnimationLoop lets WebXR sessions drive the frame callback when presenting.
 const firstFrameT0 = perfStart();
-frame();
-perfEnd("startup.firstFrame", firstFrameT0);
+// Readiness means controls are wired. Do not synchronously render a restored
+// scene before exposing them; the animation loop delivers the first frame.
+perfEnd("startup.firstFrame", firstFrameT0, { deferred: true });
 clock.start();
 window.__AP_READY = true;
 requestEarthNightTexture(renderQuality.mobile ? 3600 : 2400);

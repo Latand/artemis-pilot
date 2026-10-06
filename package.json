@@ -51,6 +51,8 @@
     "smoke:reltravel": "node scripts/smoke-reltravel.mjs",
     "smoke:river-visual": "node scripts/smoke-river-visual.mjs",
     "smoke:river-styles": "node scripts/verify-river-styles.mjs",
+    "smoke:adaptive-quality": "node scripts/smoke-adaptive-quality.mjs",
+    "verify:adaptive-quality": "node scripts/verify-adaptive-quality.mjs",
     "smoke:mobile-startup": "node scripts/verify-mobile-startup.mjs",
     "benchmark:river-render": "node scripts/benchmark-river-render.mjs",
     "build": "vite build",

@@ -107,7 +107,7 @@ try {
         page.on('console', m => { if (m.type() === 'error' && /shader|THREE|GL_INVALID|WebGL/i.test(m.text())) report.errors.push({ name, error: m.text() }); });
         await page.addInitScript(() => { Date.now = () => Date.UTC(2026, 9, 3, 12); localStorage.clear(); localStorage.setItem('ap_introSeen', '1'); localStorage.setItem('ap_uiMode', 'observe'); });
         await page.route('https://fonts.googleapis.com/**', r => r.fulfill({ status: 200, body: '' }));
-        await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=sun&dist=40000&dpr=1&tier1=0&field=0&galaxy=0&galaxyvol=0&galaxies=0&realsky=0&river=1&bloom=0&compile=0&hidehelp=1`, { waitUntil: 'domcontentloaded' });
+        await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&focus=sun&dist=40000&dpr=1&tier1=0&field=0&galaxy=0&galaxyvol=0&galaxies=0&realsky=0&river=1&bloom=0&compile=0&hidehelp=1`, { waitUntil: 'domcontentloaded' });
         await page.waitForFunction(() => window.__AP_READY && window.__radianceFrame && window.__radianceRead);
         await page.evaluate(async ({ fixture, spec, suite }) => {
           const [s, c, state, bh, bodies, active, hyg] = await Promise.all([import('/src/scene.js'), import('/src/constants.js'), import('/src/state.js'), import('/src/blackholes.js'), import('/src/bodies.js'), import('/src/universe/activeStars.js'), import('/src/universe/hygActiveCatalog.js')]);

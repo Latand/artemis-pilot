@@ -1,4 +1,6 @@
-# Final issue50-only PR validation; preserve every earlier failed report.
+# PR #59 is an immutable historical exact-tree attestation, not a universal gate.
+# Current-source model/pixel jobs below remain mandatory for matching changes.
+# Preserve every earlier failed report and every historical assertion.
 # Native program observations remain untimed. The approved maximum rule
 # max(220ms, baseline maximum*1.10) applies only to this active-disk cost suite.
 name: Disk continuity final validation
@@ -33,7 +35,80 @@ env:
   CANDIDATE_ROOT: ${{ github.workspace }}
   EXPECTED_CANDIDATE_REVISION: ${{ github.event.pull_request.head.sha }}
 jobs:
+  current-model:
+    name: Current-source disk model regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - name: Current shader, lifecycle, numerical and failure controls
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/disk-current-model
+          node scripts/smoke-disk-workflow-scope.mjs
+          node scripts/smoke-disk-plane-support.mjs
+          node scripts/smoke-disk-frustum-fast-path.mjs
+          node scripts/smoke-disk-fast-path-lifecycle.mjs
+          node scripts/smoke-disk-program-precision.mjs
+          ARTEMIS_EVIDENCE=evidence/disk-current-model/static-programs.json node scripts/smoke-disk-static-programs.mjs
+          node scripts/smoke-native-disk-proof.mjs
+          node scripts/smoke-disk-plane-qa.mjs
+          node scripts/smoke-disk-pointer-fixture.mjs
+          node scripts/smoke-disk-plane-finalize.mjs
+          node scripts/smoke-context-recovery-qa.mjs
+          node scripts/smoke-hole-appearance.mjs
+          node scripts/smoke-hole-precision.mjs
+          node scripts/smoke-hole-emission.mjs
+          npm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: disk-current-model-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-current-model/
+          if-no-files-found: error
+          retention-days: 14
+  current-pixels:
+    name: Current-source disk crossing ${{ matrix.device }} / bloom-${{ matrix.bloom }}
+    needs: current-model
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+        bloom: [0, 1]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - name: Full-quality signed crossings, repeated resize and real GPU recovery
+        run: node scripts/probe-disk-continuity-current.mjs
+        env:
+          DEVICE: ${{ matrix.device }}
+          BLOOM: ${{ matrix.bloom }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: disk-current-${{ matrix.device }}-${{ matrix.bloom }}-${{ github.event.pull_request.head.sha }}
+          path: evidence/disk-current/
+          if-no-files-found: error
+          retention-days: 14
   pixels:
+    if: github.event.pull_request.number == 59 && github.event.pull_request.base.sha == '6179f23661591bb4dee89a0bf8e686233e1ba280'
     name: Disk-only pixels and recovery ${{ matrix.device }} / bloom-${{ matrix.bloom }}
     runs-on: ubuntu-latest
     # Fixed step caps total56 minutes, leaving4 for scheduling/cleanup.
@@ -301,6 +376,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
   paired-cost:
+    if: github.event.pull_request.number == 59 && github.event.pull_request.base.sha == '6179f23661591bb4dee89a0bf8e686233e1ba280'
     name: Disk-only actual-main cost ${{ matrix.device }} / bloom-${{ matrix.bloom }}
     # Every pixel/lifecycle mode must pass before any cost job can start.
     needs: pixels

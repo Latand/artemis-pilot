@@ -3,7 +3,7 @@ import { stellarExposure } from "./render/stellarAppearance.js";
 import { AU_KM, CAM_DIST_MAX, COSMIC_ZOOMS, K, LY_SCENE, SEC_YEAR, MPC_KM } from "./constants.js";
 import { mulberry32, smooth01 } from "./format.js";
 import { G } from "./state.js";
-import { cam } from "./scene.js";
+import { cam, renderQuality } from "./scene.js";
 import { toast } from "./achievements.js";
 import { makeGalaxyCloudAsync, galacticCenterScene, galacticRingPositions, applyEraToCloud } from "./universe/starfield.js";
 import { galToSceneUnitsInto } from "./universe/coords.js";
@@ -298,6 +298,23 @@ function updateLocalGalaxyMotion() {
     setDisruptUniforms(mwDiskMergeUniforms, mergerDisruptFractionAt(t), eraModulation(t).redshiftTint);
 }
 
+let fallbackGalaxyPromise = null;
+function buildFallbackGalaxy() {
+    return fallbackGalaxyPromise ||= (async () => {
+        // A bounded point-cloud fallback remains visible without compiling
+        // the volume raymarcher. Physics and catalog source counts are intact.
+        const count = renderQuality.minimal ? 12000 : 170000;
+        const mwCloud = await makeGalaxyCloudAsync(count, 0x6d57, 2048, idleSlice);
+        const mwDisk = mergeableDiskPoints(mwCloud.pos, mwCloud.col, { size: 1.20, opacity: .5, seed: 0x6d57 ^ 0x77 });
+        mwDiskMergeUniforms = mwDisk.material.uniforms;
+        galaxyRoot.add(mwDisk);
+        await idleSlice();
+        galaxyRoot.add(milkyWayHalo());
+        galaxyRoot.add(galacticPlaneRing(8178, 0x53617a, .30));
+        galaxyRoot.add(galacticPlaneRing(16000, 0x344058, .24));
+    })().catch(error => { fallbackGalaxyPromise = null; console.warn('Galaxy fallback unavailable', error); });
+}
+
 async function buildCosmicLayer() {
     if (!sceneRef || layerBuilt) return layerBuildPromise;
     if (layerBuilding) return layerBuildPromise;
@@ -311,17 +328,7 @@ async function buildCosmicLayer() {
         // instead of the plain points() helper, so the MW's own disk can puff
         // into "Milkomeda" alongside M31's disk during the merger.
         // Only needed as the fallback for ?galaxyvol=0.
-        if (!galaxyVolumeEnabled()) {
-            const mwCloud = await makeGalaxyCloudAsync(170000, 0x6d57, 4096, idleSlice);
-            const mwDisk = mergeableDiskPoints(mwCloud.pos, mwCloud.col, { size: 1.20, opacity: .5, seed: 0x6d57 ^ 0x77 });
-            mwDiskMergeUniforms = mwDisk.material.uniforms;
-            galaxyRoot.add(mwDisk);
-            await idleSlice();
-            galaxyRoot.add(milkyWayHalo());
-            galaxyRoot.add(galacticPlaneRing(8178, 0x53617a, .30));
-            galaxyRoot.add(galacticPlaneRing(16000, 0x344058, .24));
-            await idleSlice();
-        }
+        if (!galaxyVolumeEnabled()) await buildFallbackGalaxy();
         // Curated destinations and the HYG catalog are drawn at every scale by
         // render/catalogStars.js (shared resolved-star material), not here.
         // Other galaxies -- the Local Group, the Local Volume, 2MRS and the
@@ -432,6 +439,7 @@ export function updateCosmicLayer() {
     // (render/galaxyVolume.js); this point cloud remains only as the
     // fallback when that layer is disabled (?galaxyvol=0).
     const fallback = galaxyVisible && !galaxyVolumeEnabled();
+    if (fallback && !fallbackGalaxyPromise) buildFallbackGalaxy();
     root.visible = fallback;
     diskRoot.visible = fallback;
     galaxyRoot.visible = fallback;

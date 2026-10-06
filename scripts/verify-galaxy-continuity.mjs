@@ -10,7 +10,7 @@ const page=await browser.newPage({viewport:{width:640,height:400},deviceScaleFac
 page.on('pageerror',e=>console.log('ERROR',e.message));
 page.on('console',m=>{if(m.type()==='error')console.log('CONSOLE',m.text().slice(0,700));});
 await page.addInitScript(()=>{Date.now=()=>Date.UTC(2026,8,13,12);localStorage.setItem('ap_intro_seen','1');});
-await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&dpr=1&tier1=0&galadapt=0&focus=sun&dist=1e4&realsky=0&river=0`,{waitUntil:'domcontentloaded',timeout:120000});
+await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&hidehelp=1&dpr=1&tier1=0&galadapt=0&focus=sun&dist=1e4&realsky=0&river=0`,{waitUntil:'domcontentloaded',timeout:120000});
 await page.waitForFunction(()=>window.__AP_READY,null,{timeout:120000});console.log('APP READY');
 await page.evaluate(async()=>{const {setPaused}=await import('/src/timeCtl.js');setPaused(true,'capture');__G.predict=false;});
 await page.waitForFunction(()=>__volStatus().mapsReady,null,{timeout:120000});

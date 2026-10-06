@@ -1,3 +1,4 @@
+import { withinStartupBudget } from './render/startupBudget.js';
 import * as THREE from "three";
 import { PL } from "./constants.js";
 import { mulberry32, makeNoise } from "./format.js";
@@ -225,8 +226,14 @@ export async function loadAllMaps() {
         milky: forceMilky ? tryLoad("2k_stars_milky_way.jpg") : Promise.resolve(null),
     };
     const out = {};
-    for (const k of Object.keys(names)) out[k] = await names[k];
+    await Promise.all(Object.entries(names).map(async ([key, promise]) => {
+        const result = await withinStartupBudget(() => promise, 5000);
+        out[key] = result.status === 'ready' ? result.value : null;
+    }));
     const forcePlanetMaps = q.get("planetmaps") === "1";
-    out.planets = forcePlanetMaps ? await Promise.all(PL.map((_, i) => loadPlanetMap(i))) : new Array(PL.length).fill(null);
+    out.planets = forcePlanetMaps ? await Promise.all(PL.map(async (_, i) => {
+        const result = await withinStartupBudget(() => loadPlanetMap(i), 5000);
+        return result.status === 'ready' ? result.value : null;
+    })) : new Array(PL.length).fill(null);
     return out;
 }

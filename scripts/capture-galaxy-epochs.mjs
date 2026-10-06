@@ -55,7 +55,7 @@ try {
     page.setDefaultTimeout(180000);
     page.on('pageerror', e => report.errors.push(e.message));
     page.on('console', m => { if (m.type() === 'error' && !m.text().includes('favicon') && !m.text().startsWith('Failed to load resource')) report.errors.push(m.text()); });
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__epoch_probe__?dpr=1&galadapt=0&galexposure=.15`);
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__epoch_probe__?quality=high&dpr=1&galadapt=0&galexposure=.15`);
     await page.evaluate(async ([W, H]) => {
         const s = await import('/src/scene.js'), v = await import('/src/render/galaxyVolume.js');
         const c = await import('/src/universe/coords.js'), e = await import('/src/render/stellarAppearance.js');

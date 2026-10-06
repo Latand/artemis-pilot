@@ -130,13 +130,17 @@ lensingPass.enabled = false;
 // Copying the antialiased canvas back mid-frame instead and drawing on showed
 // blank frames under ANGLE.
 const lensTarget = new THREE.WebGLRenderTarget(1, 1, {
-    samples: renderQuality.mobile ? 0 : 4, internalFormat: "RGBA8", colorSpace: THREE.SRGBColorSpace,
+    samples: renderQuality.lensSamples, internalFormat: "RGBA8", colorSpace: THREE.SRGBColorSpace,
 });
 lensTarget.isXRRenderTarget = true;
 lensTarget.depthTexture = new THREE.DepthTexture(1, 1);
 const lensQuad = new FullScreenQuad(lensingPass.material);
 const _buf = new THREE.Vector2();
 export function renderLensed(rendererArg, sceneArg, camera) {
+    if (lensTarget.samples !== renderQuality.lensSamples) {
+        lensTarget.dispose();
+        lensTarget.samples = renderQuality.lensSamples;
+    }
     rendererArg.getDrawingBufferSize(_buf);
     lensTarget.setSize(_buf.x, _buf.y);
     holeRoot.visible = false;
@@ -178,7 +182,7 @@ const lensOff = typeof location !== "undefined" && new URLSearchParams(location.
 export function updateLensing(camera, aspect) {
     _cand.length = 0;
     holeRoot.visible = true;
-    if (lensOff || renderer.xr.isPresenting) { lensingPass.enabled = false; return false; }
+    if (lensOff || renderQuality.minimal || renderer.xr.isPresenting) { lensingPass.enabled = false; return false; }
     const f = 1 / Math.tan(camera.fov * Math.PI / 360);
     for (let i = 0; i < BH.n; i++) {
         consider(_cand, (eph.earthX + BH.x[i]) * K, BH.z[i] * K, -(eph.earthY + BH.y[i]) * K, BH.rs[i] * K, camera, f);

@@ -76,7 +76,7 @@ try {
         else if (message.type() === 'warning' && /WebGL|GL_INVALID|shader|texture/i.test(text)) report.warnings.push({ case: report.currentCase || 'startup', message: text });
     });
     page.on('requestfailed', request => report.failedRequests.push({ url: request.url(), error: request.failure()?.errorText }));
-    const query = new URLSearchParams({ hidehelp: '1', dpr: '1', tier1: '0', realsky: '0', field: '0', galaxies: '0', galaxyvol: '0', galaxy: '0',
+    const query = new URLSearchParams({ quality: 'high', hidehelp: '1', dpr: '1', tier1: '0', realsky: '0', field: '0', galaxies: '0', galaxyvol: '0', galaxy: '0',
         focus: 'earth', dist: '25', river: '0', bloom: '0', compile: '0', clouds: '1', moonmap: '1', earthnight: '1', planetmaps: '1' });
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?${query}`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__AP_READY && window.__celestialFrame);
