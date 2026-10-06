@@ -100,7 +100,7 @@ try {
   page.on('console', m => { if (m.type() === 'error' && /shader|webgl|THREE/i.test(m.text())) report.errors.push(m.text()); });
   await page.addInitScript(() => { localStorage.clear(); localStorage.setItem('ap_introSeen', '1'); localStorage.setItem('ap_uiMode', 'observe'); });
   await page.route('https://fonts.googleapis.com/**', r => r.fulfill({ status: 200, body: '' }));
-  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&tier1=0&field=0&galaxyvol=0&galaxies=0&realsky=0&river=1&bloom=0&compile=0&hidehelp=1&dpr=1`, { waitUntil: 'domcontentloaded' });
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?tier1=0&field=0&galaxyvol=0&galaxies=0&realsky=0&river=1&bloom=0&compile=0&hidehelp=1&dpr=1`, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__AP_READY && window.__foreignFrame && window.__foreignRiverRead);
   await page.evaluate(async ({ hostId, collector }) => {
     const [scene, state, active, systems, P, input, C, systemRender] = await Promise.all([

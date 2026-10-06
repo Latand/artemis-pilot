@@ -14,7 +14,7 @@ export function installQualityControls(state, setMode) {
     label.append(select);
     const status = document.createElement('p'); status.setAttribute('role', 'status');
     const note = document.createElement('p');
-    note.textContent = 'Minimal keeps bodies, stars and gravity flow, with a simplified galaxy and no lensing or bloom. Physics and saves are unchanged. Software rendering may remain slow.';
+    note.textContent = 'Minimal keeps bodies, stars and gravity flow, with a simplified galaxy and no lensing or bloom. Physics and saves are unchanged. Reload High for its full particle allocation and antialiasing. Software rendering may remain slow.';
     root.append(summary, label, status, note); document.body.append(root);
     select.addEventListener('change', () => setMode(select.value));
     // Graphics shortcuts must never leak into ship controls.

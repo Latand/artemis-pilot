@@ -30,7 +30,7 @@ try {
     const page=await browser.newPage({viewport:{width:480,height:300},deviceScaleFactor:1});page.setDefaultTimeout(120000);
     page.on('pageerror',e=>report.errors.push(e.message));
     page.on('console',m=>{if(m.type()==='error'&&!m.text().includes('favicon'))report.errors.push(m.text())});
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__cost_probe__?dpr=1&galadapt=0&galexposure=.15`);
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__cost_probe__?quality=high&dpr=1&galadapt=0&galexposure=.15`);
     await page.evaluate(async()=>{
         const s=await import('/src/scene.js'),v=await import('/src/render/galaxyVolume.js'),c=await import('/src/universe/coords.js'),e=await import('/src/render/stellarAppearance.js');
         const {K}=await import('/src/constants.js');window.probe={s,v,c,e,K};

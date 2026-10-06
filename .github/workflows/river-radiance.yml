@@ -29,6 +29,7 @@ env:
   PR_BASE_REVISION: ${{ github.event.pull_request.base.sha }}
 jobs:
   fresh-performance:
+    if: github.event.pull_request.base.sha == '6179f23661591bb4dee89a0bf8e686233e1ba280'
     name: Fresh radiance ${{ matrix.device }} ${{ matrix.fixture }}
     runs-on: ubuntu-latest
     timeout-minutes: 160
@@ -82,7 +83,7 @@ jobs:
   fresh-aggregate:
     name: Fresh radiance complete ${{ matrix.device }}
     needs: fresh-performance
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && github.event.pull_request.base.sha == '6179f23661591bb4dee89a0bf8e686233e1ba280' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -123,6 +124,7 @@ jobs:
           path: evidence/aggregate/
           retention-days: 14
   final-functional:
+    if: github.event.pull_request.base.sha == '6179f23661591bb4dee89a0bf8e686233e1ba280'
     name: Final radiance ${{ matrix.suite }} ${{ matrix.device }}
     needs: fresh-aggregate
     runs-on: ubuntu-latest

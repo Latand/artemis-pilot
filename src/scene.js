@@ -2,7 +2,7 @@ import { moveExplorationTarget } from './universe/explorationCamera.js';
 import * as THREE from "three";
 import { renderLinearFrame } from "./render/linearFrame.js";
 import { G, keys } from "./state.js";
-import { createQualityController, isSoftwareRenderer, readRendererName, qualityBudget, qualityPixelRatio } from './render/adaptiveQuality.js';
+import { createQualityController, isSoftwareRenderer, readRendererName, qualityBudget, qualityPixelRatio, qualityMode } from './render/adaptiveQuality.js';
 import { bindContextLifecycle } from "./render/contextLifecycle.js";
 import { CAM_DIST_MAX, K, LY_SCENE } from "./constants.js";
 import { tierDepthRange } from "./render/tierDepth.js";
@@ -21,19 +21,20 @@ export const cvHost = document.getElementById("gl");
 // alternative to logarithmicDepthBuffer isn't available here; the
 // multi-frustum tiering below (`renderSceneTiered`) is the whole fix.
 // logarithmicDepthBuffer itself stays off per A6 (fill-rate cost).
-// Avoid the default framebuffer's permanent multisample cost. Detail can
-// recover at runtime without recreating the user's WebGL context.
-export const renderer = new THREE.WebGLRenderer({ antialias: false });
 const q = new URLSearchParams(location.search);
+let savedQuality = 'auto';
+try { savedQuality = localStorage.getItem('ap_quality') || 'auto'; } catch { }
+const initialQualityMode = qualityMode(q.get('quality') || savedQuality);
+// Conservative startup avoids permanent framebuffer multisampling. A deliberate
+// High load keeps the full-detail capture path; live changes reuse the context.
+export const renderer = new THREE.WebGLRenderer({ antialias: initialQualityMode === 'high' });
 const dprOverride = Number(q.get("dpr") || q.get("pixelRatio"));
 function isMobileLike() {
     return window.matchMedia?.("(max-width: 760px), (hover: none) and (pointer: coarse)")?.matches || false;
 }
-let savedQuality = 'auto';
-try { savedQuality = localStorage.getItem('ap_quality') || 'auto'; } catch { }
 const rendererName = readRendererName(renderer.getContext());
 const qualityController = createQualityController({ mobile: isMobileLike(),
-    software: isSoftwareRenderer(rendererName), mode: q.get('quality') || savedQuality });
+    software: isSoftwareRenderer(rendererName), mode: initialQualityMode });
 export const renderQuality = { ...qualityController.state, rendererName, dpr: 1, loadShed: 0, bloomScale: 1,
     ...qualityBudget(qualityController.state.level, isMobileLike()) };
 export const viewportSize = { w: 1, h: 1, pxScale: 1 };

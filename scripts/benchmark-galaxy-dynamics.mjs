@@ -46,7 +46,7 @@ try {
     page.setDefaultTimeout(180000);
     page.on('pageerror', e => report.errors.push(e.message));
     // galres=1: every changed frame is one full-resolution integration
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__dyn_cost__?dpr=1&galadapt=0&galexposure=.15&galres=1`);
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/__dyn_cost__?quality=high&dpr=1&galadapt=0&galexposure=.15&galres=1`);
     await page.evaluate(async ([W, H, MOBILE]) => {
         const s = await import('/src/scene.js'), v = await import('/src/render/galaxyVolume.js');
         const c = await import('/src/universe/coords.js'), e = await import('/src/render/stellarAppearance.js');

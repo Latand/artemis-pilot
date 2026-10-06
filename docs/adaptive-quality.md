@@ -37,8 +37,8 @@ manual quality remains available without promising smooth performance.
 Quality changes adjust framebuffer DPR/pixel budgets, river draw fraction and
 compute cadence, volumetric galaxy target resolution, and lens-target MSAA.
 Low and Minimal can reduce DPR below 1 even on a device-DPR-1 screen. Default
-framebuffer MSAA is off; High enables the existing four-sample lens target on
-desktop. Explicit `dpr`/`pixelRatio` remains an absolute diagnostic override.
+framebuffer MSAA is off; an explicit High load enables it, and High uses the
+existing four-sample lens target on desktop. Explicit `dpr`/`pixelRatio` remains an absolute diagnostic override.
 
 Minimal omits the screen-space lens distortion, bloom and volumetric galaxy
 raymarcher. It retains bodies, stars, black-hole optics and gravity-flow sources,
@@ -46,8 +46,8 @@ and provides a bounded 12,000-point galaxy fallback at galactic viewing scales.
 The fallback is a simplified display, not the full volumetric photometric model.
 River allocation starts at 32² software / 64² mobile / 96² desktop; an explicit
 High load preserves the former 96² mobile / 124² desktop capacities. Runtime
-mode changes adjust the existing allocation without reallocating or changing
-source counts; reload with High for its full allocation. `np` remains an explicit
+mode changes reuse the framebuffer and existing allocation without reallocating
+or changing source counts; reload with High for its full allocation and MSAA. `np` remains an explicit
 allocation override.
 
 No force law, integrator, saved simulation schema, source-selection cap or

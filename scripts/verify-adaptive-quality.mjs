@@ -71,10 +71,15 @@ async function warmRendererStartup()`);
         await page.screenshot({ path: resolve(out, `${test.name}-scene.png`) });
         await page.evaluate(async () => {
             const bh = await import('/src/blackholes.js'); bh.clearBlackHoles();
-            for (let i = 0; i < 3; i++) bh.addBlackHole(150000 + i * 80000, i * 70000, 10, 0, 0, true);
+            for (let i = 0; i < 3; i++) bh.addBlackHole(150000 + i * 80000, i * 40000, 10, 0, 0, true);
+            const { G } = await import('/src/state.js'), { cam } = await import('/src/scene.js');
+            const { eph } = await import('/src/ephemeris.js'), { K } = await import('/src/constants.js');
+            G.focus = 'free'; cam.tgt.set((eph.earthX + 230000) * K, 0, -(eph.earthY + 40000) * K);
+            cam.dist = 450; cam.distTarget = null; cam.yaw = 1.3; cam.pitch = .45;
         });
         await page.waitForFunction(() => __river.sourceCount >= 13);
         const sourceCount = await page.evaluate(() => __river.sourceCount);
+        await page.screenshot({ path: resolve(out, `${test.name}-three-holes-minimal.png`) });
         const invariant = await page.evaluate(async () => {
             const { BH, G } = await import('/src/state.js');
             return { n: BH.n, mass: Array.from(BH.mu).slice(0, BH.n), t: G.t };
@@ -82,6 +87,12 @@ async function warmRendererStartup()`);
         await page.locator('#renderQualityControls summary').click();
         await page.locator('#renderQualityMode').selectOption('low');
         await page.waitForFunction(() => __renderQuality.mode === 'low' && __renderQuality.dpr <= .75 && __river.computeEvery === 2);
+        await page.waitForFunction(async () => {
+            const lens = await import('/src/lensing.js');
+            return lens.lensingPass.enabled && lens.lensingPass.uniforms.uN.value === 3;
+        });
+        assert.equal(await page.evaluate(() => __renderQuality.lensSamples), 0, 'three visible lenses do not force MSAA');
+        await page.screenshot({ path: resolve(out, `${test.name}-three-holes-low.png`) });
         await page.locator('#renderQualityMode').selectOption('minimal');
         await page.waitForFunction(() => __renderQuality.mode === 'minimal' && __river.computeEvery === 4);
         const after = await page.evaluate(async () => {
