@@ -21,7 +21,7 @@ try {
     const page=await browser.newPage({viewport:{width:640,height:400},deviceScaleFactor:1});page.setDefaultTimeout(120000);
     page.on('pageerror',e=>report.errors.push(e.message));
     await page.addInitScript(()=>{Date.now=()=>Date.UTC(2026,8,13,12);localStorage.setItem('ap_introSeen','1')});
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&dpr=1&tier1=0&galadapt=0&focus=earth&dist=25&realsky=0&river=0&lens=0`,{waitUntil:'domcontentloaded'});
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&hidehelp=1&dpr=1&tier1=0&galadapt=0&focus=earth&dist=25&realsky=0&river=0&lens=0`,{waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>window.__AP_READY&&window.__captureAppFrame);
     await page.evaluate(async()=>{
         const s=await import('/src/scene.js'),b=await import('/src/bodies.js'),e=await import('/src/render/stellarAppearance.js'),c=await import('/src/universe/coords.js'),v=await import('/src/render/galaxyVolume.js');

@@ -49,7 +49,7 @@ const transformed=new Function('s','id','assert',transformBody)(main,'/src/main.
 assert.equal(transformed.split('window.__frameSuccess=').length-1,3,'Every near-flight completion branch is counted');
 execFileSync(process.execPath,['--check','--input-type=module'],{input:transformed});
 const entry=main.slice(main.indexOf('function frame() {'),main.indexOf('function frameStep() {'));
-const makeFrame=new Function('frameStep','renderContext',entry+';return frame;');
+const makeFrame=new Function('frameStep','renderContext','renderSubmissionSerial',entry+';return frame;');
 assert.doesNotThrow(makeFrame(()=>{throw Error('GPU lost');},{isLost:()=>true}));
 assert.throws(makeFrame(()=>{throw Error('unrelated failure');},{isLost:()=>false}),/unrelated failure/);
 console.log('PASS: production scheduler loss guard, unrelated error propagation, and all exact-source QA transforms');

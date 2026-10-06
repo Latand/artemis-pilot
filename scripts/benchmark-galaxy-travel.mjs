@@ -13,7 +13,7 @@ assert(process.env.BASE_ROOT, 'BASE_ROOT must identify an exact baseline worktre
 const out = resolve(args[1] || 'evidence/galaxy-travel-paired');
 const workload = JSON.parse(await readFile(new URL('./galaxy-travel-timing-fixtures.json', import.meta.url), 'utf8'));
 const orders = ['ABBA', 'BAAB'], warmup = 4, samples = 12;
-const query = '?tier1=0&river=0&bloom=0&compile=0&hidehelp=1&dpr=1&perf=1&galadapt=0';
+const query = '?quality=high&tier1=0&river=0&bloom=0&compile=0&hidehelp=1&dpr=1&perf=1&galadapt=0';
 function transform(source, id) {
     if (!id.replaceAll('\\','/').endsWith('/src/main.js')) return;
     assert(source.includes('renderer.setAnimationLoop(frame);'));

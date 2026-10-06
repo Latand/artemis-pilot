@@ -439,10 +439,10 @@ function sizeTarget(rt, w, h, name) {
 function ensureTargets(renderer) {
     const size = renderer.getDrawingBufferSize(_size);
     // Bound residency, including DPR-heavy displays. No monolithic 8K volume.
-    const maxPixels = renderQuality.mobile ? 1.2e6 : 4.2e6;
+    const maxPixels = Math.min(renderQuality.maxPixels ?? Infinity, renderQuality.mobile ? 1.2e6 : 4.2e6);
     const cap = Math.min(1, Math.sqrt(maxPixels / Math.max(1, size.x * size.y)),
         renderer.capabilities.maxTextureSize / Math.max(size.x, size.y, 1));
-    const full = Math.min(cap, RES_FORCED || (renderQuality.mobile ? 0.5 : 1));
+    const full = Math.min(cap, RES_FORCED || Math.min(renderQuality.galaxyScale ?? 1, renderQuality.mobile ? 0.5 : 1));
     const sc = Math.min(full, RES_FORCED || state.scale);
     const w = Math.max(64, Math.round(size.x * full)), h = Math.max(40, Math.round(size.y * full));
     const wd = Math.max(64, Math.round(size.x * sc)), hd = Math.max(40, Math.round(size.y * sc));
@@ -478,7 +478,7 @@ const SCENE_TO_GAL = (() => {
 // that lives a fraction of that is averaged to its mean
 // (galaxyDynamics.materialDetailLod). 0 (paused, captures): full detail.
 export function updateGalaxyVolume(camera, tSec, era = null, disrupt = 0, opacity = 1, oldFade = 1, frameSimSec = 0) {
-    if (!state.enabled) return;
+    if (!galaxyVolumeEnabled()) return;
     init();
     state.camera = camera; state.time = tSec; state.era = era; state.disrupt = disrupt; state.oldFade = oldFade;
     state.frameSimSec = frameSimSec;
@@ -578,7 +578,7 @@ function quantizeScale(want) {
 }
 
 export function setGalaxyVolumeMagLimit(m) {
-    if (!state.enabled) return;
+    if (!galaxyVolumeEnabled()) return;
     init();
     const u = state.rayMat.uniforms.uMagLimit;
     if (Math.abs(u.value - m) > 1e-3) { u.value = m; state.dirty = true; }
@@ -654,7 +654,7 @@ function meterPool(renderer, rt) {
     meter.pending = true;
 }
 export function galaxyVolumeExposureCap() {
-    return state.enabled && state.ready && state.maps && state.opacity > 0.001 ? meter.cap : 1;
+    return galaxyVolumeEnabled() && state.ready && state.maps && state.opacity > 0.001 ? meter.cap : 1;
 }
 function meterUpdate(now) {
     const dt = meter.t ? Math.min(0.5, Math.max(0, (now - meter.t) / 1000)) : 0;
@@ -664,7 +664,7 @@ function meterUpdate(now) {
 }
 
 export function renderGalaxyVolume(renderer, camera = state.camera) {
-    if (!state.enabled || !state.ready || state.opacity <= 0.001 || !state.maps) { meter.target = 1; meter.fresh = true; return; }
+    if (!galaxyVolumeEnabled() || !state.ready || state.opacity <= 0.001 || !state.maps) { meter.target = 1; meter.fresh = true; return; }
     if (renderer.getContext().isContextLost()) return;
     renderer.getDrawingBufferSize(_size);
     if (camera) updateGalaxyVolume(camera, state.time, state.era, state.disrupt, state.opacity, state.oldFade, state.frameSimSec);
@@ -746,7 +746,7 @@ export function galaxyVolumeStats() {
     const refined = RES_FORCED || state.mix >= 1;
     const rt = refined ? state.rtFull : state.rtDraft;
     return {
-        enabled: state.enabled, renders: state.renders, res: rt ? [rt.width, rt.height] : null, scale: RES_FORCED || state.scale,
+        enabled: galaxyVolumeEnabled(), minimal: renderQuality.minimal, renders: state.renders, res: rt ? [rt.width, rt.height] : null, scale: RES_FORCED || state.scale,
         mapsReady: !!state.maps?.full, coverageReady: !!state.maps, mapError: state.mapError, mapsMs: state.maps?.ms ?? null, fade: state.mapFade, draft: !refined,
         exposureMode: FIXED_EXPOSURE === null ? "shared-sky" : "fixed-diagnostic",
         historyUsed: state.historyUsed, historyReady: !!state.history, invalidations: state.invalidations,
@@ -777,7 +777,7 @@ export function setGalaxyVolumeEnabled(on) {
     state.enabled = enabled;
 }
 export function galaxyVolumeEnabled() {
-    return state.enabled;
+    return state.enabled && !renderQuality.minimal;
 }
 
 // CPU metadata cannot certify GPU render-target contents after context restore.

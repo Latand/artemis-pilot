@@ -1,0 +1,33 @@
+#renderQualityControls { position:fixed;right:12px;top:82px;z-index:1200;max-width:min(290px,calc(100vw - 24px));border:1px solid #667582;border-radius:6px;background:#101820ed;color:#eaf0f5;font:12px/1.45 system-ui,sans-serif; }
+#renderQualityControls summary { cursor:pointer;min-height:36px;display:flex;align-items:center;padding:0 10px; }
+#renderQualityControls[open] { padding-bottom:10px; }
+#renderQualityControls label { display:block;margin:4px 10px; }
+#renderQualityControls select { max-width:150px;min-height:36px;background:#192735;color:inherit;border:1px solid #667582;border-radius:4px;font:inherit; }
+#renderQualityControls p { margin:8px 10px 0;max-width:265px; }
+body.mode-xr #renderQualityControls, body.mode-clean #renderQualityControls { display:none; }
+@media(max-width:760px) { #renderQualityControls { top:calc(var(--explore-toolbar-bottom,108px) + 84px);right:10px; } #renderQualityControls summary,#renderQualityControls select { min-height:44px; } }
+
+#restartGraphics[hidden] { display:none!important; }
+
+ body.compact-explorer.mode-observe #renderQualityControls {
+  top:calc(var(--explore-panel-bottom,238px) + 10px);
+  max-height:calc(var(--time-dock-top,calc(100dvh - 140px)) - var(--explore-panel-bottom,238px) - 20px);
+  box-sizing:border-box;
+ }
+ body.compact-explorer.mode-observe #renderQualityControls summary,
+ body.compact-explorer.mode-observe #renderQualityControls select { min-height:44px; }
+ body.compact-explorer.mode-observe #renderQualityControls[open] { overflow:auto; }
+ body.compact-explorer.compact-moving.mode-observe #renderQualityControls,
+ body.compact-explorer.mode-observe:has(#tdOptions:not([hidden])) #renderQualityControls,
+ body.compact-explorer.mode-observe:has(#explorePanel.expanded) #renderQualityControls,
+ body.compact-explorer.mode-observe:has(#gravityInspector[open]) #renderQualityControls { display:none; }
+@media(max-height:540px) and (orientation:landscape) {
+ body.compact-explorer.mode-observe #renderQualityControls {
+  top:calc(var(--explore-toolbar-bottom,60px) + 10px);
+  right:10px;
+  max-width:min(290px,calc(100vw - var(--explore-panel-right,260px) - 20px));
+  max-height:calc(var(--time-dock-top,calc(100dvh - 140px)) - var(--explore-toolbar-bottom,60px) - 20px);
+ }
+}
+
+#renderQualityControls summary:focus-visible { outline:2px solid #8ecdf6;outline-offset:-4px; }

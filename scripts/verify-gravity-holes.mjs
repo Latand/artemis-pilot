@@ -3,16 +3,84 @@ import assert from 'node:assert/strict';
 import {chromium} from 'playwright';
 import {createServer} from 'vite';
 import {mkdir,writeFile} from 'node:fs/promises';
+import {readFileSync} from 'node:fs';
+import vm from 'node:vm';
 import {execFileSync} from 'node:child_process';
+// Explicit frame() calls intentionally bypass live RAF admission. The caller
+// resets the phase pacer and must prove that one real render was produced;
+// a synchronous pixel readback owns GPU serialization for this small fixture.
+const HOLE_FRAME_HOOK = `
+const holeQAReadback = new Uint8Array(4);
+window.__holeFrame = () => {
+ const gl = renderer.getContext();
+ if (renderContext.isLost() || gl.isContextLost()) throw Error('Force fixture requires a healthy render context');
+ const before = renderSubmissionSerial;
+ clock.getDelta = () => 1/60;
+ lastMobileFrame = -Infinity;
+ frame();
+ if (renderSubmissionSerial !== before + 1) throw Error('Force fixture did not produce exactly one render');
+ if (renderContext.isLost() || gl.isContextLost()) throw Error('Force fixture lost context during render');
+ gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,holeQAReadback);
+ if (renderContext.isLost() || gl.isContextLost()) throw Error('Force fixture lost context during readback');
+ if (gl.getError() !== gl.NO_ERROR) throw Error('Force fixture readback has a WebGL error');
+ return { before, after: renderSubmissionSerial, pixel: Array.from(holeQAReadback) };
+};
+`;
+function transformHoleMain(source) {
+ const marker='const firstFrameT0 = perfStart();',loop='renderer.setAnimationLoop(frame);';
+ assert.equal(source.split(marker).length,2,'Exact startup fixture seam');
+ assert.equal(source.split(loop).length,2,'Exactly one live loop is disabled');
+ return source.replace(marker,'G.t=0;G.paused=true;G.gr=true;grB=1;resetEphem();clock.getDelta=()=>1/60;'+marker)
+  .replace(loop,'')+HOLE_FRAME_HOOK;
+}
+if(process.argv.includes('--validate')){
+ const main=readFileSync(new URL('../src/main.js',import.meta.url),'utf8'),transformed=transformHoleMain(main);
+ assert(!transformed.includes('renderer.setAnimationLoop(frame);'));
+ execFileSync(process.execPath,['--check','--input-type=module'],{input:transformed});
+ const start=main.indexOf('function frame() {'),end=main.indexOf('function frameStep() {',start);
+ assert(start>=0&&end>start,'Actual production frame wrapper is available');
+ const wrapper=main.slice(start,end);
+ function fixture(mode='healthy'){
+  const events=[],buffers=[],gl={lost:mode==='lost-before',NO_ERROR:0,RGBA:0x1908,UNSIGNED_BYTE:0x1401,
+   isContextLost(){return this.lost;},getError(){return mode==='gl-error'?0x0502:0;},
+   finish(){throw Error('Do not substitute a blind finish for an observed frame');},
+   readPixels(x,y,w,h,format,type,buffer){
+    assert.deepEqual([x,y,w,h,format,type],[0,0,1,1,this.RGBA,this.UNSIGNED_BYTE]);assert.equal(buffer.byteLength,4);
+    buffers.push(buffer);events.push('readback');buffer.set([17,23,41,255]);if(mode==='lost-read')this.lost=true;
+   }};
+  const c={window:{},clock:{getDelta:()=>0},lastMobileFrame:100,renderSubmissionSerial:7,renderer:{getContext:()=>gl},
+   renderContext:{isLost:()=>gl.lost},VR:{active:false},performance:{now:()=>100},
+   document:{hidden:false,getElementById:()=>({style:{display:'none'}})},
+   renderFrameGate:{stats:{stalled:true},ready(){throw Error('Explicit QA call must not poll live admission');},submitted(){throw Error('Explicit QA call owns completion');}}};
+  c.frameStep=()=>{events.push('frame');assert.equal(c.lastMobileFrame,-Infinity);assert.equal(c.clock.getDelta(),1/60);
+   if(mode==='render-error')throw Error('Original render error');
+   if(mode!=='no-frame')c.renderSubmissionSerial+=mode==='double-frame'?2:1;
+   if(mode==='lost-frame')gl.lost=true;
+  };
+  vm.createContext(c);vm.runInContext(wrapper+HOLE_FRAME_HOOK,c);
+  return {c,events,buffers,run:()=>c.window.__holeFrame()};
+ }
+ const healthy=fixture();
+ for(let i=0;i<3;i++){const result=healthy.run();assert.equal(result.before,7+i);assert.equal(result.after,8+i);assert.deepEqual([...result.pixel],[17,23,41,255]);}
+ assert.deepEqual(healthy.events,['frame','readback','frame','readback','frame','readback']);
+ assert(healthy.buffers.every(buffer=>buffer===healthy.buffers[0]),'Readback reuses one typed array');
+ for(const mode of ['no-frame','double-frame','lost-before','lost-frame','lost-read','gl-error','render-error']){
+  const f=fixture(mode);assert.throws(f.run,mode==='render-error'?/Original render error/:/Force fixture/);
+  if(['no-frame','double-frame','lost-before','lost-frame','render-error'].includes(mode))assert.equal(f.buffers.length,0);
+ }
+ assert.throws(()=>transformHoleMain(main.replace('renderer.setAnimationLoop(frame);','')),/live loop/);
+ assert.throws(()=>transformHoleMain(main.replace('const firstFrameT0 = perfStart();','')),/startup fixture seam/);
+ console.log('Gravity-hole fixture: actual explicit wrapper, exact render count, reused completed readback, no-frame/double-frame/context-loss/GL-error negatives and deferred-startup transform passed. No GPU execution claimed.');
+ process.exit(0);
+}
 const device=process.env.DEVICE||'desktop',mobile=device!=='desktop',out=process.env.ARTEMIS_EVIDENCE||'evidence/gravity-inspector';
 await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),device,checks:[],errors:[],omissions:['AT-HYG streaming','procedural resolved field','HYG background'],scope:'Software Chromium behavioral verification, not a hardware performance benchmark'};
+const report={revision:execFileSync('git',['rev-parse','HEAD'],{encoding:'utf8'}).trim(),device,checks:[],producedFrames:[],errors:[],omissions:['AT-HYG streaming','procedural resolved field','HYG background'],scope:'Software Chromium behavioral verification, not a hardware performance benchmark'};
 const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);console.log('PASS',name);};
 const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'hole-explanation-qa',enforce:'pre',transform(source,id){
  if(id.split('?')[0].endsWith('/src/river.js'))return source+'\nexport function holeQAUniforms(){return bodyVals.slice(3+PL.length,3+PL.length+BH.n).map(v=>v.toArray());}';
  if(!id.split('?')[0].endsWith('/src/main.js'))return;
- const marker='const firstFrameT0 = perfStart();';assert.equal(source.split(marker).length,2);
- return source.replace(marker,'G.t=0;G.paused=true;G.gr=true;grB=1;resetEphem();clock.getDelta=()=>1/60;'+marker).replace('renderer.setAnimationLoop(frame);','')+'\nwindow.__holeFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;frame();renderer.getContext().finish();};';
+ return transformHoleMain(source);
 }}]});await server.listen();
 const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 try{
@@ -22,7 +90,7 @@ try{
  await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=earth&dist=25&hidehelp=1&tier1=0&field=0&realsky=0&bloom=0&compile=0`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__holeFrame);
- const frame=async()=>page.evaluate(()=>__holeFrame());
+ const frame=async()=>{const produced=await page.evaluate(()=>__holeFrame());report.producedFrames.push(produced);return produced;};
  await page.evaluate(async()=>{
   const {G,WORLD}=await import('/src/state.js'),{addBlackHole}=await import('/src/blackholes.js'),{cam}=await import('/src/scene.js');
   WORLD.earthDestroyed=WORLD.moonDestroyed=WORLD.sunDestroyed=true;WORLD.plDestroyed.fill(true);G.darkMatter=G.darkEnergy=false;

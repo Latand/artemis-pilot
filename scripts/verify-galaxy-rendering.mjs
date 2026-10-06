@@ -20,7 +20,7 @@ const server = await createServer({ root, server: { host: '127.0.0.1', port: 0, 
 await server.listen();
 const browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM || undefined,
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
-const url = `http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&dpr=1&tier1=0&galadapt=0&focus=sun&dist=1e4&realsky=0&river=0`;
+const url = `http://127.0.0.1:${server.httpServer.address().port}/?quality=high&hidehelp=1&dpr=1&tier1=0&galadapt=0&focus=sun&dist=1e4&realsky=0&river=0`;
 async function openPage(fault = 'hold') {
     const page = await browser.newPage({ viewport: { width: 640, height: 400 }, deviceScaleFactor: 1 });
     page.setDefaultTimeout(120000);

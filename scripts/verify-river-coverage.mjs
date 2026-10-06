@@ -76,7 +76,7 @@ coverage:try{
  page.on('pageerror',e=>report.errors.push(e.stack||e.message));page.on('console',m=>{if(m.type()==='error'&&/THREE|Shader|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
  await page.addInitScript(()=>{localStorage.clear();localStorage.setItem('ap_introSeen','1');Date.now=()=>Date.UTC(2026,9,4,12);});
  await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
- await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=sun&dist=40000&pitch=0&yaw=1.5707963267948966&dpr=.5&compile=0&field=0&realsky=0&tier1=0&hidehelp=1`,{waitUntil:'domcontentloaded'});
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&focus=sun&dist=40000&pitch=0&yaw=1.5707963267948966&dpr=.5&compile=0&field=0&realsky=0&tier1=0&hidehelp=1`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__coverageFrame);
  // Keep all 1200 production frames and full particle counts, but bound the
  // software GPU's steady framebuffer work at the supported dpr=.5 setting.

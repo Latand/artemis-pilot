@@ -22,7 +22,7 @@ try{
  const page=await context.newPage();page.setDefaultTimeout(180000);
  page.on('pageerror',e=>report.errors.push(e.message));
  page.on('console',m=>{if(m.type()==='error'&&/Shader|WebGL|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
- await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?hidehelp=1&tier1=0&galadapt=0&focus=earth&dist=25&river=0&lens=0`,{waitUntil:'domcontentloaded'});
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&hidehelp=1&tier1=0&galadapt=0&focus=earth&dist=25&river=0&lens=0`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__reviewFrame);
  await page.evaluate(async()=>{const s=await import('/src/scene.js');s.renderer.setAnimationLoop(null);__G.paused=true;__G.gr=false;__G.predict=false;window.reviewScene=s;});
  await page.waitForFunction(()=>window.__volStatus?.().mapsReady&&window.__galaxyStatus?.().ready);

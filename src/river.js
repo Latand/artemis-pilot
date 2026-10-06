@@ -39,19 +39,16 @@ import { observerPositionRelativeTo, stabilizeBodyMaterial } from './render/rela
 // frames instead of drifting. Mass-owned samples instead store a small
 // offset from their current source and follow it even on skipped computes.
 // No absolute world coordinate is stored in either population. See WP22.
-const SEGS = renderQuality.mobile ? 1 : 2;
-// Desktop's default particle count is traded down (176 -> 124, ~1/sqrt(2))
-// so total line-vertex-shader work (particles * VPP, each vertex running the
-// same per-source color loop) stays roughly at parity with the pre-redesign
-// single-segment baseline instead of ~doubling it — measured on a loaded
-// headless run: unadjusted this cost went from a ~15% river frame-time hit
-// to ~27%; with the trade it's back near the original. `np=` still overrides.
-// Mobile uses 9,216 compute texels instead of 18,496; desktop keeps its
-// density. Explicit np= overrides remain available for profiling.
+const SEGS = renderQuality.mobile || (renderQuality.software && renderQuality.mode !== 'high') ? 1 : 2;
+// Conservative allocation before the first compute: software 32², mobile
+// 64², desktop 96². Runtime budgets reduce draw count and compute cadence;
+// all physical source uniforms stay intact. np= is an explicit diagnostic
+// allocation override and takes effect on reload.
 const TEXW = (() => {
     const m = location.search.match(/np=(\d+)/);
-    const v = m ? +m[1] : renderQuality.mobile ? 96 : 124;
-    return Math.min(1024, Math.max(64, v));
+    const v = m ? +m[1] : renderQuality.mode === 'high' ? (renderQuality.mobile ? 96 : 124) :
+        renderQuality.software ? 32 : renderQuality.mobile ? 64 : 96;
+    return Math.min(1024, Math.max(16, v));
 })();
 const NPART = TEXW * TEXW;
 const RIVER_QUALITY_TEXW = renderQuality.mobile ? 96 : 124;
@@ -895,6 +892,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     river.renderShed = renderShed;
     let drawFrac = Math.max(.52, .56 + localFocus * .30, 1 - renderShed * .44);
     if (renderQuality.mobile) drawFrac = Math.min(drawFrac, renderQuality.loadShed >= 2 ? .72 : .84);
+    drawFrac = Math.min(drawFrac, renderQuality.riverDraw ?? 1);
     const drawCount = Math.max(256, Math.min(NPART, Math.floor(NPART * drawFrac)));
     if (drawCount !== river.drawCount) {
         lines.geometry.setDrawRange(0, drawCount * IPP);
@@ -1129,7 +1127,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         shellAnchorIdx = shellBest;
         shellAnchorLive = true;
     }
-    const vRefCadence = renderQuality.mobile ? 4 : G.warp > 600 ? 3 : 1;
+    const vRefCadence = Math.max(renderQuality.riverEvery ?? 1, renderQuality.mobile ? 4 : G.warp > 600 ? 3 : 1);
     const vRefMove = Math.max(
         Math.abs(smoothCenter.x - riverVRefCx),
         Math.abs(smoothCenter.y - riverVRefCy),
@@ -1178,7 +1176,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const dtVis = Number.isFinite(dtSim) ? dtSim : 0;
     river.dtVis = dtVis;
     uniformsShared.uRespawn.value = respawn;
-    const adaptiveComputeEvery = renderQuality.mobile ? (river.computeEveryAdaptive || 1) : 1;
+    const adaptiveComputeEvery = renderQuality.riverEvery;
     const baseComputeEvery = renderQuality.mobile && renderQuality.loadShed >= 2 ? 2 : 1;
     const computeEvery = Math.max(baseComputeEvery, adaptiveComputeEvery);
     river.computeEvery = computeEvery;
@@ -1211,9 +1209,9 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         } finally { renderer.setRenderTarget(prevRT); }
         const computeMs = performance.now() - computeT0;
         river.computeMs = computeMs;
-        if (renderQuality.mobile && computeMs > 24) river.computeEveryAdaptive = Math.min(4, Math.max(river.computeEveryAdaptive || 1, Math.ceil(computeMs / 18)));
-        else if (renderQuality.mobile && computeMs < 6 && river.computeEveryAdaptive > 1) river.computeEveryAdaptive = Math.max(1, river.computeEveryAdaptive - 1);
-        else if (!renderQuality.mobile) river.computeEveryAdaptive = 1;
+        // Submission time is diagnostic only; the global delivered-frame
+        // controller includes asynchronous GPU stalls on desktop and mobile.
+        river.computeEveryAdaptive = adaptiveComputeEvery;
         const sw = rtA; rtA = rtB; rtB = sw;
         // The compute pass reassigns owners from this CDF. Hold this snapshot
         // across skipped computes: new camera eligibility must not dim an old,

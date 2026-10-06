@@ -1,0 +1,34 @@
+name: Responsive startup and adaptive quality
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/*adaptive-quality*'
+      - '.github/workflows/adaptive-quality.yml'
+permissions:
+  contents: read
+concurrency:
+  group: adaptive-quality-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  startup-and-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npm run smoke:adaptive-quality && npm test && npm run smoke:determinism && npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run verify:adaptive-quality && npm run smoke:saves
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adaptive-quality-evidence
+          path: evidence/adaptive-quality/
+          retention-days: 14

@@ -52,10 +52,10 @@ Six bounded functional cells cover desktop/mobile and these three suites:
   sequences, including same-count source replacement, ordering/eligibility,
   positive/negative/paused advection, native mobile cadence and real GPU
   loss/restoration. The candidate gain checks now apply unconditionally to the
-  sole current root. The mobile lifecycle cell uses explicit `quality=low` to
-  exercise production cadence two, with `np=96` preserving all 9,216 legacy
+  sole current root. The mobile lifecycle cell initially loads `quality=low`, then selects the
+  public High/Low modes per the cadence phases below, with `np=96` preserving all 9,216 legacy
   particle texels and the existing `dpr=1`. All other functional cells use High.
-  This cell covers Low-mode cadence at full particle capacity; it does not claim
+  This cell covers staged cadence at full particle capacity; it does not claim
   full visual detail. Signed held-texture skips and moving-hole urgent dispatch
   keep their original assertions.
 
@@ -108,3 +108,16 @@ comparisons; river coverage's ancestry fence is satisfied by current main;
 exploration crossover is already scoped to PR #32 and not source-triggered.
 These unrelated jobs are unchanged. Browser checks require hosted execution;
 local model/source validation is not GPU or physical-device acceptance.
+
+### Current lifecycle cadence phases
+
+The mobile black-hole fixture uses the public High mode for its small paused
+source moves, and Low for both signed-motion phases. Proxima remains Low
+throughout. This preserves the archived predicate's intended cadence-one
+paused BH phase and urgent off-cadence signed BH phase; blanket Low correctly
+skips some small paused moves and therefore cannot satisfy that predicate.
+The immutable policy and every assertion remain unchanged. The `np=96`/DPR1
+allocation remains constant, no physical state is changed, and pre-controller
+runtime retains its native cadence selection. Reports identify these mixed
+visual modes explicitly; this is functional cadence coverage, not timing or
+full-detail acceptance.

@@ -87,8 +87,16 @@ for (const device of ['desktop', 'mobile']) for (const suite of ['transient', 'l
     for (const assertion of ['healthyRadianceMobileCadence(row.frames, spec.subject)', 'signedRadianceAdvection(state,plan)',
       'healthyRadianceGain(state, row.frames.at(-2))', 'healthyRadianceRecovery(row.recoveries.at(-1), state)',
       'healthyRadianceCapture(state)', 'frame.count === (mobile ? 9216 : 15376)']) assert(source.includes(assertion));
-    assert(source.includes('Current mobile Low cadence at DPR1 with np=96 (9,216 texels);'));
+    assert(source.includes('Current mobile staged High/Low cadence at DPR1 with np=96 (9,216 texels);'));
     assert(!source.includes(': full production device quality`'));
+    const selection = source.match(/            if \(q\.s\.setQualityMode\) \{[\s\S]*?\n            \}/)[0];
+    for (const subject of ['proxima', 'black-hole']) for (const rate of [0,3852,-3852]) for (const native of [false,true]) {
+      const q = { subject, s: { renderQuality: { mode: 'low' } } }; let calls = 0;
+      if (native) q.s.setQualityMode = mode => { q.s.renderQuality.mode = mode; calls++; };
+      new Function('q','plan',selection)(q,{rate});
+      const expected = native && subject === 'black-hole' && rate === 0 ? 'high' : 'low';
+      assert.equal(q.s.renderQuality.mode, expected); assert.equal(calls, expected === 'high' ? 1 : 0);
+    }
     execFileSync(process.execPath, ['--input-type=module', '--check'], { input: materializeCurrentRiver(source, new URL('verify-river-radiance.mjs', import.meta.url).href) });
   }
 }

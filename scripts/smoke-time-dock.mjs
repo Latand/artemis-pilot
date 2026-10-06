@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { createServer } from "vite";
 import { boundedDiagnostic } from "./qa-bounded-diagnostic.mjs";
+import { timeDockFrameHook } from "./time-dock-frame-fixture.mjs";
 
 const failures = [];
 const pageErrors = [];
@@ -11,6 +12,7 @@ let activePage = null;
 const report = {
   revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   scope: 'Time Dock UI-only live application: real frames, physics, four viewport layouts, cadence and actual controls. Full-layer motion/pixel verification runs separately.',
+  cadenceSampling: 'Read-only frameNo hook observes exact8/24 production-frame windows, not possibly skipped display callbacks;10s non-delivery cap. The app scheduler, physics and2–8 mutation limit remain unchanged.',
   omittedUnrelatedLayers: ['background procedural field', 'real-sky catalog', 'volumetric galaxy', 'galaxies', 'river', 'bloom', 'eager warm compile'],
   checks: [], phases: [], pageErrors, passed: false,
 };
@@ -87,6 +89,11 @@ try {
   viteServer = await createServer({
     logLevel: "silent",
     server: { host: "127.0.0.1", port: 0 },
+    plugins: [{ name:'time-dock-produced-frames',enforce:'pre',transform(source,id) {
+      if (!id.split('?')[0].endsWith('/src/main.js')) return;
+      if (!/\bframeNo\s*=\s*0\b/.test(source)) throw Error('Production frame counter seam changed');
+      return source+'\n'+timeDockFrameHook;
+    } }],
   });
   await viteServer.listen();
   const address = viteServer.httpServer?.address();
@@ -252,7 +259,7 @@ try {
       return originalQuery(...args);
     };
     setWarp(500 * SEC_YEAR, "dock-smoke-log-space");
-    for (let i = 0; i < 8; i++) await new Promise(resolve => requestAnimationFrame(resolve));
+    await window.__timeDockFrames(8);
     rail.querySelectorAll = originalQuery;
     return {
       activeLabel: rail.querySelector('.tdTick[aria-current="true"]')?.getAttribute("aria-label"),
@@ -272,7 +279,7 @@ try {
   const renderCadence = await page.evaluate(async () => {
     const { setWarp } = await import("/src/timeCtl.js");
     setWarp(3600, "dock-smoke-cadence");
-    for (let i = 0; i < 8; i++) await new Promise(resolve => requestAnimationFrame(resolve));
+    await window.__timeDockFrames(8);
     const dock = document.getElementById("timeDock");
     const date = document.getElementById("tdDate");
     let dateMutations = 0;
@@ -281,12 +288,12 @@ try {
     const attributeObserver = new MutationObserver(records => { attributeMutations += records.length; });
     dateObserver.observe(date, { childList: true, characterData: true, subtree: true });
     attributeObserver.observe(dock, { attributes: true, subtree: true });
-    for (let i = 0; i < 24; i++) await new Promise(resolve => requestAnimationFrame(resolve));
+    const delivered = await window.__timeDockFrames(24);
     dateObserver.disconnect();
     attributeObserver.disconnect();
-    return { dateMutations, attributeMutations, frames: 24 };
+    return { dateMutations, attributeMutations, frames: delivered.producedFrames, rawCallbacks: delivered.rafCallbacks };
   });
-  check(renderCadence.dateMutations >= 2 && renderCadence.dateMutations <= 8,
+  check(renderCadence.frames === 24 && renderCadence.dateMutations >= 2 && renderCadence.dateMutations <= 8,
     "Time Dock text renders on the HUD cadence", renderCadence);
   check(renderCadence.attributeMutations === 0,
     "stable Time Dock classes and attributes produce zero redundant mutations", renderCadence);
@@ -297,7 +304,7 @@ try {
     const { setWarp } = await import("/src/timeCtl.js");
     const activeLabel = async warp => {
       setWarp(warp, "dock-smoke-rung-edge");
-      for (let i = 0; i < 8; i++) await new Promise(resolve => requestAnimationFrame(resolve));
+      await window.__timeDockFrames(8);
       return document.querySelector('.tdTick[aria-current="true"]')?.getAttribute("aria-label");
     };
     const midpoint = Math.sqrt(600 * 3600);
@@ -338,8 +345,21 @@ try {
     const { setWarp } = await import("/src/timeCtl.js");
     WORLD.irreversibleFloorT = G.t;
     const expected = "REVERSE BLOCKED — cannot rewind past " + fmtCivilDate(getEpochMs(), WORLD.irreversibleFloorT);
+    WORLD.reverseBlocked = false; // Require a newly produced pulse, not an earlier latched flag.
     setWarp(-3600, "dock-smoke");
-    requestAnimationFrame(() => setWarp(3600, "dock-smoke-release"));
+    // Wait for a produced physics tick, not a raw RAF that GPU admission may skip.
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const deadline = setTimeout(() => { settled = true; reject(new Error('No production reverse-block pulse within 3000ms')); }, 3000);
+      const releaseAfterStep = () => {
+        if (settled) return;
+        if (WORLD.reverseBlocked) {
+          settled = true; clearTimeout(deadline);
+          setWarp(3600, "dock-smoke-release"); resolve();
+        } else requestAnimationFrame(releaseAfterStep);
+      };
+      requestAnimationFrame(releaseAfterStep);
+    });
     return expected;
   });
   let statusVisible = true;
@@ -456,7 +476,7 @@ try {
   const jumpAfterCancel = await page.evaluate(async () => (await import("/src/timeCtl.js")).jumpActive());
   check(jumpBeforeCancel && !jumpAfterCancel, "the real CANCEL handler clears active jump state",
     { jumpBeforeCancel, jumpAfterCancel });
-  for (let i = 0; i < 8; i++) await page.evaluate(() => new Promise(resolve => requestAnimationFrame(resolve)));
+  report.jumpSettling = await page.evaluate(() => window.__timeDockFrames(8));
   const jumpGeometry = await dockGeometry(page);
   check(jumpGeometry.scaleOverlap === 0, "cosmic-scale clearance expands with the jump plate", jumpGeometry);
   await page.evaluate(() => { document.getElementById("tdJump").hidden = true; });

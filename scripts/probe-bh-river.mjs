@@ -36,7 +36,7 @@ try {
     page.on('console', m => { if (m.type() === 'error' && /THREE|Shader|GL_INVALID/.test(m.text())) report.errors.push(m.text()); });
     await page.addInitScript(() => { Date.now = () => Date.UTC(2026, 8, 13, 12); localStorage.clear(); });
     await page.route(/fonts\.(googleapis|gstatic)\.com/, r => r.fulfill({ contentType: 'text/css', body: '' }));
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=earth&dist=25&tier1=0&realsky=0&field=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&bloom=0&dpr=1`);
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&focus=earth&dist=25&tier1=0&realsky=0&field=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&bloom=0&dpr=1`);
     await page.waitForFunction(() => window.__AP_READY && window.__celestialFrame);
     await page.evaluate(async () => {
         window.qa = { s: await import('/src/scene.js'), st: await import('/src/state.js'), bh: await import('/src/blackholes.js'),

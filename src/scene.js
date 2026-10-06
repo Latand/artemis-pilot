@@ -1,7 +1,10 @@
+import { createGraphicsRestart } from './render/graphicsRestart.js';
+import { createGpuFrameGate } from './render/gpuFrameGate.js';
 import { moveExplorationTarget } from './universe/explorationCamera.js';
 import * as THREE from "three";
 import { renderLinearFrame } from "./render/linearFrame.js";
 import { G, keys } from "./state.js";
+import { createQualityController, isSoftwareRenderer, readRendererName, qualityBudget, qualityPixelRatio, qualityMode } from './render/adaptiveQuality.js';
 import { bindContextLifecycle } from "./render/contextLifecycle.js";
 import { CAM_DIST_MAX, K, LY_SCENE } from "./constants.js";
 import { tierDepthRange } from "./render/tierDepth.js";
@@ -20,35 +23,64 @@ export const cvHost = document.getElementById("gl");
 // alternative to logarithmicDepthBuffer isn't available here; the
 // multi-frustum tiering below (`renderSceneTiered`) is the whole fix.
 // logarithmicDepthBuffer itself stays off per A6 (fill-rate cost).
-export const renderer = new THREE.WebGLRenderer({ antialias: true });
 const q = new URLSearchParams(location.search);
+let savedQuality = 'auto';
+try { savedQuality = localStorage.getItem('ap_quality') || 'auto'; } catch { }
+const initialQualityMode = qualityMode(q.get('quality') || savedQuality);
+// Conservative startup avoids permanent framebuffer multisampling. A deliberate
+// High load keeps the full-detail capture path; live changes reuse the context.
+export const renderer = new THREE.WebGLRenderer({ antialias: initialQualityMode === 'high' });
+export const renderFrameGate = createGpuFrameGate(() => renderer.getContext(), {
+    onStall: () => showRenderStall(), onRecovered: () => clearRenderStall(),
+});
+window.__renderFrameGate = renderFrameGate.stats;
+window.addEventListener('pagehide', () => renderFrameGate.dispose());
+window.addEventListener('pageshow', () => renderFrameGate.reset());
 const dprOverride = Number(q.get("dpr") || q.get("pixelRatio"));
-export const renderQuality = { mobile: false, dpr: 1, loadShed: 0, bloomScale: 1 };
+// Keep one live MediaQueryList; creating one in every frame can itself
+// become measurable overhead on the devices this controller protects.
+const mobileMedia = window.matchMedia?.("(max-width: 760px), (hover: none) and (pointer: coarse)");
+function isMobileLike() { return mobileMedia?.matches || false; }
+const rendererName = readRendererName(renderer.getContext());
+const qualityController = createQualityController({ mobile: isMobileLike(),
+    software: isSoftwareRenderer(rendererName), mode: initialQualityMode });
+export const renderQuality = { ...qualityController.state, rendererName, dpr: 1, loadShed: 0, bloomScale: 1,
+    ...qualityBudget(qualityController.state.level, isMobileLike()) };
 export const viewportSize = { w: 1, h: 1, pxScale: 1 };
 window.__renderQuality = renderQuality;
 let pixelLoadShed = 0;
-function isMobileLike() {
-    return window.matchMedia?.("(max-width: 760px), (hover: none) and (pointer: coarse)")?.matches || false;
-}
-function choosePixelRatio() {
-    const device = window.devicePixelRatio || 1;
-    const mobile = isMobileLike();
-    renderQuality.mobile = mobile;
-    if (Number.isFinite(dprOverride) && dprOverride > 0) return Math.max(.5, Math.min(2.5, dprOverride));
-    let cap = mobile ? 1.15 : 1.5;
-    if (pixelLoadShed >= 2) cap = Math.min(cap, mobile ? .92 : 1.1);
-    else if (pixelLoadShed >= 1) cap = Math.min(cap, mobile ? 1.0 : 1.25);
-    return Math.min(device, cap);
-}
+let updateQualityControls = () => {};
 function applyPixelRatio() {
-    const next = choosePixelRatio();
+    Object.assign(renderQuality, qualityController.state);
+    const level = renderQuality.mode === 'auto' ? Math.max(renderQuality.level, pixelLoadShed) : renderQuality.level;
+    Object.assign(renderQuality, qualityBudget(level, renderQuality.mobile));
+    renderQuality.effectiveLevel = level;
+    renderQuality.loadShed = level;
+    const next = qualityPixelRatio({ level, mobile: renderQuality.mobile, device: window.devicePixelRatio || 1,
+        override: dprOverride, width: cvHost.clientWidth, height: cvHost.clientHeight });
     if (Math.abs(next - renderQuality.dpr) > .01) {
         renderQuality.dpr = next;
         renderer.setPixelRatio(next);
     }
+    updateQualityControls();
     return renderQuality.dpr;
 }
 applyPixelRatio();
+export function resetRenderPerformance() { qualityController.reset(performance.now()); }
+export function sampleRenderPerformance(now, active = true) {
+    const targetMs = Math.max(renderQuality.mobile || renderQuality.minimal ? 1000 / 30 : 1000 / 60,
+        renderFrameGate.stats.fallback ? renderFrameGate.stats.fallbackIntervalMs : 0);
+    const mobile = isMobileLike(), mobileChanged = mobile !== renderQuality.mobile;
+    if (qualityController.sample(now, { active, mobile, targetMs }) || mobileChanged) resize(false);
+    Object.assign(renderQuality, qualityController.state);
+}
+export function setQualityMode(mode) {
+    qualityController.setMode(mode, performance.now());
+    try { localStorage.setItem('ap_quality', qualityController.state.mode); } catch { }
+    resize(false);
+}
+document.addEventListener?.('visibilitychange', resetRenderPerformance);
+export function bindQualityControls(update) { updateQualityControls = update; update(); }
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
 renderer.setClearColor(0x000000, 1);
@@ -59,8 +91,44 @@ const contextStatus = document.createElement("div");
 contextStatus.id = "renderContextStatus";
 contextStatus.setAttribute("role", "status");
 contextStatus.hidden = true;
-contextStatus.textContent = "Graphics interrupted. Flight is held here while the display recovers.";
-Object.assign(contextStatus.style, { position: "fixed", left: "8%", right: "8%", top: "46%", padding: "18px", border: "1px solid #70818c", borderRadius: "12px", background: "#0b141fee", color: "#e9eff5", textAlign: "center", zIndex: "1000", pointerEvents: "none" });
+const contextMessage = document.createElement('span');
+contextMessage.textContent = "Graphics interrupted. Flight is held here while the display recovers.";
+const restartGraphics = document.createElement('button');
+restartGraphics.id = 'restartGraphics'; restartGraphics.type = 'button'; restartGraphics.className = 'uiBtn uiBtnHot';
+restartGraphics.textContent = 'Restart graphics'; restartGraphics.hidden = true;
+Object.assign(restartGraphics.style, { margin: '12px auto 0', minHeight: '44px', padding: '8px 14px' });
+contextStatus.appendChild(contextMessage); contextStatus.appendChild(restartGraphics);
+let reloadRequired = false;
+const graphicsRestart = createGraphicsRestart(renderer, { onState(status) {
+    if (status === 'restored') { clearRenderStall(); return; }
+    contextStatus.hidden = false; restartGraphics.hidden = false;
+    restartGraphics.disabled = status === 'restarting';
+    reloadRequired = status !== 'restarting';
+    contextMessage.textContent = status === 'restarting'
+        ? 'Restarting graphics. Your simulation state is held.'
+        : 'Graphics could not restart. Reloading the page may lose unsaved simulation changes.';
+    restartGraphics.textContent = reloadRequired ? 'Reload page' : 'Restarting graphics';
+} });
+restartGraphics.addEventListener('click', () => {
+    if (reloadRequired) location.reload();
+    else graphicsRestart.restart();
+});
+// BFCache retains the original user-requested restart and its timers. A real
+// document teardown cancels it and releases listeners; it cannot strand a
+// resumed page behind a permanently disabled restart button.
+window.addEventListener('pagehide', event => { if (!event.persisted) graphicsRestart.dispose(); });
+function showRenderStall() {
+    contextStatus.hidden = false; restartGraphics.hidden = false; restartGraphics.disabled = false;
+    reloadRequired = false; restartGraphics.textContent = 'Restart graphics';
+    contextMessage.textContent = 'Graphics have stalled. Rendering and simulation are held. Restart graphics to try recovering without resetting the simulation.';
+}
+function clearRenderStall() {
+    if (graphicsRestart.state.pending) return;
+    restartGraphics.hidden = true; restartGraphics.disabled = false; reloadRequired = false;
+    restartGraphics.textContent = 'Restart graphics';
+    if (!renderContext.isLost()) contextStatus.hidden = true;
+}
+Object.assign(contextStatus.style, { position: "fixed", left: "8%", right: "8%", top: "46%", padding: "18px", border: "1px solid #70818c", borderRadius: "12px", background: "#0b141fee", color: "#e9eff5", textAlign: "center", zIndex: "1000", pointerEvents: "auto" });
 cvHost.appendChild(contextStatus);
 function releaseFlightInput() {
     keys.clear();
@@ -69,12 +137,20 @@ function releaseFlightInput() {
     window.dispatchEvent(new Event("ap:releaseflightinput"));
 }
 export const renderContext = bindContextLifecycle(renderer, {
-    onLost() { releaseFlightInput(); contextStatus.hidden = false; },
+    onLost() {
+        renderFrameGate.reset(); resetRenderPerformance(); releaseFlightInput(); contextStatus.hidden = false;
+        if (!graphicsRestart.state.pending) {
+            contextMessage.textContent = 'Graphics interrupted. Flight is held here while the display recovers.';
+            restartGraphics.hidden = true;
+        }
+    },
     onRestored() {
         // Three retains its CPU-side target reference when rebuilding GL.
         // A loss during any offscreen pass must resume on the visible canvas.
         renderer.setRenderTarget(null);
         renderer.autoClear = true;
+        renderFrameGate.reset();
+        resetRenderPerformance();
         releaseFlightInput();
         contextStatus.hidden = true;
     },
@@ -590,8 +666,10 @@ window.addEventListener("pointerup", onUp);
 window.addEventListener("pointercancel", onUp);
 el.addEventListener("wheel", onWheel, { passive: false });
 
-function resize() {
+function resize(resetSampling = true) {
     if (renderer.xr.isPresenting) return; // XR owns the framebuffer size
+    if (resetSampling) resetRenderPerformance();
+    qualityController.state.mobile = isMobileLike();
     const pr = applyPixelRatio();
     const w = cvHost.clientWidth || 1, h = cvHost.clientHeight || 1;
     viewportSize.w = w;
@@ -616,14 +694,14 @@ function resizePostProcessing(w = viewportSize.w, h = viewportSize.h, pr = rende
     activeLensingPass?.uniforms?.uTexel?.value?.set(1 / Math.max(1, w * pr), 1 / Math.max(1, h * pr));
 }
 resize();
-new ResizeObserver(resize).observe(cvHost);
+new ResizeObserver(() => resize()).observe(cvHost);
+mobileMedia?.addEventListener?.('change', () => resize());
 
 export function setRenderLoadShed(level = 0) {
     const next = Math.max(0, Math.min(2, level | 0));
     if (next === pixelLoadShed) return;
     pixelLoadShed = next;
-    renderQuality.loadShed = next;
-    resize();
+    resize(false);
 }
 
 // ---- HTML label helpers ----

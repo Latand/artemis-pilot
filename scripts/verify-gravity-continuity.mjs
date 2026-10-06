@@ -32,7 +32,7 @@ try{
     page.on('pageerror',e=>report.errors.push(e.stack||e.message));
     page.on('console',m=>{if(m.type()==='error'&&/THREE|Shader|GL_INVALID/.test(m.text()))report.errors.push(m.text());});
     await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=sun&dist=2600000&pitch=.72&yaw=-.4&compile=0&field=0&realsky=0&tier1=0&hidehelp=1&flowstyle=arcs`,{waitUntil:'domcontentloaded'});
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&focus=sun&dist=2600000&pitch=.72&yaw=-.4&compile=0&field=0&realsky=0&tier1=0&hidehelp=1&flowstyle=arcs`,{waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>window.__AP_READY&&window.__gravityFrame);
     const frame=async(n=1)=>{for(let i=0;i<n;i++)await page.evaluate(()=>window.__gravityFrame());};
     const check=(key,ok)=>{report.checks[key]=ok;assert(ok,key);};
