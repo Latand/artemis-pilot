@@ -38,3 +38,14 @@ body:not(.compact-explorer) #explorePanel:has(#gravityInspector[open]) { max-hei
         max-height:max(44px,calc(var(--explore-visible-height,100dvh) - var(--explore-toolbar-bottom,60px) - 104px));
     }
 }
+
+#gravityNetVector .gravityContribution path { stroke:#e9bf79;stroke-width:1.5;stroke-dasharray:5 3; }
+#gravityNetVector .gravityContribution text { fill:#f3d5a2;font-size:10px; }
+
+/* Screen-direction cues stay above fixed controls even when the selected
+   object's correctly anchored scene arrows fall behind the Time Dock. */
+.gravityVectorSummary { display:flex;flex-wrap:wrap;flex-basis:100%;gap:6px;padding-top:3px; }
+.gravityVectorSummary[hidden],.gravityForceCue[hidden] { display:none; }
+.gravityForceCue { display:inline-flex;align-items:center;gap:5px;white-space:nowrap;border:1px solid #675b49;border-radius:3px;padding:3px 5px;color:#f3d5a2;font-size:10px; }
+.gravityForceCue[data-source-id="net"] { color:#b8e7df;border-color:#42615d; }
+.gravityMiniDirection { display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;font-size:15px; }

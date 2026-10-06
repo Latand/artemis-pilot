@@ -1,17 +1,17 @@
-import * as THREE from 'three';
 import { G } from './state.js';
 import { K } from './constants.js';
 import { cam, camera } from './scene.js';
 import { getLocalGravityInspection } from './gravityInspection.js';
 import { getGalaxyGravityInspection } from './gravityGalaxyInspection.js';
-import { gravityContext, strongestContributions, accelerationLabel } from './gravityInspectorMath.js';
+import { gravityContext, strongestContributions, accelerationLabel, isPlacedHoleFocus, holeContributionVectors } from './gravityInspectorMath.js';
+import {projectGravityVector, screenAccelerationDirection} from './gravityVectorProjection.js';
 import './gravityInspector.css';
 
 let panel,summary,scope,leading,title,rows,net,note,modelDetail,pathButton,pathNote,hooks;
 let context='local',previous=[],identity='',lastRead=-Infinity,snapshot=null;
-let vectorSvg,vectorPath,vectorText,netDirection;
-const projectedDirection=new THREE.Vector3();
-const origin=new THREE.Vector3(),end=new THREE.Vector3();
+let vectorSvg,vectorPath,vectorText,netDirection,contributorLayer,vectorSummary;
+const summaryCues=[];
+const contributorGlyphs=[];
 const setText=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
 function element(tag,cls,text=''){const n=document.createElement(tag);n.className=cls;n.textContent=text;return n;}
 export function initGravityInspector(options={}) {
@@ -20,6 +20,7 @@ export function initGravityInspector(options={}) {
     panel=element('details','gravityInspector');panel.id='gravityInspector';
     summary=element('summary','gravitySummary');summary.append(element('span','gravityHeading','Gravity'));
     scope=element('span','gravityScope','Local');leading=element('span','gravityLeading','Inspect attraction');summary.append(scope,leading);
+    vectorSummary=element('span','gravityVectorSummary');vectorSummary.hidden=true;summary.append(vectorSummary);
     title=element('p','gravityTarget');rows=element('ol','gravityContributors');
     net=element('p','gravityNet');note=element('p','gravityModel');
     netDirection=element('span','gravityDirection','↑');netDirection.setAttribute('role','img');netDirection.hidden=true;
@@ -42,7 +43,8 @@ export function initGravityInspector(options={}) {
     document.addEventListener('keydown',e=>{if(e.key==='Escape'&&panel.open&&panel.contains(document.activeElement)){panel.open=false;summary.focus();}});
     const ns='http://www.w3.org/2000/svg';
     vectorSvg=document.createElementNS(ns,'svg');vectorSvg.id='gravityNetVector';vectorSvg.setAttribute('aria-hidden','true');
-    vectorPath=document.createElementNS(ns,'path');vectorText=document.createElementNS(ns,'text');vectorSvg.append(vectorPath,vectorText);(document.getElementById('root')||document.body).append(vectorSvg);
+    contributorLayer=document.createElementNS(ns,'g');contributorLayer.id='gravityContributionVectors';
+    vectorPath=document.createElementNS(ns,'path');vectorPath.dataset.sourceId='net';vectorText=document.createElementNS(ns,'text');vectorSvg.append(contributorLayer,vectorPath,vectorText);(document.getElementById('root')||document.body).append(vectorSvg);
     updateGravityInspector(true);
 }
 function updateRows(result) {
@@ -54,42 +56,72 @@ function updateRows(result) {
     while(rows.children.length<list.length){const li=element('li','');li.append(element('span',''),element('span','gravityValue'));rows.append(li);}
     list.forEach((row,i)=>{setText(rows.children[i].children[0],row.label);setText(rows.children[i].children[1],row.value);});
 }
+// Direction-only arrows share the exact live acceleration ledger. The ambient
+// river remains a complete qualitative field, including the selected mass.
+function selectedHoleExplanation() { return isPlacedHoleFocus(G.focus)&&G.gr; }
+function projectVector(a,fraction) {
+    return projectGravityVector(snapshot.position,a,camera,cam.dist,fraction,innerWidth,innerHeight);
+}
+function updateDirectionSummary(vectors) {
+    vectorSummary.hidden=!isPlacedHoleFocus(G.focus);
+    if(vectorSummary.hidden)return;
+    const cues=[...vectors.map(row=>({id:row.id,name:row.label.replace('Black hole ','BH '),label:row.label,a:row.acceleration})),
+        {id:'net',name:'Net',label:'Net acceleration in the Earth frame',a:snapshot.net}];
+    while(summaryCues.length<cues.length){
+        const group=element('span','gravityForceCue'),name=element('span',''),arrow=element('span','gravityMiniDirection');
+        group.append(name,arrow);vectorSummary.append(group);summaryCues.push({group,name,arrow});
+    }
+    summaryCues.forEach((cue,i)=>{
+        cue.group.hidden=i>=cues.length;if(cue.group.hidden)return;
+        const value=cues[i],d=screenAccelerationDirection(value.a,camera);
+        cue.group.dataset.sourceId=value.id;setText(cue.name,value.name);setText(cue.arrow,d.symbol);
+        cue.arrow.style.transform=`rotate(${d.rotation}deg)`;
+        cue.group.title=`${value.label}: ${accelerationLabel(Math.hypot(...value.a))}. ${d.label}. Direction only.`;
+        cue.group.setAttribute('aria-label',cue.group.title);
+    });
+}
 function drawVector() {
-    vectorSvg.style.display='none';netDirection.hidden=true;
-    if(!panel.open||!snapshot?.supported||!snapshot.position||!snapshot.net||G.uiMode!=='observe'||G.cabin)return;
-    const a=snapshot.net,m=Math.hypot(...a);if(!(m>0))return;
-    // Keep the screen-projected cue reachable even when the selected object
-    // sits behind the mobile sheet; the scene arrow stays below UI chrome.
-    projectedDirection.set(a[0],a[2],-a[1]).normalize().transformDirection(camera.matrixWorldInverse);
-    const plane=Math.hypot(projectedDirection.x,projectedDirection.y);
-    netDirection.hidden=false;
-    netDirection.textContent=plane<.05?(projectedDirection.z<0?'⊗':'⊙'):'↑';
-    netDirection.style.transform=plane<.05?'none':`rotate(${Math.atan2(projectedDirection.x,projectedDirection.y)*180/Math.PI}deg)`;
-    const directionLabel=plane<.05?(projectedDirection.z<0?'Net points into the screen':'Net points out of the screen'):'Net direction projected onto the screen';
-    netDirection.setAttribute('aria-label',directionLabel);netDirection.title=directionLabel;
-    const p=snapshot.position;
-    origin.set(p[0]*K,p[2]*K,-p[1]*K);
-    // The arrow encodes direction only. It is never a travelled distance or
-    // a force-scaled length, and it is never reversed with the time control.
-    end.copy(origin).addScaledVector(new THREE.Vector3(a[0],a[2],-a[1]),Math.max(.001,cam.dist)*.14/m);
-    origin.project(camera);end.project(camera);
-    if(origin.z<-1||origin.z>1||end.z<-1||end.z>1||Math.abs(origin.x)>1||Math.abs(origin.y)>1)return;
-    const w=innerWidth,h=innerHeight,x=(origin.x+1)*w/2,y=(1-origin.y)*h/2,ex=(end.x+1)*w/2,ey=(1-end.y)*h/2;
-    const dx=ex-x,dy=ey-y,len=Math.hypot(dx,dy);
-    vectorSvg.setAttribute('viewBox',`0 0 ${w} ${h}`);vectorSvg.style.display='block';
-    vectorText.setAttribute('x',String(x+12));vectorText.setAttribute('y',String(y-12));
-    vectorText.textContent=len<8?'Net along sightline':snapshot.estimated?'Estimated net direction':'Net direction';
-    if(len<8){vectorPath.setAttribute('d',`M ${x-4} ${y} L ${x+4} ${y} M ${x} ${y-4} L ${x} ${y+4}`);return;}
-    const ux=dx/len,uy=dy/len,bx=ex-ux*10,by=ey-uy*10;
-    vectorPath.setAttribute('d',`M ${x} ${y} L ${ex} ${ey} M ${bx-uy*5} ${by+ux*5} L ${ex} ${ey} L ${bx+uy*5} ${by-ux*5}`);
+    vectorSvg.style.display='none';vectorSummary.hidden=true;netDirection.hidden=true;vectorPath.style.display='none';vectorText.textContent='';
+    for(const glyph of contributorGlyphs)glyph.group.style.display='none';
+    if((!panel.open&&!selectedHoleExplanation())||!snapshot?.supported||!snapshot.position||!snapshot.net||G.uiMode!=='observe'||G.cabin)return;
+    vectorSvg.setAttribute('viewBox',`0 0 ${innerWidth} ${innerHeight}`);
+    const vectors=holeContributionVectors(snapshot,G.focus);
+    updateDirectionSummary(vectors);
+    const labelY=[];
+    vectors.forEach((row,i)=>{
+        if(!contributorGlyphs[i]){
+            const ns='http://www.w3.org/2000/svg',group=document.createElementNS(ns,'g'),path=document.createElementNS(ns,'path'),text=document.createElementNS(ns,'text');
+            group.classList.add('gravityContribution');group.append(path,text);contributorLayer.append(group);contributorGlyphs.push({group,path,text});
+        }
+        const glyph=contributorGlyphs[i],p=projectVector(row.acceleration,.10);
+        if(!p)return;
+        glyph.group.dataset.sourceId=row.id;glyph.group.dataset.acceleration=JSON.stringify(row.acceleration);
+        glyph.group.style.display='';glyph.path.setAttribute('d',p.d);
+        let y=p.ey+14;while(labelY.some(v=>Math.abs(v-y)<16))y+=16;labelY.push(y);
+        glyph.text.setAttribute('x',String(p.ex+8));glyph.text.setAttribute('y',String(y));
+        glyph.text.textContent=`${row.label}${p.sightline?' · along sightline':''}`;
+        vectorSvg.style.display='block';
+    });
+    const a=snapshot.net,m=Math.hypot(...a);
+    if(!(m>0))return; // opposing arrows can remain visible at a balanced point
+    // Keep the projected net cue reachable even behind the mobile sheet.
+    const cue=screenAccelerationDirection(a,camera);
+    netDirection.hidden=false;netDirection.textContent=cue.symbol;
+    netDirection.style.transform=`rotate(${cue.rotation}deg)`;
+    netDirection.setAttribute('aria-label',cue.label);netDirection.title=cue.label;
+    const p=projectVector(a,.14);if(!p)return;
+    vectorSvg.style.display='block';vectorPath.style.display='';vectorPath.setAttribute('d',p.d);
+    vectorPath.dataset.acceleration=JSON.stringify(a);
+    vectorText.setAttribute('x',String(p.x+12));vectorText.setAttribute('y',String(p.y-14));
+    vectorText.textContent=p.sightline?'Net along sightline':snapshot.estimated?'Estimated net direction':isPlacedHoleFocus(G.focus)?'Net acceleration · Earth frame':'Net direction';
 }
 export function updateGravityInspector(force=false) {
     if(!panel)return;
-    if(G.uiMode!=='observe'||G.cabin){vectorSvg.style.display='none';return;}
-    const nextContext=gravityContext(cam.dist/K,context);
+    if(G.uiMode!=='observe'||G.cabin){vectorSvg.style.display='none';vectorSummary.hidden=true;return;}
+    const nextContext=gravityContext(cam.dist/K,context,G.focus);
     const key=String(G.focus)+':'+nextContext;
     const now=performance.now();
-    if(force||panel.open||key!==identity||now-lastRead>250){
+    if(force||panel.open||selectedHoleExplanation()||key!==identity||now-lastRead>250){
         if(key!==identity){
             previous=[];identity=key;context=nextContext;panel.dataset.context=context;
             // A new target/context must not inherit the scroll position of a
@@ -99,15 +131,16 @@ export function updateGravityInspector(force=false) {
         snapshot=context==='galaxy'?getGalaxyGravityInspection():getLocalGravityInspection(G.focus);
         lastRead=now;
         setText(scope,snapshot.estimated?'Estimated':'Local');
+        summary.title=isPlacedHoleFocus(G.focus)?'Gold arrows: other holes. Green: net acceleration in the Earth frame. Open for magnitudes and model limits.':'';
         setText(title,`${snapshot.name||'Select an object'} · ${snapshot.frame||'Model scope'}`);
         setText(modelDetail.lastElementChild,snapshot.note||'No further model information.');
-        setText(note,!snapshot.supported?snapshot.note:snapshot.estimated?'Estimated shares of source magnitudes; their directions can cancel. This field is not applied to the simulation. Arrow length is normalized.':snapshot.frame==='Local perturbation only'?'Local kicks only; prescribed Galactic motion is excluded. No coupled forecast.':'Current bounded solver. Others includes frame/relativity terms; the net is their vector sum. Arrow length is normalized.');
+        setText(note,!snapshot.supported?snapshot.note:snapshot.estimated?'Estimated shares of source magnitudes; their directions can cancel. This field is not applied to the simulation. Arrow length is normalized.':snapshot.frame==='Local perturbation only'?'Local kicks only; prescribed Galactic motion is excluded. No coupled forecast.':isPlacedHoleFocus(G.focus)?'Gold arrows: pulls from the other placed holes. Green: net acceleration, including other sources and Earth-frame correction. Self-pull is excluded. Arrow lengths are normalized; Time Pulses strokes are a qualitative field, not body trajectories.':'Current bounded solver. Others includes frame/relativity terms; the net is their vector sum. Arrow length is normalized.');
         if(snapshot.supported){
             const result=strongestContributions(snapshot.contributions,previous);previous=result.ids;
             // The displayed net is exactly the sum of these same contributions,
             // including the vector remainder and coordinate corrections.
             snapshot={...snapshot,net:result.net};updateRows(result);
-            setText(leading,result.top[0]?`${result.top[0].label} leads`:'Balanced field');
+            setText(leading,result.top[0]?`${result.top[0].label} leads${isPlacedHoleFocus(G.focus)?' · arrows show acceleration':''}`:'Balanced field');
             setText(net,snapshot.estimated?'Net: estimated direction only':`${snapshot.frame==='Local perturbation only'?'Net local':'Net'}: ${accelerationLabel(Math.hypot(...result.net))}`);
         }else{rows.textContent='';setText(leading,'View model scope');setText(net,'No complete applied-force vector available');}
         pathButton.hidden=!snapshot.predictionSupported||context==='galaxy';

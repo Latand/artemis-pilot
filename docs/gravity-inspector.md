@@ -10,9 +10,17 @@ The read-only ledger is collected from the force routines used by the local inte
 
 Gas + core systems expose their actual local perturbing kicks, including self-pull exclusion. Their prescribed Galactic guiding orbit and harmonic restoring response are explicitly excluded: this is not their total motion acceleration. Each cloud and its formed core appear once, using the current bound mass and finite extent.
 
+## Placed black holes
+
+With a placed hole selected and gravity flow enabled, dashed gold arrows show the pulls from all other placed holes. The green arrow shows its current net acceleration, including other sources and the Earth-frame correction. These direction-only arrows remain active with the Gravity panel collapsed. Labeled direction cues inside its summary stay unobscured when fixed controls cover the scene arrows, including on short landscape screens; open the panel for acceleration magnitudes and model limits. A source along the line of sight is marked rather than given a fabricated screen direction.
+
+The arrows reuse the exact live solver ledger and exclude self-pull. They follow moving holes and the surviving identity after a merger. Camera position does not reweight gravity: the optical lapse factor is separate from ambient field strength. A selected placed hole keeps its local force explanation across zoom scales.
+
+Time Pulses remains a complete qualitative field, including the selected hole's own surrounding well. Its strokes are not object trajectories or exact relativistic spacetime. Its display softening, moving reference frame and large-scale estimates differ from the target-specific solver; merger/accretion mass fronts are resolved by the explanatory arrows, not the ambient field.
+
 ## Scale changes are presentation only
 
-Above a 20,000-light-year viewing distance, the panel switches to the **Milky Way context estimate**. It switches back below 14,000 light-years, so small zoom changes do not flicker. This changes the explanatory context, not the pinned selection or physical source set.
+Except for a selected placed compact object, above a 20,000-light-year viewing distance, the panel switches to the **Milky Way context estimate**. It switches back below 14,000 light-years, so small zoom changes do not flicker. This changes the explanatory context, not the pinned selection or physical source set.
 
 At galaxy scale the target is the Milky Way center, excluding self-pull. Neighboring galaxies replace individual member stars, without adding both. The view reuses a bounded, coarsened source sample from the existing large-scale visualization, with at least the Local Group horizon. Andromeda uses the existing merger-model halo mass when dark matter is on; other catalog masses are estimates from stellar light. Positions are apparent/light-cone positions, not a synchronized dynamical census. Shares are fractions of sampled source magnitudes, not shares of the net. The estimate is never applied to world physics, and no galaxy-wide forecast is offered.
 
@@ -25,5 +33,6 @@ The inspector does not offer a coupled path for placed holes or gas/core systems
 ## Verification
 
 - `npm run smoke:gravity-inspector`: shared solver ledgers, no self-pull, read-only state, corrections, gas mass accounting, bounded integration, rank/scale hysteresis, aggregate identity and mass
+- `npm run verify:gravity-holes`: real three-hole arrows, collapsed-panel visibility, camera invariance, movement, merger, scale retention, desktop/mobile screenshots
 - `npm run verify:gravity-inspector`: real desktop/mobile browser controls, exact ledger sum, bounded prediction and restoration, repeated open/close, scale transitions, preserved selection, honest gas scope and screenshots
 - The dedicated pull-request workflow captures raw application frames. CI runs use software-rendered Chromium and mobile emulation, not a phone hardware benchmark.

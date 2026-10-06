@@ -2,9 +2,20 @@
 import { LY_KM } from './constants.js';
 export const GALAXY_INSPECT_ENTER_KM=20000*LY_KM;
 export const GALAXY_INSPECT_LEAVE_KM=14000*LY_KM;
-export function gravityContext(distanceKm,previous='local') {
+export function isPlacedHoleFocus(focus) { return typeof focus==='string' && /^bh:\d+$/.test(focus); }
+export function gravityContext(distanceKm,previous='local',focus=null) {
+    // Zoom may change the ambient illustration, never which forces explain
+    // the selected placed hole. Its live solver remains local at every scale.
+    if(isPlacedHoleFocus(focus))return 'local';
     if(previous==='galaxy')return distanceKm<GALAXY_INSPECT_LEAVE_KM?'local':'galaxy';
     return distanceKm>GALAXY_INSPECT_ENTER_KM?'galaxy':'local';
+}
+export function holeContributionVectors(snapshot,focus) {
+    if(!snapshot?.supported||!isPlacedHoleFocus(focus))return [];
+    // All other placed holes (at most five), not a nearest/visible subset.
+    // The solver owns self exclusion, causal mass history and the pair law.
+    return snapshot.contributions.filter(row=>row.kind==='black-hole'&&row.id!==focus&&
+        row.acceleration?.length===3&&row.acceleration.every(Number.isFinite)&&Math.hypot(...row.acceleration)>0);
 }
 export function sumAcceleration(rows,out=[0,0,0]) {
     out.fill(0);for(const row of rows)for(let i=0;i<3;i++)out[i]+=row.acceleration[i];return out;

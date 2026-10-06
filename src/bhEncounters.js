@@ -110,8 +110,15 @@ export function addHoleData(xKm, yKm, rsKm, vx0 = 0, vy0 = 0, events = null, kin
     updateHoleSize(i);
     return i;
 }
-export function removeHoleData(i) {
+export function removeHoleData(i, replacement = -1) {
     if (i < 0 || i >= BH.n) return;
+    // Keep the selected physical survivor when compact array slots change.
+    const focused = /^bh:(\d+)$/.exec(String(G.focus));
+    if (focused) {
+        const index = Number(focused[1]);
+        if (index === i) G.focus = replacement >= 0 ? "bh:" + replacement : "ship";
+        else if (index > i) G.focus = "bh:" + (index - 1);
+    }
     H.onRemove(i);
     for (let k = ENC.length - 1; k >= 0; k--) {
         if (ENC[k].bh === i) ENC.splice(k, 1);
@@ -429,7 +436,7 @@ function mergePair(i, j, t) {
     for (let k = 0; k < TDES.length; k++) if (TDES[k].bh === j) TDES[k].bh = i;
     for (let k = 0; k < CAPTURES.length; k++) if (CAPTURES[k].bh === j) CAPTURES[k].bh = i;
     for (let k = ENC.length - 1; k >= 0; k--) if (ENC[k].bh === i || ENC[k].bh === j) ENC.splice(k, 1);
-    removeHoleData(j);
+    removeHoleData(j, i);
     BH.x[i] = x; BH.y[i] = y; BH.z[i] = z;
     BH.vx[i] = vx; BH.vy[i] = vy; BH.vz[i] = vz;
     BH.mu[i] = muTotal - muLoss;
