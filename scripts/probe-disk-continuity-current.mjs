@@ -52,6 +52,9 @@ function captureCrossing(pitch) {
     const pointerSnapshots = [];
     function draw() {
         const pointer = { before: window.__diskPlanePointerSnapshot() }; pointerSnapshots.push(pointer);
+        // Production hides holeRoot before the composer's world pass. LensPass
+        // restores it after drawing optics, so every readback must prepare again.
+        lens.updateLensing(s.camera, s.camera.aspect);
         if (window.__qaBloom) s.composer.render(); else lens.renderLensed(s.renderer, s.scene, s.camera);
         gl.finish(); const bytes = new Uint8Array(width * height * 4);
         gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
