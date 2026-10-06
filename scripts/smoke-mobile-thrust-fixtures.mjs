@@ -63,3 +63,54 @@ for (const source of [current, current.replace('const firstFrameT0 = perfStart()
     execFileSync(process.execPath, ['--check', '--input-type=module'], { input: transformed });
 }
 console.log('Mobile thrust fixtures: explicit verified High budgets, equal initial frame, completed manual GPU frames, raw evidence and all original limits retained.');
+
+// Hosted recovery regression: restored frame 7 resumed flight without any
+// additional delta-v, while the coast HUD was last written on frame 6.
+// Exercise the production cadence and mobile mode formatter, not a made-up
+// timer assumption, and keep physical release independent of the badge.
+const { releasedMobileFlightIsSafe, restoredMobileHudAdvanced } = await import('./mobile-thrust-recovery-qa.mjs');
+const held = { success: 6, hudFrame: 6, t: 12, dv: 6.916208611402841 };
+const released = { ...held, success: 7, t: 14, contextLost: false, contextLifecycleLost: false,
+    paused: false, dead: false, input: { keys: [], thrustMain: 0, thrustLat: 0, boost: false },
+    drive: { magnitude: 0, engaged: false, ax: 0, ay: 0, az: 0 }, throttle: 'COAST', mode: 'HOLD' };
+assert(releasedMobileFlightIsSafe(held, released), 'Stale mode alone does not imply physical thrust');
+for (const delta of [{ dv: held.dv + 1e-9 }, { success: 6 }, { t: 12 }, { paused: true }, { dead: true },
+    { contextLost: true }, { contextLifecycleLost: true }, { throttle: 'FIELD 68%' }, { input: undefined }, { drive: undefined }]) {
+    assert.equal(releasedMobileFlightIsSafe(held, { ...released, ...delta }), false);
+}
+for (const delta of [{ keys: ['KeyW'] }, { thrustMain: 1 }, { thrustLat: 1 }, { boost: true }]) {
+    assert.equal(releasedMobileFlightIsSafe(held, { ...released, input: { ...released.input, ...delta } }), false);
+}
+for (const delta of [{ magnitude: 1e-9 }, { engaged: true }, { ax: 1e-9 }, { ay: 1e-9 }, { az: 1e-9 }]) {
+    assert.equal(releasedMobileFlightIsSafe(held, { ...released, drive: { ...released.drive, ...delta } }), false);
+}
+assert(releasedMobileFlightIsSafe(held, { ...released, drive: null }), 'Known pre-field baseline has no field actuator');
+const cadence = current.slice(current.indexOf('function hudCadence('), current.indexOf('function nearLabelCadence('));
+const mobileSource = readFileSync(new URL('../src/mobileControls.js', import.meta.url), 'utf8');
+const formatter = mobileSource.slice(mobileSource.indexOf('export function updateMobileControls('), mobileSource.indexOf('export function initMobileControls(')).replace('export ', '');
+const hudSandbox = { G: { warp: 60, t: 14, paused: false, dead: false, landed: null }, renderQuality: { mobile: true },
+    ui: {}, mMet: {}, mVel: {}, mAlt: {}, mFocus: {}, mWarp: {}, mWarpVal: {}, mMode: { textContent: 'HOLD' },
+    setText: (el, value) => { el.textContent = value; }, setClass: () => {}, fmtMET: () => '', fmtDist: () => '',
+    focusName: () => 'SHIP', warpLabel: () => '', syncMobileButtons: () => {},
+    window: { __frameSuccess: 7, __mobileHudFrame: 6 } };
+vm.createContext(hudSandbox); vm.runInContext(cadence + formatter, hudSandbox);
+const hudPoll = vm.runInContext(`(${restoredMobileHudAdvanced.toString()})`, hudSandbox);
+assert.equal(typeof hudPoll(held), 'boolean'); assert.equal(hudPoll(held), false);
+const every = vm.runInContext('hudCadence(false, 0)', hudSandbox); assert.equal(every, 2);
+for (const frameNo of [7, 8]) {
+    if (frameNo % every === 0) {
+        vm.runInContext('updateMobileControls({r: 10, R: 1}, 7.74, 0)', hudSandbox);
+        hudSandbox.window.__mobileHudFrame = frameNo;
+    }
+    hudSandbox.window.__frameSuccess = frameNo;
+    assert.equal(hudSandbox.mMode.textContent, frameNo === 7 ? 'HOLD' : 'COAST');
+    assert.equal(hudPoll(held), frameNo === 8);
+}
+hudSandbox.window.__frameSuccess = held.success;
+assert.equal(hudPoll(held), false, 'A HUD write without a successfully submitted restored frame is insufficient');
+assert(mobile.includes('await page.waitForTimeout(2200);'), 'Original first recovery observation remains');
+assert(mobile.includes('const recoveryDeadline=Date.now()+180000;'));
+assert(mobile.includes('timeout:Math.max(1,recoveryDeadline-Date.now())'), 'HUD observation shares, never extends, restoration readiness deadline');
+assert(mobile.indexOf('releasedMobileFlightIsSafe(held,restored)') < mobile.indexOf('page.waitForFunction(restoredMobileHudAdvanced'), 'Do not wait away a physical release failure');
+assert(mobile.includes("restoredHud.mode==='COAST'"), 'Keep the independent production badge assertion');
+console.log('Mobile recovery: actual odd/even HUD cadence reproduces stale HOLD; physical-release failures remain immediate and readiness deadline is shared.');

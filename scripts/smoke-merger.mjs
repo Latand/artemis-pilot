@@ -1,6 +1,7 @@
 import { createServer } from "vite";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { mergerFrameHook, waitForMergerFrames } from "./merger-frame-fixture.mjs";
 
 // WP23a: the Milky Way-Andromeda merger. Verifies the cached two-body +
 // dynamical-friction trajectory table in cosmic.js (mergerSeparationKpcAt /
@@ -24,6 +25,11 @@ if (!url) {
   viteServer = await createServer({
     logLevel: "silent",
     server: { host: "127.0.0.1", port: 0 },
+    plugins: [{name:'merger-produced-frames',enforce:'pre',transform(source,id) {
+      if (!id.split('?')[0].endsWith('/src/main.js')) return;
+      if (!/\bframeNo\s*=\s*0\b/.test(source)) throw Error('Production frame counter seam changed');
+      return source+mergerFrameHook;
+    }}],
   });
   await viteServer.listen();
   const address = viteServer.httpServer?.address();
@@ -128,28 +134,20 @@ async function shootAtGyr(gyr, label) {
     window.__G.t = tSec;
     window.__G.warp = 1;
   }, { tSec: gyr * GYR_SEC });
-  // Let a handful of real rAF frames run so updateCosmicLayer/updateLocalGalaxyMotion
-  // pick up the new G.t and the merger-driven uniforms/positions settle.
-  await page.evaluate(() => new Promise(resolve => {
-    let n = 0;
-    const tick = () => { n++; if (n >= 8) resolve(); else requestAnimationFrame(tick); };
-    requestAnimationFrame(tick);
-  }));
+  // Observe 8 actual production updates, not raw display callbacks that GPU
+  // admission may skip. The live app still owns every draw and physics step.
+  const settling = { beforeWorker:await waitForMergerFrames(page,8) };
   // Past ~1 Gyr the tidal-debris simulation starts in its worker; once it
   // has run the debris must be drawn after first passage.
   let tides = null;
   if (gyr >= 4) {
     await page.waitForFunction(() => !window.__tidesStatus || window.__tidesStatus().ready || window.__tidesStatus().error, null, { timeout: 120000, polling: 250 });
-    await page.evaluate(() => new Promise(resolve => {
-      let n = 0;
-      const tick = () => { n++; if (n >= 4) resolve(); else requestAnimationFrame(tick); };
-      requestAnimationFrame(tick);
-    }));
+    settling.afterWorker = await waitForMergerFrames(page,4);
     tides = await page.evaluate(() => window.__tidesStatus?.() || null);
   }
   const shot = await page.screenshot({ path: `${SCRATCH}/23a-merger-${label}.png` });
   const sum = checksum(shot);
-  sum.tides = tides;
+  sum.tides = tides; sum.settling = settling;
   console.log(`screenshot T+${gyr}Gyr (${label}): bytes=${shot.length} ${JSON.stringify(sum)}`);
   return sum;
 }
