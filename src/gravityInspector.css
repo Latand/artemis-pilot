@@ -38,3 +38,6 @@ body:not(.compact-explorer) #explorePanel:has(#gravityInspector[open]) { max-hei
         max-height:max(44px,calc(var(--explore-visible-height,100dvh) - var(--explore-toolbar-bottom,60px) - 104px));
     }
 }
+
+#gravityNetVector .gravityContribution path { stroke:#e9bf79;stroke-width:1.5;stroke-dasharray:5 3; }
+#gravityNetVector .gravityContribution text { fill:#f3d5a2;font-size:10px; }

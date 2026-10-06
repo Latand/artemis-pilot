@@ -33,7 +33,7 @@ jobs:
       - name: Verify and capture actual inspector and bounded coast paths
         env:
           DEVICE: ${{ matrix.device }}
-        run: node scripts/verify-gravity-inspector.mjs
+        run: node scripts/verify-gravity-inspector.mjs && node scripts/verify-gravity-holes.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:

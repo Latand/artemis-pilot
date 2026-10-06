@@ -225,6 +225,9 @@ export async function loadState() {
             : [row[0], row[1], 0, row[2], row[3], 0, row[4], row[5], row[6], row[7]];
         GS.push({ x, y, z, vx, vy, vz, mu, R, t0, t: t === null ? Infinity : t });
     }
+    // Clearing the old inventory remaps live selections. The already resolved
+    // saved selection belongs to the replacement inventory, not those removals.
+    const restoredFocus = G.focus;
     clearBlackHoles();
     restoreNebulae(data.neb || []);
     invalidateGasDynamics();
@@ -236,6 +239,7 @@ export async function loadState() {
             : [{ x, y, z: z || 0, t: -1e18, dmu: rs * C_LIGHT * C_LIGHT / 2 }]; // v1 saves: field counts as long-established
         addBlackHole(x, y, rs, vx, vy, true, ev, kind ?? 0, period ?? 0, Number.isFinite(z) ? z : 0, Number.isFinite(vz) ? vz : 0);
     });
+    G.focus = restoredFocus;
     // after the holes exist: encounter records reference them by index
     restoreEncounterState(data.tde || null);
     if (typeof data.bhSizeIdx === "number") BH.sizeIdx = data.bhSizeIdx;

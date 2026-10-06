@@ -65,7 +65,7 @@ export function flowVel(x, y, z, mx, my, mz, out) {
         // black-hole river: v = √(2μ/r) — exactly c at the horizon
         const bdx = x - (flowCtx.earthScX + BH.sx[i]), bdy = y - BH.sy[i], bdz = z - (flowCtx.earthScZ + BH.sz[i]);
         const br = Math.max(BH.sinkS[i] * .5, Math.hypot(bdx, bdy, bdz));
-        const cBH = BH.c[i] * Math.max(.08, BH.obsT[i] || 1);
+        const cBH = BH.c[i]; // camera-dependent optical lapse is not gravity
         const bs = cBH / Math.sqrt(br) / br;
         exVX -= bdx * bs; exVY -= bdy * bs; exVZ -= bdz * bs;
         const bPull = cBH * cBH / (br * br * br);
