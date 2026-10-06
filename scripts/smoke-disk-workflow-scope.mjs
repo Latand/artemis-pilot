@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { diskInputs, diskMaximumTaskPolicy } from './disk-plane-source-contract.mjs';
+import { captureDiskQuality, assertDiskFullQuality } from './disk-current-quality.mjs';
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const read = path => readFileSync(new URL('../' + path, import.meta.url));
 const workflow = read('.github/workflows/disk-plane-validation.yml').toString();
@@ -50,3 +51,36 @@ for (const [path, expected] of Object.entries({
 assert.equal(diskMaximumTaskPolicy.absoluteFloorMs, 220);
 assert.equal(diskMaximumTaskPolicy.baselineMultiplier, 1.10);
 console.log('Disk routing: exact historical jobs and harness bytes preserved; current model/pixel jobs mandatory; all protected triggers, four pixel cells and six routing negative controls pass. No historical pixel/cost acceptance claimed.');
+
+// Both legacy and controller-based source must prove the actual same quality.
+// Fake renderer objects exercise the shared browser metadata collector itself.
+let qualityChecks = 0;
+for (const mobile of [false, true]) for (const bloom of [false, true]) for (const legacy of [false, true]) {
+    const viewport = mobile ? { width: 390, height: 700 } : { width: 960, height: 640 };
+    const texWidth = mobile ? 96 : 124;
+    const scene = { renderQuality: { mobile, ...(legacy ? {} : { mode: 'high' }) },
+        cvHost: { clientWidth: viewport.width, clientHeight: viewport.height },
+        viewportSize: { w: viewport.width, h: viewport.height }, bloomPass: { enabled: bloom },
+        renderer: { getContext: () => ({ getContextAttributes: () => ({ antialias: true }),
+            drawingBufferWidth: viewport.width, drawingBufferHeight: viewport.height, isContextLost: () => false }),
+            getPixelRatio: () => 1, getRenderTarget: () => null, domElement: { ...viewport } } };
+    const actual = captureDiskQuality(scene, { count: texWidth * texWidth, texW: texWidth });
+    const expected = { mobile, bloom, viewport };
+    assert.equal(assertDiskFullQuality(actual, expected).profile, legacy ? 'legacy-native-full' : 'current-high'); qualityChecks++;
+    for (const mutate of [q => { q.modePresent = true; q.mode = 'low'; }, q => { q.modePresent = true; q.mode = null; },
+        q => { q.modePresent = false; q.mode = 'high'; }, q => { delete q.modePresent; }, q => { q.mobile = !mobile; },
+        q => { q.pixelRatio = .92; }, q => { q.antialias = false; }, q => { q.antialias = null; },
+        q => { q.riverCount = 4096; }, q => { q.riverTexWidth--; }, q => { q.bloom = !bloom; },
+        q => { q.canvasTarget = false; }, q => { q.contextLost = true; },
+        ...['host', 'viewport', 'canvas', 'drawingBuffer'].map(key => q => { q[key].width--; }),
+        ...['host', 'viewport', 'canvas', 'drawingBuffer'].map(key => q => { q[key].height++; })]) {
+        const changed = structuredClone(actual); mutate(changed);
+        assert.throws(() => assertDiskFullQuality(changed, expected), /Disk full-quality evidence/); qualityChecks++;
+    }
+}
+const currentProbe = read('scripts/probe-disk-continuity-current.mjs').toString();
+assert(currentProbe.includes('qa.quality.captureDiskQuality(s, qa.river.river)'));
+assert(currentProbe.includes('assertDiskFullQuality(sample.qualityEvidence, { mobile, bloom, viewport: page.viewportSize() })'));
+assert(currentProbe.includes('/?quality=high&dpr=1&focus=saturn'));
+assert(currentProbe.includes("assertCrossingAcceptance(report.samples, 'candidate')"));
+console.log(`Current disk full-quality: ${qualityChecks} legacy/current positive and incompatible actual-renderer negative controls passed; no pixel or recovery threshold changed.`);

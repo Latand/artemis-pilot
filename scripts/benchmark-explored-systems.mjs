@@ -29,7 +29,7 @@ const fixtures = [
     { name: 'catalog-star', focus: 'star:2', distance: null, yaw: -.4, pitch: .45 },
     { name: 'system-overview', focus: 'star:4', distance: 1500000, yaw: -.4, pitch: .45 },
 ];
-const query = { focus: 'earth', dist: '25', hidehelp: '1', dpr: '1', tier1: '0', realsky: '0', field: '0',
+const query = { quality: 'high', focus: 'earth', dist: '25', hidehelp: '1', dpr: '1', tier1: '0', realsky: '0', field: '0',
     galaxyvol: '0', galaxies: '0', galaxy: '0', river: '0', bloom: '0', compile: '0', galadapt: '0',
     earthnight: '1', clouds: '1', moonmap: '1' };
 const quantile = (values, p) => [...values].sort((a, b) => a - b)[Math.max(0, Math.ceil(values.length * p) - 1)];
@@ -73,7 +73,7 @@ function transform(source, id) {
     if (!id.endsWith('/src/main.js')) return null;
     source = once(source, 'const firstFrameT0 = perfStart();',
         'G.t=0;G.paused=true;G.warp=1;resetEphem();clock.getDelta=()=>1/60;\nconst firstFrameT0 = perfStart();');
-    source = once(source, 'renderer.setAnimationLoop(frame);', '// QA: frames delivered explicitly and serially.');
+    source = once(source, 'renderer.setAnimationLoop(frame);', 'if (frameNo === 0) frame(); // QA: exactly one untimed initialization frame, then explicit serial delivery.');
     // The measured production frame is untouched. Its diagnostic copy is
     // compiled only after ALL acceptance windows, never before them.
     // Chromium WebGL finish() is only Flush(); readPixels establishes completion:
@@ -89,7 +89,7 @@ window.__pairedFineFrame=()=>{pairedFineFrame ||= eval(${JSON.stringify('(')} + 
     clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;const start=performance.now();pairedFineFrame();const gl=renderer.getContext();gl.finish();gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pairedReadbackPixel);
     return {frameAndFinishMs:performance.now()-start,frameNo};};
 window.__pairedWorkload=()=>({frameNo,beltCursor,kuiperCursor,nearVisualReady,nearFieldCadence:cam.dist>LY_SCENE*.2?'cosmic':'every-frame',
-    mobile:renderQuality.mobile,loadShed:renderQuality.loadShed,warp:G.warp,gr:G.gr,uiMode:G.uiMode,
+    mobile:renderQuality.mobile,quality:{dpr:renderer.getPixelRatio(),antialias:renderer.getContext().getContextAttributes().antialias,riverCapacity:river.count,bloom:!!bloomPass.enabled,lensing:!!lensingPass.enabled,volume:galaxyVolumeStats().enabled},warp:G.warp,gr:G.gr,uiMode:G.uiMode,
     minor:Object.fromEntries(['belt','kuiper','curated','oort'].map(k=>[k,{capacity:minorRenderers[k].capacity,elementCount:minorSwarms[k].length/6,
         first:Array.from(minorSwarms[k].slice(0,12)),last:Array.from(minorSwarms[k].slice(-12))}]))});\n`;
 }

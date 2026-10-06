@@ -29,9 +29,10 @@ const initialQualityMode = qualityMode(q.get('quality') || savedQuality);
 // High load keeps the full-detail capture path; live changes reuse the context.
 export const renderer = new THREE.WebGLRenderer({ antialias: initialQualityMode === 'high' });
 const dprOverride = Number(q.get("dpr") || q.get("pixelRatio"));
-function isMobileLike() {
-    return window.matchMedia?.("(max-width: 760px), (hover: none) and (pointer: coarse)")?.matches || false;
-}
+// Keep one live MediaQueryList; creating one in every frame can itself
+// become measurable overhead on the devices this controller protects.
+const mobileMedia = window.matchMedia?.("(max-width: 760px), (hover: none) and (pointer: coarse)");
+function isMobileLike() { return mobileMedia?.matches || false; }
 const rendererName = readRendererName(renderer.getContext());
 const qualityController = createQualityController({ mobile: isMobileLike(),
     software: isSoftwareRenderer(rendererName), mode: initialQualityMode });
@@ -642,6 +643,7 @@ function resizePostProcessing(w = viewportSize.w, h = viewportSize.h, pr = rende
 }
 resize();
 new ResizeObserver(() => resize()).observe(cvHost);
+mobileMedia?.addEventListener?.('change', () => resize());
 
 export function setRenderLoadShed(level = 0) {
     const next = Math.max(0, Math.min(2, level | 0));

@@ -96,6 +96,17 @@ const adapterImport = "import { systemRenderStatement } from './explored-system-
 const adapterCall = "['systemRender', systemRenderStatement(body)]";
 const originalCall = "['systemRender', 'updateSystemRender(focusedSystem, G.t, camera, G.focus);']";
 function assertUnchangedAcceptanceHarness(source) {
+    // Startup-quality only: pin actual detail and one untimed initialization
+    // frame on both revisions. All acceptance windows/budgets remain pinned.
+    for (const [current, original] of [
+        ["const query = { quality: 'high', focus:", "const query = { focus:"],
+        ["'if (frameNo === 0) frame(); // QA: exactly one untimed initialization frame, then explicit serial delivery.'", "'// QA: frames delivered explicitly and serially.'"],
+        ['mobile:renderQuality.mobile,quality:{dpr:renderer.getPixelRatio(),antialias:renderer.getContext().getContextAttributes().antialias,riverCapacity:river.count,bloom:!!bloomPass.enabled,lensing:!!lensingPass.enabled,volume:galaxyVolumeStats().enabled},warp:G.warp', 'mobile:renderQuality.mobile,loadShed:renderQuality.loadShed,warp:G.warp'],
+    ]) {
+        if (!source.includes(current)) continue;
+        assert.equal(source.split(current).length, 2, 'Exactly one reviewed quality-fixture adaptation');
+        source = source.replace(current, original);
+    }
     const imports = source.split(adapterImport).length - 1;
     const calls = source.split(adapterCall).length - 1;
     if (imports || calls) {

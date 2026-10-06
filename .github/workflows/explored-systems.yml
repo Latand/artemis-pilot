@@ -57,6 +57,7 @@ jobs:
         if: matrix.device == 'desktop'
         run: |
           node scripts/smoke-explored-baseline-routing.mjs
+          node scripts/smoke-explored-quality-fixture.mjs
           node scripts/smoke-explored-point-ownership.mjs
           node scripts/smoke-explored-warm-resources.mjs
           npm test

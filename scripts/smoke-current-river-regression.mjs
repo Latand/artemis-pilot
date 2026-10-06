@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { adaptCurrentRiver, materializeCurrentRiver, currentRiverHarnesses } from './run-current-river-regression.mjs';
+import { adaptCurrentRiver, materializeCurrentRiver, currentRiverHarnesses, currentRiverProfile } from './run-current-river-regression.mjs';
 const read = path => readFileSync(new URL('../'+path, import.meta.url), 'utf8');
 const sha = bytes => createHash('sha256').update(bytes).digest('hex');
 const base = "github.event.pull_request.base.sha == '6179f23661591bb4dee89a0bf8e686233e1ba280'";
@@ -66,6 +66,56 @@ for (const [kind, { file, sha256 }] of Object.entries(currentRiverHarnesses)) {
   const materialized = materializeCurrentRiver(source, new URL(file, import.meta.url).href);
   execFileSync(process.execPath, ['--input-type=module', '--check'], { input: materialized });
 }
+// Pure fixture selection: only mobile lifecycle exercises the real Low cadence.
+// Explicit np=96 retains the original full mobile allocation and dpr=1 remains.
+for (const device of ['desktop', 'mobile']) for (const suite of ['transient', 'lifecycle']) for (const kind of ['foreign', 'radiance']) {
+  const cadence = kind === 'radiance' && device === 'mobile' && suite === 'lifecycle';
+  const { source, substitutions, profile } = adaptCurrentRiver(kind, read('scripts/'+currentRiverHarnesses[kind].file), { device, suite });
+  assert.equal(profile.qualityMode, cadence ? 'low' : 'high');
+  assert.equal(profile.particleWidth, cadence ? 96 : null);
+  assert.equal(profile.expectedComputeEvery, cadence ? 2 : null);
+  const query = new URLSearchParams(source.match(/page\.goto\(`[^`]+\/\?([^`]+)`/)[1]);
+  assert.equal(query.get('quality'), profile.qualityMode); assert.equal(query.get('dpr'), '1');
+  assert.equal(query.get('np'), cadence ? '96' : null);
+  assert(source.includes(`qualityMode: "${profile.qualityMode}"`));
+  let restored = source;
+  for (const { before, after } of [...substitutions].reverse()) {
+    assert.equal(restored.split(after).length, 2); restored = restored.replace(after, before);
+  }
+  assert.equal(restored, read('scripts/'+currentRiverHarnesses[kind].file));
+  if (cadence) {
+    for (const assertion of ['healthyRadianceMobileCadence(row.frames, spec.subject)', 'signedRadianceAdvection(state,plan)',
+      'healthyRadianceGain(state, row.frames.at(-2))', 'healthyRadianceRecovery(row.recoveries.at(-1), state)',
+      'healthyRadianceCapture(state)', 'frame.count === (mobile ? 9216 : 15376)']) assert(source.includes(assertion));
+    assert(source.includes('Current mobile Low cadence at DPR1 with np=96 (9,216 texels);'));
+    assert(!source.includes(': full production device quality`'));
+    execFileSync(process.execPath, ['--input-type=module', '--check'], { input: materializeCurrentRiver(source, new URL('verify-river-radiance.mjs', import.meta.url).href) });
+  }
+}
+for (const options of [{ device: 'tablet' }, { suite: 'benchmark' }]) assert.throws(() => currentRiverProfile('radiance', options));
+const river = read('src/river.js');
+const allocation = river.match(/const TEXW = \(\(\) => \{[\s\S]+?\}\)\(\);/);
+const scheduling = river.match(/const adaptiveComputeEvery = [^\n]+;\n    const baseComputeEvery = [^\n]+;\n    const computeEvery = [^\n]+;/);
+assert(allocation && scheduling, 'Production allocation and compute-cadence seams');
+const allocate = new Function('location', 'renderQuality', allocation[0]+' return TEXW;');
+const cadenceOf = new Function('renderQuality', 'river', scheduling[0]+' return computeEvery;');
+const qualityURL = new URL('../src/render/adaptiveQuality.js', import.meta.url);
+// A cherry-pick onto pre-controller main retains its native mobile load-shed path.
+const nativeQuality = existsSync(qualityURL) ? await import(qualityURL) : null;
+const profile = currentRiverProfile('radiance', { device: 'mobile', suite: 'lifecycle' });
+const quality = { mode: profile.qualityMode, mobile: true, software: true, loadShed: 2,
+  ...(nativeQuality ? nativeQuality.qualityBudget(2, true) : {}) };
+assert.equal(allocate({ search: '?quality=low&np=96&dpr=1' }, quality), 96);
+assert.equal(96 * 96, 9216, 'Unchanged full mobile particle capacity');
+assert.equal(cadenceOf(quality, { computeEveryAdaptive: 1 }), 2, 'Actual production cadence remains two');
+if (nativeQuality) {
+  const controller = nativeQuality.createQualityController({ mode: profile.qualityMode, mobile: true, software: true });
+  assert.equal(controller.state.mode, 'low'); assert.equal(controller.state.level, 2);
+  assert.equal(nativeQuality.qualityBudget(controller.state.level, true).riverEvery, 2);
+  assert.equal(nativeQuality.qualityPixelRatio({ level: 2, mobile: true, device: 3, override: 1, width: 430, height: 932 }), 1);
+  const full = { mode: 'high', mobile: true, software: true, loadShed: 0, ...nativeQuality.qualityBudget(0, true) };
+  assert.equal(cadenceOf(full, { computeEveryAdaptive: 1 }), 1, 'Retain the original High-mode non-cadence control');
+}
 // Immutable policy, acceptance metadata and negative controls stay pinned;
 // these checks preserve historical contracts but do not claim new timings.
 for (const [path, expected] of Object.entries({
@@ -81,4 +131,4 @@ for (const [path, expected] of Object.entries({
   'scripts/river-radiance-qa.mjs': '8c052596895045da9d4326e322c6d283558b430086ede693a9d05d54f360b413',
   'scripts/river-radiance-lifecycle.mjs': '22fd07e634b21fa8e175297a38fda8eb309b87805c5b8c38b42508c527afe671',
 })) assert.equal(sha(read(path)), expected, `Historical contract: ${path}`);
-console.log('Current river scope: preserved archived workflows/contracts, mandatory six functional cells, reversible full-quality/single-root adapter, routing and mutated-harness negatives passed. No timing acceptance.');
+console.log('Current river scope: preserved archived workflows/contracts, mandatory six functional cells, reversible explicit-quality/single-root adapter with full-capacity Low mobile lifecycle, routing and mutated-harness negatives passed. No timing acceptance.');

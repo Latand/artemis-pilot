@@ -52,7 +52,12 @@ Six bounded functional cells cover desktop/mobile and these three suites:
   sequences, including same-count source replacement, ordering/eligibility,
   positive/negative/paused advection, native mobile cadence and real GPU
   loss/restoration. The candidate gain checks now apply unconditionally to the
-  sole current root.
+  sole current root. The mobile lifecycle cell uses explicit `quality=low` to
+  exercise production cadence two, with `np=96` preserving all 9,216 legacy
+  particle texels and the existing `dpr=1`. All other functional cells use High.
+  This cell covers Low-mode cadence at full particle capacity; it does not claim
+  full visual detail. Signed held-texture skips and moving-hole urgent dispatch
+  keep their original assertions.
 
 Each cell has a 15-minute process cap and 20-minute job cap. These are bounded
 functional workloads, not shortened versions of the historical benchmark.
@@ -72,9 +77,17 @@ Tests reverse every substitution to recover the original harness byte-for-byte
 and reject modified source, missing routes and omitted current matrix coverage.
 
 Foreign execution changes only explicit current-only report fields and the
-URL's `quality=high`. Radiance additionally selects one current root, labels it
-honestly, enables every candidate gain check, and uses that root for sparse
-identity. It removes exactly the old two-root field/texture equality and
+URL's `quality=high`. Radiance uses High except for mobile lifecycle, whose
+explicit Low/`np=96` profile exercises native compute cadence without reducing
+particle capacity. Its report records Low, the capacity override and the
+selected profile, and its capacity assertion no longer claims full visual
+quality. The profile is selected by explicit device/suite arguments to the pure
+adapter; only the CLI reads environment variables. Pure regressions exercise
+the actual production allocation and compute-cadence expressions, retain the
+High-mode cadence-one negative control and check every profile's reversibility.
+A pre-controller main keeps its existing native mobile cadence path. Radiance
+also selects one current root, labels it honestly, enables every candidate gain
+check, and uses that root for sparse identity. It removes exactly the old two-root field/texture equality and
 compute-shader equality comparisons. Those are not meaningful historical
 acceptance statements when running only the new source. Every remaining
 per-frame, source, pixel, gain, cadence, advection and recovery check is retained

@@ -11,6 +11,7 @@ import { DISK_PLANE_CASES, assertCrossingAcceptance, transformDiskPlaneSource } 
 import { installPointerAudit, parkNeutralPointer, assertPointerCaptures } from './disk-pointer-fixture.mjs';
 import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled, pausedRecoveryPassed } from './context-recovery-qa.mjs';
 import { initializeDiskReport, atomicDiskReport, finalizeDiskProbe } from './disk-plane-finalize.mjs';
+import { assertDiskFullQuality } from './disk-current-quality.mjs';
 
 const device = process.env.DEVICE || 'desktop', bloomOption = process.env.BLOOM || '0';
 assert(['desktop', 'mobile'].includes(device)); assert(['0', '1'].includes(bloomOption));
@@ -73,13 +74,14 @@ function captureCrossing(pitch) {
     }
     return { scenario: 'disk-crossing', pitch, metrics, png, pointerSnapshots, width, height,
         diskOn: disk.material.uniforms.uDiskOn.value, bloom: !!s.bloomPass.enabled,
-        quality: s.renderQuality.mode, paused: st.G.paused, t: st.G.t, success: window.__diskPlaneFrameSuccess || 0 };
+        qualityEvidence: qa.quality.captureDiskQuality(s, qa.river.river), paused: st.G.paused, t: st.G.t, success: window.__diskPlaneFrameSuccess || 0 };
 }
 async function capture(page, pitch, phase) {
     const sample = await page.evaluate(captureCrossing, pitch);
     assertPointerCaptures(sample.pointerSnapshots);
     assert(sample.paused && sample.t === 0 && sample.success > 0);
-    assert.equal(sample.diskOn, 1); assert.equal(sample.bloom, bloom); assert.equal(sample.quality, 'high');
+    assert.equal(sample.diskOn, 1); assert.equal(sample.bloom, bloom);
+    sample.qualityValidation = assertDiskFullQuality(sample.qualityEvidence, { mobile, bloom, viewport: page.viewportSize() });
     const png = Buffer.from(sample.png.split(',')[1], 'base64');
     sample.productionSha256 = hash(png); delete sample.png;
     await writeFile(resolve(out, `${phase}-${pitch}.png`), png);
@@ -107,14 +109,15 @@ try {
     }, bloom);
     await page.addInitScript(installPointerAudit);
     await page.route(/fonts\.(googleapis|gstatic)\.com/, route => route.fulfill({ contentType: 'text/css', body: '' }));
-    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&focus=saturn&dist=600&bloom=${bloomOption}&river=0&field=0&realsky=0&tier1=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&hidehelp=1&planetmaps=1&earthnight=0`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&dpr=1&focus=saturn&dist=600&bloom=${bloomOption}&river=0&field=0&realsky=0&tier1=0&galaxies=0&galaxyvol=0&galaxy=0&compile=0&hidehelp=1&planetmaps=1&earthnight=0`, { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => window.__AP_READY && window.__celestialFrame);
     await parkNeutralPointer(page);
     await page.evaluate(async () => {
         window.qa = { readbacks: 0, s: await import('/src/scene.js'), st: await import('/src/state.js'),
             bh: await import('/src/blackholes.js'), c: await import('/src/constants.js'), e: await import('/src/ephemeris.js'),
             enc: await import('/src/bhEncounters.js'), lens: await import('/src/lensing.js'),
-            b: await import('/src/bodies.js'), textures: await import('/src/textures.js'), surface: await import('/src/render/bodySurfaceMaterial.js') };
+            b: await import('/src/bodies.js'), textures: await import('/src/textures.js'), surface: await import('/src/render/bodySurfaceMaterial.js'),
+            river: await import('/src/river.js'), quality: await import('/scripts/disk-current-quality.mjs') };
         const { st, bh, c, e } = qa, sat = c.PL.findIndex(p => p.name === 'SATURN');
         st.G.paused = true; st.G.gr = false; st.G.predict = false; st.G.focus = 'free';
         bh.clearBlackHoles(); bh.addBlackHole(e.eph.plX[sat] - 150000, e.eph.plY[sat] - 100000, 50000, 0, 0, true, null, 1, 0, e.eph.plZ[sat], 0);

@@ -65,7 +65,10 @@ No ring-deformation or ring-depth repair is included.
   non-settling desktop compile, visible scene captures, three placed black holes,
   manual changes without physical-state changes, hidden-document suspension,
   resize and controlled WebGL context restore. The hardware classification is
-  injected only for the explicit compile-timeout case.
+  injected only for the explicit compile-timeout case. Manual Low three-lens
+  frames are serialized through the real frame with the unrelated volumetric
+  galaxy disabled to bound the software GPU queue; this is not an FPS result.
+  Default entry and Minimal lifecycle continue on the real animation loop.
 - Existing full-detail pixel regression URLs explicitly request High. This
   prevents automatic software fallback or elapsed-time adaptation from silently
   changing the fixture under test; it does not alter their optical thresholds.

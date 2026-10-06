@@ -53,6 +53,7 @@ jobs:
           node scripts/smoke-scenario-session.mjs
           node scripts/run-current-river-regression.mjs foreign . evidence/river-current-hooks/foreign --validate
           node scripts/run-current-river-regression.mjs radiance . evidence/river-current-hooks/radiance --validate
+          DEVICE=mobile RADIANCE_SUITE=lifecycle node scripts/run-current-river-regression.mjs radiance . evidence/river-current-hooks/mobile-lifecycle --validate
           npm run build
       - uses: actions/upload-artifact@v4
         if: always()
@@ -81,7 +82,7 @@ jobs:
           node-version: 22
       - run: npm install --ignore-scripts --no-package-lock
       - run: npx playwright install --with-deps chromium
-      - name: Current full-quality pixels, sources, advection and real recovery
+      - name: Current pixels, full particle capacity, cadence and real recovery
         env:
           DEVICE: ${{ matrix.device }}
           SUITE: ${{ matrix.suite }}

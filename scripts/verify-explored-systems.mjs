@@ -94,7 +94,7 @@ function transform(source, id) {
     if (!id.endsWith('/src/main.js')) return null;
     source = once(source, 'const firstFrameT0 = perfStart();',
         'G.t=0;G.paused=true;G.warp=1;resetEphem();clock.getDelta=()=>1/60;\nconst firstFrameT0 = perfStart();');
-    source = once(source, 'renderer.setAnimationLoop(frame);', '// QA: production frame is delivered explicitly.');
+    source = once(source, 'renderer.setAnimationLoop(frame);', 'if (frameNo === 0) frame(); // QA: exactly one untimed initialization frame, then explicit delivery.');
     const systemRender = systemRenderStatement(source);
     source = once(source, systemRender, systemRender + 'window.__exploredCurrentSystem=focusedSystem;');
     return source + `\nwindow.__exploredFrame=()=>{clock.getDelta=()=>1/60;lastMobileFrame=-Infinity;
@@ -156,7 +156,7 @@ try {
         if (message.type() === 'warning' && /WebGL|shader|texture/i.test(message.text())) report.warnings.push(message.text());
     });
     await page.route('https://fonts.googleapis.com/**', route => route.fulfill({ status: 200, body: '' }));
-    const query = new URLSearchParams({ focus: 'earth', dist: '25', hidehelp: '1', dpr: '1', tier1: '0', realsky: '0', field: '0',
+    const query = new URLSearchParams({ quality: 'high', focus: 'earth', dist: '25', hidehelp: '1', dpr: '1', tier1: '0', realsky: '0', field: '0',
         galaxyvol: '0', galaxies: '0', galaxy: '0', river: '0', bloom: '0', compile: '0', galadapt: '0', ...report.preloadFlags });
     await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?${query}`, { waitUntil: 'domcontentloaded' });
     async function initialize() {

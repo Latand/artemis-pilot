@@ -7,7 +7,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 const out = resolve(process.argv[2] || 'evidence/adaptive-quality');
 await mkdir(out, { recursive: true });
-const report = { scope: 'Cloud Chromium SwiftShader functional QA; not WARP, Iris Xe or a physical phone benchmark', cases: [], errors: [] };
+const report = { scope: 'Cloud Chromium SwiftShader functional QA; not WARP, Iris Xe or a physical phone benchmark', manualLensOmissions: ['Unrelated volumetric galaxy disabled only for manual Low lens coverage', 'Manual Low lens frames serialized through the unchanged production frame to bound the software GPU queue; no FPS claim'], cases: [], errors: [] };
 const server = await createServer({ logLevel: 'error', server: { host: '127.0.0.1', port: 0, hmr: false } });
 await server.listen();
 let browser;
@@ -31,6 +31,7 @@ const qaRender = renderer.render.bind(renderer);
 renderer.render = (...args) => { window.__qaDraws++; return qaRender(...args); };
 renderer.compileAsync = () => { window.__qaCompiles++; return new Promise(() => {}); };
 async function warmRendererStartup()`);
+            body += '\nwindow.__qaFrame = () => { lastMobileFrame = -Infinity; frame(); };\nwindow.__qaEnsureLensing = ensureLensingModule;\nwindow.__qaResume = () => renderer.setAnimationLoop(frame);\n';
             await route.fulfill({ response, body });
         });
         if (test.stuck) await page.route('**/src/scene.js', async route => {
@@ -47,6 +48,9 @@ async function warmRendererStartup()`);
         const readyMs = performance.now() - start;
         const initial = await page.evaluate(() => ({ quality: { ...__renderQuality }, compile: __startupStatus.compile,
             compiles: __qaCompiles, draws: __qaDraws, particles: __river.count }));
+        const testResult = { ...test, readyMs, initial, phase: 'ready' };
+        report.cases.push(testResult);
+        console.log(test.name, 'ready', JSON.stringify(testResult));
         assert(readyMs < 15000, 'readiness is bounded even when compilation never settles');
         assert.equal(initial.compile, test.stuck ? 'timeout' : 'skipped');
         assert.equal(initial.compiles, test.stuck ? 1 : 0);
@@ -85,7 +89,14 @@ async function warmRendererStartup()`);
             return { n: BH.n, mass: Array.from(BH.mu).slice(0, BH.n), t: G.t };
         });
         await page.locator('#renderQualityControls summary').click();
+        testResult.phase = 'manual-low-three-lens';
+        await page.evaluate(async () => {
+            const { renderer } = await import('/src/scene.js'); renderer.setAnimationLoop(null);
+            const { setGalaxyVolumeEnabled } = await import('/src/render/galaxyVolume.js'); setGalaxyVolumeEnabled(false);
+            await window.__qaEnsureLensing();
+        });
         await page.locator('#renderQualityMode').selectOption('low');
+        await page.evaluate(() => window.__qaFrame());
         await page.waitForFunction(() => __renderQuality.mode === 'low' && __renderQuality.dpr <= .75 && __river.computeEvery === 2);
         await page.waitForFunction(async () => {
             const lens = await import('/src/lensing.js');
@@ -94,6 +105,8 @@ async function warmRendererStartup()`);
         assert.equal(await page.evaluate(() => __renderQuality.lensSamples), 0, 'three visible lenses do not force MSAA');
         await page.screenshot({ path: resolve(out, `${test.name}-three-holes-low.png`) });
         await page.locator('#renderQualityMode').selectOption('minimal');
+        await page.evaluate(() => { window.__qaFrame(); window.__qaResume(); });
+        testResult.phase = 'minimal-lifecycle';
         await page.waitForFunction(() => __renderQuality.mode === 'minimal' && __river.computeEvery === 4);
         const after = await page.evaluate(async () => {
             const { BH, G } = await import('/src/state.js');
@@ -128,8 +141,8 @@ async function warmRendererStartup()`);
         await page.waitForFunction(draws => __qaDraws > draws, draws);
         await page.screenshot({ path: resolve(out, `${test.name}-restored.png`) });
         const contextRestores = await page.evaluate(() => __renderContext.restores);
-        report.cases.push({ ...test, readyMs, initial, sourceCount, contextRestores });
-        console.log(test.name, JSON.stringify(report.cases.at(-1)));
+        Object.assign(testResult, { sourceCount, contextRestores, phase: 'passed' });
+        console.log(test.name, JSON.stringify(testResult));
         await page.close();
     }
     assert.deepEqual(report.errors, []); report.passed = true;
