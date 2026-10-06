@@ -81,3 +81,15 @@ assert.equal(pacedFrameTime(1, -Infinity, 30), 1);
 assert.equal(pacedFrameTime(10, 1, 30), null);
 assert.equal(pacedFrameTime(10, 1, 0), 10, 'XR/unthrottled frames bypass pacing');
 console.log('Integrated RAF pacing recovers at 50/60/75/80/90/120/144 Hz on desktop and mobile.');
+
+const compactSource = readFileSync(new URL('../src/compactExplorer.js', import.meta.url), 'utf8');
+const qualityCss = readFileSync(new URL('../src/render/qualityControls.css', import.meta.url), 'utf8');
+assert(compactSource.includes("setCss('--explore-panel-bottom'") && compactSource.includes('observer.observe(panel)'));
+assert(qualityCss.includes('top:calc(var(--explore-panel-bottom,238px) + 10px)'));
+assert(qualityCss.includes(':has(#explorePanel.expanded)') && qualityCss.includes(':has(#gravityInspector[open])'));
+
+assert(compactSource.includes("setCss('--time-dock-top'"));
+assert(qualityCss.includes('box-sizing:border-box') && qualityCss.includes('var(--time-dock-top,calc(100dvh - 140px))'));
+assert(qualityCss.includes('#renderQualityControls[open] { overflow:auto; }'));
+assert(qualityCss.includes('summary:focus-visible { outline:2px solid #8ecdf6;outline-offset:-4px; }'));
+assert(qualityCss.includes(':has(#tdOptions:not([hidden]))'));

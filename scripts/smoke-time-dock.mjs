@@ -338,8 +338,21 @@ try {
     const { setWarp } = await import("/src/timeCtl.js");
     WORLD.irreversibleFloorT = G.t;
     const expected = "REVERSE BLOCKED — cannot rewind past " + fmtCivilDate(getEpochMs(), WORLD.irreversibleFloorT);
+    WORLD.reverseBlocked = false; // Require a newly produced pulse, not an earlier latched flag.
     setWarp(-3600, "dock-smoke");
-    requestAnimationFrame(() => setWarp(3600, "dock-smoke-release"));
+    // Wait for a produced physics tick, not a raw RAF that GPU admission may skip.
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const deadline = setTimeout(() => { settled = true; reject(new Error('No production reverse-block pulse within 3000ms')); }, 3000);
+      const releaseAfterStep = () => {
+        if (settled) return;
+        if (WORLD.reverseBlocked) {
+          settled = true; clearTimeout(deadline);
+          setWarp(3600, "dock-smoke-release"); resolve();
+        } else requestAnimationFrame(releaseAfterStep);
+      };
+      requestAnimationFrame(releaseAfterStep);
+    });
     return expected;
   });
   let statusVisible = true;

@@ -72,6 +72,15 @@ async function warmRendererStartup()`);
         await page.evaluate(async () => {
             const { G } = await import('/src/state.js'); G.paused = true; G.gr = true; G.predict = false;
         });
+        if (test.mobile) {
+            testResult.compactQualityBounds = await page.evaluate(() => {
+                const bounds = id => { const r = document.getElementById(id).getBoundingClientRect(); return { top:r.top,bottom:r.bottom,left:r.left,right:r.right,height:r.height }; };
+                return { quality:bounds('renderQualityControls'),panel:bounds('explorePanel'),dock:bounds('timeDock'),width:innerWidth };
+            });
+            const {quality,panel,dock,width} = testResult.compactQualityBounds;
+            assert(quality.top >= panel.bottom + 9 && quality.bottom <= dock.top - 9 && quality.height >= 44 && quality.left >= 0 && quality.right <= width,
+                'Closed Graphics control does not cover compact gravity content or Time Dock');
+        }
         await page.screenshot({ path: resolve(out, `${test.name}-scene.png`) });
         await page.evaluate(async () => {
             const bh = await import('/src/blackholes.js'); bh.clearBlackHoles();
@@ -173,6 +182,35 @@ async function warmRendererStartup()`);
         const draws = await page.evaluate(() => __qaDraws);
         await page.waitForFunction(draws => __qaDraws > draws, draws);
         await page.screenshot({ path: resolve(out, `${test.name}-restored.png`) });
+        if (test.mobile) {
+            // Short portrait and a synthetic34px bottom inset exercise the
+            // constrained menu without claiming physical Safari coverage.
+            await page.setViewportSize({ width:320,height:568 });
+            await page.evaluate(() => {
+                document.getElementById('timeDock').style.setProperty('bottom','34px','important');
+                document.getElementById('renderQualityControls').open=false;
+                window.dispatchEvent(new Event('resize'));
+            });
+            const clearCompactBounds = () => page.waitForFunction(() => {
+                const q=document.getElementById('renderQualityControls').getBoundingClientRect();
+                const p=document.getElementById('explorePanel').getBoundingClientRect(),d=document.getElementById('timeDock').getBoundingClientRect();
+                return q.height>=44&&q.top>=p.bottom+9&&q.bottom<=d.top-9&&q.left>=0&&q.right<=innerWidth;
+            });
+            await clearCompactBounds();
+            await page.keyboard.press('Tab'); await page.locator('#renderQualityControls summary').focus();
+            assert(await page.locator('#renderQualityControls summary').evaluate(el => {
+                const style=getComputedStyle(el);
+                return el.matches(':focus-visible')&&parseFloat(style.outlineWidth)>=2&&parseFloat(style.outlineOffset)<0;
+            }), 'Collapsed compact Graphics has an unclipped inset keyboard focus indicator');
+            await page.screenshot({path:resolve(out,`${test.name}-short-portrait-focus.png`)});
+            await page.locator('#renderQualityControls summary').click(); await clearCompactBounds();
+            await page.screenshot({path:resolve(out,`${test.name}-short-portrait-open.png`)});
+            for(const selector of ['#tdMore','#explorePanelToggle','#gravityInspector > summary']) {
+                await page.locator(selector).click(); assert(!(await page.locator('#renderQualityControls').isVisible()), 'Expanded compact controls keep their own unobscured space');
+                await page.locator(selector).click(); await clearCompactBounds();
+            }
+            testResult.shortPortraitQuality={width:320,height:568,syntheticBottomInsetPx:34,focusAndPanelReturn:true};
+        }
         const contextRestores = await page.evaluate(() => __renderContext.restores);
         Object.assign(testResult, { sourceCount, contextRestores, phase: 'passed' });
         console.log(test.name, JSON.stringify(testResult));

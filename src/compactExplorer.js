@@ -35,6 +35,8 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
         setCss('--explore-visible-height', `${Math.round(vv?.height || innerHeight)}px`);
         setCss('--explore-viewport-top', `${Math.round(vv?.offsetTop || 0)}px`);
         setCss('--explore-toolbar-bottom', `${Math.ceil($('exploreBar').getBoundingClientRect().bottom)}px`);
+        setCss('--explore-panel-bottom', `${Math.ceil(panel.getBoundingClientRect().bottom)}px`);
+        setCss('--time-dock-top', `${Math.floor(dock.getBoundingClientRect().top)}px`);
         const h = Math.ceil(dock.getBoundingClientRect().height);
         if (h > 0) setCss('--time-dock-height', `${h}px`);
     };
@@ -67,6 +69,6 @@ export function initCompactExplorer({ stopMovement = () => {} } = {}) {
     window.visualViewport?.addEventListener('resize', measure);
     window.visualViewport?.addEventListener('scroll', measure);
     window.addEventListener('resize', measure);
-    const observer = new ResizeObserver(measure); observer.observe($('exploreBar')); observer.observe(dock);
+    const observer = new ResizeObserver(measure); observer.observe($('exploreBar')); observer.observe(dock); observer.observe(panel);
     render();
 }
