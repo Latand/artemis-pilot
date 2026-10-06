@@ -1,0 +1,71 @@
+# One explicitly reviewed diagnostic push. No PR trigger, matrix, retries,
+# automatic cancellation, or claim that this supersedes PR acceptance.
+name: Bounded overview causal diagnostic
+on:
+  push:
+    branches: ['diagnostic/overview-causal-8c6569-16587']
+    paths:
+      - 'scripts/diagnose-overview-causal.mjs'
+      - 'scripts/overview-causal-attribution.mjs'
+      - 'scripts/smoke-overview-causal.mjs'
+      - '.github/workflows/overview-causal-diagnostic.yml'
+permissions:
+  contents: read
+concurrency:
+  group: overview-causal-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  overview-diagnostic:
+    name: Fixed desktop historical pair (diagnostic only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.3'
+      - name: Verify first attempt and exact shared runtime
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = '1'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          npm install --no-save --package-lock=false --ignore-scripts playwright@1.63.0 playwright-core@1.63.0 three@0.164.1 vite@5.4.21
+          mkdir -p evidence/overview-causal
+          node --input-type=module <<'NODE' > evidence/overview-causal/runtime.json
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const packages={playwright:'1.63.0','playwright-core':'1.63.0',three:'0.164.1',vite:'5.4.21'};
+          for(const [name,version] of Object.entries(packages)) assert.equal(JSON.parse(readFileSync(`node_modules/${name}/package.json`)).version,version);
+          const browsers=JSON.parse(readFileSync('node_modules/playwright-core/browsers.json')).browsers;
+          for(const name of ['chromium','chromium-headless-shell']) { const browser=browsers.find(b=>b.name===name); assert.equal(browser.revision,'1243'); assert.equal(browser.browserVersion,'153.0.8010.12'); }
+          console.log(JSON.stringify({node:process.version,packages,chromium:'153.0.8010.12',revision:'1243'}));
+          NODE
+          git rev-parse HEAD HEAD^{tree} > evidence/overview-causal/diagnostic-head.txt
+          cp .github/workflows/overview-causal-diagnostic.yml evidence/overview-causal/execution-workflow.yml
+      - name: Install pinned Chromium
+        run: node node_modules/playwright/cli.js install --with-deps chromium
+      - name: Prepare only the two authorized historical revisions
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/overview-A" 8c6569e03efe7f74707c254c6851be975974c708
+          git worktree add --detach "$RUNNER_TEMP/overview-B" 16587fff9e4b5bfcb1c3e7313c884d0d39597be9
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/overview-A/node_modules"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/overview-B/node_modules"
+          node scripts/smoke-overview-causal.mjs
+          node scripts/diagnose-overview-causal.mjs "$RUNNER_TEMP/overview-A" "$RUNNER_TEMP/overview-B" evidence/overview-causal-validation --validate
+      - name: Collect every balanced trial then isolated overview attribution
+        timeout-minutes: 10
+        run: timeout --signal=TERM --kill-after=10s 10m node scripts/diagnose-overview-causal.mjs "$RUNNER_TEMP/overview-A" "$RUNNER_TEMP/overview-B" evidence/overview-causal
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: overview-causal-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            evidence/overview-causal/
+            evidence/overview-causal-validation/
+          if-no-files-found: error
+          retention-days: 30
