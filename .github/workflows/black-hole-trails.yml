@@ -1,0 +1,43 @@
+name: Black-hole motion trails
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'scripts/*black-hole-trail*'
+      - '.github/workflows/black-hole-trails.yml'
+permissions:
+  contents: read
+concurrency:
+  group: black-hole-trails-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  history-and-rendering:
+    name: Motion trails ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npm run smoke:black-hole-trails && npm run smoke:gravity-inspector && npm test && npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Verify real motion histories and capture the actual app
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: npm run verify:black-hole-trails
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: black-hole-trails-${{ matrix.device }}
+          path: evidence/black-hole-trails/
+          if-no-files-found: error
+          retention-days: 14

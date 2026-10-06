@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import { BH_MAX, BH_SIZES, C_LIGHT, MU_S, K, LY_SCENE, LY_KM, R_SUN } from "./constants.js";
+import { BH_MAX, BH_SIZES, C_LIGHT, MU_E, MU_M, MU_S, PL, K, LY_SCENE, LY_KM, R_SUN } from "./constants.js";
 import { tdeLuminosityW, fallbackRate, L_EDD_PER_MSUN, TDE_ETA } from "./tde.js";
-import { G, BH } from "./state.js";
+import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
 import { fmtAccel, fmtDist, fmtKm, fmtMET } from "./format.js";
 import { dotTexture, ringTexture } from "./textures.js";
@@ -19,6 +19,8 @@ import { NEBULAE, NEB_MAX, NEBULA_ARCHETYPES, nebulaRadiusKmFromPreset } from ".
 import { initEncounterHooks, addHoleData, removeHoleData, TDES } from "./bhEncounters.js";
 import { updateTdeVisuals } from "./tdeVisuals.js";
 import { holeRoot, makeHoleOptics, updateHoleOptics, SHADOW_RS } from "./holeOptics.js";
+import { getEpochMs } from './epoch.js';
+import { makeBlackHoleTrail, tickBlackHoleTrails } from './render/blackHoleTrails.js';
 import { retardedTimeMoving } from "./universe/observerTime.js";
 // the encounter physics lives in bhEncounters.js (headless); these stay
 // importable from here for the HUD / events panel
@@ -768,10 +770,12 @@ function buildHoleVisual(i) {
         g.add(horizon, optics.shadow, optics.ring, optics.disk, optics.jet, marker);
         holeRoot.add(g);
     }
-    return { g, horizon, marker, optics, quasarLight, glow, rs: rsKm, flare: 0, pulsar, audioObj, tBorn: G.t, lastT: NaN };
+    const trail = kind === 2 ? null : makeBlackHoleTrail();
+    return { trail, g, horizon, marker, optics, quasarLight, glow, rs: rsKm, flare: 0, pulsar, audioObj, tBorn: G.t, lastT: NaN };
 }
 function disposeHoleVisual(m) {
     if (!m) return;
+    m.trail?.dispose();
     if (m.audioObj) unregisterPlacedPulsar(m.audioObj);
     m.g.parent?.remove(m.g);
     if (m.quasarLight) { scene.remove(m.quasarLight); m.quasarLight.dispose?.(); }
@@ -939,7 +943,24 @@ function updateOpticsFor(bi, m, t, dBH) {
     m.marker.material.opacity = .5 * mk;
     m.marker.scale.setScalar(dBH * .0045);
 }
+// Reject under-sampled close encounters instead of inventing a straight
+// chord across a large time jump. Read-only, bounded by the local inventory.
+function trailStepLimit(i) {
+    let limit = Infinity;
+    const source = (x, y, z, mu) => {
+        if (!(mu > 0)) return;
+        const r = Math.hypot(BH.x[i]-x, BH.y[i]-y, BH.z[i]-z);
+        limit = Math.min(limit, Math.sqrt(r * r * r / (mu + BH.mu[i])) / 8);
+    };
+    if (!WORLD.earthDestroyed) source(0, 0, 0, MU_E);
+    if (!WORLD.moonDestroyed) source(eph.moonX, eph.moonY, eph.moonZ, MU_M);
+    if (!WORLD.sunDestroyed) source(eph.sunX, eph.sunY, eph.sunZ, MU_S);
+    for (let j = 0; j < PL.length; j++) if (!WORLD.plDestroyed[j]) source(eph.plX[j], eph.plY[j], eph.plZ[j], PL[j].mu);
+    for (let j = 0; j < BH.n; j++) if (j !== i) source(BH.x[j], BH.y[j], BH.z[j], BH.mu[j]);
+    return limit;
+}
 export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
+    tickBlackHoleTrails(G.paused);
     updateBHPlacementPreview(dtR);
     updateBHPlacementUI();
     for (let bi = 0; bi < BH_META.length && bi < BH.n; bi++) {
@@ -953,6 +974,11 @@ export function updateBHVisuals(dtR, earthScX = 0, earthScZ = 0) {
             m.audioObj.z = BH.z[bi];
         }
         const dBH = camera.position.distanceTo(m.g.position);
+        m.trail?.update((eph.earthX + BH.x[bi]) * K, BH.z[bi] * K, -(eph.earthY + BH.y[bi]) * K, G.t, {
+            epoch: getEpochMs(), scenePerPixel: dBH / Math.max(1, viewportSize.pxScale),
+            speed: Math.hypot(eph.earthVx + BH.vx[bi], eph.earthVy + BH.vy[bi], BH.vz[bi]) * K,
+            stepLimit: trailStepLimit(bi), enabled: G.warp >= 0,
+        });
         const obsRate = observerTimeScaleForBH(bi, m.g.position);
         BH.obsT[bi] = obsRate;
         if (BH.kind[bi] === 2 && m.pulsar) {
