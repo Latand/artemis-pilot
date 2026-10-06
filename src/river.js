@@ -15,6 +15,7 @@ import { eph } from "./ephemeris.js";
 import { publishRiverSourcePositions } from "./riverSourceCache.js";
 import { haloSamplingRadius, haloViewWeight, refreshProbability } from "./riverCoverageMath.js";
 import { sourceSampleInkGain, OWNED_SAMPLE_FRACTION } from "./riverRadianceMath.js";
+import { BLACK_HOLE_SINK_GLSL } from "./riverSinkMath.js";
 import { observerPositionRelativeTo, stabilizeBodyMaterial } from './render/relativeBodyFrame.js';
 
 // GPU river: one particle volume that follows the camera at solar-system scale.
@@ -321,6 +322,7 @@ attribute float aSeg;
 varying vec3 vColor;
 varying float vAlong, vPhase;
 ${FLOW_GLSL}
+${BLACK_HOLE_SINK_GLSL}
 void main() {
     vec4 stored = texture2D(uPos, ref);
     int own = int(stored.w + 0.5) - 1;
@@ -392,7 +394,10 @@ void main() {
         float bandMul = i == 2 ? 3.0 : 1.0;
         float surfaceBand = mix((uSink[i] * 1.5 + uRadius * 0.02) * bandMul, max(uRadius * 0.035, uSink[i] * 0.055), uLocalFocus);
         float regularSinkFade = clamp((dSrc - uSink[i]) / max(1e-6, surfaceBand), 0.0, 1.0);
-        float bhSinkFade = smoothstep(bhCore * 0.9, max(bhCore * 9.0, uRadius * 0.13), dSrc);
+        // A hole's fade belongs to its own sampled support. The old volume-
+        // sized band hid almost every owned sample at solar-system zoom.
+        float bhReach = spawnReach(i);
+        float bhSinkFade = smoothstep(bhCore * 0.9, blackHoleSinkOuter(bhCore, bhReach, 9.0), dSrc);
         fade *= mix(regularSinkFade, bhSinkFade, uHole[i]);
         curv += uRs[i] / max(uSink[i], dSrc);
         float gSrc = (uBody[i].w * uBody[i].w) / max(uSink[i] * uSink[i], dSrc * dSrc);
@@ -419,8 +424,9 @@ void main() {
             float rBH = max(bhCore * 0.42, dSrc);
             holePart = max(holePart, uBody[i].w * inversesqrt(rBH));
             float outer = max(bhCore * 18.0, uRadius * 0.30);
-            holeCrowd = max(holeCrowd, 1.0 - smoothstep(bhCore * 1.0, max(bhCore * 8.0, uRadius * 0.08), dSrc));
-            holeHalo = max(holeHalo, smoothstep(bhCore * 1.5, max(bhCore * 8.0, uRadius * 0.08), dSrc) * (1.0 - smoothstep(outer * 0.42, outer, dSrc)));
+            float crowdOuter = blackHoleSinkOuter(bhCore, bhReach, 8.0);
+            holeCrowd = max(holeCrowd, 1.0 - smoothstep(bhCore * 0.9, crowdOuter, dSrc));
+            holeHalo = max(holeHalo, smoothstep(bhCore * 0.9, crowdOuter, dSrc) * (1.0 - smoothstep(outer * 0.42, outer, dSrc)));
         }
     }
     float lapseInk = smoothstep(0.000001, 0.08, curv);

@@ -1,0 +1,54 @@
+name: Black-hole river sink support
+on:
+  pull_request:
+    paths:
+      - 'src/river*.js'
+      - 'scripts/*river-sink-support*'
+      - '.github/workflows/river-sink-support.yml'
+permissions:
+  contents: read
+concurrency:
+  group: river-sink-support-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  support:
+    name: Sink support ${{ matrix.device }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [desktop, mobile]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - name: Preserve field, sampling, coverage, radiance and lifecycle contracts
+        run: |
+          node scripts/smoke-river-sink-support.mjs
+          node scripts/smoke-river-visual.mjs
+          node scripts/smoke-river-coverage.mjs
+          node scripts/smoke-river-radiance.mjs
+          node scripts/smoke-river-radiance-lifecycle.mjs
+          node scripts/smoke-river-resource-policy.mjs
+          node scripts/smoke-river-source-alignment.mjs
+          node scripts/smoke-gravity-holes.mjs
+          npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Compare production shaders on the same frozen GPU samples
+        env:
+          DEVICE: ${{ matrix.device }}
+        run: node scripts/verify-river-sink-support.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: river-sink-support-${{ matrix.device }}
+          path: evidence/river-sink-support/
+          if-no-files-found: error
+          retention-days: 14
