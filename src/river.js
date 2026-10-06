@@ -1014,7 +1014,8 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     }
     let nb = 3 + PL.length;
     for (let i = 0; i < BH.n && nb < MAXB; i++, nb++) {
-        bodyVals[nb].set(earthV.x + BH.sx[i] - smoothCenter.x, BH.sy[i] - smoothCenter.y, earthV.z + BH.sz[i] - smoothCenter.z, BH.c[i] * Math.max(.08, BH.obsT[i] || 1));
+        // Optical lapse is camera dependent; it must not reweight gravity.
+        bodyVals[nb].set(earthV.x + BH.sx[i] - smoothCenter.x, BH.sy[i] - smoothCenter.y, earthV.z + BH.sz[i] - smoothCenter.z, BH.c[i]);
         sinkVals[nb] = BH.sinkS[i];
         rsVals[nb] = BH.rs[i] * K;
         holeVals[nb] = 1;
