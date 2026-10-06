@@ -84,3 +84,31 @@ assert(currentProbe.includes('assertDiskFullQuality(sample.qualityEvidence, { mo
 assert(currentProbe.includes('/?quality=high&dpr=1&focus=saturn'));
 assert(currentProbe.includes("assertCrossingAcceptance(report.samples, 'candidate')"));
 console.log(`Current disk full-quality: ${qualityChecks} legacy/current positive and incompatible actual-renderer negative controls passed; no pixel or recovery threshold changed.`);
+
+// Execute the current probe's actual nested draw function against a bounded
+// compositor model. The original omission draws optics once in the world pass
+// and again in LensPass, despite each individual GPU readback being healthy.
+const drawFunction = currentProbe.match(/    function draw\(\) \{[\s\S]*?\n    \}/)?.[0];
+assert(drawFunction, 'Actual current-disk draw callback');
+const prepareLens = 'lens.updateLensing(s.camera, s.camera.aspect);';
+assert.equal(drawFunction.split(prepareLens).length, 2);
+function inspectDrawOrdering(source, bloom) {
+    let holeVisible = true, worldHoleDraws = 0, opticalDraws = 0, prepared = 0;
+    const scene = { camera: { aspect: 1.5 }, renderer: { getRenderTarget: () => null }, composer: { render() {
+        if (holeVisible) worldHoleDraws++; opticalDraws++; holeVisible = true;
+    } } };
+    const lens = { updateLensing() { prepared++; holeVisible = false; }, renderLensed() { holeVisible = false; opticalDraws++; holeVisible = true; } };
+    const window = { __qaBloom: bloom, __diskPlanePointerSnapshot: () => ({}) };
+    const gl = { finish() {}, readPixels() {}, getError: () => 0, isContextLost: () => false, RGBA: 6408, UNSIGNED_BYTE: 5121 };
+    const qa = { readbacks: 0 }, pointerSnapshots = [];
+    const draw = new Function('s', 'lens', 'window', 'gl', 'qa', 'pointerSnapshots', 'width', 'height', source+'; return draw;')(
+        scene, lens, window, gl, qa, pointerSnapshots, 1, 1);
+    draw(); draw();
+    assert.equal(qa.readbacks, 2); assert.equal(pointerSnapshots.length, 2);
+    return { prepared, worldHoleDraws, opticalDraws };
+}
+for (const bloom of [false, true]) assert.deepEqual(inspectDrawOrdering(drawFunction, bloom),
+    { prepared: 2, worldHoleDraws: 0, opticalDraws: 2 });
+assert.deepEqual(inspectDrawOrdering(drawFunction.replace(prepareLens, ''), true),
+    { prepared: 0, worldHoleDraws: 2, opticalDraws: 2 }, 'Retain the old duplicate-optics bloom failure');
+console.log('Current disk draw ordering: each production direct/bloom readback prepares lens visibility; original omitted preparation reproduces duplicate world/lens optics. Pixel thresholds unchanged.');

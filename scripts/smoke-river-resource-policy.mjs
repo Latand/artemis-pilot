@@ -46,7 +46,7 @@ const originalField=fieldRead();assert.equal(originalField.targets.length,2);ass
 pixelsB[15]=3;assert.notDeepEqual(fieldRead(),originalField,'last texel of second target is checked');pixelsB[15]=2;
 fieldContext.uniformsShared.uPhase.value=4;assert.notDeepEqual(fieldRead(),originalField);fieldContext.uniformsShared.uPhase.value=3;
 
-async function runPreparation(mode){
+async function runPreparation(mode, unapplied=false){
  const oldWindow=globalThis.window;
  const cam={tgt:new THREE.Vector3(10,20,30),dist:40000,distTarget:null,yaw:Math.PI/2,pitch:0};
  const camera=new THREE.PerspectiveCamera(48,215/466,.02,1e10),scene=new THREE.Scene(),sunCore=new THREE.Mesh(),sunCorona=new THREE.Mesh(new THREE.SphereGeometry(891.3152,48,32),new THREE.ShaderMaterial());
@@ -54,8 +54,9 @@ async function runPreparation(mode){
  const viewportSize={pxScale:466/(2*Math.tan(24*Math.PI/180))};
  const G={t:123,paused:true,warp:1,thrustMain:0},keys=new Set(['KeyW']),AP={mode:'off'};
  let frameNo=1,renderCalls=0,programId=null;
- const applyCamera=()=>{cam.tgt.clone();camera.position.copy(cam.tgt).add(new THREE.Vector3(cam.dist*Math.cos(cam.yaw),0,cam.dist*Math.sin(cam.yaw)));camera.lookAt(cam.tgt);};applyCamera();camera.updateMatrixWorld(true);
- const initialCam=JSON.stringify({tgt:cam.tgt.toArray(),dist:cam.dist,yaw:cam.yaw,pitch:cam.pitch,position:camera.position.toArray(),quaternion:camera.quaternion.toArray()});
+ const applyCamera=()=>{cam.tgt.clone();camera.position.copy(cam.tgt).add(new THREE.Vector3(cam.dist*Math.cos(cam.yaw),0,cam.dist*Math.sin(cam.yaw)));camera.lookAt(cam.tgt);};if(!unapplied)applyCamera();camera.updateMatrixWorld(true);
+ const cameraState=()=>({tgt:cam.tgt.toArray(),dist:cam.dist,yaw:cam.yaw,pitch:cam.pitch,position:camera.position.toArray(),quaternion:camera.quaternion.toArray()});
+ const initialCam=JSON.stringify(cameraState());
  const memory={geometries:59,textures:19};
  const renderer={info:{memory,programs:Array(15)},properties:{get:()=>({currentProgram:programId===null?null:{id:programId}})},getContext:()=>({RGBA:6408,UNSIGNED_BYTE:5121,readPixels(){}})};
  const updateBodySurfaceLod=()=>{sunCorona.visible=696.34/camera.position.distanceTo(sunCore.position)*viewportSize.pxScale>=10;};
@@ -70,7 +71,7 @@ async function runPreparation(mode){
   if(mode==='field-drift')pixelsB[15]=3;
  };
  try{
-  globalThis.window={__coveragePreparing:false,__coverageControlState:()=>({G:{...G},keys:[...keys],AP:{...AP},frameNo,cam:JSON.parse(initialCam)}),__coverageFieldRead:fieldRead};
+  globalThis.window={__coveragePreparing:false,__coverageControlState:()=>({G:{...G},keys:[...keys],AP:{...AP},frameNo,cam:cameraState()}),__coverageFieldRead:fieldRead};
   const report={};
   const page={evaluate:async fn=>structuredClone(await fn())};
   const screenshot=async name=>{
@@ -88,7 +89,7 @@ async function runPreparation(mode){
   assert.equal(JSON.stringify({tgt:cam.tgt.toArray(),dist:cam.dist,yaw:cam.yaw,pitch:cam.pitch,position:camera.position.toArray(),quaternion:camera.quaternion.toArray()}),initialCam,'camera restored exactly');
  }finally{pixelsB[15]=2;if(oldWindow===undefined)delete globalThis.window;else globalThis.window=oldWindow;}
 }
-for(const mode of ['valid','render-throws','missing-gpu','missing-program','clock-drift','input-drift','frame-drift','field-drift'])await runPreparation(mode);
+for(const unapplied of [false,true])for(const mode of ['valid','render-throws','missing-gpu','missing-program','clock-drift','input-drift','frame-drift','field-drift'])await runPreparation(mode,unapplied);
 
 const fixture=readFileSync(new URL('./verify-river-coverage.mjs',import.meta.url),'utf8');
 assert(fixture.includes('if(window.__coveragePreparing)return window.__coverageWarmupDraw();lastMobileFrame=-Infinity;frame();'));

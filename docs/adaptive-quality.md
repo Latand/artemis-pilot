@@ -19,6 +19,36 @@ profiling or a claim to isolate CPU/GPU bottlenecks.
 - JavaScript cannot interrupt a synchronously blocked driver call. The default
   skips global compilation to avoid exposing the whole scene to that risk.
 
+## GPU queue backpressure
+
+Live WebGL2 callbacks keep at most one submitted frame in flight. A fence is
+placed after all river/world/lens/bloom/cockpit rendering, including cosmic
+frames. Later RAF callbacks poll it with a zero timeout and return immediately
+while it is busy, leaving browser input and other tasks available. A single
+flush dispatches the fence; production never calls finish or readPixels.
+The quality controller sees intervals between GPU-ready delivered frames.
+
+A never-signaling fence publishes a one-shot stall notice after four seconds.
+It continues holding submission rather than feeding more work into a stuck GPU.
+The user can request a graphics-only context restart; restore is requested only
+after a real loss event. Five-second restart failure is reported, with an
+explicit reload choice warning about unsaved changes. Nothing reloads or retries
+automatically, and a successful graphics restart preserves simulation state.
+
+Fences are deleted when complete or reset, dropped after context loss, and
+released on pagehide; restoration/pageshow starts cleanly. WebGL1, unsupported
+sync APIs or failed/null fences use the existing phase-preserving 30 Hz pacer
+without claiming GPU completion; no second completion-relative delay is added. XR retains its own pacing. Explicit deterministic QA frame()
+callers remain responsible for serializing their own GPU readbacks. Discarded
+fences are accounted separately from completed frames; BFCache preserves a
+pending user-requested restart.
+
+The first two hosted attempts retained screenshots of the visible Minimal scene
+but screenshot capture later stalled under a live multi-hole software workload.
+This motivated actual production backpressure, rather than increasing screenshot
+timeouts or claiming the previous code was responsive. Final hosted checks must
+validate the new scheduling path.
+
 ## Graphics control
 
 The Graphics control works on the welcome screen and in the scene. Auto, High,
@@ -59,7 +89,9 @@ No ring-deformation or ring-depth repair is included.
 - `npm run smoke:adaptive-quality`: deterministic desktop/mobile slowdown and
   recovery, severe stalls, manual overrides, software classification, DPR=1 and
   pixel budgets, inactive/resize/context grace, never-settling/rejected/late
-  compile promises.
+  compile promises. `smoke-gpu-frame-gate.mjs` also checks one outstanding
+  frame, zero-time polling, completion, reset/disposal/context loss, WebGL1 and
+  failed-fence fallback, plus the actual live/manual/XR scheduler wrapper.
 - `npm run verify:adaptive-quality`: actual app in Chromium/SwiftShader,
   desktop/mobile entry, no GPU submissions under the welcome screen, injected
   non-settling desktop compile, visible scene captures, three placed black holes,
@@ -89,3 +121,15 @@ commit. Do not call browser checks passed until those results exist.
 This work is not a measured reproduction on the reported WARP PC, Intel Iris Xe
 hardware or a physical phone. Software rendering may remain slow, and a browser
 using hardware acceleration can still have other bottlenecks.
+
+The paired ship-motion comparison pins High and compares all render settings,
+excluding only frame-time/sample/change/reason diagnostics that necessarily
+differ between runs. Complete raw quality snapshots remain in its reports;
+48-frame sampling and the 50% + 20 ms completed-frame bound are unchanged.
+
+Navigation's existing volumetric-map fixture requests High explicitly rather than
+waiting for maps intentionally omitted by Minimal. River coverage's render-only
+resource preparation restores the exact saved native camera pose, including the
+unapplied deferred-start pose. Its bitwise field/control invariance assertion,
+all 1200 soak frames and resource limits remain unchanged; negative tests now
+exercise both initialized and unapplied cameras with dynamic state snapshots.

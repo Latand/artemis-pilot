@@ -6,3 +6,5 @@
 #renderQualityControls p { margin:8px 10px 0;max-width:265px; }
 body.mode-xr #renderQualityControls, body.mode-clean #renderQualityControls { display:none; }
 @media(max-width:760px) { #renderQualityControls { top:calc(var(--explore-toolbar-bottom,108px) + 84px);right:10px; } #renderQualityControls summary,#renderQualityControls select { min-height:44px; } }
+
+#restartGraphics[hidden] { display:none!important; }

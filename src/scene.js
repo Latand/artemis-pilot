@@ -1,3 +1,5 @@
+import { createGraphicsRestart } from './render/graphicsRestart.js';
+import { createGpuFrameGate } from './render/gpuFrameGate.js';
 import { moveExplorationTarget } from './universe/explorationCamera.js';
 import * as THREE from "three";
 import { renderLinearFrame } from "./render/linearFrame.js";
@@ -28,6 +30,12 @@ const initialQualityMode = qualityMode(q.get('quality') || savedQuality);
 // Conservative startup avoids permanent framebuffer multisampling. A deliberate
 // High load keeps the full-detail capture path; live changes reuse the context.
 export const renderer = new THREE.WebGLRenderer({ antialias: initialQualityMode === 'high' });
+export const renderFrameGate = createGpuFrameGate(() => renderer.getContext(), {
+    onStall: () => showRenderStall(), onRecovered: () => clearRenderStall(),
+});
+window.__renderFrameGate = renderFrameGate.stats;
+window.addEventListener('pagehide', () => renderFrameGate.dispose());
+window.addEventListener('pageshow', () => renderFrameGate.reset());
 const dprOverride = Number(q.get("dpr") || q.get("pixelRatio"));
 // Keep one live MediaQueryList; creating one in every frame can itself
 // become measurable overhead on the devices this controller protects.
@@ -60,7 +68,8 @@ function applyPixelRatio() {
 applyPixelRatio();
 export function resetRenderPerformance() { qualityController.reset(performance.now()); }
 export function sampleRenderPerformance(now, active = true) {
-    const targetMs = renderQuality.mobile || renderQuality.minimal ? 1000 / 30 : 1000 / 60;
+    const targetMs = Math.max(renderQuality.mobile || renderQuality.minimal ? 1000 / 30 : 1000 / 60,
+        renderFrameGate.stats.fallback ? renderFrameGate.stats.fallbackIntervalMs : 0);
     const mobile = isMobileLike(), mobileChanged = mobile !== renderQuality.mobile;
     if (qualityController.sample(now, { active, mobile, targetMs }) || mobileChanged) resize(false);
     Object.assign(renderQuality, qualityController.state);
@@ -82,8 +91,44 @@ const contextStatus = document.createElement("div");
 contextStatus.id = "renderContextStatus";
 contextStatus.setAttribute("role", "status");
 contextStatus.hidden = true;
-contextStatus.textContent = "Graphics interrupted. Flight is held here while the display recovers.";
-Object.assign(contextStatus.style, { position: "fixed", left: "8%", right: "8%", top: "46%", padding: "18px", border: "1px solid #70818c", borderRadius: "12px", background: "#0b141fee", color: "#e9eff5", textAlign: "center", zIndex: "1000", pointerEvents: "none" });
+const contextMessage = document.createElement('span');
+contextMessage.textContent = "Graphics interrupted. Flight is held here while the display recovers.";
+const restartGraphics = document.createElement('button');
+restartGraphics.id = 'restartGraphics'; restartGraphics.type = 'button'; restartGraphics.className = 'uiBtn uiBtnHot';
+restartGraphics.textContent = 'Restart graphics'; restartGraphics.hidden = true;
+Object.assign(restartGraphics.style, { margin: '12px auto 0', minHeight: '44px', padding: '8px 14px' });
+contextStatus.appendChild(contextMessage); contextStatus.appendChild(restartGraphics);
+let reloadRequired = false;
+const graphicsRestart = createGraphicsRestart(renderer, { onState(status) {
+    if (status === 'restored') { clearRenderStall(); return; }
+    contextStatus.hidden = false; restartGraphics.hidden = false;
+    restartGraphics.disabled = status === 'restarting';
+    reloadRequired = status !== 'restarting';
+    contextMessage.textContent = status === 'restarting'
+        ? 'Restarting graphics. Your simulation state is held.'
+        : 'Graphics could not restart. Reloading the page may lose unsaved simulation changes.';
+    restartGraphics.textContent = reloadRequired ? 'Reload page' : 'Restarting graphics';
+} });
+restartGraphics.addEventListener('click', () => {
+    if (reloadRequired) location.reload();
+    else graphicsRestart.restart();
+});
+// BFCache retains the original user-requested restart and its timers. A real
+// document teardown cancels it and releases listeners; it cannot strand a
+// resumed page behind a permanently disabled restart button.
+window.addEventListener('pagehide', event => { if (!event.persisted) graphicsRestart.dispose(); });
+function showRenderStall() {
+    contextStatus.hidden = false; restartGraphics.hidden = false; restartGraphics.disabled = false;
+    reloadRequired = false; restartGraphics.textContent = 'Restart graphics';
+    contextMessage.textContent = 'Graphics have stalled. Rendering and simulation are held. Restart graphics to try recovering without resetting the simulation.';
+}
+function clearRenderStall() {
+    if (graphicsRestart.state.pending) return;
+    restartGraphics.hidden = true; restartGraphics.disabled = false; reloadRequired = false;
+    restartGraphics.textContent = 'Restart graphics';
+    if (!renderContext.isLost()) contextStatus.hidden = true;
+}
+Object.assign(contextStatus.style, { position: "fixed", left: "8%", right: "8%", top: "46%", padding: "18px", border: "1px solid #70818c", borderRadius: "12px", background: "#0b141fee", color: "#e9eff5", textAlign: "center", zIndex: "1000", pointerEvents: "auto" });
 cvHost.appendChild(contextStatus);
 function releaseFlightInput() {
     keys.clear();
@@ -92,12 +137,19 @@ function releaseFlightInput() {
     window.dispatchEvent(new Event("ap:releaseflightinput"));
 }
 export const renderContext = bindContextLifecycle(renderer, {
-    onLost() { resetRenderPerformance(); releaseFlightInput(); contextStatus.hidden = false; },
+    onLost() {
+        renderFrameGate.reset(); resetRenderPerformance(); releaseFlightInput(); contextStatus.hidden = false;
+        if (!graphicsRestart.state.pending) {
+            contextMessage.textContent = 'Graphics interrupted. Flight is held here while the display recovers.';
+            restartGraphics.hidden = true;
+        }
+    },
     onRestored() {
         // Three retains its CPU-side target reference when rebuilding GL.
         // A loss during any offscreen pass must resume on the visible canvas.
         renderer.setRenderTarget(null);
         renderer.autoClear = true;
+        renderFrameGate.reset();
         resetRenderPerformance();
         releaseFlightInput();
         contextStatus.hidden = true;

@@ -17,18 +17,19 @@ const out=resolve(process.env.ARTEMIS_EVIDENCE||'evidence/mobile-thrust');
 const suite=process.env.THRUST_SUITE||'all';
 assert(['all','recovery','soak'].includes(suite),'Known mobile QA suite');
 await mkdir(out,{recursive:true});
-const report={revision:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),before,expectBrokenRecovery,suite,errors:[],checks:[],samples:[],limitations:['Chromium/SwiftShader mobile viewport; not physical iPhone Safari.','GPU loss is explicitly injected; original device trigger is unknown.']};
+const report={revision:execFileSync('git',['rev-parse','HEAD'],{cwd:root,encoding:'utf8'}).trim(),before,expectBrokenRecovery,suite,manualSynchronization:'Reused typed-array canvas readPixels completes each deterministic soak frame; live recovery retains the production animation loop and GPU gate.',manualFrames:[],errors:[],checks:[],samples:[],limitations:['Chromium/SwiftShader mobile viewport; not physical iPhone Safari.','GPU loss is explicitly injected; original device trigger is unknown.']};
 const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);};
 const server=await createServer({root,logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'mobile-thrust-qa',enforce:'pre',transform(s,id){if(!id.split('?')[0].endsWith('/src/main.js'))return;
  const first='const firstFrameT0 = perfStart();';assert.equal(s.split(first).length,2);
  return s.replace(first,'G.t=0;G.paused=false;G.warp=60;resetEphem();clock.getDelta=()=>1/30;'+first)
  .replace('function frame() {','function frame() { window.__frameStarts=(window.__frameStarts||0)+1;')
  .replaceAll('    finishFramePerf(frameT0,','    window.__frameSuccess=(window.__frameSuccess||0)+1;\n    finishFramePerf(frameT0,')
- +'\nwindow.__thrustStep=()=>{lastMobileFrame=-Infinity;frame();};window.__thrustStop=()=>renderer.setAnimationLoop(null);window.__thrustStart=()=>renderer.setAnimationLoop(frame);';
+ +'\nconst thrustReadbackPixel=new Uint8Array(4);\nwindow.__thrustStep=()=>{const before=window.__frameSuccess;lastMobileFrame=-Infinity;frame();const gl=renderer.getContext();const start=performance.now();if(!gl.isContextLost())gl.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,thrustReadbackPixel);return{before,after:window.__frameSuccess,readbackMs:performance.now()-start,contextLost:gl.isContextLost(),error:gl.getError(),canvas:renderer.getRenderTarget()===null};};window.__thrustStop=()=>renderer.setAnimationLoop(null);window.__thrustStart=()=>renderer.setAnimationLoop(frame);';
 }}]});
 await server.listen();
-const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+let browser;
 try {
+ browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH||undefined,args:['--no-sandbox','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
  const page=await browser.newPage({viewport:{width:430,height:932},isMobile:true,hasTouch:true,deviceScaleFactor:3});page.setDefaultTimeout(180000);
  await page.addInitScript(()=>{localStorage.setItem('ap_introSeen','1');localStorage.setItem('ap_uiMode','pilot');localStorage.setItem('qa_preserve_save','untouched');Date.now=()=>Date.UTC(2026,9,2,12);});
  page.on('pageerror',e=>report.errors.push(e.stack||e.message));page.on('console',m=>{if(m.type()==='error')report.errors.push(m.text());});
@@ -61,7 +62,8 @@ try {
   // Continue actual app frames through forty seconds / forty simulation minutes.
   await page.evaluate(()=>__thrustStop());await page.mouse.move(track.x+track.width/2,track.y+track.height*.15);await page.mouse.down();
   for(let i=0;i<1200;i++){
-   await page.evaluate(()=>__thrustStep());
+   const completed=await page.evaluate(()=>__thrustStep());report.manualFrames.push(completed);
+   check(completed.after===completed.before+1&&!completed.contextLost&&completed.error===0&&completed.canvas,`Frame${i+1}: one completed production frame on healthy canvas`);
    if((i+1)%120===0){const s=await state();report.samples.push({name:`sustained-thrust-${i+1}`,...s});check([s.t,s.x,s.y,s.z,s.vx,s.vy,s.vz,s.near,s.far,s.exposure,...s.cam].every(Number.isFinite)&&s.near>0&&s.far>s.near&&!s.contextLost,`Frame${i+1}: finite scene and live WebGL`);await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));console.log('THRUST',i+1,s.t,s.memory);}
   }
   await capture('04-sustained-thrust');await page.mouse.up();await page.evaluate(()=>__thrustStep());await capture('05-released-throttle');
@@ -87,4 +89,4 @@ try {
   }
   check(report.errors.length===0,'No page/shader errors through thrust and GPU recovery');
  }
-} finally {await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}
+} catch(error) {report.failure=error.stack||String(error);throw error;} finally {await writeFile(`${out}/report.json`,JSON.stringify(report,null,2));await browser?.close();await server.close();}

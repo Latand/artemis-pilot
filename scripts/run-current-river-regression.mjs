@@ -18,7 +18,8 @@ export function currentRiverProfile(kind, { device = 'desktop', suite = 'transie
   assert(['transient', 'lifecycle'].includes(suite), 'Known radiance suite');
   const cadence = kind === 'radiance' && device === 'mobile' && suite === 'lifecycle';
   return { device, suite, qualityMode: cadence ? 'low' : 'high', particleWidth: cadence ? 96 : null,
-    expectedComputeEvery: cadence ? 2 : null };
+    expectedComputeEvery: cadence ? 2 : null,
+    lifecycleModes: cadence ? 'Proxima Low; black hole High while paused, Low during signed motion' : null };
 }
 export function adaptCurrentRiver(kind, source, options = {}) {
   assert(Object.hasOwn(currentRiverHarnesses, kind), 'Known current river suite');
@@ -28,13 +29,21 @@ export function adaptCurrentRiver(kind, source, options = {}) {
     assert.equal(source.split(before).length, 2, `Current river adapter seam: ${reason}`);
     source = source.replace(before, after); substitutions.push({ before, after, reason });
   }
-  once('const report = { ', `const report = { historicalAttestation: false, pairedSourceAcceptance: false, performanceAcceptance: false, qualityMode: ${JSON.stringify(profile.qualityMode)}, particleWidthOverride: ${profile.particleWidth}, `, 'explicit current-only provenance');
+  once('const report = { ', `const report = { historicalAttestation: false, pairedSourceAcceptance: false, performanceAcceptance: false, qualityMode: ${JSON.stringify(profile.qualityMode)}, particleWidthOverride: ${profile.particleWidth}, lifecycleModes: ${JSON.stringify(profile.lifecycleModes)}, `, 'explicit current-only provenance');
   const query = `/?quality=${profile.qualityMode}&${profile.particleWidth ? `np=${profile.particleWidth}&` : ''}`;
   once('/?'+(kind === 'foreign' ? 'tier1=0' : 'focus=sun'), query+(kind === 'foreign' ? 'tier1=0' : 'focus=sun'), 'explicit fixture mode and particle capacity');
   if (kind === 'radiance') {
     if (profile.qualityMode === 'low') {
-      once('Production device quality at DPR1 and full texture counts;', 'Current mobile Low cadence at DPR1 with np=96 (9,216 texels);', 'accurate Low lifecycle scope');
+      once('Production device quality at DPR1 and full texture counts;', 'Current mobile staged High/Low cadence at DPR1 with np=96 (9,216 texels);', 'accurate staged lifecycle scope');
       once(': full production device quality`,', ': full particle capacity and DPR1`,', 'accurate capacity assertion label');
+      // The archived BH policy expects cadence one for its small paused
+      // moves, then native urgent off-cadence work in both signed phases.
+      // Select real public modes rather than changing any scheduling rule.
+      once('            window.__radianceFrame();', `            if (q.s.setQualityMode) {
+              const mode = q.subject === 'black-hole' && !plan?.rate ? 'high' : 'low';
+              if (q.s.renderQuality.mode !== mode) q.s.setQualityMode(mode);
+            }
+            window.__radianceFrame();`, 'actual lifecycle cadence modes; pre-controller runtime keeps its native policy');
     }
     once('process.argv.slice(2, 4)', 'process.argv.slice(2, 3)', 'one current production root');
     once("assert.equal(roots.length, 2, 'Pass baseline and candidate roots');", "assert.equal(roots.length, 1, 'Pass one current production root');", 'single-root invocation');

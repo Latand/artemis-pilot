@@ -53,6 +53,7 @@ export async function prepareCoverageResources(page,screenshot,report){
 // objects without advancing frame(), the simulator, or the river compute.
 export function drawCoveragePreparation({cam,camera,scene,renderer,sunCore,sunCorona,SUN_RADIUS,viewportSize,applyCamera,updateBodySurfaceLod,renderFrame}){
  const savedCam={tgt:cam.tgt.clone(),dist:cam.dist,distTarget:cam.distTarget,yaw:cam.yaw,pitch:cam.pitch};
+ const savedCamera={position:camera.position.clone(),quaternion:camera.quaternion.clone()};
  const visibility=[];scene.traverse(object=>visibility.push([object,object.visible]));
  const registered=()=>!!sunCorona.geometry._listeners?.dispose?.some(fn=>fn.name==='onGeometryDispose');
  const memory=()=>({...renderer.info.memory,programs:renderer.info.programs.length});
@@ -74,7 +75,9 @@ export function drawCoveragePreparation({cam,camera,scene,renderer,sunCore,sunCo
   return result;
  }finally{
   cam.tgt.copy(savedCam.tgt);cam.dist=savedCam.dist;cam.distTarget=savedCam.distTarget;cam.yaw=savedCam.yaw;cam.pitch=savedCam.pitch;
-  applyCamera();camera.updateMatrixWorld(true);
+  // A deferred first frame can leave the native camera unapplied. Restore
+  // the exact captured pose, not a newly derived pose from the orbit controls.
+  camera.position.copy(savedCamera.position);camera.quaternion.copy(savedCamera.quaternion);camera.updateMatrixWorld(true);
   for(const [object,visible] of visibility)object.visible=visible;
   result.restored=visibility.every(([object,visible])=>object.visible===visible);
  }

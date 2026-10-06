@@ -83,7 +83,39 @@ async function warmRendererStartup()`);
         });
         await page.waitForFunction(() => __river.sourceCount >= 13);
         const sourceCount = await page.evaluate(() => __river.sourceCount);
+        testResult.phase = 'live-minimal-three-holes';
+        const completedBefore = await page.evaluate(() => __renderFrameGate.completed);
+        await page.waitForFunction(prior => __renderFrameGate.completed >= prior + 3 && !__renderFrameGate.stalled, completedBefore);
+        testResult.liveCompletedFrames = (await page.evaluate(() => __renderFrameGate.completed)) - completedBefore;
+        testResult.gpuGate = await page.evaluate(() => ({ ...window.__renderFrameGate }));
+        assert.equal(testResult.gpuGate.supported, true, 'SwiftShader WebGL2 uses real nonblocking completion fences');
+        assert(testResult.gpuGate.submitted > 0, 'Live rendering submits fenced frames');
+        assert.equal(testResult.gpuGate.fenced - testResult.gpuGate.completed - testResult.gpuGate.discarded, testResult.gpuGate.inFlight ? 1 : 0, 'Live fence accounting includes completion and discarded contexts');
         await page.screenshot({ path: resolve(out, `${test.name}-three-holes-minimal.png`) });
+        if (test.name === 'desktop-default') {
+            testResult.phase = 'watchdog-user-recovery';
+            const held = await page.evaluate(async () => {
+                const { renderer } = await import('/src/scene.js'), gl = renderer.getContext();
+                const { G } = await import('/src/state.js');
+                window.__qaRestoreCheckpoint = __renderContext.restores;
+                window.__qaNativeWait = gl.clientWaitSync.bind(gl);
+                gl.clientWaitSync = (...args) => __renderContext.restores === __qaRestoreCheckpoint
+                    ? gl.TIMEOUT_EXPIRED : __qaNativeWait(...args);
+                return { t: G.t, position: [G.x, G.y, G.z], velocity: [G.vx, G.vy, G.vz] };
+            });
+            await page.waitForFunction(() => __renderFrameGate.stalled);
+            await page.screenshot({ path: resolve(out, `${test.name}-watchdog.png`) });
+            await page.locator('#restartGraphics').click();
+            await page.waitForFunction(() => __renderContext.restores > __qaRestoreCheckpoint && !__renderContext.lost &&
+                document.getElementById('renderContextStatus').hidden);
+            const resumed = await page.evaluate(async () => {
+                const { renderer } = await import('/src/scene.js'); renderer.getContext().clientWaitSync = __qaNativeWait;
+                const { G } = await import('/src/state.js');
+                return { t: G.t, position: [G.x, G.y, G.z], velocity: [G.vx, G.vy, G.vz] };
+            });
+            assert.deepEqual(resumed, held, 'User-requested graphics restart preserves paused simulation state');
+            testResult.watchdogRecovery = true;
+        }
         const invariant = await page.evaluate(async () => {
             const { BH, G } = await import('/src/state.js');
             return { n: BH.n, mass: Array.from(BH.mu).slice(0, BH.n), t: G.t };
@@ -126,6 +158,7 @@ async function warmRendererStartup()`);
         await page.setViewportSize(test.mobile ? { width: 844, height: 390 } : { width: 1200, height: 760 });
         assert.equal(await page.evaluate(() => __renderQuality.mode), 'minimal');
         // Context loss/restoration exercises the real Three target rebuild.
+        const restoresBefore = await page.evaluate(() => __renderContext.restores);
         await page.evaluate(async () => {
             const { renderer } = await import('/src/scene.js');
             window.__qaContextExtension = renderer.getContext().getExtension('WEBGL_lose_context');
@@ -136,7 +169,7 @@ async function warmRendererStartup()`);
         await page.waitForTimeout(200);
         assert.equal(await page.evaluate(() => __G.t), lostT);
         await page.evaluate(() => __qaContextExtension.restoreContext());
-        await page.waitForFunction(() => __renderContext.restores === 1 && !__renderContext.lost);
+        await page.waitForFunction(prior => __renderContext.restores === prior + 1 && !__renderContext.lost, restoresBefore);
         const draws = await page.evaluate(() => __qaDraws);
         await page.waitForFunction(draws => __qaDraws > draws, draws);
         await page.screenshot({ path: resolve(out, `${test.name}-restored.png`) });

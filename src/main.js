@@ -29,7 +29,7 @@ import { fmtMET, fmtKm, fmtDist, clamp01, smooth01, speedColor } from "./format.
 import { loadAllMaps, dotTexture } from "./textures.js";
 import {
     scene, camera, composer, renderer, bloomPass, cam, applyCamera, viewportSize, put, projectTo, lastPtr,
-    renderQuality, renderContext, sampleRenderPerformance, setQualityMode, bindQualityControls, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
+    renderQuality, renderContext, renderFrameGate, sampleRenderPerformance, setQualityMode, bindQualityControls, hideLabel, setLabelDisplay, setRenderLoadShed, ensurePostProcessing,
     farTierGroup, renderSceneTiered, registerNearTierOnly, setCamRoll, applyCameraRoll, addBackgroundHook,
 } from "./scene.js";
 import {
@@ -1654,6 +1654,7 @@ function updateBodySurfaceLod(cosmicView, detailShed) {
 }
 let bodyLodReady = false, bodyLodLastDist = 0, bodyLodLastFocus = null, bodyLodLastCosmic = false, bodyLodLastDetail = false;
 
+let renderSubmissionSerial = 0;
 function renderFrame(showCockpit) {
     applyOrbitalExposureMarkers(moonBeacon, { earth: lblE, moon: lblM, planets: plLabels, moons: moonLabels });
     if (renderContext.isLost()) return;
@@ -1690,6 +1691,8 @@ function renderFrame(showCockpit) {
     } : null);
     sampleRendererInfo(renderer);
     sampleMemory();
+    renderSubmissionSerial++;
+    window.__AP_FIRST_FRAME = true;
 }
 
 function finishFramePerf(start, dtR, rawDtR, dtRCap, cosmicView, cabinActive) {
@@ -1729,8 +1732,24 @@ let lastMobileFrame = -Infinity;
 // Keep the stable frame entry point used by XR and deterministic app QA.
 // A context-loss exception must not kill Three's next-frame scheduling.
 function frame() {
-    try { frameStep(); }
-    catch (error) { if (!renderContext.isLost()) throw error; }
+    // Three supplies a timestamp for live callbacks. Explicit frame() calls
+    // are the deterministic QA entry point; those callers serialize/read back
+    // their own draws. XR owns its separate submission and pacing policy.
+    const scheduled = Number.isFinite(arguments[0]) && !VR.active;
+    if (scheduled && !document.hidden && document.getElementById("intro").style.display === "none" &&
+        !renderContext.isLost() && !renderFrameGate.ready(performance.now())) {
+        // A diagnosed stall holds simulation time rather than accumulating a
+        // wall-clock catch-up step when the GPU or user restart recovers.
+        if (renderFrameGate.stats.stalled) clock.getDelta();
+        return;
+    }
+    const beforeRender = renderSubmissionSerial;
+    try {
+        frameStep();
+        // Place the fence after river compute, world/lens/bloom and cockpit
+        // passes, including cosmic early-return frames. No inactive-frame fence.
+        if (scheduled && renderSubmissionSerial !== beforeRender) renderFrameGate.submitted(performance.now());
+    } catch (error) { if (!renderContext.isLost()) throw error; }
 }
 function frameStep() {
     // Keep the welcome screen and background tabs responsive without advancing
@@ -1742,7 +1761,7 @@ function frameStep() {
         return;
     }
     const now = performance.now();
-    const renderHz = renderQuality.mobile || renderQuality.minimal ? 30 : 0;
+    const renderHz = renderQuality.mobile || renderQuality.minimal || renderFrameGate.stats.fallback ? 30 : 0;
     const pacedTime = pacedFrameTime(now, lastMobileFrame, VR.active ? 0 : renderHz);
     if (pacedTime === null) return;
     lastMobileFrame = pacedTime;
@@ -2344,7 +2363,6 @@ function frameStep() {
         updateLensingLazy(camera, camera.aspect);
         bloomPass.enabled = false;
         renderFrame(false);
-        window.__AP_FIRST_FRAME = true;
         return;
     }
     updateLensingLazy(camera, camera.aspect);
@@ -2707,7 +2725,6 @@ function frameStep() {
         bh: BH.n,
     } : null);
     renderFrame(cabinActive);
-    window.__AP_FIRST_FRAME = true;
     finishFramePerf(frameT0, dtR, rawDtR, dtRCap, cosmicView, cabinActive);
 }
 // setAnimationLoop lets WebXR sessions drive the frame callback when presenting.

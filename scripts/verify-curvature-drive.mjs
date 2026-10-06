@@ -1,3 +1,4 @@
+import { qualitySettings } from './quality-fixture-settings.mjs';
 import assert from 'node:assert/strict';
 import { prepareContextRecoveryQA, contextLossSettled, contextRestoreSettled, recoveredGpuIsHealthy } from './context-recovery-qa.mjs';
 import { chromium } from 'playwright';
@@ -27,7 +28,7 @@ try {
  page.on('pageerror',e=>report.errors.push(e.stack||e.message));
  page.on('console',m=>{if(m.type()==='error'&&!m.text().includes('ERR_'))report.errors.push(m.text());});
  await page.route('https://fonts.googleapis.com/**',r=>r.fulfill({status:200,body:''}));
- await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?focus=ship&dist=.14&hidehelp=1&compile=0&tier1=0&field=0&realsky=0&galaxies=0&galaxyvol=0`,{waitUntil:'domcontentloaded'});
+ await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/?quality=high&focus=ship&dist=.14&hidehelp=1&compile=0&tier1=0&field=0&realsky=0&galaxies=0&galaxyvol=0`,{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>window.__AP_READY&&window.__driveFrame);
  await prepareContextRecoveryQA(page);
  await page.evaluate(async()=>{const {cam}=await import('/src/scene.js');const {shipG}=await import('/src/ship.js');__G.heading=0;__G.pitch=0;__G.hold=null;__G.warp=1;__G.paused=false;__driveFrame();cam.tgt.copy(shipG.position);cam.dist=.14;cam.yaw=.85;cam.pitch=.36;});
@@ -95,7 +96,7 @@ try {
  const guideOff=await replay(false),guideOn=await replay(true);
  report.performance={guideOff,guideOn,limit:'on <= off * 1.5 + 20 ms; whole-app completed GPU work, not device FPS'};
  check(JSON.stringify(guideOff.end.flight)===JSON.stringify(guideOn.end.flight),'hiding the field guide preserves bit-identical active flight');
- check(guideOn.samples.every((f,i)=>JSON.stringify(f.quality)===JSON.stringify(guideOff.samples[i].quality)),'paired timing keeps exact quality settings');
+ check(guideOn.samples.every((f,i)=>JSON.stringify(qualitySettings(f.quality))===JSON.stringify(qualitySettings(guideOff.samples[i].quality))),'paired timing keeps exact quality settings');
  check(guideOn.samples.every((f,i)=>f.camera.every((v,k)=>Math.abs(v-guideOff.samples[i].camera[k])<1e-9)&&f.target.every((v,k)=>Math.abs(v-guideOff.samples[i].target[k])<1e-9)),'paired timing keeps the same camera and target');
  const profile=f=>JSON.stringify([f.computeEvery,f.skippedCompute,f.riverDrawCount,f.sourceCount,f.texW]);
  report.performance.matchedWorkFrames=guideOn.samples.filter((f,i)=>profile(f)===profile(guideOff.samples[i])).length;
