@@ -38,11 +38,25 @@ try{
  });
  const a=await inspect();
  check(await page.locator('#gravityInspector').evaluate(e=>!e.open),'Explanation works with Gravity collapsed');
- check(a.paths.length===2&&a.paths.every(p=>p.id!=='bh:0'),'Both other-hole arrows are visible; self is absent');
+ check(a.paths.length===2&&a.paths.every(p=>p.id!=='bh:0'),'Both other-hole scene directions are drawn; self is absent');
+ const unobscured=expected=>page.evaluate(expected=>{
+  const cues=[...document.querySelectorAll('.gravityForceCue')].filter(e=>!e.hidden);
+  return cues.length===expected&&cues.every(e=>{
+   const r=e.getBoundingClientRect(),label=e.firstElementChild.getBoundingClientRect();
+   if(!(r.width>0&&r.height>0&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight&&e.scrollWidth<=e.clientWidth+1&&label.left>=r.left&&label.right<=r.right))return false;
+   return [[r.left+4,r.top+4],[r.right-4,r.top+4],[r.left+4,r.bottom-4],[r.right-4,r.bottom-4],[(r.left+r.right)/2,(r.top+r.bottom)/2]]
+    .every(([x,y])=>e.contains(document.elementFromPoint(x,y)));
+  });
+ },expected);
+ check(await unobscured(3),'Full contributor and net labels and directions are unclipped and unobscured');
  check(a.paths.every(p=>JSON.stringify(p.a)===JSON.stringify(a.s.contributions.find(r=>r.id===p.id).acceleration)),'Contribution arrows use exact solver vectors');
  check(a.net.every((v,i)=>Math.abs(v-a.s.net[i])<1e-12*Math.max(1,Math.abs(v))),'Net arrow includes the complete solver ledger');
  check(await page.evaluate(()=>__river.sourceCount>=3+__BH.n),'Full ambient source inventory remains present');
  await page.screenshot({path:`${out}/${device}-three-hole-forces.png`,timeout:180000});
+ await page.evaluate(async()=>{const {addBlackHole}=await import('/src/blackholes.js');for(let i=0;i<3;i++)addBlackHole(1.04e8+i*1e6,.97e8-i*1e6,12000+i*1000,0,0,true,null,0,0,(i+3)*1e6);});await frame();
+ check(await unobscured(6),'Six-hole maximum keeps all five partner cues and the net fully readable');
+ await page.screenshot({path:`${out}/${device}-six-hole-forces.png`,timeout:180000});
+ await page.evaluate(async()=>{const {removeHoleData}=await import('/src/bhEncounters.js');while(__BH.n>3)removeHoleData(__BH.n-1);});await frame();
  await page.evaluate(async()=>{const {cam}=await import('/src/scene.js');cam.yaw+=.7;cam.pitch=.35;cam.dist=3000;cam.distTarget=null;});await frame();
  const b=await inspect();
  check(JSON.stringify(a.s)===JSON.stringify(b.s)&&JSON.stringify(a.weights)===JSON.stringify(b.weights),'Paused camera changes preserve solver vectors and GPU gravitational weights');

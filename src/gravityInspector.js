@@ -1,18 +1,17 @@
-import * as THREE from 'three';
 import { G } from './state.js';
 import { K } from './constants.js';
 import { cam, camera } from './scene.js';
 import { getLocalGravityInspection } from './gravityInspection.js';
 import { getGalaxyGravityInspection } from './gravityGalaxyInspection.js';
 import { gravityContext, strongestContributions, accelerationLabel, isPlacedHoleFocus, holeContributionVectors } from './gravityInspectorMath.js';
-import {projectGravityVector} from './gravityVectorProjection.js';
+import {projectGravityVector, screenAccelerationDirection} from './gravityVectorProjection.js';
 import './gravityInspector.css';
 
 let panel,summary,scope,leading,title,rows,net,note,modelDetail,pathButton,pathNote,hooks;
 let context='local',previous=[],identity='',lastRead=-Infinity,snapshot=null;
-let vectorSvg,vectorPath,vectorText,netDirection,contributorLayer;
+let vectorSvg,vectorPath,vectorText,netDirection,contributorLayer,vectorSummary;
+const summaryCues=[];
 const contributorGlyphs=[];
-const projectedDirection=new THREE.Vector3();
 const setText=(node,value)=>{if(node.textContent!==value)node.textContent=value;};
 function element(tag,cls,text=''){const n=document.createElement(tag);n.className=cls;n.textContent=text;return n;}
 export function initGravityInspector(options={}) {
@@ -21,6 +20,7 @@ export function initGravityInspector(options={}) {
     panel=element('details','gravityInspector');panel.id='gravityInspector';
     summary=element('summary','gravitySummary');summary.append(element('span','gravityHeading','Gravity'));
     scope=element('span','gravityScope','Local');leading=element('span','gravityLeading','Inspect attraction');summary.append(scope,leading);
+    vectorSummary=element('span','gravityVectorSummary');vectorSummary.hidden=true;summary.append(vectorSummary);
     title=element('p','gravityTarget');rows=element('ol','gravityContributors');
     net=element('p','gravityNet');note=element('p','gravityModel');
     netDirection=element('span','gravityDirection','↑');netDirection.setAttribute('role','img');netDirection.hidden=true;
@@ -62,12 +62,31 @@ function selectedHoleExplanation() { return isPlacedHoleFocus(G.focus)&&G.gr; }
 function projectVector(a,fraction) {
     return projectGravityVector(snapshot.position,a,camera,cam.dist,fraction,innerWidth,innerHeight);
 }
+function updateDirectionSummary(vectors) {
+    vectorSummary.hidden=!isPlacedHoleFocus(G.focus);
+    if(vectorSummary.hidden)return;
+    const cues=[...vectors.map(row=>({id:row.id,name:row.label.replace('Black hole ','BH '),label:row.label,a:row.acceleration})),
+        {id:'net',name:'Net',label:'Net acceleration in the Earth frame',a:snapshot.net}];
+    while(summaryCues.length<cues.length){
+        const group=element('span','gravityForceCue'),name=element('span',''),arrow=element('span','gravityMiniDirection');
+        group.append(name,arrow);vectorSummary.append(group);summaryCues.push({group,name,arrow});
+    }
+    summaryCues.forEach((cue,i)=>{
+        cue.group.hidden=i>=cues.length;if(cue.group.hidden)return;
+        const value=cues[i],d=screenAccelerationDirection(value.a,camera);
+        cue.group.dataset.sourceId=value.id;setText(cue.name,value.name);setText(cue.arrow,d.symbol);
+        cue.arrow.style.transform=`rotate(${d.rotation}deg)`;
+        cue.group.title=`${value.label}: ${accelerationLabel(Math.hypot(...value.a))}. ${d.label}. Direction only.`;
+        cue.group.setAttribute('aria-label',cue.group.title);
+    });
+}
 function drawVector() {
-    vectorSvg.style.display='none';netDirection.hidden=true;vectorPath.style.display='none';vectorText.textContent='';
+    vectorSvg.style.display='none';vectorSummary.hidden=true;netDirection.hidden=true;vectorPath.style.display='none';vectorText.textContent='';
     for(const glyph of contributorGlyphs)glyph.group.style.display='none';
     if((!panel.open&&!selectedHoleExplanation())||!snapshot?.supported||!snapshot.position||!snapshot.net||G.uiMode!=='observe'||G.cabin)return;
     vectorSvg.setAttribute('viewBox',`0 0 ${innerWidth} ${innerHeight}`);
     const vectors=holeContributionVectors(snapshot,G.focus);
+    updateDirectionSummary(vectors);
     const labelY=[];
     vectors.forEach((row,i)=>{
         if(!contributorGlyphs[i]){
@@ -86,13 +105,10 @@ function drawVector() {
     const a=snapshot.net,m=Math.hypot(...a);
     if(!(m>0))return; // opposing arrows can remain visible at a balanced point
     // Keep the projected net cue reachable even behind the mobile sheet.
-    projectedDirection.set(a[0],a[2],-a[1]).normalize().transformDirection(camera.matrixWorldInverse);
-    const plane=Math.hypot(projectedDirection.x,projectedDirection.y);
-    netDirection.hidden=false;
-    netDirection.textContent=plane<.05?(projectedDirection.z<0?'⊗':'⊙'):'↑';
-    netDirection.style.transform=plane<.05?'none':`rotate(${Math.atan2(projectedDirection.x,projectedDirection.y)*180/Math.PI}deg)`;
-    const directionLabel=plane<.05?(projectedDirection.z<0?'Net points into the screen':'Net points out of the screen'):'Net direction projected onto the screen';
-    netDirection.setAttribute('aria-label',directionLabel);netDirection.title=directionLabel;
+    const cue=screenAccelerationDirection(a,camera);
+    netDirection.hidden=false;netDirection.textContent=cue.symbol;
+    netDirection.style.transform=`rotate(${cue.rotation}deg)`;
+    netDirection.setAttribute('aria-label',cue.label);netDirection.title=cue.label;
     const p=projectVector(a,.14);if(!p)return;
     vectorSvg.style.display='block';vectorPath.style.display='';vectorPath.setAttribute('d',p.d);
     vectorPath.dataset.acceleration=JSON.stringify(a);
@@ -101,7 +117,7 @@ function drawVector() {
 }
 export function updateGravityInspector(force=false) {
     if(!panel)return;
-    if(G.uiMode!=='observe'||G.cabin){vectorSvg.style.display='none';return;}
+    if(G.uiMode!=='observe'||G.cabin){vectorSvg.style.display='none';vectorSummary.hidden=true;return;}
     const nextContext=gravityContext(cam.dist/K,context,G.focus);
     const key=String(G.focus)+':'+nextContext;
     const now=performance.now();

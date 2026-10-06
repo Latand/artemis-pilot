@@ -23,3 +23,12 @@ export function projectGravityVector(positionKm,acceleration,camera,distance,fra
     const ux=dx/len,uy=dy/len,bx=ex-ux*10,by=ey-uy*10;
     return {x,y,ex,ey,sightline:false,d:`M ${x} ${y} L ${ex} ${ey} M ${bx-uy*5} ${by+ux*5} L ${ex} ${ey} L ${bx+uy*5} ${by-ux*5}`};
 }
+
+// A panel cue remains readable when fixed controls cover the scene origin.
+export function screenAccelerationDirection(acceleration,camera) {
+    const m=Math.hypot(...acceleration);
+    if(!(m>0)||!Number.isFinite(m))return {symbol:'·',rotation:0,label:'Balanced acceleration'};
+    direction.set(acceleration[0]/m,acceleration[2]/m,-acceleration[1]/m).transformDirection(camera.matrixWorldInverse);
+    if(Math.hypot(direction.x,direction.y)<.05)return {symbol:direction.z<0?'⊗':'⊙',rotation:0,label:direction.z<0?'Into the screen':'Out of the screen'};
+    return {symbol:'↑',rotation:Math.atan2(direction.x,direction.y)*180/Math.PI,label:'Direction projected onto the screen'};
+}

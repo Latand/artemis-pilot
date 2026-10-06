@@ -12,7 +12,7 @@ Gas + core systems expose their actual local perturbing kicks, including self-pu
 
 ## Placed black holes
 
-With a placed hole selected and gravity flow enabled, dashed gold arrows show the pulls from all other placed holes. The green arrow shows its current net acceleration, including other sources and the Earth-frame correction. These direction-only arrows remain visible with the Gravity panel collapsed; open it for acceleration magnitudes and model limits. A source along the line of sight is marked rather than given a fabricated screen direction.
+With a placed hole selected and gravity flow enabled, dashed gold arrows show the pulls from all other placed holes. The green arrow shows its current net acceleration, including other sources and the Earth-frame correction. These direction-only arrows remain active with the Gravity panel collapsed. Labeled direction cues inside its summary stay unobscured when fixed controls cover the scene arrows, including on short landscape screens; open the panel for acceleration magnitudes and model limits. A source along the line of sight is marked rather than given a fabricated screen direction.
 
 The arrows reuse the exact live solver ledger and exclude self-pull. They follow moving holes and the surviving identity after a merger. Camera position does not reweight gravity: the optical lapse factor is separate from ambient field strength. A selected placed hole keeps its local force explanation across zoom scales.
 

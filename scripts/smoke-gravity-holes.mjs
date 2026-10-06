@@ -63,7 +63,7 @@ assert.deepEqual(holeContributionVectors({supported:true,contributions:[]},'ship
 console.log('Gravity hole explanation checks passed');
 
 const {PerspectiveCamera,Vector3,Matrix4}=await import('three');
-const {projectGravityVector}=await import('../src/gravityVectorProjection.js');
+const {projectGravityVector,screenAccelerationDirection}=await import('../src/gravityVectorProjection.js');
 function cameraAt(positionKm,distance,yaw=0,pitch=0){
  const camera=new PerspectiveCamera(50,1100/760,2e-6,1e24),target=new Vector3(positionKm[0]*K,positionKm[2]*K,-positionKm[1]*K);
  const offset=new Vector3(distance*Math.cos(pitch)*Math.cos(yaw),distance*Math.sin(pitch),distance*Math.cos(pitch)*Math.sin(yaw));
@@ -88,3 +88,10 @@ for(const a of [[1,0,0],[0,1,0],[0,0,1]]){
 }
 assert.equal(projectGravityVector(near,[0,0,0],nearCamera,distance,.1,1100,760),null);
 console.log('PASS near-horizon 1 m / 10 m and remote force arrows preserve bounded screen directions');
+
+const cueCamera=cameraAt([0,0,0],1);
+assert.equal(screenAccelerationDirection([1,0,0],cueCamera).symbol,'⊙');
+assert.equal(screenAccelerationDirection([-1,0,0],cueCamera).symbol,'⊗');
+assert.equal(screenAccelerationDirection([0,1e-250,0],cueCamera).symbol,'↑');
+assert.equal(screenAccelerationDirection([0,0,0],cueCamera).label,'Balanced acceleration');
+console.log('PASS compact summary directions retain tiny vectors, true sightlines and balanced-net semantics');
