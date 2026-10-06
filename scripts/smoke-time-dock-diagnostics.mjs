@@ -31,3 +31,33 @@ const rejected = assert.rejects(never,/No production reverse-block pulse within 
 expire();queued.shift()();await rejected;assert.equal(calls.length,0);assert.equal(queued.length,0);
 assert(source.includes('timeout: 3000') && source.includes('latchStartedAt + 1000') && source.includes('latchStartedAt + 1700'));
 console.log('Time Dock pulse: release follows one actual blocked production step despite skipped RAF callbacks; never-produced pulse still fails within3s.');
+
+const { waitForProducedFrames, timeDockFrameHook } = await import('./time-dock-frame-fixture.mjs');
+for (const count of [8,24]) for (const skip of [0,1,5,120]) {
+  let frame=10, cancelled=0;const callbacks=[];
+  const result=waitForProducedFrames(()=>frame,count,{requestFrame:fn=>callbacks.push(fn),schedule:()=>5,cancel:id=>{assert.equal(id,5);cancelled++;}});
+  for(let n=0;n<count;n++) {
+    for(let i=0;i<skip;i++){callbacks.shift()();assert.equal(callbacks.length,1);}
+    frame++;callbacks.shift()();
+  }
+  assert.deepEqual(await result,{producedFrames:count,rafCallbacks:count*(skip+1)});
+  assert.equal(cancelled,1);assert.equal(callbacks.length,0);
+}
+for(const invalid of [-1,1.5,NaN,25]) {
+  let frame=0;const callbacks=[];
+  const result=waitForProducedFrames(()=>frame,24,{requestFrame:fn=>callbacks.push(fn),schedule:()=>1,cancel:()=>{}});
+  const failure=assert.rejects(result,/reset or overran/);frame=invalid;callbacks.shift()();await failure;assert.equal(callbacks.length,0);
+}
+let fireDeadline;const callbacks=[];
+const stalled=waitForProducedFrames(()=>0,24,{requestFrame:fn=>callbacks.push(fn),schedule:(fn,ms)=>{assert.equal(ms,10000);fireDeadline=fn;},cancel:()=>{}});
+const stalledFailure=assert.rejects(stalled,/did not deliver 24 frames within 10000ms/);fireDeadline();callbacks.shift()();await stalledFailure;assert.equal(callbacks.length,0);
+assert.equal((source.match(/window\.__timeDockFrames\(8\)/g)||[]).length,4);
+assert(source.includes('const delivered = await window.__timeDockFrames(24)'));
+assert(source.includes('renderCadence.frames === 24 && renderCadence.dateMutations >= 2 && renderCadence.dateMutations <= 8'));
+assert(source.includes('renderCadence.attributeMutations === 0'));
+assert(!source.includes('for (let i = 0; i < 8; i++)')&&!source.includes('for (let i = 0; i < 24; i++)'));
+const { execFileSync } = await import('node:child_process');
+const production = readFileSync(new URL('../src/main.js',import.meta.url),'utf8');
+assert(/\bframeNo\s*=\s*0\b/.test(production));
+execFileSync(process.execPath,['--check','--input-type=module'],{input:production+'\n'+timeDockFrameHook});
+console.log('Time Dock cadence: unchanged8/24 delivered-frame windows,2–8 date mutations/zero redundant attributes, bounded non-delivery/reset/overrun negatives, read-only production counter hook pass.');
