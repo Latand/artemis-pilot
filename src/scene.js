@@ -96,7 +96,7 @@ contextMessage.textContent = "Graphics interrupted. Flight is held here while th
 const restartGraphics = document.createElement('button');
 restartGraphics.id = 'restartGraphics'; restartGraphics.type = 'button'; restartGraphics.className = 'uiBtn uiBtnHot';
 restartGraphics.textContent = 'Restart graphics'; restartGraphics.hidden = true;
-Object.assign(restartGraphics.style, { margin: '12px auto 0', minHeight: '44px', padding: '8px 14px' });
+Object.assign(restartGraphics.style, { display: 'block', margin: '12px auto 0', minHeight: '44px', padding: '8px 14px' });
 contextStatus.appendChild(contextMessage); contextStatus.appendChild(restartGraphics);
 let reloadRequired = false;
 const graphicsRestart = createGraphicsRestart(renderer, { onState(status) {
@@ -123,13 +123,29 @@ function showRenderStall() {
     contextMessage.textContent = 'Graphics have stalled. Rendering and simulation are held. Restart graphics to try recovering without resetting the simulation.';
 }
 function clearRenderStall() {
-    if (graphicsRestart.state.pending) return;
+    if (graphicsRestart.state.pending || renderContext.isLost()) return;
     restartGraphics.hidden = true; restartGraphics.disabled = false; reloadRequired = false;
     restartGraphics.textContent = 'Restart graphics';
-    if (!renderContext.isLost()) contextStatus.hidden = true;
+    contextStatus.hidden = true;
 }
-Object.assign(contextStatus.style, { position: "fixed", left: "8%", right: "8%", top: "46%", padding: "18px", border: "1px solid #70818c", borderRadius: "12px", background: "#0b141fee", color: "#e9eff5", textAlign: "center", zIndex: "1000", pointerEvents: "auto" });
-cvHost.appendChild(contextStatus);
+Object.assign(contextStatus.style, { position: "fixed", left: "8%", right: "8%", top: "50%", transform: "translateY(-50%)", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", boxSizing: "border-box", padding: "18px", border: "1px solid #70818c", borderRadius: "12px", background: "#0b141fee", color: "#e9eff5", textAlign: "center", zIndex: "1300", pointerEvents: "auto" });
+function mountContextStatus() {
+    // #root is a fixed-position stacking context. A child cannot out-rank
+    // Graphics controls mounted on body, regardless of its own z-index.
+    // Keep the notice at the page level, or inside the active fullscreen root.
+    const host = document.fullscreenElement || document.body;
+    if (contextStatus.parentNode !== host) host.appendChild(contextStatus);
+}
+mountContextStatus();
+document.addEventListener('fullscreenchange', mountContextStatus);
+window.addEventListener('pageshow', mountContextStatus);
+function disposeContextStatus(event) {
+    if (event.persisted) return;
+    document.removeEventListener('fullscreenchange', mountContextStatus);
+    window.removeEventListener('pageshow', mountContextStatus);
+    window.removeEventListener('pagehide', disposeContextStatus);
+}
+window.addEventListener('pagehide', disposeContextStatus);
 function releaseFlightInput() {
     keys.clear();
     G.thrustMain = G.thrustLat = 0;
@@ -141,8 +157,17 @@ export const renderContext = bindContextLifecycle(renderer, {
         renderFrameGate.reset(); resetRenderPerformance(); releaseFlightInput(); contextStatus.hidden = false;
         if (!graphicsRestart.state.pending) {
             contextMessage.textContent = 'Graphics interrupted. Flight is held here while the display recovers.';
-            restartGraphics.hidden = true;
+            restartGraphics.hidden = true; restartGraphics.disabled = false; reloadRequired = false;
         }
+    },
+    onRecoveryTimeout() {
+        if (graphicsRestart.state.pending || reloadRequired) return;
+        // WEBGL_lose_context.restoreContext cannot restore a natural loss.
+        // Keep waiting for the browser, with a user-controlled reload escape.
+        contextStatus.hidden = false; reloadRequired = true;
+        contextMessage.textContent = 'Graphics have not recovered yet. Flight is still held. You can keep waiting or reload the page. Reloading may lose unsaved simulation changes.';
+        restartGraphics.textContent = 'Reload page';
+        restartGraphics.hidden = false; restartGraphics.disabled = false;
     },
     onRestored() {
         // Three retains its CPU-side target reference when rebuilding GL.
@@ -152,9 +177,11 @@ export const renderContext = bindContextLifecycle(renderer, {
         renderFrameGate.reset();
         resetRenderPerformance();
         releaseFlightInput();
-        contextStatus.hidden = true;
+        clearRenderStall();
     },
 });
+// Retain the deadline across BFCache suspension. Cancel only on teardown.
+window.addEventListener('pagehide', event => { if (!event.persisted) renderContext.dispose(); });
 window.__renderContext = renderContext;
 
 export const scene = new THREE.Scene();

@@ -116,7 +116,10 @@ const timeout = recoveryFixture(); timeout.controller.restart(); timeout.fire(50
 const unavailable = recoveryFixture(false); assert.equal(unavailable.controller.restart(), false); assert.equal(unavailable.controller.state.status, 'unavailable'); assert.equal(unavailable.timers.size, 0);
 const disposed = recoveryFixture(); disposed.controller.restart(); disposed.canvas.dispatchEvent(new Event('webglcontextlost')); disposed.controller.dispose();
 assert.equal(disposed.controller.state.pending, false); assert.equal(disposed.controller.state.status, 'cancelled'); assert.equal(disposed.timers.size, 0); assert.equal(disposed.controller.restart(), false);
-const alreadyLost = recoveryFixture(); alreadyLost.gl.lost = true; alreadyLost.canvas.dispatchEvent(new Event('webglcontextlost')); alreadyLost.controller.restart(); alreadyLost.fire(100); assert.equal(alreadyLost.extension.losses, 0); assert.equal(alreadyLost.extension.restores, 1);
+const alreadyLost = recoveryFixture(); alreadyLost.gl.lost = true; alreadyLost.canvas.dispatchEvent(new Event('webglcontextlost'));
+assert.equal(alreadyLost.controller.restart(), false); assert.equal(alreadyLost.controller.state.status, 'unavailable');
+assert.equal(alreadyLost.extension.losses, 0); assert.equal(alreadyLost.extension.restores, 0);
+assert.equal(alreadyLost.timers.size, 0, 'Natural loss cannot be restored through the synthetic-loss extension');
 for (const operation of ['loseContext', 'restoreContext']) {
     const failure = recoveryFixture(); failure.extension[operation] = () => { throw Error('driver failure'); };
     failure.controller.restart();
