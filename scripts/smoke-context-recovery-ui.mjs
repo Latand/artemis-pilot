@@ -15,7 +15,10 @@ const code = source.slice(start, end).replace('export const renderContext', 'con
 class Element extends EventTarget {
     constructor() { super(); this.style = {}; this.children = []; }
     setAttribute() {}
-    appendChild(el) { this.children.push(el); }
+    appendChild(el) {
+        if (el.parentNode) el.parentNode.children = el.parentNode.children.filter(child => child !== el);
+        this.children.push(el); el.parentNode = this; el.mounts = (el.mounts || 0) + 1;
+    }
 }
 let time = 0, id = 0, reloads = 0;
 const timers = new Map();
@@ -39,9 +42,11 @@ const ext = {
 };
 const renderer = { domElement: canvas, getContext: () => gl, setRenderTarget() {} };
 const window = new EventTarget();
+const document = Object.assign(new EventTarget(), { body: new Element(), fullscreenElement: null,
+    createElement: () => new Element() });
 const c = {
     window,
-    document: { createElement: () => new Element() },
+    document,
     cvHost: new Element(), renderer, keys: new Set(), G: {}, Event,
     location: { reload() { reloads++; } },
     resetRenderPerformance() {},
@@ -61,6 +66,10 @@ const fire = ms => {
 };
 const lose = () => { gl.lost = true; canvas.dispatchEvent(new Event('webglcontextlost', { cancelable: true })); };
 const restore = () => { gl.lost = false; canvas.dispatchEvent(new Event('webglcontextrestored')); };
+const notice = vm.runInContext('contextStatus', c);
+assert.equal(notice.parentNode, document.body, 'Notice escapes the canvas/root stacking context');
+window.dispatchEvent(new Event('pageshow'));
+assert.equal(notice.mounts, 1, 'An unchanged host does not detach a potentially focused Reload button');
 
 // Natural loss preempts a diagnosed fence stall; reset's onRecovered cannot hide the loss.
 c.renderFrameGate.submitted(0);
@@ -74,6 +83,20 @@ assert(read().reloadRequired);
 assert(!read().buttonHidden);
 assert(read().lost);
 assert.equal(reloads, 0);
+const fullscreenRoot = new Element();
+document.fullscreenElement = fullscreenRoot; document.dispatchEvent(new Event('fullscreenchange'));
+assert.equal(notice.parentNode, fullscreenRoot, 'Fullscreen retains the existing notice and Reload button');
+assert(read().reloadRequired && read().lost);
+const pagehide = persisted => { const event = new Event('pagehide'); event.persisted = persisted; window.dispatchEvent(event); };
+pagehide(true);
+document.fullscreenElement = null; // Fullscreen can end while the document is suspended.
+window.dispatchEvent(new Event('pageshow'));
+assert.equal(notice.parentNode, document.body, 'BFCache return remounts at the current page/fullscreen root');
+document.fullscreenElement = fullscreenRoot; document.dispatchEvent(new Event('fullscreenchange'));
+assert.equal(notice.parentNode, fullscreenRoot, 'BFCache keeps fullscreen listeners');
+document.fullscreenElement = null; document.dispatchEvent(new Event('fullscreenchange'));
+assert.equal(notice.parentNode, document.body);
+assert(read().reloadRequired && read().lost);
 restore();
 assert(read().hidden);
 assert(!read().lost);
@@ -104,4 +127,9 @@ assert(!read().buttonHidden);
 restore();
 assert(read().hidden);
 assert.equal(reloads, 0);
-console.log('PASS integrated production UI callbacks: natural loss during diagnosed fence stall, ordered synthetic restore, delayed loss after restart timeout; no automatic reload.');
+pagehide(false);
+document.fullscreenElement = fullscreenRoot; document.dispatchEvent(new Event('fullscreenchange'));
+window.dispatchEvent(new Event('pageshow'));
+assert.equal(notice.parentNode, document.body, 'Teardown releases fullscreen and pageshow listeners');
+assert.equal(timers.size, 0);
+console.log('PASS integrated production UI callbacks: page/fullscreen mounting, natural loss during diagnosed fence stall, ordered synthetic restore, delayed loss after restart timeout; no automatic reload.');

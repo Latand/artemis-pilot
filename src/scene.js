@@ -129,7 +129,23 @@ function clearRenderStall() {
     contextStatus.hidden = true;
 }
 Object.assign(contextStatus.style, { position: "fixed", left: "8%", right: "8%", top: "50%", transform: "translateY(-50%)", maxHeight: "calc(100dvh - 32px)", overflowY: "auto", boxSizing: "border-box", padding: "18px", border: "1px solid #70818c", borderRadius: "12px", background: "#0b141fee", color: "#e9eff5", textAlign: "center", zIndex: "1300", pointerEvents: "auto" });
-cvHost.appendChild(contextStatus);
+function mountContextStatus() {
+    // #root is a fixed-position stacking context. A child cannot out-rank
+    // Graphics controls mounted on body, regardless of its own z-index.
+    // Keep the notice at the page level, or inside the active fullscreen root.
+    const host = document.fullscreenElement || document.body;
+    if (contextStatus.parentNode !== host) host.appendChild(contextStatus);
+}
+mountContextStatus();
+document.addEventListener('fullscreenchange', mountContextStatus);
+window.addEventListener('pageshow', mountContextStatus);
+function disposeContextStatus(event) {
+    if (event.persisted) return;
+    document.removeEventListener('fullscreenchange', mountContextStatus);
+    window.removeEventListener('pageshow', mountContextStatus);
+    window.removeEventListener('pagehide', disposeContextStatus);
+}
+window.addEventListener('pagehide', disposeContextStatus);
 function releaseFlightInput() {
     keys.clear();
     G.thrustMain = G.thrustLat = 0;

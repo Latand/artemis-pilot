@@ -81,14 +81,18 @@ try {
             const bounds = await button.evaluate(el => {
                 const r = el.getBoundingClientRect();
                 const points = [[.1, .1], [.9, .1], [.5, .5], [.1, .9], [.9, .9]];
-                return { visible: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight,
+                return { left: r.left, top: r.top, right: r.right, bottom: r.bottom,
+                    visible: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight,
                     height: r.height, reachable: points.every(([x, y]) => {
                         const top = document.elementFromPoint(r.x + r.width * x, r.y + r.height * y);
                         return top === el || el.contains(top);
                     }) };
             });
+            report.layoutChecks ||= [];
+            report.layoutChecks.push({ viewport, mode, expanded, bounds });
+            await page.screenshot({ path: resolve(out, `loss-${viewport.width}x${viewport.height}-${mode}-${expanded ? 'open' : 'closed'}.png`) });
             assert(bounds.visible && bounds.reachable && bounds.height >= 44,
-                `Reload stays usable at ${JSON.stringify(viewport)}, ${mode}, Graphics expanded=${expanded}`);
+                `Reload stays usable at ${JSON.stringify(viewport)}, ${mode}, Graphics expanded=${expanded}: ${JSON.stringify(bounds)}`);
         }
         await page.screenshot({ path: resolve(out, `loss-${viewport.width}x${viewport.height}.png`) });
     }
