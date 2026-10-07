@@ -61,6 +61,13 @@ lifecycle, source-alignment, resource-policy and gravity-hole headless guards.
 Those structural guards are not a substitute for the existing long coverage
 and radiance renderer suites; this focused check does not relax their gates.
 
+The combined release also runs the merged motion-trail fixture. Its added
+coexistence case enables the river through the normal presentation transition
+while real integrated histories remain paused. One completed lens-enabled
+frame must submit both the production river and all three trail meshes in the
+unbent hole pass, and toggling the overlay must leave measured histories intact.
+The same-task canvas PNG is retained as `*-trails-with-river.png`.
+
 Local pure/structural checks pass. Local Chromium cannot launch because this
 executor denies its required Unix socket, including an escalated invocation.
 Actual rendered acceptance remains pending the focused hosted workflow and

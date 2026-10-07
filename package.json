@@ -85,7 +85,9 @@
     "smoke:galaxy-travel": "node scripts/smoke-galaxy-travel.mjs",
     "verify:galaxy-travel": "node scripts/verify-galaxy-travel.mjs",
     "smoke:scenario-playback": "node scripts/smoke-scenario-playback.mjs && node scripts/smoke-scenario-session.mjs && node scripts/smoke-scenario-input.mjs && node scripts/smoke-core-integration.mjs && node scripts/smoke-guided-river-presentation.mjs",
-    "verify:scenario-playback": "node scripts/verify-scenario-playback.mjs"
+    "verify:scenario-playback": "node scripts/verify-scenario-playback.mjs",
+    "smoke:black-hole-trails": "node scripts/smoke-black-hole-trails.mjs && node scripts/smoke-black-hole-trail-renderer.mjs && node scripts/smoke-black-hole-trail-scene.mjs && node scripts/verify-black-hole-trails.mjs --validate",
+    "verify:black-hole-trails": "node scripts/verify-black-hole-trails.mjs"
   },
   "dependencies": {
     "three": "0.164.1"

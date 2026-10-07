@@ -16,6 +16,7 @@ import { dotTexture, ringTexture } from "./textures.js";
 import { scene, renderQuality } from "./scene.js";
 import { segmentSphereHit } from "./geometry.js";
 import { PERF, markPerf } from "./perf.js";
+import { clearBlackHoleTrails } from './render/blackHolePath.js';
 import { RecentPath } from "./render/recentPath.js";
 import { getEpochMs } from "./epoch.js";
 import { ACTIVE_STARS, activeStarForFocus } from "./universe/activeStars.js";
@@ -124,6 +125,7 @@ export function setJourneyOpacity(o) {
     recent.mesh.material.uniforms.uOpacity.value = 0.48 * (1 - Math.min(1, o / 0.48));
 }
 export function clearTrail() {
+    clearBlackHoleTrails();
     clearInspectionPrediction();
     for (const p of [recent, journey]) { p.history.clear(); p.mesh.geometry.setDrawRange(0, 0); p.mesh.visible = false; }
 }
