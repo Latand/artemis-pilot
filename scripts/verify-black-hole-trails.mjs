@@ -99,6 +99,27 @@ try{
   const {lensingPass}=await import('/src/lensing.js');return lensingPass.enabled&&window.__trailDraws.length>0&&window.__trailDraws.every(Boolean);
  }),'Lens-enabled direct rendering keeps measured tails in the unbent hole pass');
  await page.screenshot({path:`${out}/${device}-lensed-trails.png`,timeout:180000});
+ // Combined release guard: the live measured histories and actual river
+ // must both submit on one completed frame, in their different lens passes.
+ await page.evaluate(async()=>{
+  const {G}=await import('/src/state.js'),{scene}=await import('/src/scene.js');
+  const lines=[];scene.traverse(o=>{if(o.isLineSegments&&o.geometry?.attributes.ref)lines.push(o);});
+  if(lines.length!==1)throw Error('Expected exactly one production river line object');
+  const line=lines[0],old=line.onBeforeRender;window.__coexistenceRiverDraws=0;window.__trailDraws=[];
+  line.onBeforeRender=function(...args){old.apply(this,args);window.__coexistenceRiverDraws++;};
+  window.__restoreCoexistence=()=>{line.onBeforeRender=old;G.gr=false;};G.gr=true;
+ });await frame();await frame();
+ const coexistence=await page.evaluate(async()=>{
+  const {renderer}=await import('/src/scene.js'),{river}=await import('/src/river.js'),{lensingPass}=await import('/src/lensing.js');
+  window.__coexistenceRiverDraws=0;window.__trailDraws=[];
+  const produced=window.__trailFrame();
+  return {produced,riverVisible:river.visible,riverDraws:window.__coexistenceRiverDraws,
+   unbentTrailDraws:window.__trailDraws.slice(),lensing:lensingPass.enabled,png:renderer.domElement.toDataURL('image/png')};
+ });report.producedFrames.push(coexistence.produced);
+ await writeFile(`${out}/${device}-trails-with-river.png`,Buffer.from(coexistence.png.split(',')[1],'base64'));delete coexistence.png;report.coexistence=coexistence;
+ check(coexistence.lensing&&coexistence.riverVisible&&coexistence.riverDraws>0&&coexistence.unbentTrailDraws.length>=3&&coexistence.unbentTrailDraws.every(Boolean),'Same completed lens-enabled frame draws the river and all three unbent measured trails');
+ const withRiver=await status();check(withRiver.every((s,i)=>s.visible&&JSON.stringify(s.points)===JSON.stringify(paused[i].points)),'Toggling river ink cannot mutate measured trail histories');
+ await page.evaluate(()=>window.__restoreCoexistence());await frame();
  await page.evaluate(async()=>{
   const s=await import('/src/scene.js'),lens=await import('/src/lensing.js');
   await s.ensurePostProcessing(lens.lensingPass);s.bloomPass.enabled=true;
