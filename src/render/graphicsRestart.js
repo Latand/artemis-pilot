@@ -32,14 +32,16 @@ export function createGraphicsRestart(renderer, { onState = () => {},
     canvas.addEventListener('webglcontextrestored', restored);
     function restart() {
         if (state.pending || disposed) return false;
+        // The extension can only restore a loss it initiated. A genuine loss
+        // must await the browser or offer a user-controlled page reload.
+        if (renderer.getContext().isContextLost()) { finish('unavailable'); return false; }
         try { extension = renderer.getContext().getExtension('WEBGL_lose_context'); }
         catch { extension = null; }
         if (!extension) { finish('unavailable'); return false; }
         state.pending = true; state.status = 'restarting'; onState(state.status);
         deadline = schedule(() => { if (state.pending) finish('timeout'); }, timeoutMs);
         try {
-            if (renderer.getContext().isContextLost()) requestRestore();
-            else { lossSettled = false; extension.loseContext(); }
+            lossSettled = false; extension.loseContext();
         } catch { finish('failed'); return false; }
         return true;
     }
