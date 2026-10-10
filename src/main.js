@@ -2349,7 +2349,7 @@ function frameStep() {
         updateShells(0, 0);
         const cosmicShipD = camera.position.distanceTo(shipG.position);
         const warpScale = warpHullScale(cosmicShipD, Math.min(2.4, Math.max(.012, cosmicShipD * .02)));
-        updateShipVisuals(craft, shipG.position, dirV, warpScale, 0, rawDtR, G.paused, shipG.visible, cosmicShipD);
+        updateShipVisuals(craft, shipG.position, dirV, warpScale, 0, rawDtR, G.paused, shipG.visible, cam.dist);
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
         updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, G.uiMode === "observe" ? 0 : 1);
@@ -2417,7 +2417,9 @@ function frameStep() {
     prevVelAngleVis = velAngle;
     const directionVisualActive = (G.uiMode !== "observe" || VR.active) && G.warp <= 600 && headingRate < 7 && velAngleRate < 7;
     craft.scale.setScalar(cs);
-    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible, cd);
+    // R follows the orbit distance, which is steady while the camera glides
+    // back to the hull after a focus change (cd is not).
+    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible, cam.dist);
     const shipView = shipPresentation(cd, cs, camera.fov, viewportSize.h);
     craft.visible = shipView.hullAlpha > .001;
     for (const material of craft.userData.fadeMaterials) {

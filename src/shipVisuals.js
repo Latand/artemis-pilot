@@ -46,8 +46,9 @@ function updateBubble(b, viewDist, dtReal, paused) {
     const wanted = G.focus === 'ship' && Number.isFinite(viewDist) && viewDist > 0 ? viewDist * BUBBLE_VIEW_RADIUS : b.radius;
     // Zooming is a view action: R follows it in real time, even when paused.
     const view = Math.max(0, Math.min(dtReal || 0, .1)), dt = paused ? 0 : view;
+    // Eased in log space, so even a large zoom ratio settles within a second.
     if (!(b.radius > 0) || b.presence === 0) b.radius = wanted;
-    else b.radius += (wanted - b.radius) * -Math.expm1(-view / .35);
+    else b.radius *= Math.exp(Math.log(wanted / b.radius) * -Math.expm1(-view / .25));
     // Presence only eases presentation (volume, contrast, contour). The field
     // term itself is v_s(f - 1) and follows the model speed every frame.
     const target = b.speed > 0 ? Math.min(1, Math.log1p(b.speed) / Math.log1p(20)) : 0;

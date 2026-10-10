@@ -70,7 +70,11 @@ These are presentation choices, stated so they are not mistaken for physics:
   and keeps easing after the speed reaches zero, so braking to rest fades the
   field smoothly. The shift term itself always follows the model speed.
 * When the camera focuses on another body, R stays at its last size and that
-  view's river carries no shift term; the far bubble's f is zero there.
+  view's river carries no shift term. This is a display convention: the far
+  bubble's f is negligible there (f(5R) ≈ 1e-6), and if the ship crosses that
+  view's sampled volume the crossing is left out.
+* R follows the camera's orbit distance and eases in log space, so a return
+  of focus to the hull settles within about a second.
 * Adding the bubble to the river's mass terms is a visualization; it solves no
   Einstein equations.
 

@@ -1101,7 +1101,8 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         smoothCenter.z - textureCenter.z - bubbleCarry.z,
     );
     // The shift term exists only in the ship chart. A view focused elsewhere
-    // keeps its natural river (the far bubble's f is zero there anyway).
+    // keeps its natural river: a display convention, since there the far
+    // bubble's f is negligible (f(5 R) ~ 1e-6).
     const bubbleSpeed = bubbleAnchored && bubble.speed > 0 ? bubble.speed * K : 0;
     if (bubbleSpeed > 0 && Number.isFinite(bubbleSpeed)) {
         // float64 subtraction before the float32 upload, like every source

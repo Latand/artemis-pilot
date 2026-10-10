@@ -10,7 +10,7 @@ const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:
  return s.replace('const firstFrameT0 = perfStart();','clock.getDelta=()=>window.__qaDt||1/60;const firstFrameT0 = perfStart();').replace('renderer.setAnimationLoop(frame);','')+
  '\nwindow.__warpFrame=()=>{lastMobileFrame=-Infinity;frame();renderer.getContext().finish();const r=window.__river;return {t:G.t,x:G.x,y:G.y,z:G.z,v:[G.vx,G.vy,G.vz],gr:G.gr,bubble:{...WARP},'+
  'river:{visible:r.visible,radius:r.radius,presence:r.warpPresence,presentation:r.bubblePresentation,bubbleRadius:r.bubbleRadius,bubbleSpeed:r.bubbleSpeed,displayRate:r.displayRate,respawn:r.respawn,warpLines:r.warpVisible},focus:G.focus,'+
- 'cam:{dist:cam.dist,toShip:camera.position.distanceTo(shipG.position)},craft:{visible:craft.visible,scale:craft.scale.x},'+
+ 'cam:{dist:cam.dist,toShip:camera.position.distanceTo(shipG.position)},bubbleR:shipVisuals.bubble.radius,craft:{visible:craft.visible,scale:craft.scale.x},'+
  'layers:["Alcubierre expansion and exotic-energy guide","Illustrative transition pulse front"].map(n=>scene.getObjectByName(n)).filter(Boolean).length,'+
  'driveGuide:!!shipG.getObjectByName("Fictional curvature drive envelope")?.visible,memory:{...renderer.info.memory},programs:renderer.info.programs.length};};';
 }}]});await server.listen();
@@ -41,6 +41,32 @@ try{
  const readout=await page.evaluate(()=>document.getElementById(innerWidth<=760?'mVelL':'cVelL')?.textContent);
  check(readout===(mobile?'WARP':'WARP · BUBBLE'),'speed readout names the flown mode');
  await capture('01-ramp');
+ // Focus switch near home (real keys): ramp to ~300 c, where the camera
+ // still glides between bodies, focus the Moon with F, then return.
+ for(let i=0;i<9;i++)await page.keyboard.press('x');
+ await page.evaluate(()=>{window.__qaDt=.06;});await page.keyboard.down('Shift');await page.keyboard.down('w');
+ for(let i=0;i<120&&s.bubble.speed<299792.458*300;i++)s=await frame();
+ await page.keyboard.up('w');await page.keyboard.up('Shift');await page.evaluate(()=>{window.__qaDt=1/60;});s=await frames(20);
+ check(s.bubble.speed>299792.458*100,'real input reaches the focus-test cruise');
+ const anchoredR=s.bubbleR;
+ await page.keyboard.press('f');const away=[];for(let i=0;i<90;i++)away.push(await frame());
+ check(away.at(-1).focus==='moon','F moves focus off the ship');
+ check(away.every(f=>f.river.bubbleSpeed===0),'a view focused elsewhere carries no bubble term');
+ check(away.every(f=>Math.abs(f.bubbleR-anchoredR)<=anchoredR*1e-9),'bubble radius stays at its last anchored size');
+ for(let i=0;i<3;i++)await page.keyboard.press('f');
+ // While the camera glides back, R and the sampled volume stay at the
+ // anchored scale (they read the orbit distance), so the field returns at once.
+ const back=[];for(let i=0;i<150;i++)back.push(await frame());
+ s=back.at(-1);check(s.focus==='ship'&&s.river.bubbleSpeed>0,'returning focus to the ship restores the bubble term');
+ check(back.some(f=>Math.abs(f.cam.toShip-f.cam.dist)>f.cam.dist*.5),'the return really glides (camera away from the hull at first)');
+ report.focusReturn=back.filter((f,i)=>i<20||i%10===0).map((f,i)=>({R:+f.bubbleR.toPrecision(4),camDist:+f.cam.dist.toPrecision(4),toShip:+f.cam.toShip.toPrecision(4),river:+f.river.radius.toPrecision(4),focus:f.focus}));
+ report.focusAway=away.filter((f,i)=>i%15===0).map(f=>({R:+f.bubbleR.toPrecision(4),camDist:+f.cam.dist.toPrecision(4),toShip:+f.cam.toShip.toPrecision(4),focus:f.focus}));
+ // R eases from its frozen size to the new zoom target; it must never inflate
+ // with the gliding camera's distance to the hull.
+ check(back.every(f=>f.bubbleR<=2*Math.max(.45*f.cam.dist,anchoredR)&&f.bubbleR>=.5*Math.min(.45*f.cam.dist,anchoredR)),'bubble radius never inflates while the camera glides back');
+ const arrived=back.findIndex(f=>Math.abs(f.cam.toShip-f.cam.dist)<f.cam.dist*.05);
+ check(arrived>=0&&back.slice(Math.min(back.length-1,arrived+30)).every(f=>Math.abs(f.river.radius/(f.bubbleR*2.1)-1)<.5&&f.bubbleR<=2*.45*f.cam.dist&&f.bubbleR>=.5*.45*f.cam.dist),'R and river volume settle within 0.5 s of the camera arriving');
+ await page.evaluate(()=>document.querySelector('[data-bubble-stop]:not([disabled])')?.click());s=await frames(4);
  // Real controls only: X raises the drive throttle, held Shift+W ramps.
  // Frames advance 0.06 s each (main.js caps a frame at 0.06 s) to keep
  // the software-GPU run short; this is not a frame-rate measurement.
@@ -61,14 +87,6 @@ try{
  await capture('02-superluminal-cruise');
  const heading=s.bubble.dx;await page.keyboard.down('a');const turn=await frames(4);await page.keyboard.up('a');
  check(turn.bubble.dy>0&&Math.abs(turn.bubble.dx-heading)<.05,'turn bends the bubble axis gradually');
- // Focus another body mid-flight (real F key): its river keeps no bubble
- // term and R stays at its last size while the ship flies on.
- const anchoredR=(await frame()).river.bubbleRadius;
- await page.keyboard.press('f');const away=[];for(let i=0;i<20;i++)away.push(await frame());
- check(away.at(-1).focus==='moon','F moves focus off the ship');
- check(away.every(f=>f.river.bubbleSpeed===0),'a view focused elsewhere carries no bubble term');
- check(away.every(f=>Math.abs(f.river.bubbleRadius-anchoredR)<=anchoredR*1e-9),'bubble radius stays at its last anchored size');
- for(let i=0;i<3;i++)await page.keyboard.press('f');s=await frames(10);check(s.focus==='ship'&&s.river.bubbleSpeed>0,'returning focus to the ship restores the bubble term');
  // Real S braking to rest: presentation channel equals eased presence every frame.
  const before=await frame();await page.evaluate(()=>{window.__qaDt=.06;});await page.keyboard.down('s');
  const brake=[];for(let i=0;i<200&&!(brake.length&&brake.at(-1).bubble.speed===0&&brake.at(-1).river.presence<.02);i++)brake.push(await frame());
