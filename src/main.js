@@ -1,3 +1,4 @@
+import { initWarpWaves, updateWarpWaves } from './warpWaves.js';
 import { WARP, stepWarp, stopWarp, resetWarp } from './warpBubble.js';
 import { initWarpControls, updateWarpControls } from './warpControls.js';
 import { pacedFrameTime } from './render/adaptiveQuality.js';
@@ -342,6 +343,7 @@ initQuickControls();
 initRiverStyles();
 initShipVisuals();
 initWarpControls();
+initWarpWaves();
 initTimeDock();
 initEvents({ mergerState: mergerDebugState });
 initUiMode();
@@ -2064,6 +2066,7 @@ function frameStep() {
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
+    updateWarpWaves(rawDtR);
     shipG.visible = !G.dead && !cosmicView && !G.cabin && !(focusNeb >= 0 && NEBULAE[focusNeb]?.formation) && (G.uiMode !== "observe" || VR.active || scenarioPlaybackActive());
     clouds.rotation.y += dtR * .01;
     perfEnd("scene.focus", sceneFocusT0, PERF.enabled ? { activeStarsDue, activeStarsFresh, focus: String(G.focus) } : null);
@@ -2341,7 +2344,7 @@ function frameStep() {
         // Hide the local GPU layer even on the cosmic early-return path.
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
         updateShells(0, 0);
-        const warpScale = WARP.enabled ? camera.position.distanceTo(shipG.position)*.035 : Math.min(2.4, Math.max(.012, camera.position.distanceTo(shipG.position)*.02));
+        const warpScale = WARP.enabled ? Math.max(.012,camera.position.distanceTo(shipG.position)*.065) : Math.min(2.4, Math.max(.012, camera.position.distanceTo(shipG.position)*.02));
         updateShipVisuals(craft, shipG.position, dirV, warpScale, 0, rawDtR, G.paused, shipG.visible);
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
@@ -2394,7 +2397,7 @@ function frameStep() {
     // ---- craft pose & adaptive size ----
     craft.quaternion.setFromUnitVectors(upV, dirV);
     const cd = camera.position.distanceTo(shipG.position);
-    const cs = (scenarioPlaybackActive() || WARP.enabled) ? cd * .035 : Math.min(2.4, Math.max(.012, cd * .02));
+    const cs = WARP.enabled ? Math.max(.012,cd*.065) : scenarioPlaybackActive() ? cd*.035 : Math.min(2.4, Math.max(.012, cd * .02));
     const shipSpeed = Math.hypot(G.vx, G.vy, G.vz);
     // the direction guides fade by the same rule as the body arrows: the
     // ship's path is its orbit about its primary (oi.r), set against the

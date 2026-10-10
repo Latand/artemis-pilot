@@ -1,7 +1,7 @@
 name: Hypothetical warp bubble
 on:
   pull_request:
-    paths: ['src/warp*', 'src/ship*', 'src/main.js', 'src/worldStep.js', 'src/state.js', 'src/saves.js', 'src/hud.js', 'index.html', 'scripts/*warp-bubble*', 'scripts/*warp-transport*', '.github/workflows/warp-bubble.yml']
+    paths: ['src/warp*', 'src/ship*', 'src/main.js', 'src/worldStep.js', 'src/state.js', 'src/saves.js', 'src/hud.js', 'index.html', 'scripts/*warp-bubble*', 'scripts/*warp-transport*', 'scripts/*warp-waves*', '.github/workflows/warp-bubble.yml']
 permissions:
   contents: read
 jobs:
@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-warp-bubble.mjs && node scripts/smoke-warp-transport.mjs && node scripts/smoke-curvature-drive.mjs && npm test && npm run smoke:science-copy && npm run smoke:reltravel && npm run smoke:determinism && npm run build
+      - run: node scripts/smoke-warp-bubble.mjs && node scripts/smoke-warp-transport.mjs && node scripts/smoke-warp-waves.mjs && node scripts/smoke-curvature-drive.mjs && npm test && npm run smoke:science-copy && npm run smoke:reltravel && npm run smoke:determinism && npm run build
   capture:
     runs-on: ubuntu-latest
     timeout-minutes: 35
@@ -43,4 +43,26 @@ jobs:
         if: always()
         with:
           name: warp-bubble-${{ matrix.device }}
+          path: evidence/
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: command -v ffmpeg || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+      - run: node scripts/record-warp-bubble.mjs
+        env:
+          ARTEMIS_EVIDENCE: evidence/warp-video
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: warp-bubble-video
           path: evidence/

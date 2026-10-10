@@ -20,3 +20,7 @@ body:is(.mode-direct,.mode-cabin,.mode-clean) :is(#shipVisualControls,.warpVisua
 body.mode-observe #shipVisualControls [data-warp-visual], body.mode-observe .warpVisualNote { display:none; }
 
 .warpVisualNote { white-space:pre-line; }
+
+.waveControls { width:100%; color:#efce94; font:11px/1.5 monospace; }
+.waveControls summary { cursor:pointer; padding:5px 0; }
+.waveControls .warpVisualControl { margin:3px 0; }

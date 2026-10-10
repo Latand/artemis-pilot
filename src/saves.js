@@ -1,3 +1,4 @@
+import { resetWarpWaves } from './warpWaveState.js';
 import { resetWarp } from './warpBubble.js';
 import { serializeUniverseJournal, restoreUniverseJournal, validUniverseJournal } from './universe/universeJournal.js';
 import { resetDrive } from './curvatureDrive.js';
@@ -169,7 +170,7 @@ export async function loadState() {
     apOff();
     relResetState();
     Object.assign(G, data.g);
-    resetDrive(); resetWarp(); // legacy saves resume in exact coast, never with a stale command
+    resetDrive(); resetWarp(); resetWarpWaves(); // legacy saves resume in exact coast, never with a stale command
     if (data.v >= 10 && data.log) restoreLog(data.log);
     else restoreLog(null);
     if (data.focusCatalog && Number.isFinite(Number(data.focusCatalog.hygIndex))) {

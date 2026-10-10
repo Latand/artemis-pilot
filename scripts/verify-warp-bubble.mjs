@@ -21,7 +21,7 @@ try{
  await page.waitForFunction(()=>window.__AP_READY&&window.__warpFrame);
  const frame=()=>page.evaluate(()=>__warpFrame());
  const frames=async n=>{let s;for(let i=0;i<n;i++)s=await frame();return s;};
- const capture=async name=>{const s=await frames(2);await page.screenshot({path:`${out}/${name}.png`});report.frames.push({name,...s});return s;};
+ const capture=async name=>{const s=await frames(6);await page.screenshot({path:`${out}/${name}.png`});report.frames.push({name,...s});return s;};
  await page.evaluate(async()=>{const {cam}=await import('/src/scene.js'),{shipG}=await import('/src/ship.js');__G.warp=1;__G.heading=0;__G.pitch=0;__G.hold=null;__warpFrame();cam.tgt.copy(shipG.position);cam.dist=.14;cam.yaw=.85;cam.pitch=.36;});
  if(mobile)await page.locator('#mMenuBtn').click();
  const button=page.locator('[data-bubble-drive]:visible').first();check(await button.isVisible(),'warp control accessible');await button.click();
@@ -43,5 +43,18 @@ try{
  s=await frame();check(JSON.stringify(s.memory)===JSON.stringify(mem)&&s.programs===programs,'repeated toggle does not allocate render resources');
  await page.evaluate(async()=>{const {WARP}=await import('/src/warpBubble.js');WARP.enabled=true;WARP.logSpeed=5;WARP.speed=Math.expm1(5);__G.warp=-1;});s=await frames(2);check(s.bubble.speed===0,'reverse time disconnects bubble');
  await page.evaluate(async()=>{__G.warp=1;const {saveState,loadState}=await import('/src/saves.js');saveState();await loadState();});s=await frame();check(!s.bubble.enabled&&s.bubble.speed===0,'save load resumes without stale warp command');
- await capture('04-local-flight');check(report.errors.length===0,'no browser or shader errors');
+ await capture('04-local-flight');
+ // Optional front replay pauses the world and remains at its emission origin.
+ await page.evaluate(async()=>{const {WARP_WAVES,resetWarpWaves}=await import('/src/warpWaveState.js');const {WARP}=await import('/src/warpBubble.js');resetWarpWaves();WARP_WAVES.enabled=true;WARP.enabled=true;__G.paused=false;});
+ await page.keyboard.down('w');await frames(8);await page.keyboard.up('w');await frames(2);
+ const event=await page.evaluate(async()=>({...((await import('/src/warpWaveState.js')).WARP_WAVES.events[0])}));check(event.kind==='ramping','actual ramp creates optional illustrative event');
+ await page.evaluate(()=>document.querySelector('[data-wave-replay]').click());
+ const replayStart=await frame();await frames(15);
+ const replay=await page.evaluate(async()=>{const {WARP_WAVES:s}=await import('/src/warpWaveState.js'),{scene}=await import('/src/scene.js');const m=scene.getObjectByName('Illustrative transition pulse front');return {paused:__G.paused,event:s.replay,age:s.replayAge,position:m.position.toArray(),radius:m.scale.x,visible:m.visible};});
+ check(replay.paused&&replay.visible,'replay pauses flight and shows front');
+ check(replay.event.x===event.x&&Math.abs(replay.position[0]-event.x*.001)<1e-8,'front stays at fixed emission origin');
+ check(Math.abs(replay.radius-299792.458*replay.age*.001)<1e-9,'replay uses stated c front and slowed wave clock');
+ const replayEnd=await capture('05-illustrative-front-replay');check(replayStart.x===replayEnd.x&&replayStart.t===replayEnd.t,'replay leaves world motion paused');
+ await page.evaluate(async()=>{(await import('/src/warpWaveState.js')).resetWarpWaves();});await frame();
+ check(report.errors.length===0,'no browser or shader errors');
 }finally{writeFileSync(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}

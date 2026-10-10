@@ -58,4 +58,5 @@ export function updateShipVisuals(craft, position, direction, scale, speedKmS, d
     field.material.uniforms.level.value = s.strength;
     field.material.uniforms.phase.value = s.motion.angle;
     s.fieldVisible = field.visible || metricField.visible;
+    s.metric = metricField.visible;
 }

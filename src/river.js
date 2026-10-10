@@ -953,7 +953,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const wx = sv.x - smoothCenter.x, wy = sv.y - smoothCenter.y, wz = sv.z - smoothCenter.z;
     const warpNear = Number.isFinite(wx + wy + wz) && Math.hypot(wx, wy, wz) < smoothR * 2 &&
         Math.hypot(camera.position.x - sv.x, camera.position.y - sv.y, camera.position.z - sv.z) < sv.radius * 30;
-    if (sv.strength > 0 && warpNear) {
+    if (sv.strength > 0 && warpNear && !sv.metric) {
         uniformsShared.uWarpShip.value.set(wx, wy, wz);
         uniformsShared.uWarpAxis.value.set(sv.dx, sv.dy, sv.dz);
         uniformsShared.uWarpRadius.value = sv.radius;
