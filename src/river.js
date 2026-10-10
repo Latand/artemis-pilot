@@ -394,7 +394,7 @@ void main() {
     // fades: volume edge, camera proximity, sink proximity
     // (p is already relative to the river's own center — see uCenterShift)
     float edge0 = 0.52 + 0.12 * uBubbleShape.z; // the tighter warp volume fades later
-    float fade = clamp(1.0 - (length(p) - uRadius * edge0) / (uRadius * (1.0 - edge0)), 0.0, 1.0);
+    float fade = clamp(1.0 - (length(p) - uRadius * edge0) / (uRadius * (0.48 - 0.12 * uBubbleShape.z)), 0.0, 1.0);
     if (own >= 0 && own < uSinkNB) {
         // Fade before recycling, in the same source-relative support used
         // by the compute pass. Crossing the ambient edge cannot blink a halo.
@@ -1016,7 +1016,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const localMinR = localFocus > .05 ? Math.max(10, Math.min(72, earthClear * 5.5 + 9)) : 16;
     // In warp the bubble radius follows the view, so the sampled volume does
     // too: the same particle budget then resolves the field around the hull.
-    // Its radius tightens to the bubble's walls (f ~ 0.04 at 2 R): a wider
+    // Its radius tightens to the bubble's walls (f = 0.028 at 2 R): a wider
     // volume stacks the uniform far stream over the walls in projection,
     // and at 2.8x the camera distance only ~3% of samples land in view
     // near the hull.
@@ -1100,14 +1100,21 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         smoothCenter.y - textureCenter.y - bubbleCarry.y,
         smoothCenter.z - textureCenter.z - bubbleCarry.z,
     );
-    const bubbleSpeed = bubble.active && bubble.speed > 0 ? bubble.speed * K : 0;
+    // The shift term exists only in the ship chart. A view focused elsewhere
+    // keeps its natural river (the far bubble's f is zero there anyway).
+    const bubbleSpeed = bubbleAnchored && bubble.speed > 0 ? bubble.speed * K : 0;
     if (bubbleSpeed > 0 && Number.isFinite(bubbleSpeed)) {
         // float64 subtraction before the float32 upload, like every source
         uniformsShared.uBubble.value.set(sv.x - smoothCenter.x, sv.y - smoothCenter.y, sv.z - smoothCenter.z, bubble.radius);
         uniformsShared.uBubbleAxis.value.set(bubble.ax, bubble.ay, bubble.az, bubbleSpeed);
-        uniformsShared.uBubbleShape.value.set(bubble.sigma, bubbleAnchored ? 1 : 0, warpPresence, warpRegime(bubble.speed));
-    } else { uniformsShared.uBubbleAxis.value.w = 0; uniformsShared.uBubbleShape.value.z = 0; }
+    } else uniformsShared.uBubbleAxis.value.w = 0;
+    // Presentation eases with presence on its own, also after the speed
+    // reaches zero, so braking to rest fades the field without a step.
+    uniformsShared.uBubbleShape.value.set(bubble.sigma, 1, warpPresence, warpPresence > 0 ? warpRegime(bubble.speed) : 0);
     river.bubbleSpeed = uniformsShared.uBubbleAxis.value.w;
+    river.bubblePresentation = uniformsShared.uBubbleShape.value.z;
+    river.bubbleRadius = uniformsShared.uBubble.value.w;
+
     uniformsShared.uOrigin.value.set(earthV.x - smoothCenter.x, earthV.y - smoothCenter.y, earthV.z - smoothCenter.z);
     uniformsShared.uRadius.value = smoothR;
     observerPositionRelativeTo(camera, smoothCenter, uniformsShared.uCam.value);

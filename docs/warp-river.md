@@ -35,6 +35,13 @@ What follows from the model:
   property of Alcubierre's choice of f; zero-expansion warp fields exist.
 * At the bubble centre proper time equals coordinate time, and the hull's local
   velocity stays separate from the coordinate speed v_s.
+* Alcubierre's shift is parallel to the travel axis everywhere, so in the ship
+  chart the streamlines near the hull are straight lines along the axis. The
+  lines change direction and bend where the bubble competes with the
+  gravitational terms (at low coordinate speed, or near a mass) and when the
+  axis turns; at high speed the bubble's signature is the speed profile and
+  θ (stream slowing into the front, calm hull region, stream speeding up
+  behind).
 
 ## Display conventions
 
@@ -44,7 +51,7 @@ These are presentation choices, stated so they are not mistaken for physics:
   (R = 0.45 × camera distance), so the calm interior always holds the hull.
   R is a free parameter of the metric.
 * σR = 1.8: a thick wall, so the field fades over about one radius
-  (f(R) ≈ 0.5, f(2R) ≈ 0.04).
+  (f(R) ≈ 0.53, f(1.5R) ≈ 0.15, f(2R) ≈ 0.028, f(2.5R) ≈ 0.005).
 * Near the ship the river is drawn in the ship chart. Its sampled volume
   shrinks to 2.1 R and follows the bubble rigidly, so no wake is left in old
   coordinates and particles are not re-created every frame.
@@ -59,6 +66,11 @@ These are presentation choices, stated so they are not mistaken for physics:
   samples leaving the rear re-enter upstream on the same streamline; samples
   stalled in the calm interior are recycled sooner. This keeps the walls
   resolved on a 1024-particle (weak graphics) budget.
+* Presentation (volume, contrast, line ink) eases with the bubble's presence
+  and keeps easing after the speed reaches zero, so braking to rest fades the
+  field smoothly. The shift term itself always follows the model speed.
+* When the camera focuses on another body, R stays at its last size and that
+  view's river carries no shift term; the far bubble's f is zero there.
 * Adding the bubble to the river's mass terms is a visualization; it solves no
   Einstein equations.
 
@@ -67,9 +79,9 @@ These are presentation choices, stated so they are not mistaken for physics:
 * W raises ln(1 + v) smoothly; release cruises; S brakes; A/D turn the bubble
   axis with an eased angular step. Collapse bubble stops transport at once.
 * 1 billion c is a numerical guard of the simulation.
-* Above c a horizon cuts the hull off from the front wall, so in general
-  relativity the bubble could not be steered or stopped from inside. The game
-  allows it.
+* Above c the hull is causally disconnected from part of the wall (Natário).
+  Control of the bubble from inside then has no causal path in general
+  relativity; the game allows it.
 * The prescribed metric changes everywhere at once with v_s(t) and contains no
   propagation law. The river therefore shows no travelling disturbance or
   gravitational waves. Steady idealized cruise emits none. Radiation from
@@ -90,7 +102,7 @@ These are presentation choices, stated so they are not mistaken for physics:
   around the hull, no per-frame respawn, camera holds the hull, pause, stop,
   reverse, save/load, far superluminal flight.
 * `scripts/record-warp-bubble.mjs`: frame-rendered 30 fps video (1/30 s of
-  simulation per frame; not a measured frame rate) with real controls only.
+  simulation per frame; frame rate unmeasured) with real controls only.
 * River guards (`smoke-foreign-river`, `smoke-river-radiance`) still require the
   natural-flight field and advection to be byte-identical to their baselines,
   after `scripts/river-warp-normalize.mjs` strictly removes the warp insertions.

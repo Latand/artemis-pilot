@@ -1,4 +1,5 @@
 import { WARP, BUBBLE_SIGMA } from './warpBubble.js';
+import { G } from './state.js';
 import { createShipMotion, stepShipMotion } from './shipMotion.js';
 import './shipVisuals.css';
 import { DRIVE } from './curvatureDrive.js';
@@ -33,7 +34,6 @@ export function initShipVisuals() {
         if (!shipVisuals.enabled) shipVisuals.strength = 0;
         sync();
     });
-    shipVisuals.syncNotes = sync;
     sync();
 }
 function updateBubble(b, viewDist, dtReal, paused) {
@@ -41,7 +41,9 @@ function updateBubble(b, viewDist, dtReal, paused) {
     b.speed = WARP.enabled ? WARP.speed : 0;
     // Bubble axis in scene axes: (x, y, z) -> (x, z, -y).
     b.ax = WARP.dx; b.ay = WARP.dz; b.az = -WARP.dy;
-    const wanted = Number.isFinite(viewDist) && viewDist > 0 ? viewDist * BUBBLE_VIEW_RADIUS : b.radius;
+    // R follows the view only while the camera rides with the hull; a view
+    // focused elsewhere leaves it at its last size.
+    const wanted = G.focus === 'ship' && Number.isFinite(viewDist) && viewDist > 0 ? viewDist * BUBBLE_VIEW_RADIUS : b.radius;
     // Zooming is a view action: R follows it in real time, even when paused.
     const view = Math.max(0, Math.min(dtReal || 0, .1)), dt = paused ? 0 : view;
     if (!(b.radius > 0) || b.presence === 0) b.radius = wanted;

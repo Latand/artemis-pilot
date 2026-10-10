@@ -83,7 +83,8 @@ export function steerWarp(s, hx, hy, hz, dt, tau = .45) {
     const hn = Math.hypot(hx, hy, hz);
     if (!(hn > 0) || !Number.isFinite(hn)) return s;
     hx /= hn; hy /= hn; hz /= hn;
-    if (!(s.speed > 0) || !(dt > 0)) { s.dx = hx; s.dy = hy; s.dz = hz; return s; }
+    if (!(s.speed > 0)) { s.dx = hx; s.dy = hy; s.dz = hz; return s; }
+    if (!(dt > 0)) return s; // paused: the moving bubble keeps its axis
     const dot = Math.max(-1, Math.min(1, s.dx*hx + s.dy*hy + s.dz*hz));
     const angle = Math.acos(dot);
     if (angle < 1e-9) { s.dx = hx; s.dy = hy; s.dz = hz; return s; }
@@ -110,8 +111,18 @@ export function takeWarpShift(out, s = WARP) {
     s.shiftX = 0; s.shiftY = 0; s.shiftZ = 0;
     return out;
 }
+// At most 8 characters, so the HUD cell keeps its unit on a 360 px phone
+// at every speed up to the guard: m/s, km/s, then c with k/M/B multiples.
+const WARP_MULTIPLES = [[1, ''], [1e3, 'k'], [1e6, 'M'], [1e9, 'B']];
 export function warpSpeedLabel(speed) {
-    if (!(speed>0)) return '0 km/s';
-    return speed<WARP_C ? `${speed<100?speed.toFixed(2):speed.toFixed(0)} km/s` :
-        `${(speed/WARP_C).toLocaleString('en-US',{maximumFractionDigits:speed<WARP_C*100?2:0})} c`;
+    if (!(speed > 0)) return '0 km/s';
+    if (speed < 1) return `${Math.round(speed * 1000)} m/s`;
+    if (speed < 999.5) return `${speed < 9.95 ? speed.toFixed(1) : speed.toFixed(0)} km/s`;
+    const c = speed / WARP_C;
+    if (c < .00995) return `${c.toFixed(4)} c`;
+    if (c < 9.995) return `${c.toFixed(2)} c`;
+    for (const [unit, name] of WARP_MULTIPLES) {
+        const m = c / unit;
+        if (m < 999.5 || unit === 1e9) return `${m.toFixed(m < 9.995 ? 2 : m < 99.95 ? 1 : 0)}${name} c`;
+    }
 }

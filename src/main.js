@@ -11,7 +11,7 @@ import { initForeignStarField, updateForeignStarField, foreignCameraStars } from
 import { presentationExposureSeconds } from './render/orbitalExposureMath.js';
 import { updateVisibleTrajectories, hideVisibleTrajectories } from './render/visibleTrajectories.js';
 import { updateOrbitalExposure, hideOrbitalExposure, applyOrbitalExposureMarkers } from './render/orbitalExposure.js';
-import { initShipVisuals, updateShipVisuals } from "./shipVisuals.js";
+import { initShipVisuals, updateShipVisuals, shipVisuals } from "./shipVisuals.js";
 import { initRiverStyles } from "./riverStyles.js";
 import { updateGravityInspector } from "./gravityInspector.js";
 import { updateLargeScaleFlow } from "./render/largeScaleFlow.js";
@@ -1418,6 +1418,11 @@ let beltCursor = 0, kuiperCursor = 0;
 const arrC = [0, 0, 0];
 const fv = [0, 0, 0];
 const WARP_HULL_VIEW = .042;
+// Grows smoothly with the bubble's presence, so enabling warp keeps the hull steady.
+function warpHullScale(dist, normal) {
+    const blend = WARP.enabled ? shipVisuals.bubble.presence : 0;
+    return normal + (Math.max(.012, dist * WARP_HULL_VIEW) - normal) * blend;
+}
 let placed = false, frameNo = 0, grB = 0, hudReady = false, nearLabelsReady = false, nearVisualReady = false;
 let hudLastFocus, hudLastMode, hudLastWarp, hudLastPaused;
 const DIR_FADE_START_KMS = 55, DIR_FADE_END_KMS = 90;
@@ -2343,7 +2348,7 @@ function frameStep() {
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
         updateShells(0, 0);
         const cosmicShipD = camera.position.distanceTo(shipG.position);
-        const warpScale = WARP.enabled ? Math.max(.012, cosmicShipD * WARP_HULL_VIEW) : Math.min(2.4, Math.max(.012, cosmicShipD * .02));
+        const warpScale = warpHullScale(cosmicShipD, Math.min(2.4, Math.max(.012, cosmicShipD * .02)));
         updateShipVisuals(craft, shipG.position, dirV, warpScale, 0, rawDtR, G.paused, shipG.visible, cosmicShipD);
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
@@ -2398,7 +2403,7 @@ function frameStep() {
     const cd = camera.position.distanceTo(shipG.position);
     // In warp the hull keeps one readable screen size at every zoom; the
     // bubble radius follows the same view scale (shipVisuals.js).
-    const cs = WARP.enabled ? Math.max(.012, cd * WARP_HULL_VIEW) : scenarioPlaybackActive() ? cd*.035 : Math.min(2.4, Math.max(.012, cd * .02));
+    const cs = warpHullScale(cd, scenarioPlaybackActive() ? cd*.035 : Math.min(2.4, Math.max(.012, cd * .02)));
     const shipSpeed = Math.hypot(G.vx, G.vy, G.vz);
     // the direction guides fade by the same rule as the body arrows: the
     // ship's path is its orbit about its primary (oi.r), set against the

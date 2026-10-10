@@ -39,10 +39,11 @@ export function warpTravelStep(requested) {
     } else if (warpSegmentBlocked(G.x,G.y,G.z,nx,ny,nz,dt)) {
         stopWarp(WARP,'Navigation interlock: loaded body in path');
     } else {
-        G.x=nx; G.y=ny; G.z=nz; G.leftHome ||= Math.hypot(nx,ny,nz)>1e5;
         // The river carries its particles with the bubble alone (the hull's
-        // own drift stays out), so it reads the bubble's share of this move.
-        noteWarpShift(WARP.dx*distance, WARP.dy*distance, WARP.dz*distance);
+        // own drift stays out). Hand it the realized float64 move, so far from
+        // home the rounding of G.x cannot slide the field against the hull.
+        noteWarpShift((nx-G.x)-G.vx*dt, (ny-G.y)-G.vy*dt, (nz-G.z)-G.vz*dt);
+        G.x=nx; G.y=ny; G.z=nz; G.leftHome ||= Math.hypot(nx,ny,nz)>1e5;
     }
     // Central proper time equals coordinate time only in the ideal metric.
     // Bubble speed never enters local velocity or Lorentz calculations.
