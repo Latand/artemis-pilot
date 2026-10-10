@@ -9,13 +9,16 @@ import { resolve } from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { transformCelestialSource } from './celestial-detail-fixtures.mjs';
+import { withoutWarpSandbox } from './river-warp-normalize.mjs';
 
 const baseRef = '2cde3de63015ea721364471736d82a21726af4e4';
 const root = process.cwd(), out = resolve(process.argv[2] || 'evidence/river-sink-support');
 const baseSource = execFileSync('git', ['show', `${baseRef}:src/river.js`], { encoding: 'utf8' });
 const source = await readFile('src/river.js', 'utf8');
 const literal = (text, name) => text.match(new RegExp('const ' + name + ' = /\\* glsl \\*/(`[^]*?`);'))?.[1];
-for (const name of ['FLOW_GLSL', 'COMPUTE_FRAG']) assert.equal(literal(source, name), literal(baseSource, name), `${name} must remain byte-identical`);
+// Natural flight: compare after strictly removing the warp-sandbox insertions.
+const naturalSource = withoutWarpSandbox(source);
+for (const name of ['FLOW_GLSL', 'COMPUTE_FRAG']) assert.equal(literal(naturalSource, name), literal(baseSource, name), `${name} must remain byte-identical`);
 const oldVertex = literal(baseSource, 'LINE_VERT'); assert(oldVertex);
 const mobile = process.env.DEVICE === 'mobile';
 const report = { baseRef, revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),

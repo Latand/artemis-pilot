@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { withoutWarpSandbox } from './river-warp-normalize.mjs';
 import { execFileSync } from 'node:child_process';
 import { sourceSampleInkGain as gain, SPARSE_SOURCE_SAMPLES, OWNED_SAMPLE_FRACTION } from '../src/riverRadianceMath.js';
 
@@ -20,7 +21,7 @@ for(const reference of [0,1,76.41153028181971,512,7000]){
 const proxima=15376*OWNED_SAMPLE_FRACTION;
 assert(Math.abs(gain(proxima,76.41153028181971)-128/proxima)<1e-15);
 
-const source=readFileSync(new URL('../src/river.js',import.meta.url),'utf8');
+const source=withoutWarpSandbox(readFileSync(new URL('../src/river.js',import.meta.url),'utf8')); // natural flight vs baseline
 const baseline=execFileSync('git',['show','09863eedda25eef36d79e9cf88daa4ff3e377875:src/river.js'],{encoding:'utf8'});
 function literal(text,name){const m=text.match(new RegExp('const '+name+' = /\\* glsl \\*/`([\\s\\S]*?)`;'));assert(m,name);return m[1];}
 function fn(text,name){const start=text.indexOf(name);assert(start>=0);let i=text.indexOf('{',start),depth=1,end=i+1;for(;depth;end++){if(text[end]==='{')depth++;if(text[end]==='}')depth--;}return text.slice(start,end);}

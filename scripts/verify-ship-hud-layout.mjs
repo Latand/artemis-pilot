@@ -22,7 +22,7 @@ export async function verifyShipHudLayout(page, { check, out, frames, report }) 
      inside:r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight,
      rect:{left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height}};
    };
-   const control=document.querySelector('#shipVisualControls button'),r=control.getBoundingClientRect();
+   const control=document.querySelector('#shipVisualControls [data-warp-visual]'),r=control.getBoundingClientRect();
    const hits=[[.5,.5],[.2,.5],[.8,.5]].map(([x,y])=>{
     const hit=document.elementFromPoint(r.left+r.width*x,r.top+r.height*y);return hit===control||control.contains(hit);
    });
@@ -59,7 +59,7 @@ export async function verifyShipHudLayout(page, { check, out, frames, report }) 
   },count);
  };
  const setEnabled=async enabled=>{
-  if((await page.locator('#shipVisualControls button').getAttribute('aria-pressed'))!==String(enabled))await page.locator('#shipVisualControls button').click();
+  if((await page.locator('#shipVisualControls [data-warp-visual]').getAttribute('aria-pressed'))!==String(enabled))await page.locator('#shipVisualControls [data-warp-visual]').click();
  };
  for(const objectives of ['full','reduced']){
   if(objectives==='reduced')await page.evaluate(async()=>{
@@ -77,8 +77,13 @@ export async function verifyShipHudLayout(page, { check, out, frames, report }) 
   if(objectives==='full')report.hudFullObjectiveHeight=firstLayout.obstacles.find(e=>e.id==='objPanel').rect.height;
   else check(firstLayout.objectives===2&&firstLayout.obstacles.find(e=>e.id==='objPanel').rect.height<report.hudFullObjectiveHeight,'Reduced objectives really shrink the live panel');
  }
- const hidden=async name=>check(await page.evaluate(()=>
-  ['shipVisualControls','dWarpVisualNote','warpVisualNote'].every(id=>document.getElementById(id).getClientRects().length===0)),`${name}: both desktop and mobile warp overlays are hidden`);
+ const hidden=async name=>{
+  check(await page.evaluate(mode=>{
+   const selectors=mode==='observe'?['#shipVisualControls [data-warp-visual]','#dWarpVisualNote','#warpVisualNote']:['#shipVisualControls','#dWarpVisualNote','#warpVisualNote'];
+   return selectors.every(selector=>document.querySelector(selector).getClientRects().length===0);
+  },name),`${name}: legacy field controls and annotations are hidden`);
+  if(name==='observe')check(await page.locator('#shipVisualControls [data-bubble-drive]').isVisible(),'Explore retains the explicit warp-sandbox entry point');
+ };
  for(const mode of ['direct','observe']){
   await page.locator(`[data-ui-mode="${mode}"]`).click();await frames(2);await settle();
   await hidden(mode);

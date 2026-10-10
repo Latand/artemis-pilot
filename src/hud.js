@@ -1,3 +1,4 @@
+import { WARP, warpSpeedLabel } from './warpBubble.js';
 import { PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, SEC_YEAR, warpLabel } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
@@ -18,7 +19,7 @@ const bhFocusIndex = f => {
 export const metEl = $("met"), civilDateEl = $("civilDate"), warpEl = $("warpLine"), engineEl = $("engineLine"), throttleEl = $("throttleLine");
 export const scaleRungEl = $("scaleRung"), lightTravelEl = $("lightTravel");
 export const fuelTxtEl = $("fuelTxt"), fuelFillEl = $("fuelFill");
-export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVel = $("cVel"), cApPe = $("cApPe"), cMoon = $("cMoon"), cSun = $("cSun"), cDv = $("cDv"), cGrav = $("cGrav");
+export const cAltL = $("cAltL"), cAlt = $("cAlt"), cVelL = $("cVelL"), cVel = $("cVel"), cApPe = $("cApPe"), cMoon = $("cMoon"), cSun = $("cSun"), cDv = $("cDv"), cGrav = $("cGrav");
 export const fFlow = $("fFlow"), fDark = $("fDark"), fHalo = $("fHalo"), fShip = $("fShip"), fClock = $("fClock"), relLineEl = $("relLine"), fEsc = $("fEsc"), fEscM = $("fEscM"), fAcc = $("fAcc");
 export const flowPanelEl = $("flowPanel"), bannerEl = $("banner"), helpEl = $("help");
 export const lblE = $("lblE"), lblM = $("lblM"), lblO = $("lblO"), lblS = $("lblS");
@@ -191,6 +192,7 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     else if (G.landed) setText(engineEl, G.landed.body === "earth" ? "ON THE SURFACE — SHIFT+W TO LIFT OFF" :
         G.landed.body === "planet" ? "ON " + PL[G.landed.i].name + " — W TO LIFT OFF (SHIFT HELPS)" :
             G.landed.body === "sysmoon" ? "ON PROCEDURAL MOON — W TO LIFT OFF" : "ON THE LUNAR SURFACE — W TO LIFT OFF");
+    else if (WARP.enabled) setText(engineEl, 'HYPOTHETICAL BUBBLE · '+warpSpeedLabel(WARP.speed)+' · '+WARP.phase);
     else if (aMag > 0) setText(engineEl, (mainIn ? "CURVATURE FIELD " + Math.round(G.throttle * 100) + "%" : "LATERAL FIELD") + (G.boost ? " · BOOST ×4" : "") + " · effective acceleration");
     else setText(engineEl, "FIELD IDLE — ballistic coast");
     setText(throttleEl, "FIELD STRENGTH " + Math.round(G.throttle * 100) + "% · " +
@@ -201,7 +203,9 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     setStyle(fuelFillEl, "background", frFuel < .15 ? "linear-gradient(90deg,#7d2e2e,#c85858)" : "linear-gradient(90deg,#2e7d4f,#58c87f)");
     setText(cAltL, "ALT · " + oi.body);
     setText(cAlt, fmtDist(Math.max(0, oi.r - oi.R)));
-    setText(cVel, sp.toFixed(3) + " km/s");
+    // In warp the readout is the mode being flown: the bubble's coordinate speed.
+    setText(cVelL, WARP.enabled ? "WARP · BUBBLE" : "VELOCITY");
+    setText(cVel, WARP.enabled ? warpSpeedLabel(WARP.speed) : sp.toFixed(3) + " km/s");
     setText(cApPe, (oi.ra === Infinity ? "ESC" : fmtDist(Math.max(0, oi.ra - oi.R))) + " / " + fmtDist(Math.max(0, oi.rp - oi.R)));
     setText(cMoon, fmtDist(oi.rM));
     setText(cSun, fmtDist(oi.rS));

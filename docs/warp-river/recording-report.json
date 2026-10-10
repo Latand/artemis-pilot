@@ -1,0 +1,533 @@
+{
+  "checks": [
+    {
+      "name": "video encoding: ",
+      "pass": true
+    },
+    {
+      "name": "no separate warp sphere or ring objects at any frame",
+      "pass": true
+    },
+    {
+      "name": "shared field lines stay on through the whole recording",
+      "pass": true
+    },
+    {
+      "name": "held real input reaches over 10,000 c",
+      "pass": true
+    },
+    {
+      "name": "superluminal flight is drawn through the shared river",
+      "pass": true
+    },
+    {
+      "name": "no per-frame particle respawn while the camera moves superluminally",
+      "pass": true
+    },
+    {
+      "name": "camera holds the visible hull",
+      "pass": true
+    },
+    {
+      "name": "real S input brakes the bubble to rest",
+      "pass": true
+    },
+    {
+      "name": "local velocity stays separate from bubble speed",
+      "pass": true
+    },
+    {
+      "name": "recording has no browser or shader errors",
+      "pass": true
+    },
+    {
+      "name": "GPU particle state stays finite",
+      "pass": true
+    }
+  ],
+  "errors": [],
+  "frames": [
+    {
+      "frame": 0,
+      "name": "00-local-lines",
+      "t": 0.06666666666666667,
+      "gr": true,
+      "local": 7.729891847467494,
+      "bubble": {
+        "speed": 0,
+        "phase": "off",
+        "dx": 1,
+        "dy": 0
+      },
+      "river": {
+        "visible": true,
+        "presence": 0,
+        "bubbleSpeed": 0,
+        "respawn": 0.074889661674525,
+        "radius": 25.200000000015375,
+        "draw": 819
+      },
+      "toShip": 5.9999999999997895,
+      "craft": true,
+      "layers": 0,
+      "samples": {
+        "near": 0,
+        "ahead": 0,
+        "behind": 0,
+        "ambient": 340,
+        "owned": 684,
+        "finite": true
+      }
+    },
+    {
+      "frame": 70,
+      "name": "01-local-lines-before-warp",
+      "t": 2.4,
+      "gr": true,
+      "local": 7.7298918944839015,
+      "bubble": {
+        "speed": 0,
+        "phase": "off",
+        "dx": 1,
+        "dy": 0
+      },
+      "river": {
+        "visible": true,
+        "presence": 0,
+        "bubbleSpeed": 0,
+        "respawn": 0.07489499154492593,
+        "radius": 25.199999999999125,
+        "draw": 819
+      },
+      "toShip": 5.9999999999997895,
+      "craft": true,
+      "layers": 0
+    },
+    {
+      "frame": 165,
+      "name": "02-ramp-subluminal",
+      "t": 5.566666666666666,
+      "gr": true,
+      "local": 7.729891921709083,
+      "bubble": {
+        "speed": 788.1551051932419,
+        "phase": "ramping",
+        "dx": 1,
+        "dy": 0
+      },
+      "river": {
+        "visible": true,
+        "presence": 0.9976270075239435,
+        "bubbleSpeed": 0.7881551051932418,
+        "respawn": 0.0751810659162952,
+        "radius": 5.765079011360694,
+        "draw": 819
+      },
+      "toShip": 5.9999999999997895,
+      "craft": true,
+      "layers": 0
+    },
+    {
+      "frame": 220,
+      "name": "03-through-c",
+      "t": 7.3999999999999995,
+      "gr": true,
+      "local": 7.729891921709083,
+      "bubble": {
+        "speed": 316916.4742566915,
+        "phase": "ramping",
+        "dx": 1,
+        "dy": 0
+      },
+      "river": {
+        "visible": true,
+        "presence": 0.9999984495057479,
+        "bubbleSpeed": 316.9164742566915,
+        "respawn": 0.029999953485172436,
+        "radius": 5.67014994916948,
+        "draw": 580
+      },
+      "toShip": 5.9999999999997895,
+      "craft": true,
+      "layers": 0
+    },
+    {
+      "frame": 320,
+      "name": "04-high-superluminal",
+      "t": 10.733333333333333,
+      "gr": true,
+      "local": 7.729891921709083,
+      "bubble": {
+        "speed": 17495562411.273823,
+        "phase": "ramping",
+        "dx": 1,
+        "dy": 0
+      },
+      "river": {
+        "visible": true,
+        "presence": 0.9999999999974888,
+        "bubbleSpeed": 17495562.411273822,
+        "respawn": 0.029999999999924663,
+        "radius": 5.670000000057711,
+        "draw": 819
+      },
+      "toShip": 5.9999999999997895,
+      "craft": true,
+      "layers": 0
+    },
+    {
+      "frame": 375,
+      "name": "05-turn",
+      "t": 12.566666666666666,
+      "gr": true,
+      "local": 7.729891921709083,
+      "bubble": {
+        "speed": 222792497913.32474,
+        "phase": "cruise",
+        "dx": 0.8939805837341922,
+        "dy": 0.4481056972481752
+      },
+      "river": {
+        "visible": true,
+        "presence": 0.9999999999999983,
+        "bubbleSpeed": 222792497.91332474,
+        "respawn": 0.02999999999999995,
+        "radius": 5.670000000000039,
+        "draw": 819
+      },
+      "toShip": 6.000000000609475,
+      "craft": true,
+      "layers": 0
+    },
+    {
+      "frame": 470,
+      "name": "06-braking",
+      "t": 15.733333333333333,
+      "gr": true,
+      "local": 7.729891921709083,
+      "bubble": {
+        "speed": 3400720837.6333876,
+        "phase": "braking",
+        "dx": -0.4144035327036504,
+        "dy": 0.9100932436199791
+      },
+      "river": {
+        "visible": true,
+        "presence": 0.9999999999999996,
+        "bubbleSpeed": 3400720.8376333877,
+        "respawn": 0.029999999999999985,
+        "radius": 5.670000000000009,
+        "draw": 819
+      },
+      "toShip": 6.000000015961545,
+      "craft": true,
+      "layers": 0
+    },
+    {
+      "frame": 560,
+      "name": "07-braking-late",
+      "t": 18.733333333333334,
+      "gr": true,
+      "local": 7.729891921709083,
+      "bubble": {
+        "speed": 99273.78273857644,
+        "phase": "braking",
+        "dx": -0.4161446189280985,
+        "dy": 0.9092984417325193
+      },
+      "river": {
+        "visible": true,
+        "presence": 0.9999999999999996,
+        "bubbleSpeed": 99.27378273857644,
+        "respawn": 0.029999999999999985,
+        "radius": 5.670000000000009,
+        "draw": 819
+      },
+      "toShip": 6.000000015961545,
+      "craft": true,
+      "layers": 0
+    },
+    {
+      "frame": 735,
+      "name": "08-after-stop",
+      "t": 24.566666666666666,
+      "gr": true,
+      "local": 7.729903773569276,
+      "bubble": {
+        "speed": 0,
+        "phase": "ready",
+        "dx": -0.4161468365471422,
+        "dy": 0.9092974268256818
+      },
+      "river": {
+        "visible": true,
+        "presence": 0.007375289988169592,
+        "bubbleSpeed": 0,
+        "respawn": 0.006049920304740686,
+        "radius": 16.696545745725935,
+        "draw": 819
+      },
+      "toShip": 6.000000015961545,
+      "craft": true,
+      "layers": 0
+    }
+  ],
+  "note": "frame-rendered at 30 fps, 1/30 s simulation per frame; frame rate unmeasured",
+  "samples": [
+    {
+      "frame": 0,
+      "speedC": 0,
+      "near": 0,
+      "ahead": 0,
+      "behind": 0,
+      "ambient": 340,
+      "owned": 684,
+      "finite": true
+    },
+    {
+      "frame": 30,
+      "speedC": 0,
+      "near": 0,
+      "ahead": 0,
+      "behind": 0,
+      "ambient": 340,
+      "owned": 684,
+      "finite": true
+    },
+    {
+      "frame": 60,
+      "speedC": 0,
+      "near": 0,
+      "ahead": 0,
+      "behind": 0,
+      "ambient": 340,
+      "owned": 684,
+      "finite": true
+    },
+    {
+      "frame": 90,
+      "speedC": 1.1896517906760196e-8,
+      "near": 0,
+      "ahead": 0,
+      "behind": 0,
+      "ambient": 340,
+      "owned": 684,
+      "finite": true
+    },
+    {
+      "frame": 120,
+      "speedC": 0.00002021334148216776,
+      "near": 9,
+      "ahead": 6,
+      "behind": 3,
+      "ambient": 584,
+      "owned": 440,
+      "finite": true
+    },
+    {
+      "frame": 150,
+      "speedC": 0.000517536937460975,
+      "near": 360,
+      "ahead": 292,
+      "behind": 68,
+      "ambient": 870,
+      "owned": 154,
+      "finite": true
+    },
+    {
+      "frame": 180,
+      "speedC": 0.013449748498892352,
+      "near": 699,
+      "ahead": 542,
+      "behind": 157,
+      "ambient": 878,
+      "owned": 146,
+      "finite": true
+    },
+    {
+      "frame": 210,
+      "speedC": 0.3548300576829535,
+      "near": 751,
+      "ahead": 404,
+      "behind": 347,
+      "ambient": 878,
+      "owned": 146,
+      "finite": true
+    },
+    {
+      "frame": 240,
+      "speedC": 9.385559489032408,
+      "near": 762,
+      "ahead": 424,
+      "behind": 338,
+      "ambient": 878,
+      "owned": 146,
+      "finite": true
+    },
+    {
+      "frame": 270,
+      "speedC": 248.3493620860742,
+      "near": 753,
+      "ahead": 415,
+      "behind": 338,
+      "ambient": 878,
+      "owned": 146,
+      "finite": true
+    },
+    {
+      "frame": 300,
+      "speedC": 6571.861087510688,
+      "near": 745,
+      "ahead": 403,
+      "behind": 342,
+      "ambient": 878,
+      "owned": 146,
+      "finite": true
+    },
+    {
+      "frame": 330,
+      "speedC": 173288.84327582992,
+      "near": 877,
+      "ahead": 460,
+      "behind": 417,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 360,
+      "speedC": 651857.5424701027,
+      "near": 873,
+      "ahead": 462,
+      "behind": 411,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 390,
+      "speedC": 779869.9626030967,
+      "near": 874,
+      "ahead": 495,
+      "behind": 379,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 420,
+      "speedC": 795991.9495129929,
+      "near": 868,
+      "ahead": 461,
+      "behind": 407,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 450,
+      "speedC": 99330.02392176265,
+      "near": 897,
+      "ahead": 448,
+      "behind": 449,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 480,
+      "speedC": 3634.4926910883078,
+      "near": 885,
+      "ahead": 474,
+      "behind": 411,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 510,
+      "speedC": 112.64171241312586,
+      "near": 861,
+      "ahead": 474,
+      "behind": 387,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 540,
+      "speedC": 3.413465826677266,
+      "near": 885,
+      "ahead": 471,
+      "behind": 414,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 570,
+      "speedC": 0.10312357551311803,
+      "near": 874,
+      "ahead": 476,
+      "behind": 398,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 600,
+      "speedC": 0.003111027844984995,
+      "near": 880,
+      "ahead": 474,
+      "behind": 406,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 630,
+      "speedC": 0.00009071080722104086,
+      "near": 889,
+      "ahead": 440,
+      "behind": 449,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 660,
+      "speedC": 0,
+      "near": 557,
+      "ahead": 274,
+      "behind": 283,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 690,
+      "speedC": 0,
+      "near": 333,
+      "ahead": 162,
+      "behind": 171,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 720,
+      "speedC": 0,
+      "near": 238,
+      "ahead": 114,
+      "behind": 124,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    }
+  ],
+  "summary": {
+    "frames": 741,
+    "maxSpeedC": 798816.3986149579,
+    "endSpeedKmS": 0
+  }
+}

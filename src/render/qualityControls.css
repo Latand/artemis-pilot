@@ -31,3 +31,6 @@ body.mode-xr #renderQualityControls, body.mode-clean #renderQualityControls { di
 }
 
 #renderQualityControls summary:focus-visible { outline:2px solid #8ecdf6;outline-offset:-4px; }
+
+/* The modal flight sheet owns touch input, including its close button. */
+body:has(#mMenu.open) #renderQualityControls { display:none; }

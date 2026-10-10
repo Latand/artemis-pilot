@@ -89,7 +89,8 @@ const cadence = current.slice(current.indexOf('function hudCadence('), current.i
 const mobileSource = readFileSync(new URL('../src/mobileControls.js', import.meta.url), 'utf8');
 const formatter = mobileSource.slice(mobileSource.indexOf('export function updateMobileControls('), mobileSource.indexOf('export function initMobileControls(')).replace('export ', '');
 const hudSandbox = { G: { warp: 60, t: 14, paused: false, dead: false, landed: null }, renderQuality: { mobile: true },
-    ui: {}, mMet: {}, mVel: {}, mAlt: {}, mFocus: {}, mWarp: {}, mWarpVal: {}, mMode: { textContent: 'HOLD' },
+    ui: {}, mMet: {}, mVelL: {}, mVel: {}, mAlt: {}, mFocus: {}, mWarp: {}, mWarpVal: {}, mMode: { textContent: 'HOLD' },
+    WARP: { enabled: false, speed: 0 }, warpSpeedLabel: () => '', // warp sandbox off: ordinary readout
     setText: (el, value) => { el.textContent = value; }, setClass: () => {}, fmtMET: () => '', fmtDist: () => '',
     focusName: () => 'SHIP', warpLabel: () => '', syncMobileButtons: () => {},
     window: { __frameSuccess: 7, __mobileHudFrame: 6 } };
