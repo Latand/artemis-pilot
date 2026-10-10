@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { blackHoleSinkOuter } from '../src/riverSinkMath.js';
 import { spawnReach } from '../src/riverMath.js';
 import { C_LIGHT, MU_S, FLOW } from '../src/constants.js';
+import { withoutWarpSandbox } from './river-warp-normalize.mjs';
 
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 for (const radius of [16, 100, 1000, 1e4, 1e5, 1e6, 1.2e8]) {
@@ -36,7 +37,9 @@ assert(meanFade(true) < .02, 'old whole-volume fade is a failing negative contro
 const source = readFileSync(new URL('../src/river.js', import.meta.url), 'utf8');
 const base = execFileSync('git', ['show', '2cde3de63015ea721364471736d82a21726af4e4:src/river.js'], { encoding: 'utf8' });
 const literal = (text, name) => text.match(new RegExp('const ' + name + ' = /\\* glsl \\*/`([\\s\\S]*?)`;'))?.[1];
-for (const name of ['FLOW_GLSL', 'COMPUTE_FRAG']) assert.equal(literal(source, name), literal(base, name), `${name}: unchanged physical field, sampling, capture and advection`);
+// Natural flight: compare after strictly removing the warp-sandbox insertions.
+const natural = withoutWarpSandbox(source);
+for (const name of ['FLOW_GLSL', 'COMPUTE_FRAG']) assert.equal(literal(natural, name), literal(base, name), `${name}: unchanged physical field, sampling, capture and advection`);
 assert(source.includes('${BLACK_HOLE_SINK_GLSL}'));
 assert(source.includes('blackHoleSinkOuter(bhCore, bhReach, 9.0)'));
 assert(source.includes('blackHoleSinkOuter(bhCore, bhReach, 8.0)'));
