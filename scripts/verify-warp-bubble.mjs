@@ -42,10 +42,10 @@ try{
  if(!mobile)check(readout==='WARP · BUBBLE','speed readout names the flown mode');
  await capture('01-ramp');
  // Real controls only: X raises the drive throttle, held Shift+W ramps.
- // Frames advance 0.1 s each (the controller's own per-frame cap) to keep
+ // Frames advance 0.06 s each (main.js caps a frame at 0.06 s) to keep
  // the software-GPU run short; this is not a frame-rate measurement.
  for(let i=0;i<9;i++)await page.keyboard.press('x');
- await page.evaluate(()=>{window.__qaDt=.1;});await page.keyboard.down('Shift');await page.keyboard.down('w');s=await frames(40);
+ await page.evaluate(()=>{window.__qaDt=.06;});await page.keyboard.down('Shift');await page.keyboard.down('w');s=await frames(90);
  await page.keyboard.up('w');await page.keyboard.up('Shift');await page.evaluate(()=>{window.__qaDt=1/60;});s=await frames(4);
  const cruise=[];for(let i=0;i<12;i++)cruise.push(await frame());
  s=cruise.at(-1);
@@ -66,18 +66,28 @@ try{
  await page.evaluate(()=>{__G.paused=false;});
  if(mobile)await page.locator('#mMenuBtn').click();await page.locator('[data-bubble-stop]:visible').first().click();if(mobile)await page.locator('#mMenuClose').click();
  s=await frames(2);check(s.bubble.speed===0&&s.river.bubbleSpeed===0,'visible emergency control collapses the bubble term');
- s=await frames(60);check(s.river.presence===0,'river returns to its natural presentation after the stop');
- const mem=s.memory,programs=s.programs;
- for(let i=0;i<6;i++){await page.evaluate(()=>document.querySelector('[data-bubble-drive]').click());await frames(2);}
- s=await frame();check(JSON.stringify(s.memory)===JSON.stringify(mem)&&s.programs===programs,'repeated toggle does not allocate render resources');
- await page.evaluate(()=>document.querySelector('[data-bubble-drive]').click());await page.keyboard.down('w');s=await frames(20);await page.keyboard.up('w');check(s.bubble.speed>0,'ramp before reverse');
+ // Presentation eases out over ~0.6 s time constants; ~5 s later it is exactly off.
+ await page.evaluate(()=>{window.__qaDt=.06;});s=await frames(85);await page.evaluate(()=>{window.__qaDt=1/60;});
+ check(s.river.presence===0&&s.river.bubbleSpeed===0,'river returns to its natural presentation after the stop');
+ // Background streaming may allocate meanwhile; one of three windows must
+ // show six warp toggles with no new geometry, texture or program at all.
+ let clean=false;
+ for(let attempt=0;attempt<3&&!clean;attempt++){
+  const base=await frame();
+  for(let i=0;i<6;i++){await page.evaluate(()=>document.querySelector('[data-bubble-drive]').click());await frames(2);}
+  s=await frame();clean=JSON.stringify(s.memory)===JSON.stringify(base.memory)&&s.programs===base.programs;
+  if(!clean)report.frames.push({name:'toggle-window-drift',attempt,before:base.memory,after:s.memory,programs:[base.programs,s.programs]});
+ }
+ check(clean,'repeated toggle does not allocate render resources');
+ await page.evaluate(()=>{if(document.querySelector('[data-bubble-drive]').getAttribute('aria-pressed')!=='true')document.querySelector('[data-bubble-drive]').click();});
+ await page.keyboard.down('w');s=await frames(20);await page.keyboard.up('w');check(s.bubble.enabled&&s.bubble.speed>0,'ramp before reverse');
  await page.evaluate(()=>{__G.warp=-1;});s=await frames(2);check(s.bubble.speed===0,'reverse time disconnects bubble');
  await page.evaluate(async()=>{__G.warp=1;const {saveState,loadState}=await import('/src/saves.js');saveState();await loadState();});s=await frame();check(!s.bubble.enabled&&s.bubble.speed===0,'save load resumes without stale warp command');
  await capture('04-local-flight');
  // Far from home: ten light-years out, superluminal, with rebased river.
  // Fixture position only; the ramp itself is real input.
- await page.evaluate(()=>{__G.x=9.46e13;__G.y=1e12;__G.z=3e11;__G.vx=__G.vy=__G.vz=0;__G.focus='ship';document.querySelector('[data-bubble-drive]').click();window.__qaDt=.1;});
- await page.keyboard.down('Shift');await page.keyboard.down('w');s=await frames(40);await page.keyboard.up('w');await page.keyboard.up('Shift');
+ await page.evaluate(()=>{__G.x=9.46e13;__G.y=1e12;__G.z=3e11;__G.vx=__G.vy=__G.vz=0;__G.focus='ship';document.querySelector('[data-bubble-drive]').click();window.__qaDt=.06;});
+ await page.keyboard.down('Shift');await page.keyboard.down('w');s=await frames(90);await page.keyboard.up('w');await page.keyboard.up('Shift');
  await page.evaluate(()=>{window.__qaDt=1/60;});s=await frames(6);check(s.bubble.speed>299792.458,'far fixture ramps past c with real input');const far=await page.evaluate(async()=>(await import('/src/river.js')).riverDebugReadPositions(4));
  check(Number.isFinite(s.x)&&s.river.visible&&far.finite&&far.distinct>8,'far superluminal flight keeps finite, visible field lines');
  await capture('05-far-superluminal');
