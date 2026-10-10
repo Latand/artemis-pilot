@@ -12,7 +12,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 const out=process.env.ARTEMIS_EVIDENCE||'evidence/warp-video';mkdirSync(out,{recursive:true});
 const np=process.env.ARTEMIS_NP?`&np=${process.env.ARTEMIS_NP}`:'';
-const report={checks:[],errors:[],frames:[],note:'frame-rendered at 30 fps, 1/30 s simulation per frame; not a measured frame rate'};
+const report={checks:[],errors:[],frames:[],note:'frame-rendered at 30 fps, 1/30 s simulation per frame; frame rate unmeasured'};
 const check=(ok,name)=>{report.checks.push({name,pass:!!ok});assert(ok,name);};
 const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:0,hmr:false},plugins:[{name:'warp-qa',enforce:'pre',transform(s,id){
  if(!id.split('?')[0].endsWith('/src/main.js'))return;
@@ -39,7 +39,7 @@ try{
   #rec b{color:#fff;font-size:15px}`});
  await page.evaluate(()=>{const b=document.createElement('div');b.id='rec';document.body.appendChild(b);});
  const caption=()=>page.evaluate(async()=>{const {WARP}=await import('/src/warpBubble.js');const k=[...window.__keys].filter(c=>/Key[WASDX]|Shift/.test(c)).map(c=>c.replace('Key','').replace('Left','')).join('+')||'—';
-  document.getElementById('rec').innerHTML='<b>ARTEMIS · warp sandbox through the gravity river</b>\nHypothetical Alcubierre shift field · not a working engine\nShort bright dashes: space contracts ahead\nLong violet strokes: space expands behind · calm around the hull\nKeys held: '+k+' · mode: '+(WARP.enabled?WARP.phase:'local flight')+'\nFrame-rendered 30 fps (1/30 s per frame) · not a measured frame rate';});
+  document.getElementById('rec').innerHTML='<b>ARTEMIS · warp sandbox through the gravity river</b>\nHypothetical Alcubierre shift field · no engine demonstrated\nShort bright dashes: space contracts ahead\nLong violet strokes: space expands behind · calm around the hull\nKeys held: '+k+' · mode: '+(WARP.enabled?WARP.phase:'local flight')+'\nFrame-rendered 30 fps (1/30 s per frame) · FPS unmeasured';});
  const video=spawn('ffmpeg',['-y','-loglevel','error','-f','image2pipe','-vcodec','mjpeg','-framerate','30','-i','pipe:0','-an','-c:v','libx264','-preset','fast','-crf','20','-pix_fmt','yuv420p','-movflags','+faststart',`${out}/warp-river.mp4`]);
  let fferr='';video.stderr.on('data',d=>fferr+=d);const finished=once(video,'close');
  const stills={0:'00-local-lines',70:'01-local-lines-before-warp',165:'02-ramp-subluminal',320:'04-high-superluminal',375:'05-turn',470:'06-braking',560:'07-braking-late',735:'08-after-stop'};

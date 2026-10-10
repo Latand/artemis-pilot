@@ -9,7 +9,7 @@ const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:
  if(!id.split('?')[0].endsWith('/src/main.js'))return;
  return s.replace('const firstFrameT0 = perfStart();','clock.getDelta=()=>window.__qaDt||1/60;const firstFrameT0 = perfStart();').replace('renderer.setAnimationLoop(frame);','')+
  '\nwindow.__warpFrame=()=>{lastMobileFrame=-Infinity;frame();renderer.getContext().finish();const r=window.__river;return {t:G.t,x:G.x,y:G.y,z:G.z,v:[G.vx,G.vy,G.vz],gr:G.gr,bubble:{...WARP},'+
- 'river:{visible:r.visible,radius:r.radius,presence:r.warpPresence,bubbleSpeed:r.bubbleSpeed,displayRate:r.displayRate,respawn:r.respawn,warpLines:r.warpVisible},'+
+ 'river:{visible:r.visible,radius:r.radius,presence:r.warpPresence,presentation:r.bubblePresentation,bubbleRadius:r.bubbleRadius,bubbleSpeed:r.bubbleSpeed,displayRate:r.displayRate,respawn:r.respawn,warpLines:r.warpVisible},focus:G.focus,'+
  'cam:{dist:cam.dist,toShip:camera.position.distanceTo(shipG.position)},craft:{visible:craft.visible,scale:craft.scale.x},'+
  'layers:["Alcubierre expansion and exotic-energy guide","Illustrative transition pulse front"].map(n=>scene.getObjectByName(n)).filter(Boolean).length,'+
  'driveGuide:!!shipG.getObjectByName("Fictional curvature drive envelope")?.visible,memory:{...renderer.info.memory},programs:renderer.info.programs.length};};';
@@ -39,7 +39,7 @@ try{
  check(s.bubble.speed>0&&s.river.bubbleSpeed>0,'held input ramps and the shared river receives the bubble');
  check(!s.driveGuide&&!s.river.warpLines,'curvature-drive envelope and its legacy guide stay hidden in warp');
  const readout=await page.evaluate(()=>document.getElementById(innerWidth<=760?'mVelL':'cVelL')?.textContent);
- if(!mobile)check(readout==='WARP · BUBBLE','speed readout names the flown mode');
+ check(readout===(mobile?'WARP':'WARP · BUBBLE'),'speed readout names the flown mode');
  await capture('01-ramp');
  // Real controls only: X raises the drive throttle, held Shift+W ramps.
  // Frames advance 0.06 s each (main.js caps a frame at 0.06 s) to keep
@@ -61,7 +61,23 @@ try{
  await capture('02-superluminal-cruise');
  const heading=s.bubble.dx;await page.keyboard.down('a');const turn=await frames(4);await page.keyboard.up('a');
  check(turn.bubble.dy>0&&Math.abs(turn.bubble.dx-heading)<.05,'turn bends the bubble axis gradually');
- const before=await frame();await page.keyboard.down('s');s=await frames(35);await page.keyboard.up('s');check(s.bubble.speed<before.bubble.speed,'actual S input brakes');await capture('03-braking');
+ // Focus another body mid-flight (real F key): its river keeps no bubble
+ // term and R stays at its last size while the ship flies on.
+ const anchoredR=(await frame()).river.bubbleRadius;
+ await page.keyboard.press('f');const away=[];for(let i=0;i<20;i++)away.push(await frame());
+ check(away.at(-1).focus==='moon','F moves focus off the ship');
+ check(away.every(f=>f.river.bubbleSpeed===0),'a view focused elsewhere carries no bubble term');
+ check(away.every(f=>Math.abs(f.river.bubbleRadius-anchoredR)<=anchoredR*1e-9),'bubble radius stays at its last anchored size');
+ for(let i=0;i<3;i++)await page.keyboard.press('f');s=await frames(10);check(s.focus==='ship'&&s.river.bubbleSpeed>0,'returning focus to the ship restores the bubble term');
+ // Real S braking to rest: presentation channel equals eased presence every frame.
+ const before=await frame();await page.evaluate(()=>{window.__qaDt=.06;});await page.keyboard.down('s');
+ const brake=[];for(let i=0;i<200&&!(brake.length&&brake.at(-1).bubble.speed===0&&brake.at(-1).river.presence<.02);i++)brake.push(await frame());
+ await page.keyboard.up('s');await page.evaluate(()=>{window.__qaDt=1/60;});
+ check(brake.some(f=>f.bubble.speed>0)&&brake.at(-1).bubble.speed<before.bubble.speed,'actual S input brakes');
+ check(brake.some(f=>f.bubble.speed===0),'S braking reaches rest');
+ check(brake.every(f=>f.river.presentation===f.river.presence),'presentation follows eased presence through the stop (no one-frame step)');
+ await capture('03-braking');
+ await page.keyboard.down('w');s=await frames(25);await page.keyboard.up('w');check(s.bubble.speed>0,'re-ramp after rest');
  await page.evaluate(()=>{__G.paused=true;});const paused=await frames(2);s=await frames(4);check(s.x===paused.x&&s.y===paused.y&&s.z===paused.z&&s.bubble.speed===paused.bubble.speed,'pause freezes transport and ramp');
  await page.evaluate(()=>{__G.paused=false;});
  if(mobile)await page.locator('#mMenuBtn').click();await page.locator('[data-bubble-stop]:visible').first().click();if(mobile)await page.locator('#mMenuClose').click();
@@ -91,5 +107,11 @@ try{
  await page.evaluate(()=>{window.__qaDt=1/60;});s=await frames(6);check(s.bubble.speed>299792.458,'far fixture ramps past c with real input');const far=await page.evaluate(async()=>(await import('/src/river.js')).riverDebugReadPositions(4));
  check(Number.isFinite(s.x)&&s.river.visible&&far.finite&&far.distinct>8,'far superluminal flight keeps finite, visible field lines');
  await capture('05-far-superluminal');
+ // Every warp speed label fits its real HUD cell, unit included.
+ const widths=mobile?[[430,932],[360,740]]:[[1280,820]];
+ for(const [w,h] of widths){await page.setViewportSize({width:w,height:h});await frames(2);
+  const fit=await page.evaluate(async id=>{const {warpSpeedLabel}=await import('/src/warpBubble.js');const el=document.getElementById(id);const prev=el.textContent,bad=[];
+   for(let e=-2;e<=14.48;e+=.05){el.textContent=warpSpeedLabel(10**e);if(el.scrollWidth>el.clientWidth)bad.push(el.textContent);}el.textContent=prev;return bad;},mobile?'mVel':'cVel');
+  check(fit.length===0,`speed labels fit at ${w}px: ${fit.slice(0,3).join(' | ')}`);}
  check(report.errors.length===0,'no browser or shader errors');
 }finally{writeFileSync(`${out}/report.json`,JSON.stringify(report,null,2));await browser.close();await server.close();}

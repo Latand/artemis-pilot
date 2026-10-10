@@ -63,7 +63,7 @@ import assert from 'node:assert/strict';
 const {G,WORLD,BH,resetShip}=await import('../src/state.js');
 const {eph,resetEphem}=await import('../src/ephemeris.js');
 const {warpTravelStep,warpSegmentBlocked}=await import('../src/warpTravel.js');
-const {WARP,resetWarp,stopWarp}=await import('../src/warpBubble.js');
+const {WARP,resetWarp,stopWarp,takeWarpShift}=await import('../src/warpBubble.js');
 const {stepWorld}=await import('../src/worldStep.js');
 const {R_SUN,SEC_YEAR,STARS}=await import('../src/constants.js');
 const {getPhysicalSystem,ACTIVE_STARS}=await import('../src/universe/activeStars.js');
@@ -90,6 +90,13 @@ const t=G.t,tau=G.tau,x=G.x;const dt=stepWorld(.1);
 assert(Math.abs(dt-.1)<1e-9);assert(Math.abs(G.t-t-dt)<1e-9);assert.equal(G.tau-tau,dt);
 assert.deepEqual([G.vx,G.vy,G.vz],[3,4,5]);assert(Math.abs(G.x-x-(1e6+3)*dt)<1e-3);
 assert.equal(warpTravelStep(100),1,'bounded surface sweep / delivered time');
+// Far from home the river must receive the realized float64 move, step by
+// step (a nominal step slides by up to half an ulp of G.x every frame).
+{G.x=2.5e17;G.y=3e15;G.z=-1e15;G.vx=7;G.vy=-3;G.vz=1;WARP.enabled=true;WARP.speed=WARP.meanSpeed=2.99792458e14;WARP.dx=.6;WARP.dy=.8;WARP.dz=0;
+ const out=[0,0,0];takeWarpShift(out);let travelled=0,worst=0;
+ for(let i=0;i<240;i++){const b=[G.x,G.y,G.z],v=[G.vx,G.vy,G.vz],d=warpTravelStep(1/30);takeWarpShift(out);
+  const a=[G.x,G.y,G.z];for(let k=0;k<3;k++)worst=Math.max(worst,Math.abs(out[k]-((a[k]-b[k])-v[k]*d)));travelled+=Math.abs(a[0]-b[0]);}
+ assert(worst<1e-6,`realized shift off by ${worst} km`);assert(travelled>1e15,'fixture really travelled');}
 G.x=5e23;G.y=G.z=0;WARP.meanSpeed=1e20;warpTravelStep(.1);assert.equal(WARP.speed,0);assert.match(WARP.reason,/Coordinate guard/);
 WARP.speed=WARP.meanSpeed=1e6;const reverse=warpTravelStep(-1);assert.equal(reverse,0);assert.equal(WARP.speed,0);
 WARP.limited=true;stopWarp();assert(!WARP.limited);resetWarp();

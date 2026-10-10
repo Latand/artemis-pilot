@@ -49,11 +49,13 @@ let angleStep=0;for(let i=0;i<180;i++){const d0=[turn.dx,turn.dy];steerWarp(turn
  angleStep=Math.max(angleStep,Math.acos(Math.min(1,d0[0]*turn.dx+d0[1]*turn.dy)));close(Math.hypot(turn.dx,turn.dy,turn.dz),1,1e-12);}
 assert(angleStep<.06,'axis turns gradually per frame');assert(turn.dy>.999,'axis reaches the heading');
 steerWarp(turn,0,-1,0,1/60);assert(Math.hypot(turn.dx,turn.dy,turn.dz)>.999999&&turn.dy<1,'opposite heading turns about a perpendicular');
+const held=[turn.dx,turn.dy,turn.dz];steerWarp(turn,1,0,0,0);assert.deepEqual([turn.dx,turn.dy,turn.dz],held,'pause keeps the moving axis');
 turn.speed=0;steerWarp(turn,1,0,0,1/60);assert.deepEqual([turn.dx,turn.dy,turn.dz],[1,0,0]);
 // Transport hand-off to the river is consumed exactly once.
 const carry=createWarpState(),out=[0,0,0];noteWarpShift(1,2,3,carry);noteWarpShift(1,0,0,carry);
 assert.deepEqual(takeWarpShift(out,carry),[2,2,3]);assert.deepEqual(takeWarpShift(out,carry),[0,0,0]);
-assert.equal(warpSpeedLabel(WARP_C*12345.678),'12,346 c');assert.equal(warpSpeedLabel(WARP_C*2.5),'2.5 c');assert.equal(warpSpeedLabel(42),'42.00 km/s');
+for(const [v,t] of [[0,'0 km/s'],[.09,'90 m/s'],[4.2,'4.2 km/s'],[42,'42 km/s'],[999,'999 km/s'],[2000,'0.0067 c'],[WARP_C*2.5,'2.50 c'],[WARP_C*58.36,'58.4 c'],[WARP_C*12345.678,'12.3k c'],[WARP_C*999999,'1.00M c'],[WARP_C*1.47e6,'1.47M c'],[WARP_C*WARP_MAX_C,'1.00B c']])assert.equal(warpSpeedLabel(v),t);
+for(let e=-3;e<=Math.log10(WARP_C*WARP_MAX_C);e+=.01){const t=warpSpeedLabel(10**e);assert(t.length<=8&&/ (m\/s|km\/s|[kMB]?c)$/.test(t),t);}
 // The shared river carries the same shift term in its one flow field.
 const river=readFileSync(new URL('../src/river.js',import.meta.url),'utf8');
 assert.equal((river.match(/uFrameVel \* uFrameW \+ bubbleShift\(p\)/g)||[]).length,2,'both flowField returns add the bubble');
