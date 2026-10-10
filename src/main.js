@@ -1,3 +1,6 @@
+import { initWarpWaves, updateWarpWaves } from './warpWaves.js';
+import { WARP, stepWarp, stopWarp, resetWarp } from './warpBubble.js';
+import { initWarpControls, updateWarpControls } from './warpControls.js';
 import { pacedFrameTime } from './render/adaptiveQuality.js';
 import { installQualityControls } from './render/qualityControls.js';
 import { withinStartupBudget } from './render/startupBudget.js';
@@ -339,6 +342,8 @@ cinematic.initCine();
 initQuickControls();
 initRiverStyles();
 initShipVisuals();
+initWarpControls();
+initWarpWaves();
 initTimeDock();
 initEvents({ mergerState: mergerDebugState });
 initUiMode();
@@ -1796,12 +1801,13 @@ function frameStep() {
     if ((rotIn || mainIn || latIn) && AP.mode !== "off") apOff("pilot override", toast);
     if ((rotIn || mainIn || latIn) && REL.active) relCancel("pilot override", toast);
     let atx = 0, aty = 0, atz = 0, aMag = 0;
+    if (WARP.enabled && (AP.mode !== 'off' || REL.active || scenarioPlaybackActive() || cinematic.isPlaying())) resetWarp();
     const canThrust = !scenarioPlaybackActive() && !G.dead && !G.paused && G.warp > 0 && (G.infinite || G.fuel > 0);
-    if (canThrust && AP.mode !== "off" && !mainIn && !latIn) {
+    if (canThrust && !WARP.enabled && AP.mode !== "off" && !mainIn && !latIn) {
         const ap = apStep(dtR, dtR * G.warp, orbitInfo(), { toast });
         if (ap && ap.aMag > 0) { atx = ap.atx; aty = ap.aty; atz = ap.atz || 0; aMag = ap.aMag; mainIn = ap.mainIn; }
     }
-    if (canThrust && (mainIn || latIn) && aMag === 0) {
+    if (canThrust && !WARP.enabled && (mainIn || latIn) && aMag === 0) {
         const mult = G.boost ? BOOST : 1;
         const cp = Math.cos(G.pitch || 0), hx = cp * Math.cos(G.heading), hy = cp * Math.sin(G.heading), hz = Math.sin(G.pitch || 0);
         if (mainIn) { const a = MAIN_A * G.throttle * mult * mainIn; atx += a * hx; aty += a * hy; atz += a * hz; }
@@ -1835,7 +1841,13 @@ function frameStep() {
     }
     // Commanded local potential -> its centre gradient -> the existing RK4
     // path. The same field state controls the envelope, river guide and sound.
-    stepDrive(DRIVE, atx, aty, atz, dtR, canThrust);
+    const warpAllowed = !G.dead && !G.paused && G.warp > 0 && !G.landed && !REL.active && !scenarioPlaybackActive() && !cinematic.isPlaying();
+    if (WARP.enabled && (!warpAllowed && !G.paused || G.warp <= 0)) stopWarp(WARP);
+    stepWarp(WARP, mainIn, G.throttle, G.boost, dtR, warpAllowed);
+    WARP.dx=Math.cos(G.pitch||0)*Math.cos(G.heading);
+    WARP.dy=Math.cos(G.pitch||0)*Math.sin(G.heading); WARP.dz=Math.sin(G.pitch||0);
+    stepDrive(DRIVE, atx, aty, atz, dtR, canThrust && !WARP.enabled);
+    if(frameNo % 6 === 0) updateWarpControls();
     sampleDriveGradient(driveAcceleration, 0, 0, 0, DRIVE.ax, DRIVE.ay, DRIVE.az);
     [atx, aty, atz] = driveAcceleration;
     aMag = DRIVE.magnitude;
@@ -1844,7 +1856,7 @@ function frameStep() {
     const physicsT0 = perfStart();
     let advanced = 0, activeStarsFresh = false;
     const scenarioFrame = tickScenarioPlayback(rawDtR, !!(rotIn || mainIn || latIn || AP.mode !== "off" || REL.active || cinematic.isPlaying() || VR.active));
-    setExternalTimeDriver(cinematic.isPlaying() || REL.active || scenarioPlaybackActive());
+    setExternalTimeDriver(cinematic.isPlaying() || REL.active || scenarioPlaybackActive() || WARP.enabled);
     const jumpFrame = tickJump(rawDtR, dtR, aMag > 0);
     const frameSimAdvance = scenarioFrame ? scenarioFrame.advanceSec : jumpFrame ? jumpFrame.advanceSec : dtR * G.warp;
     // one world step for every mode (flight, landed, dead, relativistic):
@@ -2054,6 +2066,7 @@ function frameStep() {
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
+    updateWarpWaves(rawDtR);
     shipG.visible = !G.dead && !cosmicView && !G.cabin && !(focusNeb >= 0 && NEBULAE[focusNeb]?.formation) && (G.uiMode !== "observe" || VR.active || scenarioPlaybackActive());
     clouds.rotation.y += dtR * .01;
     perfEnd("scene.focus", sceneFocusT0, PERF.enabled ? { activeStarsDue, activeStarsFresh, focus: String(G.focus) } : null);
@@ -2114,7 +2127,7 @@ function frameStep() {
         cam.dist += (goal - cam.dist) * Math.min(1, dtR * 4);
         if (Math.abs(goal - cam.dist) <= goal * .02) { cam.dist = goal; cam.distTarget = null; }
     }
-    cam.dist = Math.max(minD, cam.dist);
+    cam.dist = Math.max(minD, WARP.enabled ? Math.max(Math.abs(oriX),Math.abs(oriY),Math.abs(oriZ))*Number.EPSILON*128 : 0, cam.dist);
     updateScenarioCamera();
     const cabinActive = updateCabinHUD(cosmicView, oi);
     const hudEvery = hudCadence(cabinActive, aMag);
@@ -2331,6 +2344,8 @@ function frameStep() {
         // Hide the local GPU layer even on the cosmic early-return path.
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
         updateShells(0, 0);
+        const warpScale = WARP.enabled ? Math.max(.012,camera.position.distanceTo(shipG.position)*.065) : Math.min(2.4, Math.max(.012, camera.position.distanceTo(shipG.position)*.02));
+        updateShipVisuals(craft, shipG.position, dirV, warpScale, 0, rawDtR, G.paused, shipG.visible);
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
         updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, G.uiMode === "observe" ? 0 : 1);
@@ -2382,7 +2397,7 @@ function frameStep() {
     // ---- craft pose & adaptive size ----
     craft.quaternion.setFromUnitVectors(upV, dirV);
     const cd = camera.position.distanceTo(shipG.position);
-    const cs = scenarioPlaybackActive() ? cd * .035 : Math.min(2.4, Math.max(.012, cd * .02));
+    const cs = WARP.enabled ? Math.max(.012,cd*.065) : scenarioPlaybackActive() ? cd*.035 : Math.min(2.4, Math.max(.012, cd * .02));
     const shipSpeed = Math.hypot(G.vx, G.vy, G.vz);
     // the direction guides fade by the same rule as the body arrows: the
     // ship's path is its orbit about its primary (oi.r), set against the

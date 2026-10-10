@@ -1,3 +1,5 @@
+import { WARP, stopWarp } from './warpBubble.js';
+import { warpTravelStep } from './warpTravel.js';
 import { invalidateGasDynamics } from "./universe/gasDynamics.js";
 import { nextFormationBoundary, NEB_MAX, NEBULAE, prepareGasAdvance } from "./universe/nebulaeData.js";
 import { refreshActiveStars } from "./universe/activeStars.js";
@@ -38,6 +40,7 @@ export const WORLD_STEP = {
 };
 
 function shortfallReason(aMag) {
+    if (WARP.enabled && WARP.speed > 0) return 'warp navigation limits surface sweeps to one simulated second per frame';
     if (BH.n > 0) return "black holes are integrated step by step";
     if (GS.length > 0) return "gravity ghosts force step-by-step physics";
     if (aMag > 0) return "field active: the acceleration is integrated step by step";
@@ -56,8 +59,12 @@ function stepWorldSlice(requested, atx = 0, aty = 0, atz = 0, aMag = 0, toast = 
     const stepsBefore = frame.stepsUsed, analyticBefore = frame.analyticCalls;
     try {
         updateSunEvolution(G.t);
+        if (requested < 0 || REL.active || G.dead || G.landed) stopWarp(WARP);
         if (REL.active && requested < 0) relCancel("reverse warp", toast);
-        if (REL.active) {
+        if (WARP.enabled && (WARP.speed > 0 || WARP.meanSpeed > 0) && !REL.active && !G.dead && !G.landed && requested > 0) {
+            r.mode = 'warp bubble';
+            r.delivered = warpTravelStep(requested);
+        } else if (REL.active) {
             r.mode = "relativistic";
             WORLD.reverseBlocked = false;
             r.delivered = relTravelStep(requested);

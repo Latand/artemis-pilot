@@ -1,10 +1,12 @@
+import { WARP } from './warpBubble.js';
+import { createWarpMetricField } from './warpMetricField.js';
 import { createShipMotion, stepShipMotion } from './shipMotion.js';
 import './shipVisuals.css';
 import { DRIVE } from './curvatureDrive.js';
 import { createDriveField } from './shipDriveField.js';
 import * as THREE from 'three';
 const axis = new THREE.Vector3(), up = new THREE.Vector3(0,1,0);
-let field = null;
+let field = null, metricField = null;
 
 export const shipVisuals = {
     enabled: true, motion: createShipMotion(),
@@ -32,21 +34,29 @@ export function updateShipVisuals(craft, position, direction, scale, speedKmS, d
     const s = shipVisuals;
     // Ring motion and all distortion use the delivered drive field, never
     // passive orbital speed. speedKmS remains in the API for old view callers.
-    const level = DRIVE.level;
+    const bubbleLevel = WARP.enabled && WARP.speed > 0 ? Math.min(1,.2+WARP.logSpeed/18) : 0;
+    const level = bubbleLevel || DRIVE.level;
     stepShipMotion(s.motion, level * 120, dtReal, paused);
     for (const rotor of craft.userData.rotors) rotor.rotation.y = s.motion.angle;
     s.x = position.x; s.y = position.y; s.z = position.z;
-    axis.set(DRIVE.ax, DRIVE.az, -DRIVE.ay);
+    if (bubbleLevel) axis.set(WARP.dx,WARP.dz,-WARP.dy);
+    else axis.set(DRIVE.ax, DRIVE.az, -DRIVE.ay);
     if (axis.lengthSq() > 1e-20) axis.normalize(); else axis.copy(direction);
     s.dx = axis.x; s.dy = axis.y; s.dz = axis.z;
-    s.radius = Math.min(10, Math.max(.036, scale * 3));
+    s.radius = bubbleLevel ? Math.max(.036,scale*3) : Math.min(10, Math.max(.036, scale * 3));
     s.visible = visible;
     s.strength = s.enabled && visible ? level : 0;
     if (!field) { field = createDriveField(); craft.parent.add(field); }
-    field.visible = s.strength > .001;
+    field.visible = s.strength > .001 && !bubbleLevel;
+    if (!metricField) { metricField=createWarpMetricField(); craft.parent.add(metricField); }
+    metricField.visible=s.strength>.001 && bubbleLevel>0;
+    metricField.quaternion.setFromUnitVectors(up,axis);
+    metricField.scale.setScalar(s.radius);
+    metricField.material.uniforms.level.value=s.strength;
     field.quaternion.setFromUnitVectors(up, axis);
     field.scale.setScalar(s.radius);
     field.material.uniforms.level.value = s.strength;
     field.material.uniforms.phase.value = s.motion.angle;
-    s.fieldVisible = field.visible;
+    s.fieldVisible = field.visible || metricField.visible;
+    s.metric = metricField.visible;
 }

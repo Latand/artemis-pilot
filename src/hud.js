@@ -1,3 +1,4 @@
+import { WARP, warpSpeedLabel } from './warpBubble.js';
 import { PL, R_EARTH, R_MOON, R_SUN, MU_E, MU_M, MU_S, BH_SIZES, FUEL_DV0, SEC_YEAR, warpLabel } from "./constants.js";
 import { G, BH, WORLD } from "./state.js";
 import { eph } from "./ephemeris.js";
@@ -191,6 +192,7 @@ export function updateHUD(oi, aMag, mainIn, sp, kVLoc, fB) {
     else if (G.landed) setText(engineEl, G.landed.body === "earth" ? "ON THE SURFACE — SHIFT+W TO LIFT OFF" :
         G.landed.body === "planet" ? "ON " + PL[G.landed.i].name + " — W TO LIFT OFF (SHIFT HELPS)" :
             G.landed.body === "sysmoon" ? "ON PROCEDURAL MOON — W TO LIFT OFF" : "ON THE LUNAR SURFACE — W TO LIFT OFF");
+    else if (WARP.enabled) setText(engineEl, 'HYPOTHETICAL BUBBLE · '+warpSpeedLabel(WARP.speed)+' · '+WARP.phase);
     else if (aMag > 0) setText(engineEl, (mainIn ? "CURVATURE FIELD " + Math.round(G.throttle * 100) + "%" : "LATERAL FIELD") + (G.boost ? " · BOOST ×4" : "") + " · effective acceleration");
     else setText(engineEl, "FIELD IDLE — ballistic coast");
     setText(throttleEl, "FIELD STRENGTH " + Math.round(G.throttle * 100) + "% · " +
