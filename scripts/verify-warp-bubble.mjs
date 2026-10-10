@@ -23,7 +23,7 @@ try{
  const frames=async n=>{let s;for(let i=0;i<n;i++)s=await frame();return s;};
  const capture=async name=>{const s=await frames(6);await page.screenshot({path:`${out}/${name}.png`});report.frames.push({name,...s});return s;};
  await page.evaluate(async()=>{const {cam}=await import('/src/scene.js'),{shipG}=await import('/src/ship.js');__G.warp=1;__G.heading=0;__G.pitch=0;__G.hold=null;__warpFrame();cam.tgt.copy(shipG.position);cam.dist=.14;cam.yaw=.85;cam.pitch=.36;});
- if(mobile)await page.locator('#mMenuBtn').click();
+ if(mobile){await page.locator('#mMenuBtn').click();check(!await page.locator('#renderQualityControls').isVisible(),'flight sheet hides overlapping graphics control');}
  const button=page.locator('[data-bubble-drive]:visible').first();check(await button.isVisible(),'warp control accessible');await button.click();
  if(mobile)await page.locator('#mMenuClose').click();await page.evaluate(()=>document.activeElement?.blur());
  let s=await frames(6);check(s.bubble.enabled&&s.bubble.speed===0,'real UI enables ready state');
@@ -54,6 +54,8 @@ try{
  check(replay.paused&&replay.visible,'replay pauses flight and shows front');
  check(replay.event.x===event.x&&Math.abs(replay.position[0]-event.x*.001)<1e-8,'front stays at fixed emission origin');
  check(Math.abs(replay.radius-299792.458*replay.age*.001)<1e-9,'replay uses stated c front and slowed wave clock');
+ // Sample the late, labeled replay so the front extends beyond the ship.
+ await page.evaluate(async()=>{(await import('/src/warpWaveState.js')).WARP_WAVES.replayAge=.0005;});
  const replayEnd=await capture('05-illustrative-front-replay');check(replayStart.x===replayEnd.x&&replayStart.t===replayEnd.t,'replay leaves world motion paused');
  await page.evaluate(async()=>{(await import('/src/warpWaveState.js')).resetWarpWaves();});await frame();
  check(report.errors.length===0,'no browser or shader errors');
