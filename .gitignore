@@ -22,3 +22,8 @@ scripts/shoot*.mjs
 /shot-*.png
 /sweep-*.png
 /lod-*.png
+
+# local warp QA captures
+/qa-local/
+/evidence-local/
+/evidence/

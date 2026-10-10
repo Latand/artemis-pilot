@@ -1,5 +1,4 @@
-import { initWarpWaves, updateWarpWaves } from './warpWaves.js';
-import { WARP, stepWarp, stopWarp, resetWarp } from './warpBubble.js';
+import { WARP, stepWarp, stopWarp, resetWarp, steerWarp } from './warpBubble.js';
 import { initWarpControls, updateWarpControls } from './warpControls.js';
 import { pacedFrameTime } from './render/adaptiveQuality.js';
 import { installQualityControls } from './render/qualityControls.js';
@@ -343,7 +342,6 @@ initQuickControls();
 initRiverStyles();
 initShipVisuals();
 initWarpControls();
-initWarpWaves();
 initTimeDock();
 initEvents({ mergerState: mergerDebugState });
 initUiMode();
@@ -1419,6 +1417,7 @@ const minorOortStep = { start: 0, count: 0, nextIdx: 0 };
 let beltCursor = 0, kuiperCursor = 0;
 const arrC = [0, 0, 0];
 const fv = [0, 0, 0];
+const WARP_HULL_VIEW = .042;
 let placed = false, frameNo = 0, grB = 0, hudReady = false, nearLabelsReady = false, nearVisualReady = false;
 let hudLastFocus, hudLastMode, hudLastWarp, hudLastPaused;
 const DIR_FADE_START_KMS = 55, DIR_FADE_END_KMS = 90;
@@ -1844,8 +1843,8 @@ function frameStep() {
     const warpAllowed = !G.dead && !G.paused && G.warp > 0 && !G.landed && !REL.active && !scenarioPlaybackActive() && !cinematic.isPlaying();
     if (WARP.enabled && (!warpAllowed && !G.paused || G.warp <= 0)) stopWarp(WARP);
     stepWarp(WARP, mainIn, G.throttle, G.boost, dtR, warpAllowed);
-    WARP.dx=Math.cos(G.pitch||0)*Math.cos(G.heading);
-    WARP.dy=Math.cos(G.pitch||0)*Math.sin(G.heading); WARP.dz=Math.sin(G.pitch||0);
+    // The bubble axis eases toward the hull heading: turns bend path and field smoothly.
+    steerWarp(WARP, Math.cos(G.pitch||0)*Math.cos(G.heading), Math.cos(G.pitch||0)*Math.sin(G.heading), Math.sin(G.pitch||0), G.paused ? 0 : dtR);
     stepDrive(DRIVE, atx, aty, atz, dtR, canThrust && !WARP.enabled);
     if(frameNo % 6 === 0) updateWarpControls();
     sampleDriveGradient(driveAcceleration, 0, 0, 0, DRIVE.ax, DRIVE.ay, DRIVE.az);
@@ -2066,7 +2065,6 @@ function frameStep() {
     }
     const oriX = (eph.earthX + G.x) * K, oriY = G.z * K, oriZ = -(eph.earthY + G.y) * K;
     shipG.position.set(oriX, oriY, oriZ);
-    updateWarpWaves(rawDtR);
     shipG.visible = !G.dead && !cosmicView && !G.cabin && !(focusNeb >= 0 && NEBULAE[focusNeb]?.formation) && (G.uiMode !== "observe" || VR.active || scenarioPlaybackActive());
     clouds.rotation.y += dtR * .01;
     perfEnd("scene.focus", sceneFocusT0, PERF.enabled ? { activeStarsDue, activeStarsFresh, focus: String(G.focus) } : null);
@@ -2344,8 +2342,9 @@ function frameStep() {
         // Hide the local GPU layer even on the cosmic early-return path.
         updateRiver(advanced, 0, earthV, moonV, sunPos, plPosArr, dtR);
         updateShells(0, 0);
-        const warpScale = WARP.enabled ? Math.max(.012,camera.position.distanceTo(shipG.position)*.065) : Math.min(2.4, Math.max(.012, camera.position.distanceTo(shipG.position)*.02));
-        updateShipVisuals(craft, shipG.position, dirV, warpScale, 0, rawDtR, G.paused, shipG.visible);
+        const cosmicShipD = camera.position.distanceTo(shipG.position);
+        const warpScale = WARP.enabled ? Math.max(.012, cosmicShipD * WARP_HULL_VIEW) : Math.min(2.4, Math.max(.012, cosmicShipD * .02));
+        updateShipVisuals(craft, shipG.position, dirV, warpScale, 0, rawDtR, G.paused, shipG.visible, cosmicShipD);
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
         updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, G.uiMode === "observe" ? 0 : 1);
@@ -2397,7 +2396,9 @@ function frameStep() {
     // ---- craft pose & adaptive size ----
     craft.quaternion.setFromUnitVectors(upV, dirV);
     const cd = camera.position.distanceTo(shipG.position);
-    const cs = WARP.enabled ? Math.max(.012,cd*.065) : scenarioPlaybackActive() ? cd*.035 : Math.min(2.4, Math.max(.012, cd * .02));
+    // In warp the hull keeps one readable screen size at every zoom; the
+    // bubble radius follows the same view scale (shipVisuals.js).
+    const cs = WARP.enabled ? Math.max(.012, cd * WARP_HULL_VIEW) : scenarioPlaybackActive() ? cd*.035 : Math.min(2.4, Math.max(.012, cd * .02));
     const shipSpeed = Math.hypot(G.vx, G.vy, G.vz);
     // the direction guides fade by the same rule as the body arrows: the
     // ship's path is its orbit about its primary (oi.r), set against the
@@ -2411,7 +2412,7 @@ function frameStep() {
     prevVelAngleVis = velAngle;
     const directionVisualActive = (G.uiMode !== "observe" || VR.active) && G.warp <= 600 && headingRate < 7 && velAngleRate < 7;
     craft.scale.setScalar(cs);
-    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible);
+    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible, cd);
     const shipView = shipPresentation(cd, cs, camera.fov, viewportSize.h);
     craft.visible = shipView.hullAlpha > .001;
     for (const material of craft.userData.fadeMaterials) {

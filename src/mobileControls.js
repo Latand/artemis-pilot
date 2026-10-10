@@ -12,11 +12,12 @@ import { toggleScenarioMenu } from "./scenarios.js";
 import { toggleBHPlacementMode } from "./blackholes.js";
 import { setUiMode } from "./uiMode.js";
 import { setPaused, setWarp } from "./timeCtl.js";
+import { WARP, warpSpeedLabel } from "./warpBubble.js";
 
 const $ = id => document.getElementById(id);
 
 const ui = $("mobileUI");
-const mMet = $("mMet"), mVel = $("mVel"), mAlt = $("mAlt"), mFocus = $("mFocus"), mWarp = $("mWarp"), mMode = $("mMode"), mWarpVal = $("mWarpVal");
+const mMet = $("mMet"), mVelL = $("mVelL"), mVel = $("mVel"), mAlt = $("mAlt"), mFocus = $("mFocus"), mWarp = $("mWarp"), mMode = $("mMode"), mWarpVal = $("mWarpVal");
 const menu = $("mMenu");
 const btnPredict = $("mPredict"), btnRiver = $("mRiver"), btnConst = $("mConst"), btnPause = $("mPause");
 
@@ -190,13 +191,14 @@ export function syncMobileButtons() {
 export function updateMobileControls(oi, sp, aMag) {
     if (!ui) return;
     setText(mMet, fmtMET(G.t));
-    setText(mVel, sp.toFixed(2) + " km/s");
+    setText(mVelL, WARP.enabled ? "WARP" : "VEL");
+    setText(mVel, WARP.enabled ? warpSpeedLabel(WARP.speed) : sp.toFixed(2) + " km/s");
     setText(mAlt, fmtDist(Math.max(0, oi.r - oi.R)));
     setText(mFocus, focusName());
     setText(mWarp, warpLabel(G.warp));
     setText(mWarpVal, warpLabel(G.warp));
     if (mMode) {
-        setText(mMode, G.dead ? "LOST" : G.paused ? "PAUSED" : aMag > 0 ? "FIELD" : G.landed ? "LANDED" : "COAST");
+        setText(mMode, G.dead ? "LOST" : G.paused ? "PAUSED" : WARP.enabled ? "BUBBLE" : aMag > 0 ? "FIELD" : G.landed ? "LANDED" : "COAST");
         setClass(mMode, aMag > 0 ? "burn" : G.paused || G.dead ? "warn" : "");
     }
     syncMobileButtons();

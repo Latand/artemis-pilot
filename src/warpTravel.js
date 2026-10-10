@@ -1,4 +1,4 @@
-import { WARP, stopWarp } from './warpBubble.js';
+import { WARP, stopWarp, noteWarpShift } from './warpBubble.js';
 import { G, WORLD, BH } from './state.js';
 import { eph } from './ephemeris.js';
 import { advanceBodiesOnly } from './physics.js';
@@ -12,7 +12,7 @@ import { segmentSphereHit } from './geometry.js';
 // Explicit navigation approximation: prescribed motion in the Earth-relative
 // coordinate chart. It does not solve interactions of exotic matter with bodies.
 // Abort a swept segment intersecting loaded physical surfaces (linearly extrapolated over the delivered interval). This is a
-// conservative navigation interlock, not physical warp-impact modelling.
+// conservative navigation interlock; warp impacts on bodies are unmodelled.
 export function warpSegmentBlocked(x,y,z,nx,ny,nz,dt=0) {
     const hits=(cx,cy,cz,r,vx=0,vy=0,vz=0)=>segmentSphereHit(x-cx+vx*dt,y-cy+vy*dt,z-cz+vz*dt,nx-cx,ny-cy,nz-cz,r*1.02);
     if (!WORLD.earthDestroyed && hits(0,0,0,R_EARTH)) return true;
@@ -38,7 +38,12 @@ export function warpTravelStep(requested) {
         stopWarp(WARP,'Coordinate guard reached');
     } else if (warpSegmentBlocked(G.x,G.y,G.z,nx,ny,nz,dt)) {
         stopWarp(WARP,'Navigation interlock: loaded body in path');
-    } else { G.x=nx; G.y=ny; G.z=nz; G.leftHome ||= Math.hypot(nx,ny,nz)>1e5; }
+    } else {
+        G.x=nx; G.y=ny; G.z=nz; G.leftHome ||= Math.hypot(nx,ny,nz)>1e5;
+        // The river carries its particles with the bubble alone (the hull's
+        // own drift stays out), so it reads the bubble's share of this move.
+        noteWarpShift(WARP.dx*distance, WARP.dy*distance, WARP.dz*distance);
+    }
     // Central proper time equals coordinate time only in the ideal metric.
     // Bubble speed never enters local velocity or Lorentz calculations.
     G.tau+=dt;
