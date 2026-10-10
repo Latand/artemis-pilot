@@ -1,3 +1,4 @@
+import { withoutWarpSandbox } from './river-warp-normalize.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
@@ -64,7 +65,7 @@ for (const time of [0, 1e8, -1e8, 0]) for (let angle = 0; angle < 12; angle++) {
   object.geometry.dispose(); object.material.dispose(); cases++;
 }
 assert.equal(oldFailures, 2 * cases, 'The actual previous river code fails every before/after precision sample');
-const river = readFileSync(new URL('../src/river.js', import.meta.url), 'utf8');
+const river = withoutWarpSandbox(readFileSync(new URL('../src/river.js', import.meta.url), 'utf8')); // natural flight vs baseline
 for (const target of ['lineMat', 'dots.material', 'warpLines.material', 'obj.material']) assert(river.includes(`stabilizeBodyMaterial(${target});`));
 assert(river.includes('observerPositionRelativeTo(camera, smoothCenter, uniformsShared.uCam.value);'));
 assert(river.includes('observerPositionRelativeTo(camera, cam.tgt, riverObserverRelative).length()'));

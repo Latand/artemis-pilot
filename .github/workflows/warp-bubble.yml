@@ -1,7 +1,7 @@
 name: Hypothetical warp bubble
 on:
   pull_request:
-    paths: ['src/warp*', 'src/ship*', 'src/main.js', 'src/worldStep.js', 'src/state.js', 'src/saves.js', 'src/hud.js', 'index.html', 'scripts/*warp-bubble*', 'scripts/*warp-transport*', 'scripts/*warp-waves*', '.github/workflows/warp-bubble.yml']
+    paths: ['src/warp*', 'src/ship*', 'src/river.js', 'src/mobileControls.js', 'src/main.js', 'src/worldStep.js', 'src/state.js', 'src/saves.js', 'src/hud.js', 'index.html', 'scripts/*warp-bubble*', 'scripts/*warp-transport*', '.github/workflows/warp-bubble.yml']
 permissions:
   contents: read
 jobs:
@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: 22
       - run: npm install --ignore-scripts
-      - run: node scripts/smoke-warp-bubble.mjs && node scripts/smoke-warp-transport.mjs && node scripts/smoke-warp-waves.mjs && node scripts/smoke-curvature-drive.mjs && npm test && npm run smoke:science-copy && npm run smoke:reltravel && npm run smoke:determinism && npm run build
+      - run: node scripts/smoke-warp-bubble.mjs && node scripts/smoke-warp-transport.mjs && node scripts/smoke-river-visual.mjs && node scripts/smoke-ship-motion.mjs && node scripts/smoke-core-integration.mjs && node scripts/smoke-curvature-drive.mjs && npm test && npm run smoke:science-copy && npm run smoke:reltravel && npm run smoke:determinism && npm run build
   capture:
     runs-on: ubuntu-latest
     timeout-minutes: 35

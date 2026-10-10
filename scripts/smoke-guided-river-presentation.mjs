@@ -10,7 +10,7 @@ const block=slice('    // A guided-flight policy changes only','    const riverV
 assert(!/fEff\s*=|computeEvery\s*=|uBody|uHalo|uDtSim/.test(init+visibility+block),'Presentation never changes physical field, source data or compute state');
 for(const mobile of [false,true])for(const surfaceProx of [0,.5,1])for(const localFocus of [0,.4,1]){
  const geometry=()=>({range:null,setDrawRange(start,count){this.range=[start,count];}});
- const context=vm.createContext({presentation:null,surfaceProx,renderQuality:{mobile,dpr:1.25,loadShed:2},river:{drawCount:0,style:3,computeEvery:3,sourceCount:20},lineMat:{depthWrite:false},lines:{geometry:geometry()},dots:{material:{depthWrite:false},geometry:geometry()},uniformsShared:{uPixelRatio:{},uLocalFocus:{},uOpacity:{}},localFocus,planeBias:.6,loadShed:.2,renderShed:.2,fEff:.7,RIVER_DENSITY_GAIN:1.1,NPART:15376,IPP:4,PERF:{enabled:false}});
+ const context=vm.createContext({takeWarpShift(){},warpShiftKm:[0,0,0],shipVisuals:{bubble:{active:false,presence:0}},G:{focus:'ship'},presentation:null,surfaceProx,renderQuality:{mobile,dpr:1.25,loadShed:2},river:{drawCount:0,style:3,computeEvery:3,sourceCount:20},lineMat:{depthWrite:false},lines:{geometry:geometry()},dots:{material:{depthWrite:false},geometry:geometry()},uniformsShared:{uPixelRatio:{},uLocalFocus:{},uOpacity:{}},localFocus,planeBias:.6,loadShed:.2,renderShed:.2,fEff:.7,RIVER_DENSITY_GAIN:1.1,NPART:15376,IPP:4,PERF:{enabled:false}});
  const apply=policy=>{context.presentation=policy;vm.runInContext('{'+init+visibility+block+'}',context);return context.uniformsShared.uOpacity.value;};
  const original=.44*(mobile?1.08:1)*1.1*.7*(1+.6*.62+localFocus*.7)*(1-.2*.12);
  assert.equal(apply(null),original);assert.equal(context.lineMat.depthTest,surfaceProx>.5);

@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createDriveState, stepDrive, sampleDriveGradient } from '../src/curvatureDrive.js';
-import { createWarpState, stepWarp, stopWarp, resetWarp } from '../src/warpBubble.js';
+import { createWarpState, stepWarp, stopWarp, resetWarp, steerWarp } from '../src/warpBubble.js';
 import { shipPresentation } from '../src/shipPresentation.js';
 import { MAIN_A, RCS_A, BOOST } from '../src/constants.js';
 const source = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
@@ -20,7 +20,7 @@ const runDrive = ({ guided = false, main = 1, lateral = 0, paused = false, warp 
     const WARP = createWarpState(); WARP.enabled=bubble;
     stepDrive(DRIVE, .02, .03, .01, 1/60); // Old held command must not survive a gate.
     const context = vm.createContext({ G: { dead:false, paused, warp, infinite:true, fuel:1, heading:0, pitch:0, throttle:1, boost:false, landed:null, muted:false },
-        WARP, stepWarp, stopWarp, resetWarp:()=>resetWarp(WARP), REL:{active:false}, cinematic:{isPlaying:()=>false}, frameNo:0, updateWarpControls(){},
+        WARP, stepWarp, stopWarp, steerWarp, resetWarp:()=>resetWarp(WARP), REL:{active:false}, cinematic:{isPlaying:()=>false}, frameNo:0, updateWarpControls(){},
         DRIVE, stepDrive, sampleDriveGradient, driveAcceleration:new Float64Array(3), scenarioPlaybackActive:()=>guided,
         AP:{mode:'off'}, mainIn:main, latIn:lateral, dtR:1/60, MAIN_A, RCS_A, BOOST, updateDriveAudio() {} });
     vm.runInContext(driveBlock + '\nglobalThis.result = { atx, aty, atz, aMag, canThrust };', context);
