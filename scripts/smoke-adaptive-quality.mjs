@@ -15,8 +15,10 @@ for (const mobile of [false, true]) {
     now = 0; const c = createQualityController({ mobile });
     run(c, 16.67, 2000); assert.equal(c.state.level, 1, 'startup does not jump to full detail');
     run(c, 120, 9000); assert.equal(c.state.level, 3, 'sustained slow delivered frames reach minimal');
-    run(c, 33.33, 16000); assert(c.state.level < 3, 'intentional 30 Hz limit allows gradual recovery');
-    run(c, 16.67, 36000); assert.equal(c.state.level, 0, 'sustained headroom recovers quality');
+    run(c, 33.33, 20000);
+    if (mobile) assert(c.state.level < 3, 'intentional mobile 30 Hz limit allows gradual recovery');
+    else assert.equal(c.state.level, 3, 'desktop recovery trial rolls back if it cannot meet its unthrottled target');
+    run(c, 16.67, 120000); assert.equal(c.state.level, 0, 'sustained headroom recovers quality');
     const oldChanges = c.state.changes;
     run(c, 140, 1000); assert.equal(c.state.changes, oldChanges, 'one spike does not shed a tier');
     c.reset(now); run(c, 1000, 100000, false); run(c, 16.67, 2500);
@@ -27,6 +29,46 @@ for (const mobile of [false, true]) {
     }
     c.setMode('auto', now); assert.equal(c.state.level, 1, 'return to auto starts conservatively');
 }
+// Reproduce the reported controller pattern without pretending these synthetic
+// timestamps are a physical-device benchmark.
+now = 0; const promotion = createQualityController({ mobile: true });
+run(promotion, 1000 / 30, 15000);
+assert.equal(promotion.state.level, 0);
+assert(promotion.state.trial, 'A capped cadence buys only a provisional upgrade');
+run(promotion, 1000 / 24, 5000);
+assert.equal(promotion.state.level, 1, '30-to-24 FPS after promotion returns to Balanced');
+assert.equal(promotion.state.reason, 'quality trial rolled back');
+assert(!promotion.state.trial);
+const rolledBackAt = now, rolledBackChanges = promotion.state.changes;
+run(promotion, 1000 / 30, 55000);
+assert.equal(promotion.state.level, 1, 'Failed higher tier is not retried during cooldown');
+assert.equal(promotion.state.changes, rolledBackChanges);
+run(promotion, 1000 / 30, 15000);
+assert.equal(promotion.state.level, 0, 'A later healthy scene may try the tier again');
+assert(!promotion.state.trial, 'Three stable windows validate the upgrade');
+assert(now > rolledBackAt + 60000);
+run(promotion, 1000 / 24, 3500);
+assert.equal(promotion.state.level, 1, 'Sustained loss is caught even after a successful trial');
+
+now = 0; const mobileSlow = createQualityController({ mobile: true });
+run(mobileSlow, 1000 / 24, 12000);
+assert.equal(mobileSlow.state.level, 3, 'Steady 24 FPS sheds quality toward the mobile target');
+now = 0; const desktopSlow = createQualityController();
+run(desktopSlow, 1000 / 30, 7000);
+assert(desktopSlow.state.level >= 2, '30 FPS desktop no longer remains Balanced indefinitely');
+
+now = 0; const interrupted = createQualityController({ mobile: true });
+run(interrupted, 1000 / 30, 15000); assert(interrupted.state.trial);
+interrupted.reset(now); run(interrupted, 1000, 30000, false);
+assert(interrupted.state.trial, 'Hidden time cannot validate a promotion');
+run(interrupted, 1000 / 24, 5000);
+assert.equal(interrupted.state.level, 1, 'Interrupted trial must still meet the target');
+interrupted.setMode('auto', now); run(interrupted, 1000 / 30, 15000);
+assert(interrupted.state.trial);
+interrupted.setMode('high', now); run(interrupted, 1000 / 24, 10000);
+assert.equal(interrupted.state.level, 0); assert(!interrupted.state.trial, 'Manual selection cancels probation');
+console.log('PASS: provisional upgrades, 30→24 FPS rollback, cooldown, later recovery, post-trial degradation, desktop target and interrupted/manual trials.');
+
 now = 0; const stalled = createQualityController();
 run(stalled, 16.67, 2000); run(stalled, 500, 2000);
 assert.equal(stalled.state.level, 2, 'repeated severe stalls shed quickly without waiting for twelve slow frames');
