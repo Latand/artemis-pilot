@@ -30,6 +30,16 @@ export function bubbleMetric(x, y, z, beta = 1, sigma = BUBBLE_SIGMA) {
 export function bubbleComovingFlow(r, frameW = 1, sigma = BUBBLE_SIGMA) {
     return bubbleShape(r, sigma).f - frameW;
 }
+// Display mapping mirrored by river.js (bubbleTheta, bubbleSpacing): theta
+// R/v_s divided by its 0.95 peak, and the spacing of an evenly carried marker
+// row, exp(kappa * theta). A visualization of eq. 12, not a transport law.
+export function bubbleThetaDisplay(x, y, z, sigma = BUBBLE_SIGMA) {
+    const r = Math.hypot(x, y, z), { df } = bubbleShape(r, sigma);
+    return Math.max(-1, Math.min(1, df * (r > 1e-6 ? y / r : 0) / .95));
+}
+export function bubbleMarkerSpacing(x, y, z, kappa, sigma = BUBBLE_SIGMA) {
+    return Math.exp(kappa * bubbleThetaDisplay(x, y, z, sigma));
+}
 export const WARP_C = 299792.458; // km/s
 export const WARP_MAX_C = 1e9; // numerical/navigation guard of this simulation
 export const WARP_MAX_LOG = Math.log1p(WARP_MAX_C*WARP_C);
@@ -39,11 +49,13 @@ export function warpRegime(speed) {
 }
 // Seconds of model time the river plays per second of sim time. One uniform
 // factor (≤ 1) keeps every direction and speed ratio of the flow while the
-// stream past the ship stays legible: it grows from ~0.5 to ~2.6 bubble radii
-// per second as the coordinate speed rises through 18 decades.
+// stream past the ship stays slow enough to follow single markers: it grows
+// from ~0.3 to ~1.2 bubble radii per second as the coordinate speed rises
+// through 18 decades.
+export const WARP_STREAM_MIN = .3, WARP_STREAM_GAIN = .9;
 export function warpDisplayRate(speed, radiusKm) {
     if (!(speed > 0) || !(radiusKm > 0)) return 1;
-    return Math.min(1, (.5 + 2.1 * warpRegime(speed)) * radiusKm / speed);
+    return Math.min(1, (WARP_STREAM_MIN + WARP_STREAM_GAIN * warpRegime(speed)) * radiusKm / speed);
 }
 export function createWarpState() {
     return { enabled:false, logSpeed:0, rate:0, speed:0, meanSpeed:0,

@@ -9,8 +9,8 @@ const server=await createServer({logLevel:'error',server:{host:'127.0.0.1',port:
  if(!id.split('?')[0].endsWith('/src/main.js'))return;
  return s.replace('const firstFrameT0 = perfStart();','clock.getDelta=()=>window.__qaDt||1/60;const firstFrameT0 = perfStart();').replace('renderer.setAnimationLoop(frame);','')+
  '\nwindow.__warpFrame=()=>{lastMobileFrame=-Infinity;frame();renderer.getContext().finish();const r=window.__river;return {t:G.t,x:G.x,y:G.y,z:G.z,v:[G.vx,G.vy,G.vz],gr:G.gr,bubble:{...WARP},'+
- 'river:{visible:r.visible,radius:r.radius,presence:r.warpPresence,presentation:r.bubblePresentation,bubbleRadius:r.bubbleRadius,bubbleSpeed:r.bubbleSpeed,displayRate:r.displayRate,respawn:r.respawn,warpLines:r.warpVisible},focus:G.focus,'+
- 'cam:{dist:cam.dist,toShip:camera.position.distanceTo(shipG.position)},bubbleR:shipVisuals.bubble.radius,craft:{visible:craft.visible,scale:craft.scale.x},'+
+ 'river:{visible:r.visible,radius:r.radius,presence:r.warpPresence,presentation:r.bubblePresentation,view:r.warpView,chart:shipVisuals.bubble.chart,bubbleRadius:r.bubbleRadius,bubbleSpeed:r.bubbleSpeed,displayRate:r.displayRate,respawn:r.respawn,warpLines:r.warpVisible},focus:G.focus,'+
+ 'cam:{dist:cam.dist,toShip:camera.position.distanceTo(shipG.position)},bubbleR:shipVisuals.bubble.radius,craft:{visible:craft.visible,scale:craft.scale.x,hullAlpha:shipPresentation(camera.position.distanceTo(shipG.position),craft.scale.x,camera.fov,viewportSize.h).hullAlpha,markerAlpha:shipPresentation(camera.position.distanceTo(shipG.position),craft.scale.x,camera.fov,viewportSize.h).markerAlpha},'+
  'layers:["Alcubierre expansion and exotic-energy guide","Illustrative transition pulse front"].map(n=>scene.getObjectByName(n)).filter(Boolean).length,'+
  'driveGuide:!!shipG.getObjectByName("Fictional curvature drive envelope")?.visible,memory:{...renderer.info.memory},programs:renderer.info.programs.length};};';
 }}]});await server.listen();
@@ -78,13 +78,63 @@ try{
  check(s.bubble.speed>299792.458,'superluminal coordinate travel');check(Math.hypot(...s.v)<299792.458,'bubble speed is separate from local velocity');
  check(s.river.visible&&s.river.presence>.95,'shared field lines remain visible at superluminal speed');
  check(cruise.every(f=>f.river.respawn<.2),'cruise keeps its particles (no per-frame full respawn)');
- check(cruise.every(f=>Math.abs(f.river.radius/(f.cam.toShip*.45*2.1)-1)<.2),'sampled volume follows the bubble reach around the hull');
+ check(cruise.every(f=>Math.abs(f.river.radius/(f.cam.toShip*Math.max(.45*2.1,1.15))-1)<.2),'sampled volume follows the bubble reach around the hull (camera inside)');
  const near=await page.evaluate(async()=>(await import('/src/river.js')).riverDebugBubbleSamples());
  check(near.finite&&near.near>=near.total*.08&&near.ahead>0&&near.behind>0,'the particle budget resolves the bubble, ahead and behind');
  check(s.river.displayRate>0&&s.river.displayRate<1,'uniform slow-motion replay is active and bounded');
  check(cruise.every(f=>Math.abs(f.cam.toShip-f.cam.dist)<f.cam.dist*.05)&&s.craft.visible,'camera holds the visible hull during transport');
  const gpu=await page.evaluate(async()=>(await import('/src/river.js')).riverDebugReadPositions(4));check(gpu.finite&&gpu.distinct>8,'GPU particle state stays finite and populated');
+ check(cruise.every(f=>f.river.chart===1&&f.river.presentation===f.river.view&&f.river.view===f.river.presence*f.river.chart),'close view draws the ship chart at full presentation');
+ // Marker transport (GPU state, two computes apart): markers stream back
+ // along the axis, slow through the front wall, move evenly beside the hull
+ // and speed up through the rear wall (theta spacing).
+ const pos=async()=>page.evaluate(async()=>{const g=(await import('/src/river.js')).riverDebugBubbleSamples(true);return {p:g.positions,axis:g.axis.slice(0,3),R:g.bubbleRadius};});
+ // Three pairs a few frames apart, so the small hull bin holds enough samples.
+ const bins={far:[],wall:[],rear:[],hull:[]};let streamBack=0,moved=0;
+ for(let k=0;k<3;k++){if(k)await frames(5);const a0=await pos();await frames(2);const a1=await pos();const ax=a0.axis;
+ for(let i=0;i<a0.p.length;i++){const p=a0.p[i],q=a1.p[i];if(!p||!q)continue;const d=[q[0]-p[0],q[1]-p[1],q[2]-p[2]],dl=Math.hypot(...d);if(dl>.4)continue;
+  const r=Math.hypot(...p),along=(p[0]*ax[0]+p[1]*ax[1]+p[2]*ax[2]);if(dl>1e-6){moved++;if(d[0]*ax[0]+d[1]*ax[1]+d[2]*ax[2]<0)streamBack++;}
+  if(r>1.8&&r<2.3)bins.far.push(dl);else if(along>.5*r&&r>.7&&r<1.3)bins.wall.push(dl);else if(along<-.5*r&&r>.7&&r<1.3)bins.rear.push(dl);else if(r<.5)bins.hull.push(dl);}}
+ const med=a=>{const b=[...a].sort((x,y)=>x-y);return b[b.length>>1]||0;};
+ report.markerTransport={far:med(bins.far),front:med(bins.wall),rear:med(bins.rear),hull:med(bins.hull),counts:{far:bins.far.length,front:bins.wall.length,rear:bins.rear.length,hull:bins.hull.length},backFraction:streamBack/Math.max(1,moved)};
+ check(bins.far.length>100&&bins.wall.length>30&&bins.rear.length>10&&bins.hull.length>5,'marker bins are populated');
+ check(streamBack/Math.max(1,moved)>.9,'markers stream back past the hull (ship chart)');
+ check(med(bins.wall)<.75*med(bins.hull)&&med(bins.rear)>1.35*med(bins.hull),'markers slow ahead and speed up behind (theta spacing)');
+ check(med(bins.hull)>.6*med(bins.far)&&med(bins.hull)<1.6*med(bins.far),'beside the hull markers move evenly (calm, no stall)');
+ check(bins.wall.length>1.3*bins.rear.length,'markers are denser ahead than behind');
  await capture('02-superluminal-cruise');
+ // Real wheel zoom to a system view and back: bounded hull and marker far
+ // out, rest chart for the river, the readable hull again close in.
+ const startDist=s.cam.dist;
+ // Wheel over the canvas itself (mobile overlays cover parts of it).
+ const [wx,wy]=await page.evaluate(()=>{for(const [fx,fy] of [[.5,.3],[.5,.45],[.3,.35],[.7,.35],[.5,.6]]){const x=innerWidth*fx,y=innerHeight*fy;if(document.elementFromPoint(x,y)?.tagName==='CANVAS')return [x,y];}return [innerWidth/2,innerHeight/3];});
+ // Parked at an intermediate zoom the drawn stream stays within its designed
+ // speed (0.3-1.2 R/s times the chart weight) at 60 and at 30 fps.
+ await page.mouse.move(wx,wy);let steps=0;for(;steps<30;steps++){await page.mouse.wheel(0,250);s=await frame();if(s.river.chart<.7)break;}
+ s=await frames(60);
+ const streamSpeed=async dt=>{await page.evaluate(dt=>{window.__qaDt=dt;},dt);await frames(4);const p0=await pos();await frames(6);const p1=await pos();
+  // positions are in bubble radii at each readback; compare in scene units over the first R
+  const d=[];for(let i=0;i<p0.p.length;i++){const a=p0.p[i],b=p1.p[i];if(!a||!b||Math.hypot(...a)<1.6)continue;const k=p1.R/p0.R,dl=Math.hypot(b[0]*k-a[0],b[1]*k-a[1],b[2]*k-a[2]);if(dl<.6)d.push(dl);}
+  d.sort((x,y)=>x-y);await page.evaluate(()=>{window.__qaDt=1/60;});return {speed:(d[d.length>>1]||0)/(6*dt),n:d.length};};
+ const s60=await streamSpeed(1/60),s30=await streamSpeed(1/30);report.parkedStream={camDist:s.cam.dist,chart:s.river.chart,s60,s30};
+ check(s.river.chart>.05&&s.river.chart<.95,'parked zoom is between the two charts');
+ check(s60.n>5&&s30.n>5&&s60.speed<=1.3&&s30.speed<=1.3&&Math.abs(s60.speed/s30.speed-1)<.25,'between charts the stream stays in its designed range at 60 and 30 fps');
+ const outFrames=[];for(let i=steps+1;i<40;i++){await page.mouse.wheel(0,250);outFrames.push(await frame());}
+ check(outFrames.every(f=>!(f.river.presence>0)||f.river.radius>=f.cam.toShip),'the camera stays inside the sampled volume on every zoom-out frame');
+ s=await frames(20);
+ { // after the chart drops, samples spread over the grown volume (no cluster at the hull)
+  const g=await page.evaluate(async()=>{const g=(await import('/src/river.js')).riverDebugBubbleSamples(true);return {p:g.positions,R:g.bubbleRadius,radius:g.radius,ambient:g.ambient};});
+  const inside=g.p.filter(q=>q&&Math.hypot(...q)<30).length,expected=g.ambient*Math.pow(30*g.R/g.radius,3);
+  report.zoomDensity={inside,expected,ambient:g.ambient};
+  check(inside<=Math.max(2*expected,3),'zoomed out, sample density near the hull stays near uniform');
+ }
+ report.zoomOut={cam:s.cam,craft:s.craft,chart:s.river.chart,view:s.river.view,speed:s.bubble.speed};
+ check(s.cam.dist>1e4&&s.craft.scale<=2.4+1e-9&&s.craft.markerAlpha>.5,'zoomed out, the hull is bounded and hands over to the marker');
+ check(s.river.chart<.05&&s.river.view<.05,'zoomed out, the river returns to the rest chart');
+ await capture('02b-system-view');
+ for(let i=0;i<40;i++){await page.mouse.wheel(0,-250);await frame();}
+ s=await frames(30);report.zoomIn={cam:s.cam,craft:s.craft,chart:s.river.chart,view:s.river.view,presence:s.river.presence};
+ check(Math.abs(s.cam.dist/startDist-1)<.05&&s.river.chart>.99&&s.craft.hullAlpha>.99,'zooming back in restores the ship chart and the readable hull');
  const heading=s.bubble.dx;await page.keyboard.down('a');const turn=await frames(4);await page.keyboard.up('a');
  check(turn.bubble.dy>0&&Math.abs(turn.bubble.dx-heading)<.05,'turn bends the bubble axis gradually');
  // Real S braking to rest: presentation channel equals eased presence every frame.
@@ -93,7 +143,7 @@ try{
  await page.keyboard.up('s');await page.evaluate(()=>{window.__qaDt=1/60;});
  check(brake.some(f=>f.bubble.speed>0)&&brake.at(-1).bubble.speed<before.bubble.speed,'actual S input brakes');
  check(brake.some(f=>f.bubble.speed===0),'S braking reaches rest');
- check(brake.every(f=>f.river.presentation===f.river.presence),'presentation follows eased presence through the stop (no one-frame step)');
+ check(brake.every(f=>f.river.presentation===f.river.view&&f.river.view===f.river.presence*f.river.chart),'presentation follows eased presence through the stop (no one-frame step)');
  await capture('03-braking');
  await page.keyboard.down('w');s=await frames(25);await page.keyboard.up('w');check(s.bubble.speed>0,'re-ramp after rest');
  await page.evaluate(()=>{__G.paused=true;});const paused=await frames(2);s=await frames(4);check(s.x===paused.x&&s.y===paused.y&&s.z===paused.z&&s.bubble.speed===paused.bubble.speed,'pause freezes transport and ramp');

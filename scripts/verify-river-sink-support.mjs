@@ -20,6 +20,9 @@ const literal = (text, name) => text.match(new RegExp('const ' + name + ' = /\\*
 const naturalSource = withoutWarpSandbox(source);
 for (const name of ['FLOW_GLSL', 'COMPUTE_FRAG']) assert.equal(literal(naturalSource, name), literal(baseSource, name), `${name} must remain byte-identical`);
 const oldVertex = literal(baseSource, 'LINE_VERT'); assert(oldVertex);
+// The legacy line program is swapped whole: a newer fragment shader may read
+// varyings the old vertex shader never writes, and would not link.
+const oldFragment = literal(baseSource, 'LINE_FRAG'); assert(oldFragment);
 const mobile = process.env.DEVICE === 'mobile';
 const report = { baseRef, revision: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
     sourceSha256: createHash('sha256').update(source).digest('hex'), mobile,
@@ -29,7 +32,8 @@ const report = { baseRef, revision: execFileSync('git', ['rev-parse', 'HEAD'], {
 await mkdir(out, { recursive: true });
 const hook = `
 const supportOldVertex = ${oldVertex};
-export function supportUseLegacy(legacy) { lineMat.vertexShader = legacy ? supportOldVertex : LINE_VERT; lineMat.needsUpdate = true; }
+const supportOldFragment = ${oldFragment};
+export function supportUseLegacy(legacy) { lineMat.vertexShader = legacy ? supportOldVertex : LINE_VERT; lineMat.fragmentShader = legacy ? supportOldFragment : LINE_FRAG; lineMat.needsUpdate = true; }
 export function supportRead() {
  const pixels=new Float32Array(TEXW*TEXW*4);renderer.readRenderTargetPixels(rtA,0,0,TEXW,TEXW,pixels);
  let hash=2166136261;const bits=new Uint32Array(pixels.buffer);for(const n of bits)hash=Math.imul(hash^n,16777619)>>>0;

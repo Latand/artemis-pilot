@@ -142,6 +142,7 @@ const uniformsShared = {
     uBubble: { value: new THREE.Vector4(0, 0, 0, 1) },
     uBubbleAxis: { value: new THREE.Vector4(0, 1, 0, 0) },
     uBubbleShape: { value: new THREE.Vector4(1.8, 1, 0, 0) },
+    uBubbleMarks: { value: new THREE.Vector2(0, 0) },
 };
 
 const FLOW_GLSL = /* glsl */`
@@ -180,6 +181,23 @@ vec3 bubbleShift(vec3 p) {
     float f = (tanhSafe(s * (rn + 1.0)) - tanhSafe(s * (rn - 1.0))) / (2.0 * tanhSafe(s));
     return uBubbleAxis.xyz * (uBubbleAxis.w * (f - uBubbleShape.y));
 }
+// Marker spacing (display mapping of theta). uBubbleMarks.x: marker speed per
+// unit uDtSim at unit spacing; y: spacing contrast kappa.
+uniform vec2 uBubbleMarks;
+// Expansion of Eulerian volumes, theta = div X (Alcubierre eq. 12), divided
+// by its peak (0.95 v_s/R at r = R on the axis): < 0 where space contracts
+// (front), > 0 where it expands (rear), near 0 beside the hull and far away.
+float bubbleTheta(vec3 p) {
+    if (uBubbleAxis.w <= 0.0) return 0.0;
+    vec3 q = (p - uBubble.xyz) / uBubble.w;
+    float rn = length(q), s = uBubbleShape.x;
+    float ta = tanhSafe(s * (rn + 1.0)), tb = tanhSafe(s * (rn - 1.0));
+    float rdf = s * (tb * tb - ta * ta) / (2.0 * tanhSafe(s));
+    return clamp(rdf * (rn > 1e-6 ? dot(q, uBubbleAxis.xyz) / rn : 0.0) / 0.95, -1.0, 1.0);
+}
+// An evenly spaced row of markers carried at the local theta bunches where
+// space contracts and spreads where it expands.
+float bubbleSpacing(vec3 p) { return exp(uBubbleMarks.y * bubbleTheta(p)); }
 float sourceCore(float sink, float isHole) {
     // Tiny holes get a display core so their local flow direction stays visible.
     float visualBH = min(max(uRadius * 0.0008, 0.45), 64.0);
@@ -277,6 +295,15 @@ void main() {
     }
     vec3 v = flowField(p);
     vec3 stp = v * uDtSim;
+    // Warp presentation: markers travel along the drawn direction at a speed
+    // proportional to their theta spacing, so a steady row keeps its count
+    // while it slows and bunches ahead and speeds up and spreads behind.
+    float markView = uBubbleAxis.w > 0.0 && !halo ? uBubbleShape.z : 0.0;
+    if (markView > 0.0) {
+        float vl = length(v);
+        vec3 markDir = vl > 1e-30 ? v / vl : -uBubbleAxis.xyz;
+        stp = mix(stp, markDir * (uBubbleMarks.x * bubbleSpacing(p) * uDtSim), markView);
+    }
     float sl = length(stp);
     float cap = uRadius * 0.05;
     if (sl > cap) stp *= cap / sl;
@@ -313,11 +340,6 @@ void main() {
     // instead of lingering as a wake where the well used to be
     if (halo && distance(p, uBody[own].xyz) > spawnReach(own) * 1.25) kill = true;
     if (hash13(vec3(vUv * 913.7, uTick)) < 0.002) kill = true;
-    // Ship chart: samples that drift into the calm interior stall there for
-    // a residence time ~1/(1 - f). Recycle them sooner, so the sample budget
-    // keeps resolving the walls and the stream; these are field samples.
-    if (!halo && uBubbleAxis.w > 0.0 && uBubbleShape.y > 0.5 &&
-        length(p - uBubble.xyz) < uBubble.w * 0.6 && hash13(vec3(vUv * 557.3, uTick + 4.1)) < 0.05) kill = true;
     if (kill) {
         float h1 = hash13(vec3(vUv * 127.1, uTick + 0.17));
         float h2 = hash13(vec3(vUv * 311.7, uTick + 1.31));
@@ -358,7 +380,7 @@ uniform int uSegs;
 attribute vec2 ref;
 attribute float aSeg;
 varying vec3 vColor;
-varying float vAlong, vPhase;
+varying float vAlong, vPhase, vBead, vSpacing;
 ${FLOW_GLSL}
 ${BLACK_HOLE_SINK_GLSL}
 void main() {
@@ -406,6 +428,14 @@ void main() {
     float camFadeBand = mix(uRadius * 0.30, uRadius * 0.16, uLocalFocus);
     fade *= clamp((distance(p, uCam) - camBlind) / max(1e-6, camFadeBand), 0.0, 1.0);
     fade *= 0.55 + 0.45 * hash13(vec3(ref * 53.7, 7.77)); // per-streak variety
+    // Warp presentation (uBubbleShape.z): weight on the plane through the hull
+    // facing the camera, so streams at other depths do not stack over the
+    // walls in projection. A display convention; the field is unchanged.
+    float bubbleView = uBubbleAxis.w > 0.0 ? uBubbleShape.z : 0.0;
+    if (bubbleView > 0.0) {
+        float depth = dot(p - uBubble.xyz, normalize(uBubble.xyz - uCam)) / (uBubble.w * 1.1);
+        fade *= mix(1.0, exp(-depth * depth), bubbleView);
+    }
     // golden when the Sun's river dominates locally, violet when expansion wins
     float dSun = distance(p, uBody[2].xyz);
     float sunPart = uBody[2].w * inversesqrt(max(uSink[2] * 0.5, dSun));
@@ -479,6 +509,9 @@ void main() {
     // governs those).
     float camBodyR = distance(uCam, localPos) / max(localSink, 1e-6);
     localInk *= mix(0.35, 1.0, max(1.0 - smoothstep(8.0, 120.0, camBodyR), uLocalFocus));
+    // Warp ship chart: the stream past the hull is the subject; a nearby
+    // body's halo tint and gain would repaint and overexpose it.
+    localInk *= 1.0 - bubbleView;
     float holeInk = smoothstep(0.08, 0.92, clamp(holePart / spd, 0.0, 1.0));
     float localViewInk = max(localInk, uLocalFocus * mix(0.20, 0.46, timeInk));
     tVis = max(max(tVis, holeInk * 0.62), max(localInk * 0.86, uLocalFocus * 0.22));
@@ -493,7 +526,7 @@ void main() {
     // (eq. 12), shapes the same streaks: short dense dashes where space
     // contracts (ahead), long thin ones where it expands (behind). Weighted
     // by the share of the local flow that belongs to the bubble.
-    float bubbleSqueeze = 0.0, bubbleStretch = 0.0;
+    float bubbleSqueeze = 0.0, bubbleStretch = 0.0, bubbleWall = 0.0;
     if (uBubbleAxis.w > 0.0) {
         vec3 q = (p - uBubble.xyz) / uBubble.w;
         float rn = length(q), s = uBubbleShape.x;
@@ -506,6 +539,10 @@ void main() {
         float signedTheta = tanhSafe(3.5 * theta) * share;
         bubbleSqueeze = max(-signedTheta, 0.0);
         bubbleStretch = max(signedTheta, 0.0);
+        // Wall strength |R df/dr| (peak 0.95 at r = R): where the shift field
+        // changes, all round the hull; theta's sign then splits it into the
+        // contracting front, the expanding rear and the shearing sides.
+        bubbleWall = clamp(abs(rdf) / 0.95, 0.0, 1.0) * share;
         // dense short dashes ahead, long strokes behind
         L *= exp(signedTheta < 0.0 ? 0.6 * signedTheta : 1.0 * signedTheta);
     }
@@ -520,9 +557,14 @@ void main() {
     vec3 cur = p;
     vec3 dir = vDir;
     float stepLen = L / float(uSegs);
+    // Warp: each streak becomes a rigid row of four markers trailing its
+    // head along the drawn direction, spaced 0.1 R times the local theta
+    // spacing: close-set ahead, wide behind, even beside the hull.
+    float markSpacing = bubbleView > 0.0 ? bubbleSpacing(p) : 1.0;
+    float stepNow = mix(stepLen, 0.4 * uBubble.w * markSpacing / float(uSegs), bubbleView);
     for (int s = 0; s < 2; s++) {
         if (s >= segIdx || uStyle == 2.0) break;
-        cur -= dir * stepLen;
+        cur -= dir * stepNow;
         if (s + 1 < segIdx && uStyle > 0.5) {
             vec3 vv = flowField(cur);
             float vvLen = length(vv);
@@ -550,16 +592,18 @@ void main() {
     fieldInk *= mix(1.0, 0.48, holeCrowd);
     fieldInk = max(fieldInk, uLocalFocus * localInk * 0.72);
     vec3 fieldColor = mix(mix(cBlue, cGold, gold), cViolet, violet);
-    // contraction keeps the river's infall blue, brightened; expansion uses
-    // the violet the river already reserves for expanding space
-    fieldColor = mix(fieldColor, vec3(0.72, 1.0, 1.0), bubbleSqueeze);
-    fieldColor = mix(fieldColor, vec3(0.95, 0.32, 1.0), bubbleStretch);
+    // Warp: hue by the sign of theta, saturating early so whole hemispheres
+    // read: cyan where space contracts (front), magenta where it expands
+    // (rear, the river's expansion family), pale blue on the shearing sides.
+    vec3 warpHue = mix(vec3(0.62, 0.80, 1.0), vec3(0.40, 1.0, 1.0), smoothstep(0.0, 0.35, bubbleSqueeze));
+    warpHue = mix(warpHue, vec3(1.0, 0.30, 0.86), smoothstep(0.0, 0.35, bubbleStretch));
+    fieldColor = mix(fieldColor, warpHue, bubbleView);
     vec3 localBright = max(localColor * 1.22, vec3(0.30, 0.34, 0.40));
     fieldColor = mix(fieldColor, localBright, localInk * 0.74);
     fieldColor = mix(fieldColor, cHole, holeInk);
     // comet-tail fade: bright head, nonlinear falloff to a faint tail (a
     // steeper, smoother gradient than the old linear head/tail mix)
-    float cometFade = mix(0.94, 0.08, pow(segT, 0.8));
+    float cometFade = mix(mix(0.94, 0.08, pow(segT, 0.8)), 0.95 - 0.4 * segT, bubbleView);
     // contracting space reads brighter; stretched strokes carry a little
     // less ink per length
     vColor = fieldColor * fade * fieldInk * (1.0 + bubbleSqueeze * 1.6 - bubbleStretch * 0.15) * (1.0 + localInk * mix(1.7, 1.0, uLocalFocus) + uLocalFocus * 0.4) * mix(0.85, 1.24, tVis) * cometFade * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime) * pulse;
@@ -573,17 +617,17 @@ void main() {
         currents = mix(currents, vec3(0.72, 0.35, 1.0), max(violet, holeInk));
         vColor = currents * max(length(vColor), 0.0) * 1.5;
     }
-    // Bubble-dominated strokes keep their hue: cap the brightest channel so
-    // the additive gain cannot clip violet and cyan to white.
-    float bubbleInk = max(bubbleSqueeze, bubbleStretch);
-    float peakInk = max(max(vColor.r, vColor.g), max(vColor.b, 1e-6));
-    vColor *= mix(1.0, min(1.0, 1.05 / peakInk), smoothstep(0.05, 0.4, bubbleInk));
+    // Warp presentation: lines carry ink where the model's wall is, so the
+    // uniform far stream and the calm hull region recede behind it.
+    vColor *= mix(1.0, (0.45 + bubbleWall) * 1.9, bubbleView);
     // Sampling density changes presentation, not the field or advection.
     // Ambient tracers remain unchanged. Apply once after every style gain so
     // lines and dots receive identical owner-aware compensation.
     if (own >= 0 && own < uSinkNB) vColor *= uHalo[own].w;
     vAlong = segT;
     vPhase = ph + uPhase * kq;
+    vBead = bubbleView;
+    vSpacing = markSpacing;
     gl_PointSize = (2.2 + tVis * 1.6) * uPixelRatio;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
@@ -591,14 +635,28 @@ void main() {
 const LINE_FRAG = /* glsl */`
 uniform float uStyle;
 varying vec3 vColor;
-varying float vAlong, vPhase;
+varying float vAlong, vPhase, vBead, vSpacing;
 void main() {
     float ink = 1.0;
     if (uStyle > 2.5 && uStyle < 3.5) {
         float wave = fract(vPhase + vAlong * 1.5);
         ink = 0.10 + 0.90 * smoothstep(0.30, 0.42, wave) * (1.0 - smoothstep(0.64, 0.78, wave));
     }
-    gl_FragColor = vec4(vColor * ink, 1.0);
+    // Warp: the row's markers. Each marker keeps one length along the row
+    // (its share of the period shrinks as the theta spacing widens), so only
+    // the gaps carry the spacing: close-set beads ahead, sparse dots behind.
+    vec3 col = vColor;
+    if (vBead > 0.0) {
+        float lag = fract(vAlong * 4.0), sp = max(vSpacing, 0.2);
+        float bead = 1.0 - smoothstep(min(0.07 / sp, 0.25), min(0.2 / sp, 0.55), lag);
+        // keep the warp hue: cap the brightest channel, so the additive style
+        // gain cannot clip cyan and magenta to white; the thread joining a
+        // row's markers stays faint at any ink
+        vec3 capped = col * min(1.0, 1.0 / max(max(col.r, col.g), max(col.b, 1e-6)));
+        col = mix(col * ink, capped * mix(0.1, 1.0, bead), vBead);
+        ink = 1.0;
+    }
+    gl_FragColor = vec4(col * ink, 1.0);
 }`;
 const DOT_FRAG = /* glsl */`
 varying vec3 vColor;
@@ -763,21 +821,23 @@ export function riverDebugReadPositions(rows = 4) {
 
 // Test/diagnostic only, like riverDebugReadPositions: counts the ambient
 // samples the live texture holds within two bubble radii, ahead and behind.
-export function riverDebugBubbleSamples() {
+export function riverDebugBubbleSamples(withPositions = false) {
     if (!river.enabled || !rtA) return null;
     const px = new Float32Array(NPART * 4);
     renderer.readRenderTargetPixels(rtA, 0, 0, TEXW, TEXW, px);
     const b = uniformsShared.uBubble.value, a = uniformsShared.uBubbleAxis.value, shift = uniformsShared.uCenterShift.value;
     let ambient = 0, owned = 0, near = 0, ahead = 0, behind = 0, finite = true;
+    const positions = withPositions ? new Array(NPART).fill(null) : null;
     for (let i = 0; i < NPART; i++) {
         if (px[i * 4 + 3] > .5) { owned++; continue; }
         ambient++;
         const x = px[i * 4] - shift.x - b.x, y = px[i * 4 + 1] - shift.y - b.y, z = px[i * 4 + 2] - shift.z - b.z;
         if (!Number.isFinite(x + y + z)) finite = false;
+        if (positions) positions[i] = [x / b.w, y / b.w, z / b.w]; // bubble radii, bubble-centred
         if (Math.hypot(x, y, z) < b.w * 2) { near++; if (x * a.x + y * a.y + z * a.z > 0) ahead++; else behind++; }
     }
     return { total: NPART, ambient, owned, near, ahead, behind, finite, radius: smoothR, bubbleRadius: b.w, bubbleSpeed: a.w,
-        bubble: b.toArray(), axis: a.toArray(), shape: uniformsShared.uBubbleShape.value.toArray(), vRef: uniformsShared.uVRef.value, style: uniformsShared.uStyle.value, segs: SEGS };
+        bubble: b.toArray(), axis: a.toArray(), shape: uniformsShared.uBubbleShape.value.toArray(), vRef: uniformsShared.uVRef.value, style: uniformsShared.uStyle.value, segs: SEGS, positions };
 }
 
 let lastR = 0, lastCx = 0, lastCz = 0;
@@ -901,7 +961,12 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const bubble = shipVisuals.bubble;
     const bubbleAnchored = bubble.active && G.focus === "ship";
     const warpPresence = bubbleAnchored ? bubble.presence : 0;
+    // Presentation follows the bubble only while it fills the view; zoomed
+    // out to a system view the river returns to its rest-chart look.
+    const warpChart = bubbleAnchored ? (Number.isFinite(bubble.chart) ? bubble.chart : 1) : 0;
+    const warpView = warpPresence * warpChart;
     river.warpPresence = warpPresence;
+    river.warpView = warpView;
     if (!river.enabled) return;
     warpLines.visible = false;
     river.warpVisible = false;
@@ -998,7 +1063,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const mobileOpacity = renderQuality.mobile ? 1.08 : 1;
     // In warp the ship-chart stream is the focus, so it gets the same ink
     // a focused body gets in deep space, where no local source lends it.
-    uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + Math.max(localFocus, warpPresence * .85) * .7) * (1 - loadShed * .12) * river.presentationGain;
+    uniformsShared.uOpacity.value = .44 * mobileOpacity * RIVER_DENSITY_GAIN * fEff * (1 + planeBias * .62 + Math.max(localFocus, warpView * .85) * .7) * (1 - loadShed * .12) * river.presentationGain;
     river.renderShed = renderShed;
     let drawFrac = Math.max(.52, .56 + localFocus * .30, 1 - renderShed * .44);
     if (renderQuality.mobile) drawFrac = Math.min(drawFrac, renderQuality.loadShed >= 2 ? .72 : .84);
@@ -1020,13 +1085,15 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // volume stacks the uniform far stream over the walls in projection,
     // and at 2.8x the camera distance only ~3% of samples land in view
     // near the hull.
-    const warpR = bubble.radius * 2.1;
-    const minR = localMinR + (Math.max(.02, warpR) - localMinR) * warpPresence;
+    // ...and never lets the camera fall outside it (instantaneous camera
+    // distance, so a fast zoom out cannot show the volume as a ball).
+    const warpR = Math.max(bubble.radius * 2.1, cd * 1.15);
+    const minR = localMinR + (Math.max(.02, warpR) - localMinR) * warpView;
     const viewR = cd * (localFocus > .05 ? 4.2 : 2.8);
-    const targetR = Math.min(1.2e8, Math.max(minR, viewR + (warpR - viewR) * warpPresence));
+    const targetR = Math.min(1.2e8, Math.max(minR, viewR + (warpR - viewR) * warpView));
     const c = cam.tgt;
     let respawn = dtSim === 0 ? 0 : .006;
-    let viewChanged = false;
+    let viewChanged = false, growthRespawn = 0;
     if (smoothR === 0) {
         smoothCenter.copy(c);
         smoothR = targetR;
@@ -1048,7 +1115,13 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         const easeC = Math.min(1, .08 + dtSmooth * 8);
         const easeR = Math.min(1, .05 + dtSmooth * 5);
         smoothCenter.lerp(c, easeC);
+        const prevR = smoothR;
         smoothR += (targetR - smoothR) * easeR;
+        // Warp: the camera stays inside the sampled volume on every frame.
+        if (warpPresence > 0 && smoothR < cd * 1.05) smoothR = cd * 1.05;
+        // A growing warp volume spreads its samples instead of leaving the
+        // old ones packed around the hull: refresh the share it gained.
+        if (warpPresence > 0 && smoothR > prevR) growthRespawn = Math.min(.95, 1 - Math.pow(prevR / smoothR, 3));
         respawn = Math.min(.09, .006 + zoomDelta * .025 + move / Math.max(smoothR, 1) * .045);
         if (zoomDelta > 2.2 || move > targetR * 2.5) {
             smoothCenter.copy(c);
@@ -1059,9 +1132,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         }
     }
     if (respawn < 1) respawn = dtSim === 0 && !viewChanged ? 0 : Math.min(.18, respawn + localFocus * .075);
-    // A steady stream empties its fast regions (tracer density ~ 1/speed);
-    // a modest sampling refresh keeps the walls and the stream resolved.
-    if (respawn < 1 && dtSim !== 0) respawn = Math.max(respawn, .03 * warpPresence);
+    if (respawn < 1) respawn = Math.max(respawn, growthRespawn);
     river.respawn = respawn;
     river.radius = smoothR;
     lastR = smoothR; lastCx = smoothCenter.x; lastCz = smoothCenter.z;
@@ -1111,7 +1182,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     } else uniformsShared.uBubbleAxis.value.w = 0;
     // Presentation eases with presence on its own, also after the speed
     // reaches zero, so braking to rest fades the field without a step.
-    uniformsShared.uBubbleShape.value.set(bubble.sigma, 1, warpPresence, warpPresence > 0 ? warpRegime(bubble.speed) : 0);
+    uniformsShared.uBubbleShape.value.set(bubble.sigma, warpChart, warpView, warpView > 0 ? warpRegime(bubble.speed) : 0);
     river.bubbleSpeed = uniformsShared.uBubbleAxis.value.w;
     river.bubblePresentation = uniformsShared.uBubbleShape.value.z;
     river.bubbleRadius = uniformsShared.uBubble.value.w;
@@ -1129,7 +1200,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     const dtPulse = Math.sign(dtSim) * Math.max(0, Math.min(dtReal, 0.1));
     const timePulse = pulsePhaseRate(uniformsShared.uTimeRate.value);
     const warpPulse = RIVER_VIS.PULSE_RATE_BASE + RIVER_VIS.PULSE_RATE_WARP * 1.3 * warpRegime(bubble.speed);
-    uniformsShared.uPhase.value = (uniformsShared.uPhase.value + dtPulse * (timePulse + (warpPulse - timePulse) * warpPresence) + 64) % 64;
+    uniformsShared.uPhase.value = (uniformsShared.uPhase.value + dtPulse * (timePulse + (warpPulse - timePulse) * warpView) + 64) % 64;
     uniformsShared.uTick.value = (uniformsShared.uTick.value + .618) % 64;
     if (PERF.enabled) markPerf("river.volume", performance.now() - riverVolumeT0, { radius: smoothR, respawn });
 
@@ -1319,7 +1390,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     }
     // Warp: speeds are read against the bubble's own stream, so the calm
     // interior, the decelerating front and the full stream stay distinct.
-    uniformsShared.uVRef.value = riverBaseVRef + (Math.max(riverBaseVRef, bubbleSpeed * 6) - riverBaseVRef) * warpPresence;
+    uniformsShared.uVRef.value = riverBaseVRef + (Math.max(riverBaseVRef, bubbleSpeed * 6) - riverBaseVRef) * warpView;
     river.vRefRefreshed = vRefDue;
     river.vRefCadence = vRefCadence;
     if (PERF.enabled) markPerf("river.sources", performance.now() - riverSourcesT0, { nb, starUniformDirty, vRefRefreshed: vRefDue, vRefCadence });
@@ -1327,7 +1398,18 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // still at solar-system scale; higher warp advances it proportionally,
     // while the compute shader caps per-frame displacement inside the volume.
     // Ship chart in warp: one uniform slow-motion factor for the whole field.
+    // The whole field replays in the same slow motion at every zoom, so the
+    // drawn stream (v_s times the chart weight) stays within its designed
+    // 0.3-1.2 R/s. Marker transport peaks near 2 R/s in the rear wall (0.6 R/s
+    // times spacing 3.5); the compute pass's per-step cap (0.05 of the volume
+    // radius) slows those markers only below about 20 compute steps a second.
     const displayRate = bubbleAnchored && bubbleSpeed > 0 ? warpDisplayRate(bubble.speed, bubble.radius / K) : 1;
+    // Marker transport: base speed (0.25-0.6 R/s of display time, rising with
+    // the coordinate speed) per unit uDtSim, and the spacing contrast.
+    const markRegime = warpRegime(bubble.speed);
+    uniformsShared.uBubbleMarks.value.set(
+        bubbleAnchored && bubbleSpeed > 0 && displayRate > 0 ? (.25 + .35 * markRegime) * bubble.radius / displayRate : 0,
+        Math.log(3.5) * (.35 + .65 * markRegime));
     const dtVis = Number.isFinite(dtSim) ? dtSim * displayRate : 0;
     river.displayRate = displayRate;
     river.dtVis = dtVis;
@@ -1423,7 +1505,7 @@ export function updateShells(dtSim, fB) {
     // locally dominant source (anchor chosen in updateRiver). Replaces the
     // old Earth-only shells; deterministic through mulberry32.
     // The shells show rest-frame infall; the ship-chart warp stream replaces it.
-    fB *= 1 - (river.warpPresence || 0);
+    fB *= 1 - (river.warpView || 0);
     const show = fB > .01 && shellAnchorLive && cam.dist < shellAnchorROut * RIVER_VIS.SHELL_VIS_CAMDIST;
     if (show && (shellAnchorSwitched || !shellAnchorWas)) {
         for (const sh of shellsE) sh.r = shellAnchorROut * (.3 + .7 * shellRnd());
