@@ -78,6 +78,7 @@ try{
  check(cruise.every(s=>s.river.respawn<.1),'no per-frame particle respawn while the camera moves superluminally');
  check(cruise.every(s=>s.craft&&Math.abs(s.toShip-6)<.3),'camera holds the visible hull');
  check(system.every(s=>s.toShip>1e4&&s.hullScale<=2.4+1e-9),'zoomed out, the hull stays bounded (marker view)');
+ check(states.slice(385,520).every(s=>!(s.river.presence>0)||s.river.radius>=s.toShip),'the camera stays inside the sampled volume through the zoom');
  check(states.at(-1).bubble.speed<1,'real S input brakes the bubble to rest');
  check(states.every(s=>s.local<299792.458),'local velocity stays separate from bubble speed');
  check(report.errors.length===0,'recording has no browser or shader errors');

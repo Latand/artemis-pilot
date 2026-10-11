@@ -492,9 +492,6 @@ void main() {
     // Warp ship chart: the stream past the hull is the subject; a nearby
     // body's halo tint and gain would repaint and overexpose it.
     localInk *= 1.0 - bubbleView;
-    // Warp ship chart: the stream past the hull is the subject; a nearby
-    // body's halo tint and gain would repaint and overexpose it.
-    localInk *= 1.0 - bubbleView;
     float holeInk = smoothstep(0.08, 0.92, clamp(holePart / spd, 0.0, 1.0));
     float localViewInk = max(localInk, uLocalFocus * mix(0.20, 0.46, timeInk));
     tVis = max(max(tVis, holeInk * 0.62), max(localInk * 0.86, uLocalFocus * 0.22));
@@ -1067,13 +1064,15 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // volume stacks the uniform far stream over the walls in projection,
     // and at 2.8x the camera distance only ~3% of samples land in view
     // near the hull.
-    const warpR = bubble.radius * 2.1;
+    // ...and never lets the camera fall outside it (instantaneous camera
+    // distance, so a fast zoom out cannot show the volume as a ball).
+    const warpR = Math.max(bubble.radius * 2.1, cd * 1.15);
     const minR = localMinR + (Math.max(.02, warpR) - localMinR) * warpView;
     const viewR = cd * (localFocus > .05 ? 4.2 : 2.8);
     const targetR = Math.min(1.2e8, Math.max(minR, viewR + (warpR - viewR) * warpView));
     const c = cam.tgt;
     let respawn = dtSim === 0 ? 0 : .006;
-    let viewChanged = false;
+    let viewChanged = false, growthRespawn = 0;
     if (smoothR === 0) {
         smoothCenter.copy(c);
         smoothR = targetR;
@@ -1095,7 +1094,13 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         const easeC = Math.min(1, .08 + dtSmooth * 8);
         const easeR = Math.min(1, .05 + dtSmooth * 5);
         smoothCenter.lerp(c, easeC);
+        const prevR = smoothR;
         smoothR += (targetR - smoothR) * easeR;
+        // Warp: the camera stays inside the sampled volume on every frame.
+        if (warpPresence > 0 && smoothR < cd * 1.05) smoothR = cd * 1.05;
+        // A growing warp volume spreads its samples instead of leaving the
+        // old ones packed around the hull: refresh the share it gained.
+        if (warpPresence > 0 && smoothR > prevR) growthRespawn = Math.min(.95, 1 - Math.pow(prevR / smoothR, 3));
         respawn = Math.min(.09, .006 + zoomDelta * .025 + move / Math.max(smoothR, 1) * .045);
         if (zoomDelta > 2.2 || move > targetR * 2.5) {
             smoothCenter.copy(c);
@@ -1109,6 +1114,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // A steady stream empties its fast regions (tracer density ~ 1/speed);
     // a modest sampling refresh keeps the walls and the stream resolved.
     if (respawn < 1 && dtSim !== 0) respawn = Math.max(respawn, .015 * warpView);
+    if (respawn < 1) respawn = Math.max(respawn, growthRespawn);
     river.respawn = respawn;
     river.radius = smoothR;
     lastR = smoothR; lastCx = smoothCenter.x; lastCz = smoothCenter.z;
@@ -1374,7 +1380,10 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // still at solar-system scale; higher warp advances it proportionally,
     // while the compute shader caps per-frame displacement inside the volume.
     // Ship chart in warp: one uniform slow-motion factor for the whole field.
-    const displayRate = bubbleAnchored && bubbleSpeed > 0 ? 1 + (warpDisplayRate(bubble.speed, bubble.radius / K) - 1) * warpChart : 1;
+    // The whole field replays in the same slow motion at every zoom, so the
+    // drawn stream (v_s times the chart weight) stays within its designed
+    // 0.3-1.2 R/s and below the compute pass's per-step cap at any frame rate.
+    const displayRate = bubbleAnchored && bubbleSpeed > 0 ? warpDisplayRate(bubble.speed, bubble.radius / K) : 1;
     uniformsShared.uBubbleTrail.value.y = displayRate;
     const dtVis = Number.isFinite(dtSim) ? dtSim * displayRate : 0;
     river.displayRate = displayRate;

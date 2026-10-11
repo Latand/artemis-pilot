@@ -78,7 +78,7 @@ try{
  check(s.bubble.speed>299792.458,'superluminal coordinate travel');check(Math.hypot(...s.v)<299792.458,'bubble speed is separate from local velocity');
  check(s.river.visible&&s.river.presence>.95,'shared field lines remain visible at superluminal speed');
  check(cruise.every(f=>f.river.respawn<.2),'cruise keeps its particles (no per-frame full respawn)');
- check(cruise.every(f=>Math.abs(f.river.radius/(f.cam.toShip*.45*2.1)-1)<.2),'sampled volume follows the bubble reach around the hull');
+ check(cruise.every(f=>Math.abs(f.river.radius/(f.cam.toShip*Math.max(.45*2.1,1.15))-1)<.2),'sampled volume follows the bubble reach around the hull (camera inside)');
  const near=await page.evaluate(async()=>(await import('/src/river.js')).riverDebugBubbleSamples());
  check(near.finite&&near.near>=near.total*.08&&near.ahead>0&&near.behind>0,'the particle budget resolves the bubble, ahead and behind');
  check(s.river.displayRate>0&&s.river.displayRate<1,'uniform slow-motion replay is active and bounded');
@@ -87,7 +87,7 @@ try{
  check(cruise.every(f=>f.river.chart===1&&f.river.presentation===f.river.view&&f.river.view===f.river.presence*f.river.chart),'close view draws the ship chart at full presentation');
  // Marker transport (GPU state, two computes apart): markers stream back
  // along the axis, slow through the front wall and nearly rest at the hull.
- const pos=async()=>page.evaluate(async()=>{const g=(await import('/src/river.js')).riverDebugBubbleSamples(true);return {p:g.positions,axis:g.axis.slice(0,3)};});
+ const pos=async()=>page.evaluate(async()=>{const g=(await import('/src/river.js')).riverDebugBubbleSamples(true);return {p:g.positions,axis:g.axis.slice(0,3),R:g.bubbleRadius};});
  const a0=await pos();await frames(2);const a1=await pos();
  const ax=a0.axis,bins={far:[],wall:[],hull:[]};let streamBack=0,moved=0;
  for(let i=0;i<a0.p.length;i++){const p=a0.p[i],q=a1.p[i];if(!p||!q)continue;const d=[q[0]-p[0],q[1]-p[1],q[2]-p[2]],dl=Math.hypot(...d);if(dl>.4)continue;
@@ -104,8 +104,27 @@ try{
  const startDist=s.cam.dist;
  // Wheel over the canvas itself (mobile overlays cover parts of it).
  const [wx,wy]=await page.evaluate(()=>{for(const [fx,fy] of [[.5,.3],[.5,.45],[.3,.35],[.7,.35],[.5,.6]]){const x=innerWidth*fx,y=innerHeight*fy;if(document.elementFromPoint(x,y)?.tagName==='CANVAS')return [x,y];}return [innerWidth/2,innerHeight/3];});
- await page.mouse.move(wx,wy);for(let i=0;i<40;i++){await page.mouse.wheel(0,250);await frame();}
- s=await frames(20);report.zoomOut={cam:s.cam,craft:s.craft,chart:s.river.chart,view:s.river.view,speed:s.bubble.speed};
+ // Parked at an intermediate zoom the drawn stream stays within its designed
+ // speed (0.3-1.2 R/s times the chart weight) at 60 and at 30 fps.
+ await page.mouse.move(wx,wy);let steps=0;for(;steps<30;steps++){await page.mouse.wheel(0,250);s=await frame();if(s.river.chart<.7)break;}
+ s=await frames(60);
+ const streamSpeed=async dt=>{await page.evaluate(dt=>{window.__qaDt=dt;},dt);await frames(4);const p0=await pos();await frames(6);const p1=await pos();
+  // positions are in bubble radii at each readback; compare in scene units over the first R
+  const d=[];for(let i=0;i<p0.p.length;i++){const a=p0.p[i],b=p1.p[i];if(!a||!b||Math.hypot(...a)<1.6)continue;const k=p1.R/p0.R,dl=Math.hypot(b[0]*k-a[0],b[1]*k-a[1],b[2]*k-a[2]);if(dl<.6)d.push(dl);}
+  d.sort((x,y)=>x-y);await page.evaluate(()=>{window.__qaDt=1/60;});return {speed:(d[d.length>>1]||0)/(6*dt),n:d.length};};
+ const s60=await streamSpeed(1/60),s30=await streamSpeed(1/30);report.parkedStream={camDist:s.cam.dist,chart:s.river.chart,s60,s30};
+ check(s.river.chart>.05&&s.river.chart<.95,'parked zoom is between the two charts');
+ check(s60.n>5&&s30.n>5&&s60.speed<=1.3&&s30.speed<=1.3&&Math.abs(s60.speed/s30.speed-1)<.25,'between charts the stream stays in its designed range at 60 and 30 fps');
+ const outFrames=[];for(let i=steps+1;i<40;i++){await page.mouse.wheel(0,250);outFrames.push(await frame());}
+ check(outFrames.every(f=>!(f.river.presence>0)||f.river.radius>=f.cam.toShip),'the camera stays inside the sampled volume on every zoom-out frame');
+ s=await frames(20);
+ { // after the chart drops, samples spread over the grown volume (no cluster at the hull)
+  const g=await page.evaluate(async()=>{const g=(await import('/src/river.js')).riverDebugBubbleSamples(true);return {p:g.positions,R:g.bubbleRadius,radius:g.radius,ambient:g.ambient};});
+  const inside=g.p.filter(q=>q&&Math.hypot(...q)<30).length,expected=g.ambient*Math.pow(30*g.R/g.radius,3);
+  report.zoomDensity={inside,expected,ambient:g.ambient};
+  check(inside<=Math.max(2*expected,3),'zoomed out, sample density near the hull stays near uniform');
+ }
+ report.zoomOut={cam:s.cam,craft:s.craft,chart:s.river.chart,view:s.river.view,speed:s.bubble.speed};
  check(s.cam.dist>1e4&&s.craft.scale<=2.4+1e-9&&s.craft.markerAlpha>.5,'zoomed out, the hull is bounded and hands over to the marker');
  check(s.river.chart<.05&&s.river.view<.05,'zoomed out, the river returns to the rest chart');
  await capture('02b-system-view');

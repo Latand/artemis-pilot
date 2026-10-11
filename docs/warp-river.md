@@ -58,19 +58,25 @@ These are presentation choices, stated so they are not mistaken for physics:
 * σR = 1.8: a thick wall, so the field fades over about one radius
   (f(R) ≈ 0.53, f(1.5R) ≈ 0.15, f(2R) ≈ 0.028, f(2.5R) ≈ 0.005).
 * Chart by zoom: while the bubble fills the view the river is drawn in the
-  ship chart; once the bounded bubble is small against the view (system
-  scale) it returns to the rest chart, where the natural river shows and the
-  bubble term only acts near the ship. Every blend in between is a Galilean
-  chart of the same metric form.
-* Near the ship the sampled volume shrinks to 2.1 R and follows the bubble
-  rigidly, so no wake is left in old coordinates and particles are not
-  re-created every frame.
-* The stream is replayed in one uniform slow-motion factor λ ≤ 1 (directions
-  and speed ratios unchanged), slow enough to follow single markers:
-  0.3 to 1.2 bubble radii per second, rising with the logarithm of v_s.
-* Each streak is the marker's own path over the last 0.8 s of display time
-  (steps scale with the local speed), with four beads at fixed time lags that
-  ride with it. Beads slow and bunch as markers enter the front wall, nearly
+  ship chart. Once the bounded bubble is small against the view (system
+  scale), line directions and colours show the rest-frame field, where the
+  natural river shows and the bubble term only acts near the ship; the
+  samples still ride with the ship as display markers. Intermediate zooms
+  blend the two presentations.
+* Near the ship the sampled volume shrinks to 2.1 R, never smaller than the
+  camera distance (the camera stays inside it, so it never reads as a ball),
+  and follows the bubble rigidly, so no wake is left in old coordinates and
+  particles are not re-created every frame. When the volume grows during a
+  zoom out, the share of samples it gained is refreshed so none stay packed
+  around the hull.
+* The whole field replays in one uniform slow-motion factor λ ≤ 1 while the
+  bubble flies, at every zoom (directions and speed ratios unchanged), slow
+  enough to follow single markers: 0.3 to 1.2 bubble radii per second,
+  rising with the logarithm of v_s.
+* Each streak traces the marker's path over the last 0.8 s of display time
+  along the current field (exact in steady cruise, approximate while the
+  bubble ramps or turns), with four beads at fixed time lags that ride with
+  it. Beads slow and bunch as markers enter the front wall, nearly
   stop beside the hull, and speed up and spread behind; neighbouring lines on
   the sides slide past each other (shear).
 * Line ink follows the wall strength |R df/dr|, so the uniform far stream and

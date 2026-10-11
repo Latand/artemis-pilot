@@ -33,6 +33,10 @@
       "pass": true
     },
     {
+      "name": "the camera stays inside the sampled volume through the zoom",
+      "pass": true
+    },
+    {
       "name": "real S input brakes the bubble to rest",
       "pass": true
     },
@@ -56,7 +60,7 @@
       "name": "00-local-lines",
       "t": 0.06666666666666667,
       "gr": true,
-      "local": 7.7298918474668294,
+      "local": 7.729891847466704,
       "bubble": {
         "speed": 0,
         "phase": "off",
@@ -67,7 +71,7 @@
         "visible": true,
         "presence": 0,
         "bubbleSpeed": 0,
-        "respawn": 0.07488966135288341,
+        "respawn": 0.07488966129566657,
         "radius": 25.200000000015375,
         "draw": 819
       },
@@ -89,7 +93,7 @@
       "name": "01-local-lines-before-warp",
       "t": 2.4,
       "gr": true,
-      "local": 7.7298918944601605,
+      "local": 7.729891894455777,
       "bubble": {
         "speed": 0,
         "phase": "off",
@@ -100,7 +104,7 @@
         "visible": true,
         "presence": 0,
         "bubbleSpeed": 0,
-        "respawn": 0.07489499061961631,
+        "respawn": 0.07489499045496488,
         "radius": 25.199999999999125,
         "draw": 819
       },
@@ -114,7 +118,7 @@
       "name": "02-ramp-subluminal",
       "t": 5.566666666666666,
       "gr": true,
-      "local": 7.729891921679155,
+      "local": 7.729891921673632,
       "bubble": {
         "speed": 788.1551051932419,
         "phase": "ramping",
@@ -125,8 +129,8 @@
         "visible": true,
         "presence": 0.9976270075239435,
         "bubbleSpeed": 0.7881551051932418,
-        "respawn": 0.07518106187505816,
-        "radius": 5.765079011360694,
+        "respawn": 0.07511484926659415,
+        "radius": 6.98909093230394,
         "draw": 819
       },
       "toShip": 5.9999999999997895,
@@ -139,7 +143,7 @@
       "name": "03-through-c",
       "t": 7.3999999999999995,
       "gr": true,
-      "local": 7.729891921679155,
+      "local": 7.729891921673632,
       "bubble": {
         "speed": 316916.4742566915,
         "phase": "ramping",
@@ -151,7 +155,7 @@
         "presence": 0.9999984495057479,
         "bubbleSpeed": 316.9164742566915,
         "respawn": 0.014999976742586218,
-        "radius": 5.67014994916948,
+        "radius": 6.900146011643265,
         "draw": 580
       },
       "toShip": 5.9999999999997895,
@@ -164,7 +168,7 @@
       "name": "04-high-superluminal",
       "t": 10.733333333333333,
       "gr": true,
-      "local": 7.729891921679155,
+      "local": 7.729891921673632,
       "bubble": {
         "speed": 17495562411.273823,
         "phase": "ramping",
@@ -176,7 +180,7 @@
         "presence": 0.9999999999974888,
         "bubbleSpeed": 17495562.411273822,
         "respawn": 0.014999999999962332,
-        "radius": 5.670000000057711,
+        "radius": 6.900000000051089,
         "draw": 819
       },
       "toShip": 5.9999999999997895,
@@ -189,7 +193,7 @@
       "name": "05-turn",
       "t": 12.566666666666666,
       "gr": true,
-      "local": 7.729891921679155,
+      "local": 7.729891921673632,
       "bubble": {
         "speed": 222792497913.32474,
         "phase": "cruise",
@@ -201,7 +205,7 @@
         "presence": 0.9999999999999983,
         "bubbleSpeed": 222792497.91332474,
         "respawn": 0.014999999999999975,
-        "radius": 5.670000000000039,
+        "radius": 6.900000000485431,
         "draw": 819
       },
       "toShip": 6.000000000609475,
@@ -214,7 +218,7 @@
       "name": "06-system-view",
       "t": 15.233333333333333,
       "gr": true,
-      "local": 7.729891921679155,
+      "local": 7.729891921673632,
       "bubble": {
         "speed": 240364815050.06158,
         "phase": "cruise",
@@ -225,8 +229,8 @@
         "visible": true,
         "presence": 0.9999999999999996,
         "bubbleSpeed": 240364815.05006158,
-        "respawn": 0.0060259601832518776,
-        "radius": 1005067.8037222346,
+        "respawn": 0.006025960179367437,
+        "radius": 1005067.8038441576,
         "draw": 819
       },
       "toShip": 359244.850291194,
@@ -239,7 +243,7 @@
       "name": "07-close-again",
       "t": 17.9,
       "gr": true,
-      "local": 7.729891921679155,
+      "local": 7.729891921673632,
       "bubble": {
         "speed": 240452930541.36203,
         "phase": "cruise",
@@ -251,7 +255,7 @@
         "presence": 0.9999999999999996,
         "bubbleSpeed": 240452930.54136205,
         "respawn": 0.014999999999999993,
-        "radius": 6.209736182482742,
+        "radius": 7.013344470135584,
         "draw": 819
       },
       "toShip": 5.99999997502269,
@@ -264,7 +268,7 @@
       "name": "08-braking",
       "t": 20.733333333333334,
       "gr": true,
-      "local": 7.729891921679155,
+      "local": 7.729891921673632,
       "bubble": {
         "speed": 108026587.83210135,
         "phase": "braking",
@@ -276,7 +280,7 @@
         "presence": 0.9999999999999996,
         "bubbleSpeed": 108026.58783210134,
         "respawn": 0.014999999999999993,
-        "radius": 5.6700056019329015,
+        "radius": 6.899999971385708,
         "draw": 819
       },
       "toShip": 5.99999997502269,
@@ -289,7 +293,7 @@
       "name": "09-braking-late",
       "t": 23.4,
       "gr": true,
-      "local": 7.729891921679155,
+      "local": 7.729891921673632,
       "bubble": {
         "speed": 9626.900620446133,
         "phase": "braking",
@@ -301,7 +305,7 @@
         "presence": 0.9999999999999996,
         "bubbleSpeed": 9.626900620446133,
         "respawn": 0.014999999999999993,
-        "radius": 5.670000000130567,
+        "radius": 6.899999971276097,
         "draw": 819
       },
       "toShip": 5.99999997502269,
@@ -314,7 +318,7 @@
       "name": "10-after-stop",
       "t": 28.4,
       "gr": true,
-      "local": 7.72990300471872,
+      "local": 7.729903006647812,
       "bubble": {
         "speed": 0,
         "phase": "ready",
@@ -325,8 +329,8 @@
         "visible": true,
         "presence": 0.009736804659749807,
         "bubbleSpeed": 0,
-        "respawn": 0.006063106696570035,
-        "radius": 16.663420318606633,
+        "respawn": 0.006057091415318729,
+        "radius": 16.678514022041,
         "draw": 819
       },
       "toShip": 5.99999997502269,
@@ -381,8 +385,8 @@
       "frame": 120,
       "speedC": 0.00002021334148216776,
       "near": 9,
-      "ahead": 6,
-      "behind": 3,
+      "ahead": 7,
+      "behind": 2,
       "ambient": 584,
       "owned": 440,
       "finite": true
@@ -390,9 +394,9 @@
     {
       "frame": 150,
       "speedC": 0.000517536937460975,
-      "near": 360,
-      "ahead": 292,
-      "behind": 68,
+      "near": 203,
+      "ahead": 162,
+      "behind": 41,
       "ambient": 870,
       "owned": 154,
       "finite": true
@@ -400,9 +404,9 @@
     {
       "frame": 180,
       "speedC": 0.013449748498892352,
-      "near": 679,
-      "ahead": 529,
-      "behind": 150,
+      "near": 348,
+      "ahead": 269,
+      "behind": 79,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -410,9 +414,9 @@
     {
       "frame": 210,
       "speedC": 0.3548300576829535,
-      "near": 742,
-      "ahead": 400,
-      "behind": 342,
+      "near": 415,
+      "ahead": 222,
+      "behind": 193,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -420,9 +424,9 @@
     {
       "frame": 240,
       "speedC": 9.385559489032408,
-      "near": 752,
-      "ahead": 421,
-      "behind": 331,
+      "near": 413,
+      "ahead": 231,
+      "behind": 182,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -430,9 +434,9 @@
     {
       "frame": 270,
       "speedC": 248.3493620860742,
-      "near": 772,
-      "ahead": 432,
-      "behind": 340,
+      "near": 425,
+      "ahead": 256,
+      "behind": 169,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -440,9 +444,9 @@
     {
       "frame": 300,
       "speedC": 6571.861087510688,
-      "near": 744,
-      "ahead": 407,
-      "behind": 337,
+      "near": 448,
+      "ahead": 239,
+      "behind": 209,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -450,9 +454,9 @@
     {
       "frame": 330,
       "speedC": 173288.84327582992,
-      "near": 872,
-      "ahead": 464,
-      "behind": 408,
+      "near": 496,
+      "ahead": 255,
+      "behind": 241,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -460,9 +464,9 @@
     {
       "frame": 360,
       "speedC": 651857.5424701027,
-      "near": 878,
-      "ahead": 478,
-      "behind": 400,
+      "near": 489,
+      "ahead": 278,
+      "behind": 211,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -470,9 +474,9 @@
     {
       "frame": 390,
       "speedC": 779869.9626030967,
-      "near": 959,
-      "ahead": 512,
-      "behind": 447,
+      "near": 397,
+      "ahead": 196,
+      "behind": 201,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -490,8 +494,8 @@
     {
       "frame": 450,
       "speedC": 801653.9072520902,
-      "near": 0,
-      "ahead": 0,
+      "near": 1,
+      "ahead": 1,
       "behind": 0,
       "ambient": 1024,
       "owned": 0,
@@ -510,9 +514,9 @@
     {
       "frame": 510,
       "speedC": 802058.5174255231,
-      "near": 99,
-      "ahead": 55,
-      "behind": 44,
+      "near": 123,
+      "ahead": 68,
+      "behind": 55,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -520,9 +524,9 @@
     {
       "frame": 540,
       "speedC": 799019.8742510754,
-      "near": 700,
-      "ahead": 384,
-      "behind": 316,
+      "near": 415,
+      "ahead": 222,
+      "behind": 193,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -530,9 +534,9 @@
     {
       "frame": 570,
       "speedC": 99381.07616683531,
-      "near": 865,
-      "ahead": 488,
-      "behind": 377,
+      "near": 505,
+      "ahead": 285,
+      "behind": 220,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -540,9 +544,9 @@
     {
       "frame": 600,
       "speedC": 3634.745441958642,
-      "near": 876,
-      "ahead": 483,
-      "behind": 393,
+      "near": 495,
+      "ahead": 273,
+      "behind": 222,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -550,9 +554,9 @@
     {
       "frame": 630,
       "speedC": 112.64277251132094,
-      "near": 887,
-      "ahead": 483,
-      "behind": 404,
+      "near": 508,
+      "ahead": 275,
+      "behind": 233,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -560,9 +564,9 @@
     {
       "frame": 660,
       "speedC": 3.413470174302363,
-      "near": 864,
-      "ahead": 468,
-      "behind": 396,
+      "near": 488,
+      "ahead": 277,
+      "behind": 211,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -570,9 +574,9 @@
     {
       "frame": 690,
       "speedC": 0.10312359328931636,
-      "near": 901,
-      "ahead": 475,
-      "behind": 426,
+      "near": 500,
+      "ahead": 267,
+      "behind": 233,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -580,9 +584,9 @@
     {
       "frame": 720,
       "speedC": 0.0031110279176368863,
-      "near": 894,
-      "ahead": 464,
-      "behind": 430,
+      "near": 500,
+      "ahead": 267,
+      "behind": 233,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -590,9 +594,9 @@
     {
       "frame": 750,
       "speedC": 0.00009071080751795381,
-      "near": 889,
-      "ahead": 447,
-      "behind": 442,
+      "near": 505,
+      "ahead": 267,
+      "behind": 238,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -600,9 +604,9 @@
     {
       "frame": 780,
       "speedC": 0,
-      "near": 663,
-      "ahead": 332,
-      "behind": 331,
+      "near": 196,
+      "ahead": 88,
+      "behind": 108,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -610,9 +614,9 @@
     {
       "frame": 810,
       "speedC": 0,
-      "near": 413,
-      "ahead": 220,
-      "behind": 193,
+      "near": 84,
+      "ahead": 48,
+      "behind": 36,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -620,9 +624,9 @@
     {
       "frame": 840,
       "speedC": 0,
-      "near": 268,
-      "ahead": 138,
-      "behind": 130,
+      "near": 56,
+      "ahead": 34,
+      "behind": 22,
       "ambient": 1024,
       "owned": 0,
       "finite": true
