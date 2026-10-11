@@ -1,0 +1,41 @@
+{
+  "device": "mobile",
+  "seconds": 8,
+  "phases": [
+    {
+      "name": "warp off (lines on)",
+      "fps": 28.93,
+      "browserTicksPerSecond": 59.98,
+      "gateWaits": 242,
+      "speed": 0,
+      "presence": 0
+    },
+    {
+      "name": "warp ramp (Shift+W held)",
+      "fps": 29.59,
+      "browserTicksPerSecond": 60.06,
+      "gateWaits": 204,
+      "speed": 39733252385.90786,
+      "presence": 0.9999999999992835
+    },
+    {
+      "name": "warp cruise",
+      "fps": 30,
+      "browserTicksPerSecond": 59.99,
+      "gateWaits": 228,
+      "speed": 204394110632.17053,
+      "presence": 0.9999999999999997
+    }
+  ],
+  "renderer": {
+    "name": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+    "level": 3,
+    "riverDraw": 0.2,
+    "river": 1024
+  },
+  "note": "software renderer on a GPU-less host; relative cost only",
+  "relative": {
+    "ramp": 1.023,
+    "cruise": 1.037
+  }
+}

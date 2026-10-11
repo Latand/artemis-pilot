@@ -29,6 +29,10 @@
       "pass": true
     },
     {
+      "name": "zoomed out, the hull stays bounded (marker view)",
+      "pass": true
+    },
+    {
       "name": "real S input brakes the bubble to rest",
       "pass": true
     },
@@ -52,7 +56,7 @@
       "name": "00-local-lines",
       "t": 0.06666666666666667,
       "gr": true,
-      "local": 7.729891847467494,
+      "local": 7.7298918474668294,
       "bubble": {
         "speed": 0,
         "phase": "off",
@@ -63,12 +67,13 @@
         "visible": true,
         "presence": 0,
         "bubbleSpeed": 0,
-        "respawn": 0.074889661674525,
+        "respawn": 0.07488966135288341,
         "radius": 25.200000000015375,
         "draw": 819
       },
       "toShip": 5.9999999999997895,
       "craft": true,
+      "hullScale": 0.11999999999999579,
       "layers": 0,
       "samples": {
         "near": 0,
@@ -84,7 +89,7 @@
       "name": "01-local-lines-before-warp",
       "t": 2.4,
       "gr": true,
-      "local": 7.7298918944839015,
+      "local": 7.7298918944601605,
       "bubble": {
         "speed": 0,
         "phase": "off",
@@ -95,12 +100,13 @@
         "visible": true,
         "presence": 0,
         "bubbleSpeed": 0,
-        "respawn": 0.07489499154492593,
+        "respawn": 0.07489499061961631,
         "radius": 25.199999999999125,
         "draw": 819
       },
       "toShip": 5.9999999999997895,
       "craft": true,
+      "hullScale": 0.11999999999999579,
       "layers": 0
     },
     {
@@ -108,7 +114,7 @@
       "name": "02-ramp-subluminal",
       "t": 5.566666666666666,
       "gr": true,
-      "local": 7.729891921709083,
+      "local": 7.729891921679155,
       "bubble": {
         "speed": 788.1551051932419,
         "phase": "ramping",
@@ -119,12 +125,13 @@
         "visible": true,
         "presence": 0.9976270075239435,
         "bubbleSpeed": 0.7881551051932418,
-        "respawn": 0.0751810659162952,
+        "respawn": 0.07518106187505816,
         "radius": 5.765079011360694,
         "draw": 819
       },
       "toShip": 5.9999999999997895,
       "craft": true,
+      "hullScale": 0.2516420880298434,
       "layers": 0
     },
     {
@@ -132,7 +139,7 @@
       "name": "03-through-c",
       "t": 7.3999999999999995,
       "gr": true,
-      "local": 7.729891921709083,
+      "local": 7.729891921679155,
       "bubble": {
         "speed": 316916.4742566915,
         "phase": "ramping",
@@ -143,12 +150,13 @@
         "visible": true,
         "presence": 0.9999984495057479,
         "bubbleSpeed": 316.9164742566915,
-        "respawn": 0.029999953485172436,
+        "respawn": 0.014999976742586218,
         "radius": 5.67014994916948,
         "draw": 580
       },
       "toShip": 5.9999999999997895,
       "craft": true,
+      "hullScale": 0.2519997661431804,
       "layers": 0
     },
     {
@@ -156,7 +164,7 @@
       "name": "04-high-superluminal",
       "t": 10.733333333333333,
       "gr": true,
-      "local": 7.729891921709083,
+      "local": 7.729891921679155,
       "bubble": {
         "speed": 17495562411.273823,
         "phase": "ramping",
@@ -167,12 +175,13 @@
         "visible": true,
         "presence": 0.9999999999974888,
         "bubbleSpeed": 17495562.411273822,
-        "respawn": 0.029999999999924663,
+        "respawn": 0.014999999999962332,
         "radius": 5.670000000057711,
         "draw": 819
       },
       "toShip": 5.9999999999997895,
       "craft": true,
+      "hullScale": 0.2519999999996124,
       "layers": 0
     },
     {
@@ -180,7 +189,7 @@
       "name": "05-turn",
       "t": 12.566666666666666,
       "gr": true,
-      "local": 7.729891921709083,
+      "local": 7.729891921679155,
       "bubble": {
         "speed": 222792497913.32474,
         "phase": "cruise",
@@ -191,68 +200,121 @@
         "visible": true,
         "presence": 0.9999999999999983,
         "bubbleSpeed": 222792497.91332474,
-        "respawn": 0.02999999999999995,
+        "respawn": 0.014999999999999975,
         "radius": 5.670000000000039,
         "draw": 819
       },
       "toShip": 6.000000000609475,
       "craft": true,
+      "hullScale": 0.2520000000255977,
       "layers": 0
     },
     {
-      "frame": 470,
-      "name": "06-braking",
-      "t": 15.733333333333333,
+      "frame": 455,
+      "name": "06-system-view",
+      "t": 15.233333333333333,
       "gr": true,
-      "local": 7.729891921709083,
+      "local": 7.729891921679155,
       "bubble": {
-        "speed": 3400720837.6333876,
-        "phase": "braking",
-        "dx": -0.4144035327036504,
-        "dy": 0.9100932436199791
+        "speed": 240364815050.06158,
+        "phase": "cruise",
+        "dx": -0.4108464436765825,
+        "dy": 0.9117045572543249
       },
       "river": {
         "visible": true,
         "presence": 0.9999999999999996,
-        "bubbleSpeed": 3400720.8376333877,
-        "respawn": 0.029999999999999985,
-        "radius": 5.670000000000009,
+        "bubbleSpeed": 240364815.05006158,
+        "respawn": 0.0060259601832518776,
+        "radius": 1005067.8037222346,
         "draw": 819
       },
-      "toShip": 6.000000015961545,
-      "craft": true,
+      "toShip": 359244.850291194,
+      "craft": false,
+      "hullScale": 2.4,
       "layers": 0
     },
     {
-      "frame": 560,
-      "name": "07-braking-late",
-      "t": 18.733333333333334,
+      "frame": 535,
+      "name": "07-close-again",
+      "t": 17.9,
       "gr": true,
-      "local": 7.729891921709083,
+      "local": 7.729891921679155,
       "bubble": {
-        "speed": 99273.78273857644,
-        "phase": "braking",
-        "dx": -0.4161446189280985,
-        "dy": 0.9092984417325193
+        "speed": 240452930541.36203,
+        "phase": "cruise",
+        "dx": -0.41613270671375824,
+        "dy": 0.9093038933178947
       },
       "river": {
         "visible": true,
         "presence": 0.9999999999999996,
-        "bubbleSpeed": 99.27378273857644,
-        "respawn": 0.029999999999999985,
-        "radius": 5.670000000000009,
+        "bubbleSpeed": 240452930.54136205,
+        "respawn": 0.014999999999999993,
+        "radius": 6.209736182482742,
         "draw": 819
       },
-      "toShip": 6.000000015961545,
+      "toShip": 5.99999997502269,
       "craft": true,
+      "hullScale": 0.25199999895095293,
       "layers": 0
     },
     {
-      "frame": 735,
-      "name": "08-after-stop",
-      "t": 24.566666666666666,
+      "frame": 620,
+      "name": "08-braking",
+      "t": 20.733333333333334,
       "gr": true,
-      "local": 7.729903773569276,
+      "local": 7.729891921679155,
+      "bubble": {
+        "speed": 108026587.83210135,
+        "phase": "braking",
+        "dx": -0.4161468107823872,
+        "dy": 0.9092974386171162
+      },
+      "river": {
+        "visible": true,
+        "presence": 0.9999999999999996,
+        "bubbleSpeed": 108026.58783210134,
+        "respawn": 0.014999999999999993,
+        "radius": 5.6700056019329015,
+        "draw": 819
+      },
+      "toShip": 5.99999997502269,
+      "craft": true,
+      "hullScale": 0.25199999895095293,
+      "layers": 0
+    },
+    {
+      "frame": 700,
+      "name": "09-braking-late",
+      "t": 23.4,
+      "gr": true,
+      "local": 7.729891921679155,
+      "bubble": {
+        "speed": 9626.900620446133,
+        "phase": "braking",
+        "dx": -0.4161468365471422,
+        "dy": 0.9092974268256818
+      },
+      "river": {
+        "visible": true,
+        "presence": 0.9999999999999996,
+        "bubbleSpeed": 9.626900620446133,
+        "respawn": 0.014999999999999993,
+        "radius": 5.670000000130567,
+        "draw": 819
+      },
+      "toShip": 5.99999997502269,
+      "craft": true,
+      "hullScale": 0.25199999895095293,
+      "layers": 0
+    },
+    {
+      "frame": 850,
+      "name": "10-after-stop",
+      "t": 28.4,
+      "gr": true,
+      "local": 7.72990300471872,
       "bubble": {
         "speed": 0,
         "phase": "ready",
@@ -261,14 +323,15 @@
       },
       "river": {
         "visible": true,
-        "presence": 0.007375289988169592,
+        "presence": 0.009736804659749807,
         "bubbleSpeed": 0,
-        "respawn": 0.006049920304740686,
-        "radius": 16.696545745725935,
+        "respawn": 0.006063106696570035,
+        "radius": 16.663420318606633,
         "draw": 819
       },
-      "toShip": 6.000000015961545,
+      "toShip": 5.99999997502269,
       "craft": true,
+      "hullScale": 0.12135868161314722,
       "layers": 0
     }
   ],
@@ -337,9 +400,9 @@
     {
       "frame": 180,
       "speedC": 0.013449748498892352,
-      "near": 699,
-      "ahead": 542,
-      "behind": 157,
+      "near": 679,
+      "ahead": 529,
+      "behind": 150,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -347,9 +410,9 @@
     {
       "frame": 210,
       "speedC": 0.3548300576829535,
-      "near": 751,
-      "ahead": 404,
-      "behind": 347,
+      "near": 742,
+      "ahead": 400,
+      "behind": 342,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -357,9 +420,9 @@
     {
       "frame": 240,
       "speedC": 9.385559489032408,
-      "near": 762,
-      "ahead": 424,
-      "behind": 338,
+      "near": 752,
+      "ahead": 421,
+      "behind": 331,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -367,9 +430,9 @@
     {
       "frame": 270,
       "speedC": 248.3493620860742,
-      "near": 753,
-      "ahead": 415,
-      "behind": 338,
+      "near": 772,
+      "ahead": 432,
+      "behind": 340,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -377,9 +440,9 @@
     {
       "frame": 300,
       "speedC": 6571.861087510688,
-      "near": 745,
-      "ahead": 403,
-      "behind": 342,
+      "near": 744,
+      "ahead": 407,
+      "behind": 337,
       "ambient": 878,
       "owned": 146,
       "finite": true
@@ -387,9 +450,9 @@
     {
       "frame": 330,
       "speedC": 173288.84327582992,
-      "near": 877,
-      "ahead": 460,
-      "behind": 417,
+      "near": 872,
+      "ahead": 464,
+      "behind": 408,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -397,9 +460,9 @@
     {
       "frame": 360,
       "speedC": 651857.5424701027,
-      "near": 873,
-      "ahead": 462,
-      "behind": 411,
+      "near": 878,
+      "ahead": 478,
+      "behind": 400,
       "ambient": 1024,
       "owned": 0,
       "finite": true
@@ -407,127 +470,167 @@
     {
       "frame": 390,
       "speedC": 779869.9626030967,
-      "near": 874,
-      "ahead": 495,
-      "behind": 379,
+      "near": 959,
+      "ahead": 512,
+      "behind": 447,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 420,
-      "speedC": 795991.9495129929,
-      "near": 868,
-      "ahead": 461,
-      "behind": 407,
+      "speedC": 799025.5818501693,
+      "near": 0,
+      "ahead": 0,
+      "behind": 0,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 450,
-      "speedC": 99330.02392176265,
-      "near": 897,
-      "ahead": 448,
-      "behind": 449,
+      "speedC": 801653.9072520902,
+      "near": 0,
+      "ahead": 0,
+      "behind": 0,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 480,
-      "speedC": 3634.4926910883078,
-      "near": 885,
-      "ahead": 474,
-      "behind": 411,
+      "speedC": 802010.2759919793,
+      "near": 0,
+      "ahead": 0,
+      "behind": 0,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 510,
-      "speedC": 112.64171241312586,
-      "near": 861,
-      "ahead": 474,
-      "behind": 387,
+      "speedC": 802058.5174255231,
+      "near": 99,
+      "ahead": 55,
+      "behind": 44,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 540,
-      "speedC": 3.413465826677266,
-      "near": 885,
-      "ahead": 471,
-      "behind": 414,
+      "speedC": 799019.8742510754,
+      "near": 700,
+      "ahead": 384,
+      "behind": 316,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 570,
-      "speedC": 0.10312357551311803,
-      "near": 874,
-      "ahead": 476,
-      "behind": 398,
+      "speedC": 99381.07616683531,
+      "near": 865,
+      "ahead": 488,
+      "behind": 377,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 600,
-      "speedC": 0.003111027844984995,
-      "near": 880,
-      "ahead": 474,
-      "behind": 406,
+      "speedC": 3634.745441958642,
+      "near": 876,
+      "ahead": 483,
+      "behind": 393,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 630,
-      "speedC": 0.00009071080722104086,
-      "near": 889,
-      "ahead": 440,
-      "behind": 449,
+      "speedC": 112.64277251132094,
+      "near": 887,
+      "ahead": 483,
+      "behind": 404,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 660,
-      "speedC": 0,
-      "near": 557,
-      "ahead": 274,
-      "behind": 283,
+      "speedC": 3.413470174302363,
+      "near": 864,
+      "ahead": 468,
+      "behind": 396,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 690,
-      "speedC": 0,
-      "near": 333,
-      "ahead": 162,
-      "behind": 171,
+      "speedC": 0.10312359328931636,
+      "near": 901,
+      "ahead": 475,
+      "behind": 426,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     },
     {
       "frame": 720,
+      "speedC": 0.0031110279176368863,
+      "near": 894,
+      "ahead": 464,
+      "behind": 430,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 750,
+      "speedC": 0.00009071080751795381,
+      "near": 889,
+      "ahead": 447,
+      "behind": 442,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 780,
       "speedC": 0,
-      "near": 238,
-      "ahead": 114,
-      "behind": 124,
+      "near": 663,
+      "ahead": 332,
+      "behind": 331,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 810,
+      "speedC": 0,
+      "near": 413,
+      "ahead": 220,
+      "behind": 193,
+      "ambient": 1024,
+      "owned": 0,
+      "finite": true
+    },
+    {
+      "frame": 840,
+      "speedC": 0,
+      "near": 268,
+      "ahead": 138,
+      "behind": 130,
       "ambient": 1024,
       "owned": 0,
       "finite": true
     }
   ],
   "summary": {
-    "frames": 741,
-    "maxSpeedC": 798816.3986149579,
+    "frames": 861,
+    "maxSpeedC": 802064.9759672066,
     "endSpeedKmS": 0
   }
 }
