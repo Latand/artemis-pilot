@@ -4,26 +4,26 @@
   "phases": [
     {
       "name": "warp off (lines on)",
-      "fps": 28.84,
-      "browserTicksPerSecond": 60.05,
-      "gateWaits": 241,
+      "fps": 28.23,
+      "browserTicksPerSecond": 60.07,
+      "gateWaits": 255,
       "speed": 0,
       "presence": 0
     },
     {
       "name": "warp ramp (Shift+W held)",
-      "fps": 29.49,
-      "browserTicksPerSecond": 60.11,
-      "gateWaits": 203,
-      "speed": 38616885667.46614,
-      "presence": 0.9999999999992576
+      "fps": 28.84,
+      "browserTicksPerSecond": 60.05,
+      "gateWaits": 250,
+      "speed": 36513233635.30174,
+      "presence": 0.999999999999207
     },
     {
       "name": "warp cruise",
-      "fps": 30.12,
-      "browserTicksPerSecond": 59.99,
-      "gateWaits": 203,
-      "speed": 198651343628.53482,
+      "fps": 29.96,
+      "browserTicksPerSecond": 60.04,
+      "gateWaits": 241,
+      "speed": 187829824809.74664,
       "presence": 0.9999999999999997
     }
   ],
@@ -35,7 +35,7 @@
   },
   "note": "software renderer on a GPU-less host; relative cost only",
   "relative": {
-    "ramp": 1.023,
-    "cruise": 1.044
+    "ramp": 1.022,
+    "cruise": 1.061
   }
 }

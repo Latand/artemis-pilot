@@ -33,8 +33,10 @@ What follows from the model:
 * Eulerian energy density is negative in the wall (eq. 19), so the weak and
   dominant energy conditions fail. Natário shows expansion and contraction are a
   property of Alcubierre's choice of f; zero-expansion warp fields exist.
-* At the bubble centre proper time equals coordinate time, and the hull's local
-  velocity stays separate from the coordinate speed v_s.
+* The bubble centre moves on a timelike geodesic: the hull rides it in free
+  fall, with proper time equal to coordinate time, and its local velocity stays
+  separate from the coordinate speed v_s. Nothing pushes the hull; v_s(t) is
+  prescribed.
 * Alcubierre's shift is parallel to the travel axis everywhere, so in the ship
   chart the streamlines near the hull are straight lines along the axis. The
   lines change direction and bend where the bubble competes with the
@@ -69,18 +71,27 @@ These are presentation choices, stated so they are not mistaken for physics:
   particles are not re-created every frame. When the volume grows during a
   zoom out, the share of samples it gained is refreshed so none stay packed
   around the hull.
-* The whole field replays in one uniform slow-motion factor λ ≤ 1 while the
-  bubble flies, at every zoom (directions and speed ratios unchanged), slow
-  enough to follow single markers: 0.3 to 1.2 bubble radii per second,
-  rising with the logarithm of v_s.
-* Each streak traces the marker's path over the last 0.8 s of display time
-  along the current field (exact in steady cruise, approximate while the
-  bubble ramps or turns), with four beads at fixed time lags that ride with
-  it. Beads slow and bunch as markers enter the front wall, nearly
-  stop beside the hull, and speed up and spread behind; neighbouring lines on
-  the sides slide past each other (shear).
-* Line ink follows the wall strength |R df/dr|, so the uniform far stream and
-  the calm hull region recede behind the wall. Hue follows the sign of θ
+* Directions come from the drawn field (the shift X in the chosen chart). The
+  whole field replays in one uniform slow-motion factor λ ≤ 1 while the bubble
+  flies, at every zoom.
+* Marker spacing shows the model's expansion θ = ∇·X (eq. 12). Each river line
+  becomes a rigid row of four markers spaced 0.1 R × exp(κ θ̂), where θ̂ is θ
+  divided by its peak (0.95 v_s/R at r = R on the axis). Ahead (θ < 0) rows
+  are close-set, behind (θ > 0) they are wide, beside the hull, on the sides
+  and far away they stay even; the change is largest at the wall, about one
+  radius from the hull (×0.29 ahead, ×3.5 behind at full contrast). κ grows
+  with the logarithm of v_s (weak at low speed, strong at high speed). Every
+  marker keeps one short length and the thread joining a row stays faint, so
+  only the gaps change: close-set beads ahead, sparse dots behind.
+* Marker transport is part of the same display mapping: markers move along
+  the drawn direction at 0.25–0.6 R/s × their spacing factor, so a steady row
+  keeps its count while it slows and bunches entering the front and speeds
+  up and spreads behind, and the sampled markers are denser ahead than
+  behind. The model's own comoving speed profile (1 − f) is not what this
+  speed shows; the lines carry no pressure and do not push the hull, whose
+  trajectory the metric prescribes.
+* Line ink follows the wall strength |R df/dr|, so the far stream and the
+  calm hull region recede behind the wall. Hue follows the sign of θ
   through a monotone saturating map: cyan where space contracts (front),
   magenta where it expands (rear, the river's family for expanding space),
   pale blue on the shearing sides. A nearby body's halo tint is suppressed in
@@ -90,10 +101,10 @@ These are presentation choices, stated so they are not mistaken for physics:
 * The rest-frame velocity and flow vectors at the hull are hidden while the
   bubble flies (they change every frame at superluminal speed); the heading
   arrow stays.
-* Sampling: most halo strata go to the bubble's ambient stream while warping;
-  samples leaving the rear re-enter upstream on the same streamline; samples
-  stalled in the calm interior are recycled sooner. This keeps the walls
-  resolved on a 1024-particle (weak graphics) budget.
+* Sampling: most halo strata go to the bubble's ambient stream while warping,
+  and samples leaving the rear re-enter upstream on the same streamline. This
+  keeps the walls resolved on a 1024-particle (weak graphics) budget without
+  adding particles.
 * Presentation eases with the bubble's presence and keeps easing after the
   speed reaches zero, so braking to rest fades the field smoothly. The shift
   term itself always follows the model speed.
@@ -103,8 +114,9 @@ These are presentation choices, stated so they are not mistaken for physics:
   view's sampled volume the crossing is left out.
 * R follows the camera's orbit distance and eases in log space, so a return
   of focus to the hull settles within about a second.
-* Beads, depth weighting, wall-strength ink and the saturating hue map are
-  artistic emphasis of model quantities. Adding the bubble to the river's mass
+* Marker spacing and transport, depth weighting, wall-strength ink and the
+  hue map are artistic readability built on model quantities (θ, f, df/dr);
+  the slow motion is a display time scale. Adding the bubble to the river's mass
   terms is a visualization; it solves no Einstein equations.
 
 ## Kinematics and limits

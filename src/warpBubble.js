@@ -30,6 +30,16 @@ export function bubbleMetric(x, y, z, beta = 1, sigma = BUBBLE_SIGMA) {
 export function bubbleComovingFlow(r, frameW = 1, sigma = BUBBLE_SIGMA) {
     return bubbleShape(r, sigma).f - frameW;
 }
+// Display mapping mirrored by river.js (bubbleTheta, bubbleSpacing): theta
+// R/v_s divided by its 0.95 peak, and the spacing of an evenly carried marker
+// row, exp(kappa * theta). A visualization of eq. 12, not a transport law.
+export function bubbleThetaDisplay(x, y, z, sigma = BUBBLE_SIGMA) {
+    const r = Math.hypot(x, y, z), { df } = bubbleShape(r, sigma);
+    return Math.max(-1, Math.min(1, df * (r > 1e-6 ? y / r : 0) / .95));
+}
+export function bubbleMarkerSpacing(x, y, z, kappa, sigma = BUBBLE_SIGMA) {
+    return Math.exp(kappa * bubbleThetaDisplay(x, y, z, sigma));
+}
 export const WARP_C = 299792.458; // km/s
 export const WARP_MAX_C = 1e9; // numerical/navigation guard of this simulation
 export const WARP_MAX_LOG = Math.log1p(WARP_MAX_C*WARP_C);

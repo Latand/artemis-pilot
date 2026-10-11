@@ -1,30 +1,30 @@
 {
-  "device": "mobile",
+  "device": "desktop",
   "seconds": 8,
   "phases": [
     {
       "name": "warp off (lines on)",
-      "fps": 28.34,
+      "fps": 16.23,
       "browserTicksPerSecond": 60.06,
-      "gateWaits": 244,
+      "gateWaits": 351,
       "speed": 0,
       "presence": 0
     },
     {
       "name": "warp ramp (Shift+W held)",
-      "fps": 29.6,
-      "browserTicksPerSecond": 60.07,
-      "gateWaits": 202,
-      "speed": 36753233473.54849,
-      "presence": 0.9999999999992109
+      "fps": 9.74,
+      "browserTicksPerSecond": 59.91,
+      "gateWaits": 402,
+      "speed": 884401.2965150409,
+      "presence": 0.9999999999459936
     },
     {
       "name": "warp cruise",
-      "fps": 30.12,
-      "browserTicksPerSecond": 60,
-      "gateWaits": 217,
-      "speed": 189064421926.9128,
-      "presence": 0.9999999999999997
+      "fps": 7.36,
+      "browserTicksPerSecond": 59.98,
+      "gateWaits": 422,
+      "speed": 4542597.273206469,
+      "presence": 0.9999999999999999
     }
   ],
   "renderer": {
@@ -35,7 +35,7 @@
   },
   "note": "software renderer on a GPU-less host; relative cost only",
   "relative": {
-    "ramp": 1.044,
-    "cruise": 1.063
+    "ramp": 0.6,
+    "cruise": 0.453
   }
 }

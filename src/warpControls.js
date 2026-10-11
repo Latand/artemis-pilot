@@ -7,7 +7,7 @@ import { setWarp } from './timeCtl.js';
 import { toast } from './achievements.js';
 import { shipVisuals } from './shipVisuals.js';
 let buttons=[],stops=[],readouts=[],notes=[],guides=[];
-const WARP_NOTE='ALCUBIERRE SHIFT IN THE GRAVITY RIVER\nCyan: space contracts ahead · markers slow, bunch\nMagenta: space expands behind · markers speed up\nHypothetical metric · no engine demonstrated';
+const WARP_NOTE='ALCUBIERRE SHIFT IN THE GRAVITY RIVER\nAhead: markers bunch (space contracts)\nBehind: markers spread (space expands)\nHypothetical metric · no engine demonstrated';
 const DRIVE_NOTE='FICTIONAL CURVATURE DRIVE\nEffective field model · no GR solver';
 export function initWarpControls() {
     notes=[...document.querySelectorAll('[data-warp-note]')];

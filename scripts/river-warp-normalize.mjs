@@ -32,10 +32,14 @@ export function withoutWarpSandbox(source) {
         } else kill = true;
     }`, '    if (!halo && length(p) > uRadius * 1.04) kill = true;', 'wind-tunnel re-entry');
     s = once(s, `
-    // Ship chart: samples that drift into the calm interior stall there for
-    // a residence time ~1/(1 - f). Recycle them sooner, so the sample budget
-    // keeps resolving the walls and the stream; these are field samples.
-    if (!halo && uBubbleAxis.w > 0.0 && uBubbleShape.y > 0.5 &&
-        length(p - uBubble.xyz) < uBubble.w * 0.6 && hash13(vec3(vUv * 557.3, uTick + 4.1)) < 0.05) kill = true;`, '', 'interior recycling');
+    // Warp presentation: markers travel along the drawn direction at a speed
+    // proportional to their theta spacing, so a steady row keeps its count
+    // while it slows and bunches ahead and speeds up and spreads behind.
+    float markView = uBubbleAxis.w > 0.0 && !halo ? uBubbleShape.z : 0.0;
+    if (markView > 0.0) {
+        float vl = length(v);
+        vec3 markDir = vl > 1e-30 ? v / vl : -uBubbleAxis.xyz;
+        stp = mix(stp, markDir * (uBubbleMarks.x * bubbleSpacing(p) * uDtSim), markView);
+    }`, '', 'theta marker transport');
     return s;
 }

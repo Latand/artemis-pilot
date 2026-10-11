@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { bubbleShape,bubbleMetric,bubbleComovingFlow,createWarpState,stepWarp,stopWarp,resetWarp,steerWarp,noteWarpShift,takeWarpShift,
+import { bubbleShape,bubbleMetric,bubbleComovingFlow,bubbleThetaDisplay,bubbleMarkerSpacing,createWarpState,stepWarp,stopWarp,resetWarp,steerWarp,noteWarpShift,takeWarpShift,
     warpDisplayRate,warpRegime,warpSpeedLabel,WARP_C,WARP_MAX_C,BUBBLE_SIGMA } from '../src/warpBubble.js';
 const close=(a,b,e=1e-7)=>assert(Math.abs(a-b)<=e*Math.max(1,Math.abs(b)),`${a} ~ ${b}`);
 // Alcubierre eq. 6: unit at the centre, analytic derivative, smooth decay.
@@ -31,6 +31,15 @@ for(const r of [.2,.7,1,1.5]){
  assert(bubbleComovingFlow(r)<bubbleComovingFlow(r-.1),'stream speeds up away from the hull');
  close(bubbleComovingFlow(r,1)-bubbleComovingFlow(r,0),-1);
 }
+// Marker spacing (display mapping of theta): rows bunch ahead, spread behind,
+// stay even beside the hull, at the sides and far away; strongest at the wall.
+{const k=Math.log(3.5),sp=(x,y,z)=>bubbleMarkerSpacing(x,y,z,k);
+ assert(sp(0,1,0)<.5&&sp(0,-1,0)>2,'ahead close-set, behind wide');close(sp(0,1,0)*sp(0,-1,0),1,1e-9);
+ assert(Math.abs(sp(0,.05,0)-1)<.06&&Math.abs(sp(0,.2,0)-1)<.2&&Math.abs(sp(0,4,0)-1)<.01&&Math.abs(sp(1,0,0)-1)<1e-9,'even at the hull, far away and at the sides');
+ let peak=0,at=0;for(let y=.05;y<3;y+=.05){const d=Math.abs(Math.log(sp(0,y,0)));if(d>peak){peak=d;at=y;}}assert(at>.7&&at<1.4,`largest change at the wall (y=${at})`);
+ for(const [x,y,z] of [[.3,.9,.1],[0,1.2,.5],[.2,-.8,-.3]])close(bubbleThetaDisplay(x,y,z),Math.max(-1,Math.min(1,bubbleMetric(x,y,z,1).expansion/.95)),1e-12);}
+const riverSrc=readFileSync(new URL('../src/river.js',import.meta.url),'utf8');
+assert(riverSrc.includes('return clamp(rdf * (rn > 1e-6 ? dot(q, uBubbleAxis.xyz) / rn : 0.0) / 0.95, -1.0, 1.0);')&&riverSrc.includes('float bubbleSpacing(vec3 p) { return exp(uBubbleMarks.y * bubbleTheta(p)); }'),'GLSL mirrors the marker spacing');
 // Display slow motion: one uniform factor, never faster than the model,
 // and a stream of 0.3 to 1.2 radii per second at any superluminal speed.
 assert.equal(warpDisplayRate(0,100),1);assert.equal(warpDisplayRate(1e-3,100),1);

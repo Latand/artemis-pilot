@@ -142,7 +142,7 @@ const uniformsShared = {
     uBubble: { value: new THREE.Vector4(0, 0, 0, 1) },
     uBubbleAxis: { value: new THREE.Vector4(0, 1, 0, 0) },
     uBubbleShape: { value: new THREE.Vector4(1.8, 1, 0, 0) },
-    uBubbleTrail: { value: new THREE.Vector2(.8, 1) },
+    uBubbleMarks: { value: new THREE.Vector2(0, 0) },
 };
 
 const FLOW_GLSL = /* glsl */`
@@ -181,6 +181,23 @@ vec3 bubbleShift(vec3 p) {
     float f = (tanhSafe(s * (rn + 1.0)) - tanhSafe(s * (rn - 1.0))) / (2.0 * tanhSafe(s));
     return uBubbleAxis.xyz * (uBubbleAxis.w * (f - uBubbleShape.y));
 }
+// Marker spacing (display mapping of theta). uBubbleMarks.x: marker speed per
+// unit uDtSim at unit spacing; y: spacing contrast kappa.
+uniform vec2 uBubbleMarks;
+// Expansion of Eulerian volumes, theta = div X (Alcubierre eq. 12), divided
+// by its peak (0.95 v_s/R at r = R on the axis): < 0 where space contracts
+// (front), > 0 where it expands (rear), near 0 beside the hull and far away.
+float bubbleTheta(vec3 p) {
+    if (uBubbleAxis.w <= 0.0) return 0.0;
+    vec3 q = (p - uBubble.xyz) / uBubble.w;
+    float rn = length(q), s = uBubbleShape.x;
+    float ta = tanhSafe(s * (rn + 1.0)), tb = tanhSafe(s * (rn - 1.0));
+    float rdf = s * (tb * tb - ta * ta) / (2.0 * tanhSafe(s));
+    return clamp(rdf * (rn > 1e-6 ? dot(q, uBubbleAxis.xyz) / rn : 0.0) / 0.95, -1.0, 1.0);
+}
+// An evenly spaced row of markers carried at the local theta bunches where
+// space contracts and spreads where it expands.
+float bubbleSpacing(vec3 p) { return exp(uBubbleMarks.y * bubbleTheta(p)); }
 float sourceCore(float sink, float isHole) {
     // Tiny holes get a display core so their local flow direction stays visible.
     float visualBH = min(max(uRadius * 0.0008, 0.45), 64.0);
@@ -278,6 +295,15 @@ void main() {
     }
     vec3 v = flowField(p);
     vec3 stp = v * uDtSim;
+    // Warp presentation: markers travel along the drawn direction at a speed
+    // proportional to their theta spacing, so a steady row keeps its count
+    // while it slows and bunches ahead and speeds up and spreads behind.
+    float markView = uBubbleAxis.w > 0.0 && !halo ? uBubbleShape.z : 0.0;
+    if (markView > 0.0) {
+        float vl = length(v);
+        vec3 markDir = vl > 1e-30 ? v / vl : -uBubbleAxis.xyz;
+        stp = mix(stp, markDir * (uBubbleMarks.x * bubbleSpacing(p) * uDtSim), markView);
+    }
     float sl = length(stp);
     float cap = uRadius * 0.05;
     if (sl > cap) stp *= cap / sl;
@@ -314,11 +340,6 @@ void main() {
     // instead of lingering as a wake where the well used to be
     if (halo && distance(p, uBody[own].xyz) > spawnReach(own) * 1.25) kill = true;
     if (hash13(vec3(vUv * 913.7, uTick)) < 0.002) kill = true;
-    // Ship chart: samples that drift into the calm interior stall there for
-    // a residence time ~1/(1 - f). Recycle them sooner, so the sample budget
-    // keeps resolving the walls and the stream; these are field samples.
-    if (!halo && uBubbleAxis.w > 0.0 && uBubbleShape.y > 0.5 &&
-        length(p - uBubble.xyz) < uBubble.w * 0.6 && hash13(vec3(vUv * 557.3, uTick + 4.1)) < 0.05) kill = true;
     if (kill) {
         float h1 = hash13(vec3(vUv * 127.1, uTick + 0.17));
         float h2 = hash13(vec3(vUv * 311.7, uTick + 1.31));
@@ -356,11 +377,10 @@ uniform sampler2D uPos;
 uniform float uVRef, uOpacity, uPhase, uStyle, uPixelRatio;
 uniform vec3 uCam, uCenterShift;
 uniform int uSegs;
-uniform vec2 uBubbleTrail; // warp: x trail time (s of display time), y display rate
 attribute vec2 ref;
 attribute float aSeg;
 varying vec3 vColor;
-varying float vAlong, vPhase, vBead;
+varying float vAlong, vPhase, vBead, vSpacing;
 ${FLOW_GLSL}
 ${BLACK_HOLE_SINK_GLSL}
 void main() {
@@ -537,12 +557,10 @@ void main() {
     vec3 cur = p;
     vec3 dir = vDir;
     float stepLen = L / float(uSegs);
-    // Warp: each streak becomes the marker's own path over the last
-    // uBubbleTrail.x seconds of display time (steps scale with the local
-    // speed), so beads at fixed time lags ride with it, bunch where space
-    // slows into the front and spread where it speeds up behind.
-    float trailDt = uBubbleTrail.x * uBubbleTrail.y / float(uSegs);
-    float stepNow = mix(stepLen, min(spd * trailDt, uBubble.w * 0.6), bubbleView);
+    // Warp: each streak becomes a rigid row of four markers trailing its
+    // head along the drawn direction, spaced 0.1 R times the local theta
+    // spacing: close-set ahead, wide behind, even beside the hull.
+    float stepNow = mix(stepLen, 0.4 * uBubble.w * bubbleSpacing(p) / float(uSegs), bubbleView);
     for (int s = 0; s < 2; s++) {
         if (s >= segIdx || uStyle == 2.0) break;
         cur -= dir * stepNow;
@@ -550,7 +568,6 @@ void main() {
             vec3 vv = flowField(cur);
             float vvLen = length(vv);
             if (vvLen > 1e-9) dir = vv / vvLen;
-            stepNow = mix(stepLen, min(vvLen * trailDt, uBubble.w * 0.6), bubbleView);
         }
     }
     vec3 pos = uStyle < 0.5 ? p - vDir * L * float(segIdx) / float(uSegs) : cur;
@@ -585,7 +602,7 @@ void main() {
     fieldColor = mix(fieldColor, cHole, holeInk);
     // comet-tail fade: bright head, nonlinear falloff to a faint tail (a
     // steeper, smoother gradient than the old linear head/tail mix)
-    float cometFade = mix(0.94, 0.08, pow(segT, 0.8));
+    float cometFade = mix(mix(0.94, 0.08, pow(segT, 0.8)), 0.95 - 0.4 * segT, bubbleView);
     // contracting space reads brighter; stretched strokes carry a little
     // less ink per length
     vColor = fieldColor * fade * fieldInk * (1.0 + bubbleSqueeze * 1.6 - bubbleStretch * 0.15) * (1.0 + localInk * mix(1.7, 1.0, uLocalFocus) + uLocalFocus * 0.4) * mix(0.85, 1.24, tVis) * cometFade * uOpacity * mix(1.0, 0.74, uLoadShed) * mix(0.46, 1.0, visibleTime) * pulse;
@@ -601,7 +618,7 @@ void main() {
     }
     // Warp presentation: lines carry ink where the model's wall is, so the
     // uniform far stream and the calm hull region recede behind it.
-    vColor *= mix(1.0, (0.28 + bubbleWall) * 2.2, bubbleView);
+    vColor *= mix(1.0, (0.45 + bubbleWall) * 1.9, bubbleView);
     // Sampling density changes presentation, not the field or advection.
     // Ambient tracers remain unchanged. Apply once after every style gain so
     // lines and dots receive identical owner-aware compensation.
@@ -609,6 +626,7 @@ void main() {
     vAlong = segT;
     vPhase = ph + uPhase * kq;
     vBead = bubbleView;
+    vSpacing = bubbleView > 0.0 ? bubbleSpacing(p) : 1.0;
     gl_PointSize = (2.2 + tVis * 1.6) * uPixelRatio;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
@@ -616,23 +634,25 @@ void main() {
 const LINE_FRAG = /* glsl */`
 uniform float uStyle;
 varying vec3 vColor;
-varying float vAlong, vPhase, vBead;
+varying float vAlong, vPhase, vBead, vSpacing;
 void main() {
     float ink = 1.0;
     if (uStyle > 2.5 && uStyle < 3.5) {
         float wave = fract(vPhase + vAlong * 1.5);
         ink = 0.10 + 0.90 * smoothstep(0.30, 0.42, wave) * (1.0 - smoothstep(0.64, 0.78, wave));
     }
-    // Warp: four beads at fixed time lags along the marker's path; they move
-    // with the marker, so their spacing shows the local stream speed.
+    // Warp: the row's markers. Each marker keeps one length along the row
+    // (its share of the period shrinks as the theta spacing widens), so only
+    // the gaps carry the spacing: close-set beads ahead, sparse dots behind.
     vec3 col = vColor;
     if (vBead > 0.0) {
-        float lag = fract(vAlong * 4.0);
-        ink = mix(ink, 0.14 + 0.86 * (1.0 - smoothstep(0.18, 0.5, lag)), vBead);
-        // keep the warp hue: cap the brightest channel after the bead gain,
-        // so the additive style gain cannot clip cyan and magenta to white
-        col *= ink;
-        col *= mix(1.0, min(1.0, 1.0 / max(max(col.r, col.g), max(col.b, 1e-6))), vBead);
+        float lag = fract(vAlong * 4.0), sp = max(vSpacing, 0.2);
+        float bead = 1.0 - smoothstep(min(0.07 / sp, 0.25), min(0.2 / sp, 0.55), lag);
+        // keep the warp hue: cap the brightest channel, so the additive style
+        // gain cannot clip cyan and magenta to white; the thread joining a
+        // row's markers stays faint at any ink
+        vec3 capped = col * min(1.0, 1.0 / max(max(col.r, col.g), max(col.b, 1e-6)));
+        col = mix(col * ink, capped * mix(0.1, 1.0, bead), vBead);
         ink = 1.0;
     }
     gl_FragColor = vec4(col * ink, 1.0);
@@ -1113,7 +1133,7 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     if (respawn < 1) respawn = dtSim === 0 && !viewChanged ? 0 : Math.min(.18, respawn + localFocus * .075);
     // A steady stream empties its fast regions (tracer density ~ 1/speed);
     // a modest sampling refresh keeps the walls and the stream resolved.
-    if (respawn < 1 && dtSim !== 0) respawn = Math.max(respawn, .015 * warpView);
+    if (respawn < 1 && dtSim !== 0) respawn = Math.max(respawn, .004 * warpView);
     if (respawn < 1) respawn = Math.max(respawn, growthRespawn);
     river.respawn = respawn;
     river.radius = smoothR;
@@ -1384,7 +1404,12 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // drawn stream (v_s times the chart weight) stays within its designed
     // 0.3-1.2 R/s and below the compute pass's per-step cap at any frame rate.
     const displayRate = bubbleAnchored && bubbleSpeed > 0 ? warpDisplayRate(bubble.speed, bubble.radius / K) : 1;
-    uniformsShared.uBubbleTrail.value.y = displayRate;
+    // Marker transport: base speed (0.25-0.6 R/s of display time, rising with
+    // the coordinate speed) per unit uDtSim, and the spacing contrast.
+    const markRegime = warpRegime(bubble.speed);
+    uniformsShared.uBubbleMarks.value.set(
+        bubbleAnchored && bubbleSpeed > 0 && displayRate > 0 ? (.25 + .35 * markRegime) * bubble.radius / displayRate : 0,
+        Math.log(3.5) * (.35 + .65 * markRegime));
     const dtVis = Number.isFinite(dtSim) ? dtSim * displayRate : 0;
     river.displayRate = displayRate;
     river.dtVis = dtVis;

@@ -2,8 +2,10 @@
 // shared gravity river. Every speed change comes from real controls (the
 // Warp button, X throttle, held Shift+W, A, S). Each frame advances exactly
 // 1/30 s of simulation and is encoded at 30 fps. Playback is real time; it
-// measures no frame rate. Optional sky layers are off to keep the software
-// renderer tractable; the river, ship, stars and HUD readout are production.
+// measures no frame rate. Frames are doubled pixel-for-pixel before encoding so
+// the one-pixel markers keep their hue through 4:2:0 chroma subsampling.
+// Optional sky layers are off to keep the software renderer tractable; the
+// river, ship, stars and HUD readout are production.
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
 import { mkdirSync,writeFileSync,existsSync } from 'node:fs';
@@ -39,8 +41,8 @@ try{
   #rec b{color:#fff;font-size:15px}`});
  await page.evaluate(()=>{const b=document.createElement('div');b.id='rec';document.body.appendChild(b);});
  const caption=()=>page.evaluate(async()=>{const {WARP}=await import('/src/warpBubble.js');const k=[...window.__keys].filter(c=>/Key[WASDX]|Shift/.test(c)).map(c=>c.replace('Key','').replace('Left','')).join('+')||'—';
-  document.getElementById('rec').innerHTML='<b>ARTEMIS · warp sandbox through the gravity river</b>\nHypothetical Alcubierre shift field · no engine demonstrated\nCyan: space contracts ahead · magenta: expands behind · calm hull\nKeys held: '+k+' · mode: '+(WARP.enabled?WARP.phase:'local flight')+'\nFrame-rendered 30 fps (1/30 s per frame) · FPS unmeasured';});
- const video=spawn('ffmpeg',['-y','-loglevel','error','-f','image2pipe','-vcodec','mjpeg','-framerate','30','-i','pipe:0','-an','-c:v','libx264','-preset','fast','-crf','20','-pix_fmt','yuv420p','-movflags','+faststart',`${out}/warp-river.mp4`]);
+  document.getElementById('rec').innerHTML='<b>ARTEMIS · warp sandbox through the gravity river</b>\nHypothetical Alcubierre shift field · no engine demonstrated\nMarkers bunch ahead (contraction) · spread behind (expansion) · calm hull\nKeys held: '+k+' · mode: '+(WARP.enabled?WARP.phase:'local flight')+'\nFrame-rendered 30 fps (1/30 s per frame) · FPS unmeasured';});
+ const video=spawn('ffmpeg',['-y','-loglevel','error','-f','image2pipe','-vcodec','mjpeg','-framerate','30','-i','pipe:0','-an','-vf','scale=iw*2:ih*2:flags=neighbor','-c:v','libx264','-preset','fast','-crf','20','-pix_fmt','yuv420p','-movflags','+faststart',`${out}/warp-river.mp4`]);
  let fferr='';video.stderr.on('data',d=>fferr+=d);const finished=once(video,'close');
  const stills={0:'00-local-lines',70:'01-local-lines-before-warp',165:'02-ramp-subluminal',320:'04-high-superluminal',375:'05-turn',455:'06-system-view',535:'07-close-again',620:'08-braking',700:'09-braking-late',850:'10-after-stop'};
  let crossed=false;
