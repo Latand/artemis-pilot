@@ -86,7 +86,8 @@ try{
  const gpu=await page.evaluate(async()=>(await import('/src/river.js')).riverDebugReadPositions(4));check(gpu.finite&&gpu.distinct>8,'GPU particle state stays finite and populated');
  check(cruise.every(f=>f.river.chart===1&&f.river.presentation===f.river.view&&f.river.view===f.river.presence*f.river.chart),'close view draws the ship chart at full presentation');
  // Marker transport (GPU state, two computes apart): markers stream back
- // along the axis, slow through the front wall and nearly rest at the hull.
+ // along the axis, slow through the front wall, move evenly beside the hull
+ // and speed up through the rear wall (theta spacing).
  const pos=async()=>page.evaluate(async()=>{const g=(await import('/src/river.js')).riverDebugBubbleSamples(true);return {p:g.positions,axis:g.axis.slice(0,3),R:g.bubbleRadius};});
  // Three pairs a few frames apart, so the small hull bin holds enough samples.
  const bins={far:[],wall:[],rear:[],hull:[]};let streamBack=0,moved=0;
