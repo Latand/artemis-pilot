@@ -560,7 +560,8 @@ void main() {
     // Warp: each streak becomes a rigid row of four markers trailing its
     // head along the drawn direction, spaced 0.1 R times the local theta
     // spacing: close-set ahead, wide behind, even beside the hull.
-    float stepNow = mix(stepLen, 0.4 * uBubble.w * bubbleSpacing(p) / float(uSegs), bubbleView);
+    float markSpacing = bubbleView > 0.0 ? bubbleSpacing(p) : 1.0;
+    float stepNow = mix(stepLen, 0.4 * uBubble.w * markSpacing / float(uSegs), bubbleView);
     for (int s = 0; s < 2; s++) {
         if (s >= segIdx || uStyle == 2.0) break;
         cur -= dir * stepNow;
@@ -626,7 +627,7 @@ void main() {
     vAlong = segT;
     vPhase = ph + uPhase * kq;
     vBead = bubbleView;
-    vSpacing = bubbleView > 0.0 ? bubbleSpacing(p) : 1.0;
+    vSpacing = markSpacing;
     gl_PointSize = (2.2 + tVis * 1.6) * uPixelRatio;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }`;
@@ -1131,9 +1132,6 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
         }
     }
     if (respawn < 1) respawn = dtSim === 0 && !viewChanged ? 0 : Math.min(.18, respawn + localFocus * .075);
-    // A steady stream empties its fast regions (tracer density ~ 1/speed);
-    // a modest sampling refresh keeps the walls and the stream resolved.
-    if (respawn < 1 && dtSim !== 0) respawn = Math.max(respawn, .004 * warpView);
     if (respawn < 1) respawn = Math.max(respawn, growthRespawn);
     river.respawn = respawn;
     river.radius = smoothR;
@@ -1402,7 +1400,9 @@ export function updateRiver(dtSim, fB, earthV, moonV, sunPosV, plPos, dtReal = 0
     // Ship chart in warp: one uniform slow-motion factor for the whole field.
     // The whole field replays in the same slow motion at every zoom, so the
     // drawn stream (v_s times the chart weight) stays within its designed
-    // 0.3-1.2 R/s and below the compute pass's per-step cap at any frame rate.
+    // 0.3-1.2 R/s. Marker transport peaks near 2 R/s in the rear wall (0.6 R/s
+    // times spacing 3.5); the compute pass's per-step cap (0.05 of the volume
+    // radius) slows those markers only below about 20 compute steps a second.
     const displayRate = bubbleAnchored && bubbleSpeed > 0 ? warpDisplayRate(bubble.speed, bubble.radius / K) : 1;
     // Marker transport: base speed (0.25-0.6 R/s of display time, rising with
     // the coordinate speed) per unit uDtSim, and the spacing contrast.

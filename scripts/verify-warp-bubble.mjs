@@ -88,14 +88,15 @@ try{
  // Marker transport (GPU state, two computes apart): markers stream back
  // along the axis, slow through the front wall and nearly rest at the hull.
  const pos=async()=>page.evaluate(async()=>{const g=(await import('/src/river.js')).riverDebugBubbleSamples(true);return {p:g.positions,axis:g.axis.slice(0,3),R:g.bubbleRadius};});
- const a0=await pos();await frames(2);const a1=await pos();
- const ax=a0.axis,bins={far:[],wall:[],rear:[],hull:[]};let streamBack=0,moved=0;
+ // Three pairs a few frames apart, so the small hull bin holds enough samples.
+ const bins={far:[],wall:[],rear:[],hull:[]};let streamBack=0,moved=0;
+ for(let k=0;k<3;k++){if(k)await frames(5);const a0=await pos();await frames(2);const a1=await pos();const ax=a0.axis;
  for(let i=0;i<a0.p.length;i++){const p=a0.p[i],q=a1.p[i];if(!p||!q)continue;const d=[q[0]-p[0],q[1]-p[1],q[2]-p[2]],dl=Math.hypot(...d);if(dl>.4)continue;
   const r=Math.hypot(...p),along=(p[0]*ax[0]+p[1]*ax[1]+p[2]*ax[2]);if(dl>1e-6){moved++;if(d[0]*ax[0]+d[1]*ax[1]+d[2]*ax[2]<0)streamBack++;}
-  if(r>1.8&&r<2.3)bins.far.push(dl);else if(along>.5*r&&r>.7&&r<1.3)bins.wall.push(dl);else if(along<-.5*r&&r>.7&&r<1.3)bins.rear.push(dl);else if(r<.5)bins.hull.push(dl);}
+  if(r>1.8&&r<2.3)bins.far.push(dl);else if(along>.5*r&&r>.7&&r<1.3)bins.wall.push(dl);else if(along<-.5*r&&r>.7&&r<1.3)bins.rear.push(dl);else if(r<.5)bins.hull.push(dl);}}
  const med=a=>{const b=[...a].sort((x,y)=>x-y);return b[b.length>>1]||0;};
  report.markerTransport={far:med(bins.far),front:med(bins.wall),rear:med(bins.rear),hull:med(bins.hull),counts:{far:bins.far.length,front:bins.wall.length,rear:bins.rear.length,hull:bins.hull.length},backFraction:streamBack/Math.max(1,moved)};
- check(bins.far.length>5&&bins.wall.length>5&&bins.rear.length>3&&bins.hull.length>2,'marker bins are populated');
+ check(bins.far.length>100&&bins.wall.length>30&&bins.rear.length>10&&bins.hull.length>5,'marker bins are populated');
  check(streamBack/Math.max(1,moved)>.9,'markers stream back past the hull (ship chart)');
  check(med(bins.wall)<.75*med(bins.hull)&&med(bins.rear)>1.35*med(bins.hull),'markers slow ahead and speed up behind (theta spacing)');
  check(med(bins.hull)>.6*med(bins.far)&&med(bins.hull)<1.6*med(bins.far),'beside the hull markers move evenly (calm, no stall)');
