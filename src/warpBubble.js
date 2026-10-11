@@ -39,11 +39,13 @@ export function warpRegime(speed) {
 }
 // Seconds of model time the river plays per second of sim time. One uniform
 // factor (≤ 1) keeps every direction and speed ratio of the flow while the
-// stream past the ship stays legible: it grows from ~0.5 to ~2.6 bubble radii
-// per second as the coordinate speed rises through 18 decades.
+// stream past the ship stays slow enough to follow single markers: it grows
+// from ~0.3 to ~1.2 bubble radii per second as the coordinate speed rises
+// through 18 decades.
+export const WARP_STREAM_MIN = .3, WARP_STREAM_GAIN = .9;
 export function warpDisplayRate(speed, radiusKm) {
     if (!(speed > 0) || !(radiusKm > 0)) return 1;
-    return Math.min(1, (.5 + 2.1 * warpRegime(speed)) * radiusKm / speed);
+    return Math.min(1, (WARP_STREAM_MIN + WARP_STREAM_GAIN * warpRegime(speed)) * radiusKm / speed);
 }
 export function createWarpState() {
     return { enabled:false, logSpeed:0, rate:0, speed:0, meanSpeed:0,

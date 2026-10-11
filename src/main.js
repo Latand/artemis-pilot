@@ -11,7 +11,7 @@ import { initForeignStarField, updateForeignStarField, foreignCameraStars } from
 import { presentationExposureSeconds } from './render/orbitalExposureMath.js';
 import { updateVisibleTrajectories, hideVisibleTrajectories } from './render/visibleTrajectories.js';
 import { updateOrbitalExposure, hideOrbitalExposure, applyOrbitalExposureMarkers } from './render/orbitalExposure.js';
-import { initShipVisuals, updateShipVisuals, shipVisuals } from "./shipVisuals.js";
+import { initShipVisuals, updateShipVisuals, shipVisuals, BUBBLE_VIEW_RADIUS } from "./shipVisuals.js";
 import { initRiverStyles } from "./riverStyles.js";
 import { updateGravityInspector } from "./gravityInspector.js";
 import { updateLargeScaleFlow } from "./render/largeScaleFlow.js";
@@ -1417,12 +1417,21 @@ const minorOortStep = { start: 0, count: 0, nextIdx: 0 };
 let beltCursor = 0, kuiperCursor = 0;
 const arrC = [0, 0, 0];
 const fv = [0, 0, 0];
-const WARP_HULL_VIEW = .042;
+const WARP_HULL_VIEW = .042, WARP_HULL_MAX = 2.4;
+// Closest camera distance float64 scene coordinates allow far from home.
+let warpCamFloor = 0;
+// The warp hull keeps one readable screen size while the camera rides close
+// and stops growing at the same 2.4-unit bound as ordinary flight (or at the
+// size that stays readable from the precision floor). Zoomed out to a system
+// view it then shrinks below a few pixels and hands over to the marker.
+function warpHullCap() { return Math.max(WARP_HULL_MAX, warpCamFloor * WARP_HULL_VIEW); }
 // Grows smoothly with the bubble's presence, so enabling warp keeps the hull steady.
 function warpHullScale(dist, normal) {
     const blend = WARP.enabled ? shipVisuals.bubble.presence : 0;
-    return normal + (Math.max(.012, dist * WARP_HULL_VIEW) - normal) * blend;
+    return normal + (Math.min(warpHullCap(), Math.max(.012, dist * WARP_HULL_VIEW)) - normal) * blend;
 }
+// R follows the drawn hull, so it shares the hull's bound.
+function warpRadiusCap() { return warpHullCap() * BUBBLE_VIEW_RADIUS / WARP_HULL_VIEW; }
 let placed = false, frameNo = 0, grB = 0, hudReady = false, nearLabelsReady = false, nearVisualReady = false;
 let hudLastFocus, hudLastMode, hudLastWarp, hudLastPaused;
 const DIR_FADE_START_KMS = 55, DIR_FADE_END_KMS = 90;
@@ -2130,7 +2139,8 @@ function frameStep() {
         cam.dist += (goal - cam.dist) * Math.min(1, dtR * 4);
         if (Math.abs(goal - cam.dist) <= goal * .02) { cam.dist = goal; cam.distTarget = null; }
     }
-    cam.dist = Math.max(minD, WARP.enabled ? Math.max(Math.abs(oriX),Math.abs(oriY),Math.abs(oriZ))*Number.EPSILON*128 : 0, cam.dist);
+    warpCamFloor = WARP.enabled ? Math.max(Math.abs(oriX),Math.abs(oriY),Math.abs(oriZ))*Number.EPSILON*128 : 0;
+    cam.dist = Math.max(minD, warpCamFloor, cam.dist);
     updateScenarioCamera();
     const cabinActive = updateCabinHUD(cosmicView, oi);
     const hudEvery = hudCadence(cabinActive, aMag);
@@ -2349,7 +2359,7 @@ function frameStep() {
         updateShells(0, 0);
         const cosmicShipD = camera.position.distanceTo(shipG.position);
         const warpScale = warpHullScale(cosmicShipD, Math.min(2.4, Math.max(.012, cosmicShipD * .02)));
-        updateShipVisuals(craft, shipG.position, dirV, warpScale, 0, rawDtR, G.paused, shipG.visible, cam.dist);
+        updateShipVisuals(craft, shipG.position, dirV, warpScale, 0, rawDtR, G.paused, shipG.visible, cam.dist, warpRadiusCap());
         const cosmicSpeed = Math.hypot(G.vx, G.vy, G.vz);
         const cosmicCd = camera.position.distanceTo(shipG.position);
         updateCosmologyVectors(oriX, oriY, oriZ, earthX, earthZ, cosmicCd, G.uiMode === "observe" ? 0 : 1);
@@ -2419,7 +2429,7 @@ function frameStep() {
     craft.scale.setScalar(cs);
     // R follows the orbit distance, which is steady while the camera glides
     // back to the hull after a focus change (cd is not).
-    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible, cam.dist);
+    updateShipVisuals(craft, shipG.position, dirV, cs, G.dead || G.landed ? 0 : shipSpeed, rawDtR, G.paused, shipG.visible, cam.dist, warpRadiusCap());
     const shipView = shipPresentation(cd, cs, camera.fov, viewportSize.h);
     craft.visible = shipView.hullAlpha > .001;
     for (const material of craft.userData.fadeMaterials) {
@@ -2531,7 +2541,10 @@ function frameStep() {
     velV.set(G.vx, G.vz, -G.vy);
     const sp = shipSpeed;
     let kVLoc = sp;
-    if (directionVisualActive && sp > 1e-9 && !G.dead && !cosmicView && !cabinActive) {
+    // In warp these show the rest-frame field at the hull, which changes every
+    // frame at superluminal speed; the river already draws the ship-chart flow.
+    const warpHidesVectors = WARP.enabled && shipVisuals.bubble.presence > .05;
+    if (directionVisualActive && !warpHidesVectors && sp > 1e-9 && !G.dead && !cosmicView && !cabinActive) {
         const dMo = oi.rM * K;
         const qLoc = fRiver * (1 - smooth01(14, 56, dMo));
         const lvx = G.vx - qLoc * _m.vmx, lvy = G.vy - qLoc * _m.vmy, lvz = G.vz;
