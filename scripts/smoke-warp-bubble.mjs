@@ -32,14 +32,14 @@ for(const r of [.2,.7,1,1.5]){
  close(bubbleComovingFlow(r,1)-bubbleComovingFlow(r,0),-1);
 }
 // Display slow motion: one uniform factor, never faster than the model,
-// and a stream of 0.5 to 2.6 radii per second at any superluminal speed.
+// and a stream of 0.3 to 1.2 radii per second at any superluminal speed.
 assert.equal(warpDisplayRate(0,100),1);assert.equal(warpDisplayRate(1e-3,100),1);
 let lastRate=1,lastStream=0;
 for(let e=-2;e<=Math.log10(WARP_C*WARP_MAX_C);e+=.5){
  const v=10**e,R=200,rate=warpDisplayRate(v,R),stream=rate*v/R;
  assert(rate>0&&rate<=1&&Number.isFinite(rate));assert(rate<=lastRate+1e-15,'slow-motion factor never rises with speed');
  assert(stream>=lastStream-1e-9,'displayed stream never slows as speed rises');
- if(v*rate>.5*R*1.0001)assert(stream>=.5&&stream<=2.61);
+ if(v*rate>.3*R*1.0001)assert(stream>=.3&&stream<=1.21);
  lastRate=rate;lastStream=stream;
 }
 close(warpRegime(WARP_C*WARP_MAX_C),1);assert.equal(warpRegime(0),0);
