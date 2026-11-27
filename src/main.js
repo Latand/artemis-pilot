@@ -1773,8 +1773,13 @@ function frame() {
         if (scheduled && renderSubmissionSerial !== beforeRender) renderFrameGate.submitted(performance.now());
     } catch (error) {
         if (renderContext.isLost()) return;
-        if (!window.__AP_FIRST_FRAME) {
-            window.dispatchEvent(new CustomEvent("artemis:startup-error", { detail: error }));
+        // Diagnostics must never replace the original render error, including
+        // when the deterministic frame entry is exercised outside the browser.
+        if (typeof window !== "undefined" && !window.__AP_FIRST_FRAME &&
+            typeof window.CustomEvent === "function") {
+            try {
+                window.dispatchEvent(new window.CustomEvent("artemis:startup-error", { detail: error }));
+            } catch { /* Preserve the original render error below. */ }
         }
         throw error;
     }

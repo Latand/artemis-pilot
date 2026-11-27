@@ -58,7 +58,7 @@ function elementText(source, id) {
 
 const head = section("<head>", "</head>", "Head");
 const help = section('<div id="help">', '<div id="hint">', "Help");
-const intro = section('<div id="intro">', '<script>try', "Intro");
+const intro = section('<div id="intro">', '<!-- End intro -->', "Intro");
 const introLore = elementText(intro, "introLore");
 const brandedTitle = "Artemis — Live Universe Simulator";
 const antithesisPattern = /\bnot\b.{0,80}\b(?:but|rather)\b|\bisn['’]t\b.{0,80}\b(?:but|it['’]s)\b|,\s*not\b|\bmore\s+[a-z-]+(?:\s+[a-z-]+){0,3}\s+than\s+[a-z-]+|\brather than\b/is;

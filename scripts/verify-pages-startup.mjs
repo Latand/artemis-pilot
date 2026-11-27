@@ -17,7 +17,7 @@ const browser = await chromium.launch({
     args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
 });
 try {
-    for (const name of ['fresh', 'returning', 'recover-saved', 'no-webgl', 'no-msaa', 'missing-entry', 'missing-app']) {
+    for (const name of ['fresh', 'returning', 'recover-saved', 'no-webgl', 'no-msaa', 'first-render-error', 'missing-entry', 'missing-app']) {
         const context = await browser.newContext();
         try {
             const page = await context.newPage();
@@ -84,6 +84,22 @@ try {
                 assert.equal(await page.locator('#startupSafe').getAttribute('href'), '?safestart=1&quality=minimal');
             } else {
                 await page.waitForFunction(() => window.__AP_READY === true);
+                if (name === 'first-render-error') {
+                    const marker = 'Injected first-render failure';
+                    await page.evaluate(marker => {
+                        const fail = () => { throw new Error(marker); };
+                        WebGL2RenderingContext.prototype.drawArrays = fail;
+                        WebGL2RenderingContext.prototype.drawElements = fail;
+                    }, marker);
+                    await page.locator('#introEnter').click();
+                    await page.waitForFunction(() => document.getElementById('startupActions').hidden === false);
+                    assert.match(await page.locator('#startupMessage').textContent(), /could not start/);
+                    assert.equal(await page.evaluate(() => Boolean(window.__AP_FIRST_FRAME)), false);
+                    assert.equal(await page.locator('#introEnter').isDisabled(), true);
+                    assert(errors.includes(marker), 'the original WebGL draw error is still reported');
+                    console.log('PASS Pages startup:', name);
+                    continue;
+                }
                 if (name === 'no-msaa') {
                     assert.equal(await page.locator('#gl canvas').evaluate(canvas =>
                         canvas.getContext('webgl2').getContextAttributes().antialias), false);
