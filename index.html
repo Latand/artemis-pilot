@@ -21,10 +21,15 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='42' cy='28' r='8' fill='%238b95a3'/%3E%3Cpath d='M7 52 C 24 51, 54 43, 59 18' stroke='%23ff4226' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Orbitron:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Orbitron:wght@600;700;800&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
   <link rel="stylesheet" href="/src/style.css" />
   <link rel="stylesheet" href="/src/explorerUI.css" />
   <style>
+    #startupNotice { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%);
+      z-index: 2000; width: min(540px, calc(100vw - 32px)); box-sizing: border-box;
+      padding: 14px 18px; border: 1px solid #70818c; border-radius: 10px;
+      color: #eff4f8; background: #0b141f; font: 14px/1.45 system-ui, sans-serif; }
+    #startupNotice a { display: inline-block; margin: 6px 16px 0 0; color: #a1eaff; }
     #cinePanel { position: absolute; right: 18px; top: 166px; width: 260px; display: none; z-index: 7; padding: 12px; }
     #cinePanel .cineGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
     #cinePanel .cineWide { grid-column: 1 / -1; }
@@ -481,13 +486,88 @@
           Press H for the physics models and their limits, or switch to Pilot to fly the spacecraft.
         </div>
         <div id="introBtns">
-          <button id="introEnter" class="uiBtn uiBtnHot">ENTER SIMULATION</button>
-          <button id="introSims" class="uiBtn">TRAVEL SIMULATIONS</button>
+          <button id="introEnter" class="uiBtn uiBtnHot" disabled>ENTER SIMULATION</button>
+          <button id="introSims" class="uiBtn" disabled>TRAVEL SIMULATIONS</button>
         </div>
       </div>
     </div>
-    <script>try { if (localStorage.getItem("ap_introSeen")) document.getElementById("intro").style.display = "none"; } catch (e) { }</script>
+    <!-- End intro -->
+
   </div>
-  <script type="module" src="/src/main.js"></script>
+  <aside id="startupNotice" aria-label="Simulation startup">
+    <div id="startupMessage" role="status">Loading the simulation…</div>
+    <div id="startupActions" hidden>
+      <a id="startupRetry" href="">Reload page</a>
+      <a id="startupSafe" href="?safestart=1&amp;quality=minimal">Start with minimal graphics</a>
+    </div>
+    <noscript>Artemis requires JavaScript and WebGL.</noscript>
+  </aside>
+  <script>
+    (() => {
+      const notice = document.getElementById("startupNotice");
+      const message = document.getElementById("startupMessage");
+      const actions = document.getElementById("startupActions");
+      const intro = document.getElementById("intro");
+      const enter = document.getElementById("introEnter");
+      const sims = document.getElementById("introSims");
+      const safe = new URLSearchParams(location.search).get("safestart") === "1";
+      let timer;
+      let failed = false;
+      let ready = false;
+      document.getElementById("startupRetry").href = location.href;
+      document.getElementById("startupSafe").hidden = safe;
+      try { if (!safe && localStorage.getItem("ap_introSeen")) intro.style.display = "none"; } catch {}
+      function show(text, offerRecovery = false) {
+        notice.hidden = false;
+        message.textContent = text;
+        actions.hidden = !offerRecovery;
+      }
+      function arm(text) {
+        clearTimeout(timer);
+        timer = setTimeout(() => show(text, true), 12000);
+      }
+      function firstFrame() {
+        clearTimeout(timer);
+        notice.hidden = true;
+      }
+      function awaitingFirstFrame() {
+        if (!ready || failed || window.__AP_FIRST_FRAME) return;
+        show("Preparing the first frame…");
+        arm("The first frame is taking longer than expected. You can wait or try minimal graphics.");
+      }
+      window.addEventListener("artemis:startup-ready", () => {
+        if (failed) return;
+        ready = true;
+        clearTimeout(timer);
+        enter.disabled = sims.disabled = false;
+        notice.hidden = true;
+        if (intro.style.display === "none") awaitingFirstFrame();
+      }, { once: true });
+      window.addEventListener("artemis:first-frame", firstFrame, { once: true });
+      const fail = error => {
+        if (failed || window.__AP_FIRST_FRAME) return;
+        failed = true;
+        clearTimeout(timer);
+        enter.disabled = sims.disabled = true;
+        const graphics = /webgl context/i.test(String(error && error.message || error || ""));
+        show(graphics
+          ? "WebGL could not start. Check that hardware acceleration and WebGL are enabled, or try another browser."
+          : "The simulation could not start. Reload the page or try minimal graphics.", true);
+      };
+      window.addEventListener("artemis:startup-error", event => fail(event.detail));
+      window.addEventListener("error", event => {
+        if (event.target instanceof HTMLScriptElement && event.target.type === "module") fail();
+      }, true);
+      const observer = new MutationObserver(() => {
+        if (intro.style.display === "none") {
+          observer.disconnect();
+          awaitingFirstFrame();
+        }
+      });
+      observer.observe(intro, { attributes: true, attributeFilter: ["style"] });
+      arm("The simulation is taking longer than expected to load. You can wait or retry.");
+    })();
+  </script>
+  <script type="module" src="/src/bootstrap.js"></script>
 </body>
 </html>

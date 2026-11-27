@@ -31,10 +31,11 @@ import { loadAndDecodeTile } from "../workers/athygTileWorker.js";
 import { PC_KM } from "./coords.js";
 import { deriveStar, deriveStarVisualInto, ekerMassForL } from "./stellar.js";
 
-const DEFAULT_MANIFEST_URL = "/data/athyg-tier1-manifest.json";
-const DEFAULT_BIN_URL = "/data/athyg-tier1.bin";
-const DEFAULT_EST_MANIFEST_URL = "/data/athyg-tier1-estimated-manifest.json";
-const DEFAULT_EST_BIN_URL = "/data/athyg-tier1-estimated.bin";
+const DEFAULT_MANIFEST_URL = "./data/athyg-tier1-manifest.json";
+// Binary paths resolve beside the manifest, not beside the worker bundle.
+const DEFAULT_BIN_URL = "./athyg-tier1.bin";
+const DEFAULT_EST_MANIFEST_URL = "./data/athyg-tier1-estimated-manifest.json";
+const DEFAULT_EST_BIN_URL = "./athyg-tier1-estimated.bin";
 const VIEW_CONE_DEG = 40;
 const DEC_BANDS = 64;
 const DEFAULT_TILES_PER_FRAME = 8;

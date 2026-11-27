@@ -354,7 +354,7 @@ initExplorerUI({flyTo: flyFocus, openNavigator, openCatalog: openCatalogSearchLa
 function applyStartupCameraState() {
     let restoredCamera = false;
     try {
-        const saved = JSON.parse(localStorage.getItem("ap_cam") || "null");
+        const saved = query.get("safestart") === "1" ? null : JSON.parse(localStorage.getItem("ap_cam") || "null");
         if (saved && isFinite(saved.dist)) {
             restoredCamera = true;
             cam.dist = saved.dist;
@@ -526,7 +526,8 @@ const predictionInitT0 = perfStart();
 computePrediction();
 perfEnd("startup.computePrediction", predictionInitT0);
 applyStartupCameraState();
-installCameraPersistence();
+// A recovery session must not overwrite the saved normal camera.
+if (query.get("safestart") !== "1") installCameraPersistence();
 
 async function warmRendererStartup() {
     const t0 = PERF.enabled ? performance.now() : 0;
@@ -1710,7 +1711,10 @@ function renderFrame(showCockpit) {
     sampleRendererInfo(renderer);
     sampleMemory();
     renderSubmissionSerial++;
-    window.__AP_FIRST_FRAME = true;
+    if (!window.__AP_FIRST_FRAME) {
+        window.__AP_FIRST_FRAME = true;
+        window.dispatchEvent(new Event("artemis:first-frame"));
+    }
 }
 
 function finishFramePerf(start, dtR, rawDtR, dtRCap, cosmicView, cabinActive) {
@@ -1767,7 +1771,18 @@ function frame() {
         // Place the fence after river compute, world/lens/bloom and cockpit
         // passes, including cosmic early-return frames. No inactive-frame fence.
         if (scheduled && renderSubmissionSerial !== beforeRender) renderFrameGate.submitted(performance.now());
-    } catch (error) { if (!renderContext.isLost()) throw error; }
+    } catch (error) {
+        if (renderContext.isLost()) return;
+        // Diagnostics must never replace the original render error, including
+        // when the deterministic frame entry is exercised outside the browser.
+        if (typeof window !== "undefined" && !window.__AP_FIRST_FRAME &&
+            typeof window.CustomEvent === "function") {
+            try {
+                window.dispatchEvent(new window.CustomEvent("artemis:startup-error", { detail: error }));
+            } catch { /* Preserve the original render error below. */ }
+        }
+        throw error;
+    }
 }
 function frameStep() {
     // Keep the welcome screen and background tabs responsive without advancing
@@ -2770,6 +2785,7 @@ const firstFrameT0 = perfStart();
 perfEnd("startup.firstFrame", firstFrameT0, { deferred: true });
 clock.start();
 window.__AP_READY = true;
+window.dispatchEvent(new Event("artemis:startup-ready"));
 requestEarthNightTexture(renderQuality.mobile ? 3600 : 2400);
 if (!renderQuality.mobile && new URLSearchParams(location.search).get("cockpitwarm") === "1") scheduleCockpitWarmup(4200);
 scheduleDeferredRealSkyLoad();
