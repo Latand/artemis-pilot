@@ -3,6 +3,8 @@ on:
   pull_request:
     paths:
       - 'src/**'
+      - 'index.html'
+      - 'scripts/verify-pages-startup.mjs'
       - 'scripts/*adaptive-quality*'
       - 'scripts/*context-loss*'
       - '.github/workflows/adaptive-quality.yml'
@@ -26,6 +28,7 @@ jobs:
       - run: npm install --ignore-scripts
       - run: npm run smoke:adaptive-quality && npm test && npm run smoke:determinism && npm run build
       - run: npx playwright install --with-deps chromium
+      - run: node scripts/verify-pages-startup.mjs
       - run: npm run verify:adaptive-quality && npm run verify:context-loss && npm run smoke:saves
       - uses: actions/upload-artifact@v4
         if: always()

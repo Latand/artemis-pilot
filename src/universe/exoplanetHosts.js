@@ -88,7 +88,7 @@ function normalizeHosts(data) {
     return hostsById;
 }
 
-export async function initExoplanets(url = "/data/exoplanets.json") {
+export async function initExoplanets(url = "./data/exoplanets.json") {
     try {
         const res = await fetch(url);
         if (!res.ok) throw new Error("HTTP " + res.status);

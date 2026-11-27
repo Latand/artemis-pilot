@@ -69,7 +69,7 @@ const render = main.slice(main.indexOf('function renderFrame(showCockpit) {'), m
 const body = main.slice(main.indexOf('function frameStep() {'), main.indexOf('// setAnimationLoop lets WebXR'));
 const exits = [...body.matchAll(/renderFrame\(([^)]+)\);/g)].map(m => m[1]); assert.equal(exits.length, 4);
 for (const exit of exits) for (const path of ['direct', 'lens', 'composer']) for (const cabin of [false, true]) {
-    const c = { renderSubmissionSerial: 0, submissions: 0, events: [], window: {}, VR: { active: false }, PERF: { enabled: false },
+    const c = { renderSubmissionSerial: 0, submissions: 0, events: [], window: new EventTarget(), Event, VR: { active: false }, PERF: { enabled: false },
         document: { hidden: false, getElementById: () => ({ style: { display: 'none' } }) }, performance: { now: () => 1 },
         renderContext: { isLost: () => false }, bloomPass: { enabled: path === 'composer' }, lensingPass: { enabled: path === 'lens' },
         renderQuality: {}, scene: {}, camera: {}, cockpitScene: {}, cockpitCam: {}, moonBeacon: {}, lblE: {}, lblM: {}, plLabels: [], moonLabels: [],
@@ -80,10 +80,12 @@ for (const exit of exits) for (const path of ['direct', 'lens', 'composer']) for
     c.renderLensedImpl = () => c.events.push('lens'); c.renderSceneTiered = () => c.events.push('direct');
     c.frameStep = () => { c.events.push('river-compute'); c.renderFrame(exit === 'false' ? false : cabin); }; // deliberately returns undefined
     c.renderFrameGate = { ready: () => true, submitted: () => { assert.equal(c.events.at(-1), 'telemetry'); assert.equal(c.renderSubmissionSerial, 1); c.submissions++; } };
+    let firstFrames = 0; c.window.addEventListener('artemis:first-frame', () => firstFrames++);
     vm.createContext(c); vm.runInContext(render + wrapper + '\nframe(1);', c);
     assert.equal(c.submissions, 1); assert.equal(c.window.__AP_FIRST_FRAME, true);
     assert(c.events.includes(path)); assert.equal(c.events.includes('cockpit'), exit !== 'false' && cabin);
     const before = c.submissions; vm.runInContext('frame();', c); assert.equal(c.submissions, before, 'Explicit caller owns its completion');
+    assert.equal(firstFrames, 1, 'Startup watchdog is notified only once');
 }
 for (const active of [false, true]) for (const ready of [false, true]) for (const xr of [false, true]) {
     const c = { renderSubmissionSerial: 0, VR: { active: xr }, document: { hidden: !active, getElementById: () => ({ style: { display: 'none' } }) },

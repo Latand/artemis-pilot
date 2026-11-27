@@ -29,7 +29,18 @@ try { savedQuality = localStorage.getItem('ap_quality') || 'auto'; } catch { }
 const initialQualityMode = qualityMode(q.get('quality') || savedQuality);
 // Conservative startup avoids permanent framebuffer multisampling. A deliberate
 // High load keeps the full-detail capture path; live changes reuse the context.
-export const renderer = new THREE.WebGLRenderer({ antialias: initialQualityMode === 'high' });
+function createStartupRenderer() {
+    if (initialQualityMode === 'high') {
+        try { return new THREE.WebGLRenderer({ antialias: true }); }
+        catch (error) {
+            if (!/webgl context/i.test(String(error?.message || error))) throw error;
+            // Some graphics configurations can create WebGL2 but reject MSAA.
+            console.warn("High-quality WebGL context unavailable; retrying without antialiasing.");
+        }
+    }
+    return new THREE.WebGLRenderer({ antialias: false });
+}
+export const renderer = createStartupRenderer();
 export const renderFrameGate = createGpuFrameGate(() => renderer.getContext(), {
     onStall: () => showRenderStall(), onRecovered: () => clearRenderStall(),
 });

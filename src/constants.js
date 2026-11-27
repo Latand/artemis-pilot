@@ -94,7 +94,7 @@ export const SUN_DIST = AU_KM * K;
 export const SUN_RADIUS = R_SUN * K;
 export const STAR_CATALOG_META = {
     builtIn: "nearby physical destinations from published nearby-star values",
-    hygUrl: "/data/hyg-stars-v41.json",
+    hygUrl: "./data/hyg-stars-v41.json",
     hygSource: "Astronexus HYG v4.1: Hipparcos, Yale Bright Star, and Gliese merge",
     gaiaDr3AstrometricSourceCount: 1467744818,
     gaiaDr3GMagSourceCount: 1806254432,
