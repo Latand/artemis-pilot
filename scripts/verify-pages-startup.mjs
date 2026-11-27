@@ -18,7 +18,20 @@ const browser = await chromium.launch({
 });
 try {
     for (const name of ['fresh', 'returning', 'recover-saved', 'no-webgl', 'no-msaa', 'first-render-error', 'missing-entry', 'missing-app']) {
-        const context = await browser.newContext();
+        const localStorage = [];
+        if (['returning', 'recover-saved', 'no-webgl'].includes(name)) {
+            localStorage.push({ name: 'ap_introSeen', value: '1' });
+        }
+        if (['recover-saved', 'no-webgl'].includes(name)) {
+            localStorage.push(
+                { name: 'ap_cam', value: '{"dist":321,"focus":"sun"}' },
+                { name: 'ap_quality', value: 'high' },
+            );
+        }
+        // Seed once for this context. A navigation must never restore the test values.
+        const context = await browser.newContext({
+            storageState: { cookies: [], origins: [{ origin, localStorage }] },
+        });
         try {
             const page = await context.newPage();
             const errors = [];
@@ -59,11 +72,6 @@ try {
             });
             await page.addInitScript(({ name }) => {
                 HTMLElement.prototype.requestFullscreen = async () => {};
-                if (['returning', 'recover-saved', 'no-webgl'].includes(name)) localStorage.setItem('ap_introSeen', '1');
-                if (name === 'recover-saved' || name === 'no-webgl') {
-                    localStorage.setItem('ap_cam', '{"dist":321,"focus":"sun"}');
-                    localStorage.setItem('ap_quality', 'high');
-                }
                 if (name === 'no-webgl' || name === 'no-msaa') {
                     const getContext = HTMLCanvasElement.prototype.getContext;
                     HTMLCanvasElement.prototype.getContext = function (type, ...args) {
@@ -114,11 +122,17 @@ try {
                     }
                     if (name === 'fresh') assert(binaryRanges > 0, 'worker reads the Tier-1 binary under the Pages prefix');
                     if (name === 'recover-saved') {
+                        const assertSavedSettings = async phase => {
+                            assert.deepEqual(await page.evaluate(() => [
+                                localStorage.getItem('ap_cam'), localStorage.getItem('ap_quality'), window.__renderQuality.mode,
+                            ]), ['{"dist":321,"focus":"sun"}', 'high', 'minimal'], phase);
+                        };
+                        await assertSavedSettings('saved settings after the first recovery frame');
                         await page.reload({ waitUntil: 'commit' });
                         await page.waitForFunction(() => window.__AP_READY === true);
-                        assert.deepEqual(await page.evaluate(() => [
-                            localStorage.getItem('ap_cam'), localStorage.getItem('ap_quality'), window.__renderQuality.mode,
-                        ]), ['{"dist":321,"focus":"sun"}', 'high', 'minimal']);
+                        await page.locator('#introEnter').click();
+                        await page.waitForFunction(() => window.__AP_FIRST_FRAME === true);
+                        await assertSavedSettings('saved settings after reload and another recovery frame');
                     }
                 }
                 assert.deepEqual([...requests].filter(path => path.startsWith('/data/')), []);
